@@ -4,9 +4,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Shield, Save } from 'lucide-react';
+import { Shield, Save, Plus, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 
 interface Permission {
   id: string;
@@ -61,6 +70,9 @@ const DEFAULT_PERMISSIONS = {
 export default function Permissions() {
   const { toast } = useToast();
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(DEFAULT_PERMISSIONS);
+  const [customRoles, setCustomRoles] = useState<string[]>([]);
+  const [isAddRoleDialogOpen, setIsAddRoleDialogOpen] = useState(false);
+  const [newRoleName, setNewRoleName] = useState('');
 
   const handlePermissionToggle = (role: string, permissionId: string) => {
     setRolePermissions(prev => {
@@ -79,13 +91,51 @@ export default function Permissions() {
     });
   };
 
-  const RolePermissionsTab = ({ role, roleLabel }: { role: string; roleLabel: string }) => (
+  const handleAddRole = () => {
+    if (newRoleName.trim()) {
+      const roleKey = newRoleName.toLowerCase().replace(/\s+/g, '_');
+      setCustomRoles([...customRoles, roleKey]);
+      setRolePermissions({ ...rolePermissions, [roleKey]: [] });
+      setNewRoleName('');
+      setIsAddRoleDialogOpen(false);
+      toast({
+        title: 'Role added',
+        description: `${newRoleName} has been created successfully.`,
+      });
+    }
+  };
+
+  const handleDeleteRole = (role: string) => {
+    setCustomRoles(customRoles.filter(r => r !== role));
+    const newPermissions = { ...rolePermissions };
+    delete newPermissions[role];
+    setRolePermissions(newPermissions);
+    toast({
+      title: 'Role deleted',
+      description: 'The custom role has been removed.',
+      variant: 'destructive',
+    });
+  };
+
+  const RolePermissionsTab = ({ role, roleLabel, canDelete = false }: { role: string; roleLabel: string; canDelete?: boolean }) => (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-lg font-semibold mb-2">{roleLabel} Permissions</h3>
-        <p className="text-sm text-muted-foreground">
-          Configure what {roleLabel.toLowerCase()} users can see and do in the system.
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="text-lg font-semibold mb-2">{roleLabel} Permissions</h3>
+          <p className="text-sm text-muted-foreground">
+            Configure what {roleLabel.toLowerCase()} users can see and do in the system.
+          </p>
+        </div>
+        {canDelete && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => handleDeleteRole(role)}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete Role
+          </Button>
+        )}
       </div>
 
       <div className="grid gap-4">
@@ -139,18 +189,66 @@ export default function Permissions() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Configure Role Permissions</CardTitle>
-            <CardDescription>
-              Select the permissions for each role. Changes will take effect immediately.
-            </CardDescription>
+            <div className="flex items-start justify-between">
+              <div>
+                <CardTitle>Configure Role Permissions</CardTitle>
+                <CardDescription>
+                  Select the permissions for each role. Changes will take effect immediately.
+                </CardDescription>
+              </div>
+              <Dialog open={isAddRoleDialogOpen} onOpenChange={setIsAddRoleDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Custom Role
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add Custom Role</DialogTitle>
+                    <DialogDescription>
+                      Create a new role for your organization
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="roleName">Role Name</Label>
+                      <Input
+                        id="roleName"
+                        placeholder="e.g., Regional Manager"
+                        value={newRoleName}
+                        onChange={(e) => setNewRoleName(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsAddRoleDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddRole}>
+                        Add Role
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="admin" className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
+              <TabsList className={`grid w-full grid-cols-${Math.min(4 + customRoles.length, 6)}`}>
                 <TabsTrigger value="admin">Admin</TabsTrigger>
                 <TabsTrigger value="manager">Manager</TabsTrigger>
                 <TabsTrigger value="team_leader">Team Leader</TabsTrigger>
                 <TabsTrigger value="mobile_sales">Mobile Sales</TabsTrigger>
+                {customRoles.map(role => (
+                  <TabsTrigger key={role} value={role}>
+                    {role.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                  </TabsTrigger>
+                ))}
               </TabsList>
               <TabsContent value="admin" className="mt-6">
                 <RolePermissionsTab role="admin" roleLabel="Admin" />
@@ -164,6 +262,15 @@ export default function Permissions() {
               <TabsContent value="mobile_sales" className="mt-6">
                 <RolePermissionsTab role="mobile_sales" roleLabel="Mobile Sales" />
               </TabsContent>
+              {customRoles.map(role => (
+                <TabsContent key={role} value={role} className="mt-6">
+                  <RolePermissionsTab
+                    role={role}
+                    roleLabel={role.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                    canDelete
+                  />
+                </TabsContent>
+              ))}
             </Tabs>
           </CardContent>
         </Card>
