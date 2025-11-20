@@ -1,20 +1,23 @@
-import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Building2,
   LayoutDashboard,
+  Building2,
   ShoppingCart,
   Package,
   Users,
-  FileText,
   BarChart3,
-  Settings,
+  FileText,
+  UsersRound,
   Shield,
+  ChevronDown,
+  Boxes,
+  ClipboardList,
+  DollarSign,
+  History,
   LogOut,
-  Menu,
-  Bell,
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import {
   Sidebar,
   SidebarContent,
@@ -24,149 +27,133 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarHeader,
   SidebarFooter,
-  useSidebar,
 } from '@/components/ui/sidebar';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-
-const getMenuItems = (role: string) => {
-  const systemAdminItems = [
-    { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-    { title: 'Companies', url: '/companies', icon: Building2 },
-  ];
-
-  const superAdminItems = [
-    { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-    { title: 'Orders', url: '/orders', icon: ShoppingCart },
-    { title: 'Inventory', url: '/inventory', icon: Package },
-    { title: 'Clients', url: '/clients', icon: Users },
-    { title: 'Analytics', url: '/analytics', icon: BarChart3 },
-    { title: 'Users', url: '/users', icon: Users },
-    { title: 'Roles & Permissions', url: '/permissions', icon: Shield },
-    { title: 'Reports', url: '/reports', icon: FileText },
-  ];
-
-  const adminItems = [
-    { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-    { title: 'Orders', url: '/orders', icon: ShoppingCart },
-    { title: 'Inventory', url: '/inventory', icon: Package },
-    { title: 'Clients', url: '/clients', icon: Users },
-    { title: 'Analytics', url: '/analytics', icon: BarChart3 },
-    { title: 'Users', url: '/users', icon: Users },
-    { title: 'Reports', url: '/reports', icon: FileText },
-  ];
-
-  const managerItems = [
-    { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-    { title: 'Orders', url: '/orders', icon: ShoppingCart },
-    { title: 'Inventory', url: '/inventory', icon: Package },
-    { title: 'Team', url: '/team', icon: Users },
-    { title: 'Analytics', url: '/analytics', icon: BarChart3 },
-  ];
-
-  const teamLeaderItems = [
-    { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-    { title: 'Orders', url: '/orders', icon: ShoppingCart },
-    { title: 'Inventory', url: '/inventory', icon: Package },
-    { title: 'Team', url: '/team', icon: Users },
-  ];
-
-  const mobileSalesItems = [
-    { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-    { title: 'Orders', url: '/orders', icon: ShoppingCart },
-    { title: 'Clients', url: '/clients', icon: Users },
-    { title: 'Inventory', url: '/inventory', icon: Package },
-  ];
-
-  switch (role) {
-    case 'system_admin':
-      return systemAdminItems;
-    case 'super_admin':
-      return superAdminItems;
-    case 'admin':
-      return adminItems;
-    case 'manager':
-      return managerItems;
-    case 'team_leader':
-      return teamLeaderItems;
-    case 'mobile_sales':
-      return mobileSalesItems;
-    default:
-      return [];
-  }
-};
 
 export const AppSidebar = () => {
   const { user, logout } = useAuth();
-  const { state } = useSidebar();
-  const location = useLocation();
   const navigate = useNavigate();
-  const isCollapsed = state === 'collapsed';
 
   if (!user) return null;
 
-  const menuItems = getMenuItems(user.role);
+  const menuItems = [
+    { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard, roles: ['system_admin', 'super_admin', 'admin', 'manager', 'team_leader', 'mobile_sales'] },
+    { title: 'Companies', url: '/companies', icon: Building2, roles: ['system_admin'] },
+    {
+      title: 'Member Management',
+      icon: UsersRound,
+      roles: ['super_admin', 'admin'],
+      submenu: [
+        { title: 'Users', url: '/users', icon: Users },
+        { title: 'Team Management', url: '/team-management', icon: UsersRound },
+      ]
+    },
+    {
+      title: 'Inventory Management',
+      icon: Package,
+      roles: ['super_admin', 'admin', 'manager', 'team_leader'],
+      submenu: [
+        { title: 'Main Inventory', url: '/inventory', icon: Boxes },
+        { title: 'Stock Allocations', url: '/stock-allocations', icon: Package },
+        { title: 'Inventory Requests', url: '/inventory-requests', icon: ClipboardList },
+        { title: 'Remitted Stocks', url: '/remitted-stocks', icon: Package },
+      ]
+    },
+    {
+      title: 'Clients Management',
+      icon: Users,
+      roles: ['super_admin', 'admin', 'manager', 'team_leader', 'mobile_sales'],
+      submenu: [
+        { title: 'Clients Database', url: '/clients', icon: Users },
+        { title: 'Pending Clients', url: '/pending-clients', icon: Users },
+        { title: 'Voided Clients', url: '/voided-clients', icon: Users },
+      ]
+    },
+    { title: 'Orders', url: '/orders', icon: ShoppingCart, roles: ['super_admin', 'admin', 'manager', 'team_leader', 'mobile_sales'] },
+    { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList, roles: ['super_admin', 'admin'] },
+    { title: 'Finance', url: '/finance', icon: DollarSign, roles: ['super_admin', 'admin'] },
+    { title: 'Analytics', url: '/analytics', icon: BarChart3, roles: ['super_admin', 'admin', 'manager'] },
+    { title: 'Reports', url: '/reports', icon: FileText, roles: ['super_admin', 'admin', 'manager'] },
+    { title: 'History', url: '/history', icon: History, roles: ['super_admin', 'admin'] },
+    { title: 'Permissions', url: '/permissions', icon: Shield, roles: ['super_admin'] },
+  ];
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
+  const filteredItems = menuItems.filter((item) => item.roles.includes(user?.role || ''));
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      <SidebarHeader className="border-b border-sidebar-border p-4">
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="p-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sidebar-primary">
-            <Building2 className="h-5 w-5 text-sidebar-primary-foreground" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
+            <Building2 className="h-5 w-5 text-primary-foreground" />
           </div>
-          {!isCollapsed && (
-            <div className="flex-1">
-              <h2 className="text-sm font-semibold text-sidebar-foreground">
-                {user.companyName || 'B2B System'}
-              </h2>
-              <p className="text-xs text-sidebar-foreground/60">{user.name}</p>
-            </div>
-          )}
+          <div>
+            <h2 className="text-sm font-semibold">B2B System</h2>
+            <p className="text-xs text-muted-foreground">{user.companyName || 'Admin'}</p>
+          </div>
         </div>
       </SidebarHeader>
-
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/60">
-            {!isCollapsed && 'Main Menu'}
-          </SidebarGroupLabel>
+          <SidebarGroupLabel>Menu</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location.pathname === item.url}>
-                    <NavLink
-                      to={item.url}
-                      className="flex items-center gap-3 text-sidebar-foreground hover:text-sidebar-primary-foreground hover:bg-sidebar-accent"
-                      activeClassName="bg-sidebar-primary text-sidebar-primary-foreground font-medium"
-                    >
-                      <item.icon className="h-5 w-5" />
-                      {!isCollapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+              {filteredItems.map((item) => (
+                item.submenu ? (
+                  <Collapsible key={item.title} defaultOpen>
+                    <SidebarMenuItem>
+                      <CollapsibleTrigger asChild>
+                        <SidebarMenuButton>
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                          <ChevronDown className="ml-auto h-4 w-4" />
+                        </SidebarMenuButton>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          {item.submenu.map((subItem) => (
+                            <SidebarMenuSubItem key={subItem.title}>
+                              <SidebarMenuSubButton asChild>
+                                <NavLink to={subItem.url} activeClassName="bg-primary text-primary-foreground">
+                                  <subItem.icon className="h-4 w-4" />
+                                  <span>{subItem.title}</span>
+                                </NavLink>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </SidebarMenuItem>
+                  </Collapsible>
+                ) : (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild>
+                      <NavLink to={item.url} activeClassName="bg-primary text-primary-foreground">
+                        <item.icon className="h-4 w-4" />
+                        <span>{item.title}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-
-      <SidebarFooter className="border-t border-sidebar-border p-2">
-        <Button
-          variant="ghost"
-          size={isCollapsed ? 'icon' : 'default'}
-          onClick={handleLogout}
-          className="w-full justify-start text-sidebar-foreground hover:text-sidebar-primary-foreground hover:bg-sidebar-accent"
-        >
-          <LogOut className="h-5 w-5" />
-          {!isCollapsed && <span className="ml-3">Logout</span>}
+      <SidebarFooter className="p-4">
+        <Button variant="ghost" className="w-full justify-start" onClick={() => { logout(); navigate('/login'); }}>
+          <LogOut className="mr-2 h-4 w-4" />
+          Logout
         </Button>
       </SidebarFooter>
     </Sidebar>
