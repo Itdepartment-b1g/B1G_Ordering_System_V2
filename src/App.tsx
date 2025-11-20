@@ -19,6 +19,15 @@ import Team from "./pages/Team";
 import Permissions from "./pages/Permissions";
 import Unauthorized from "./pages/Unauthorized";
 import NotFound from "./pages/NotFound";
+import TeamManagement from "./pages/TeamManagement";
+import StockAllocations from "./pages/StockAllocations";
+import InventoryRequests from "./pages/InventoryRequests";
+import RemittedStocks from "./pages/RemittedStocks";
+import PendingClients from "./pages/PendingClients";
+import VoidedClients from "./pages/VoidedClients";
+import PurchaseOrders from "./pages/PurchaseOrders";
+import Finance from "./pages/Finance";
+import History from "./pages/History";
 
 const queryClient = new QueryClient();
 
@@ -82,6 +91,70 @@ const App = () => (
               }
             />
             <Route
+              path="/team-management"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
+                  <TeamManagement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/stock-allocations"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
+                  <StockAllocations />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/inventory-requests"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
+                  <InventoryRequests />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/remitted-stocks"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
+                  <RemittedStocks />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/pending-clients"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
+                  <PendingClients />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/voided-clients"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
+                  <VoidedClients />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/purchase-orders"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
+                  <PurchaseOrders />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/finance"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
+                  <Finance />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/analytics"
               element={
                 <ProtectedRoute>
@@ -94,6 +167,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Reports />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/history"
+              element={
+                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
+                  <History />
                 </ProtectedRoute>
               }
             />
