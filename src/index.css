@@ -8,101 +8,102 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 210 40% 98%;
-    --foreground: 215 25% 27%;
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
 
     --card: 0 0% 100%;
-    --card-foreground: 215 25% 27%;
+    --card-foreground: 222.2 84% 4.9%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 215 25% 27%;
+    --popover-foreground: 222.2 84% 4.9%;
 
-    --primary: 214 84% 56%;
+    /* Professional business purple #472160 */
+    --primary: 276 49% 25%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 215 25% 27%;
+    --secondary: 276 32% 91%;
+    --secondary-foreground: 276 47% 11%;
 
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    --muted: 276 20% 96%;
+    --muted-foreground: 276 16% 47%;
 
-    --accent: 142 76% 36%;
-    --accent-foreground: 0 0% 100%;
+    /* Neutral with purple tint for general accents */
+    --accent: 276 20% 96%;
+    --accent-foreground: 276 47% 11%;
 
-    --destructive: 0 84% 60%;
+    --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 214 84% 56%;
+    /* Success green for approvals and positive actions */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 276 20% 91%;
+    --input: 276 20% 91%;
+    --ring: 276 49% 35%;
 
     --radius: 0.5rem;
+    
+    /* Chart colors */
+    --chart-1: 276 49% 25%;
+    --chart-2: 142 71% 45%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 280 87% 65%;
+    --chart-5: 340 82% 52%;
 
-    --sidebar-background: 215 28% 17%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 214 84% 56%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 215 25% 27%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 215 20% 25%;
-    --sidebar-ring: 214 84% 56%;
-    
-    --success: 142 76% 36%;
-    --success-foreground: 0 0% 100%;
-    
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
-    
-    --info: 199 89% 48%;
-    --info-foreground: 0 0% 100%;
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 276 10% 26%;
+
+    --sidebar-primary: 276 49% 25%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 276 10% 96%;
+
+    --sidebar-accent-foreground: 276 49% 25%;
+
+    --sidebar-border: 276 10% 91%;
+
+    --sidebar-ring: 276 49% 35%;
   }
 
   .dark {
-    --background: 215 28% 17%;
-    --foreground: 210 40% 98%;
+    --background: 276 30% 5%;
+    --foreground: 276 10% 98%;
 
-    --card: 215 25% 20%;
-    --card-foreground: 210 40% 98%;
+    --card: 276 30% 5%;
+    --card-foreground: 276 10% 98%;
 
-    --popover: 215 25% 20%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 276 30% 5%;
+    --popover-foreground: 276 10% 98%;
 
-    --primary: 214 84% 56%;
+    --primary: 276 49% 55%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 215 20% 25%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 276 30% 18%;
+    --secondary-foreground: 276 10% 98%;
 
-    --muted: 215 20% 25%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 276 30% 18%;
+    --muted-foreground: 276 10% 65%;
 
-    --accent: 142 76% 36%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 276 30% 18%;
+    --accent-foreground: 276 10% 98%;
 
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 276 10% 98%;
 
-    --border: 215 20% 25%;
-    --input: 215 20% 25%;
-    --ring: 214 84% 56%;
-    
-    --sidebar-background: 215 28% 12%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 214 84% 56%;
+    --border: 276 30% 18%;
+    --input: 276 30% 18%;
+    --ring: 276 49% 75%;
+    --sidebar-background: 276 49% 10%;
+    --sidebar-foreground: 276 10% 96%;
+    --sidebar-primary: 276 49% 55%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 215 25% 20%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 215 20% 20%;
-    --sidebar-ring: 214 84% 56%;
-    
-    --success: 142 76% 36%;
-    --success-foreground: 0 0% 100%;
-    
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
-    
-    --info: 199 89% 48%;
-    --info-foreground: 0 0% 100%;
+    --sidebar-accent: 276 30% 16%;
+    --sidebar-accent-foreground: 276 10% 96%;
+    --sidebar-border: 276 30% 16%;
+    --sidebar-ring: 276 49% 55%;
   }
 }
 
@@ -112,6 +113,6 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground overflow-x-hidden;
   }
 }

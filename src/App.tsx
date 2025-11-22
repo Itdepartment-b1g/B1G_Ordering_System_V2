@@ -3,203 +3,84 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/contexts/AuthContext";
-import { ProtectedRoute } from "@/components/ProtectedRoute";
-import Index from "./pages/Index";
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import Companies from "./pages/Companies";
-import Orders from "./pages/Orders";
-import Inventory from "./pages/Inventory";
-import Clients from "./pages/Clients";
-import UsersPage from "./pages/Users";
-import Analytics from "./pages/Analytics";
-import Reports from "./pages/Reports";
-import Team from "./pages/Team";
-import Permissions from "./pages/Permissions";
-import Unauthorized from "./pages/Unauthorized";
-import NotFound from "./pages/NotFound";
-import TeamManagement from "./pages/TeamManagement";
-import StockAllocations from "./pages/StockAllocations";
-import InventoryRequests from "./pages/InventoryRequests";
-import RemittedStocks from "./pages/RemittedStocks";
-import PendingClients from "./pages/PendingClients";
-import VoidedClients from "./pages/VoidedClients";
-import PurchaseOrders from "./pages/PurchaseOrders";
-import Finance from "./pages/Finance";
-import History from "./pages/History";
+import { AuthProvider, ProtectedRoute, LoginPage } from "@/features/auth";
+import { DashboardPage, AdminHistoryPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
+import { ProfilePage } from "@/features/profile";
+import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
+import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, LeaderRemittancePage, RequestInventoryPage, PendingRequestsPage, AdminRequestsPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import { ClientsPage, MyClientsPage, PendingClientsPage } from "@/features/clients";
+import { AnalyticsPage } from "@/features/analytics";
+import VoidedClientsPage from "@/features/clients/VoidedClientsPage";
+import { CalendarPage } from "@/features/calendar";
+import { SalesAgentsPage, TasksPage, ArchiveTasksPage, AgentHistoryPage } from "@/features/sales-agents";
+import SalesAgentsOnlyPage from "@/features/sales-agents/SalesAgentsOnlyPage";
+import TeamManagementPage from "@/features/sales-agents/TeamManagementPage";
+import MyTeamPage from "@/features/sales-agents/MyTeamPage";
+import { FinancePage } from "@/features/finance";
+import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
+import NotFound from "@/features/shared/NotFound";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <AuthProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Navigate to="/login" replace />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/unauthorized" element={<Unauthorized />} />
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/companies"
-              element={
-                <ProtectedRoute allowedRoles={['system_admin']}>
-                  <Companies />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/orders"
-              element={
-                <ProtectedRoute>
-                  <Orders />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/inventory"
-              element={
-                <ProtectedRoute>
-                  <Inventory />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/clients"
-              element={
-                <ProtectedRoute>
-                  <Clients />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/users"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
-                  <UsersPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/team-management"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
-                  <TeamManagement />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/stock-allocations"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
-                  <StockAllocations />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/inventory-requests"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
-                  <InventoryRequests />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/remitted-stocks"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
-                  <RemittedStocks />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/pending-clients"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
-                  <PendingClients />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/voided-clients"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin', 'manager', 'team_leader']}>
-                  <VoidedClients />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/purchase-orders"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
-                  <PurchaseOrders />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/finance"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
-                  <Finance />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/analytics"
-              element={
-                <ProtectedRoute>
-                  <Analytics />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/reports"
-              element={
-                <ProtectedRoute>
-                  <Reports />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/history"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin', 'admin']}>
-                  <History />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/team"
-              element={
-                <ProtectedRoute allowedRoles={['manager', 'team_leader']}>
-                  <Team />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/permissions"
-              element={
-                <ProtectedRoute allowedRoles={['super_admin']}>
-                  <Permissions />
-                </ProtectedRoute>
-              }
-            />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
-    </TooltipProvider>
+    <AuthProvider>
+      <OrderProvider>
+        <PurchaseOrderProvider>
+          <InventoryProvider>
+            <AgentInventoryProvider>
+              <TooltipProvider>
+                <Toaster />
+                <Sonner />
+                <BrowserRouter>
+                  <Routes>
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+                    <Route path="/member-management" element={<ProtectedRoute><SalesAgentsPage /></ProtectedRoute>} />
+                    <Route path="/sales-agents" element={<ProtectedRoute><SalesAgentsOnlyPage /></ProtectedRoute>} />
+                    <Route path="/team-management" element={<ProtectedRoute><TeamManagementPage /></ProtectedRoute>} />
+                    <Route path="/inventory" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
+                    <Route path="/inventory/main" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
+                    <Route path="/inventory/allocations" element={<ProtectedRoute><StockAllocationsPage /></ProtectedRoute>} />
+                    <Route path="/inventory/remitted-stocks" element={<ProtectedRoute><RemittedStocksPage /></ProtectedRoute>} />
+                    <Route path="/inventory/team-remittances" element={<ProtectedRoute><LeaderRemittancePage /></ProtectedRoute>} />
+                    <Route path="/inventory/request" element={<ProtectedRoute><RequestInventoryPage /></ProtectedRoute>} />
+                    <Route path="/inventory/pending-requests" element={<ProtectedRoute><PendingRequestsPage /></ProtectedRoute>} />
+                    <Route path="/inventory/admin-requests" element={<ProtectedRoute><AdminRequestsPage /></ProtectedRoute>} />
+                    <Route path="/inventory/leaders" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
+                    <Route path="/leader-inventory" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
+                    <Route path="/team-members" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
+                    <Route path="/my-team" element={<ProtectedRoute><MyTeamPage /></ProtectedRoute>} />
+                    <Route path="/tasks" element={<ProtectedRoute><TasksPage /></ProtectedRoute>} />
+                    <Route path="/tasks/archive" element={<ProtectedRoute><ArchiveTasksPage /></ProtectedRoute>} />
+                    <Route path="/clients" element={<ProtectedRoute><ClientsPage /></ProtectedRoute>} />
+                    <Route path="/clients/pending" element={<ProtectedRoute><PendingClientsPage /></ProtectedRoute>} />
+                    <Route path="/voided-clients" element={<ProtectedRoute><VoidedClientsPage /></ProtectedRoute>} />
+                    <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+                    <Route path="/finance" element={<ProtectedRoute><FinancePage /></ProtectedRoute>} />
+                    <Route path="/my-inventory" element={<ProtectedRoute><MyInventoryPage /></ProtectedRoute>} />
+                    <Route path="/my-clients" element={<ProtectedRoute><MyClientsPage /></ProtectedRoute>} />
+                    <Route path="/my-orders" element={<ProtectedRoute><MyOrdersPage /></ProtectedRoute>} />
+                    <Route path="/my-history" element={<ProtectedRoute><AgentHistoryPage /></ProtectedRoute>} />
+                    <Route path="/system-history" element={<ProtectedRoute><AdminHistoryPage /></ProtectedRoute>} />
+                    <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
+                    <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
+                    <Route path="/purchase-orders" element={<ProtectedRoute><PurchaseOrdersPage /></ProtectedRoute>} />
+                    <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+                    <Route path="/system-admin" element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
+                    <Route path="/sys-admin-dashboard" element={<ProtectedRoute><SysAdDashboardPage /></ProtectedRoute>} />
+                    <Route path="/super-admin-dashboard" element={<ProtectedRoute><SuperAdminDashboardPage /></ProtectedRoute>} />
+                    {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                    <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </BrowserRouter>
+              </TooltipProvider>
+            </AgentInventoryProvider>
+          </InventoryProvider>
+        </PurchaseOrderProvider>
+      </OrderProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 
