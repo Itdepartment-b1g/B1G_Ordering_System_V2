@@ -30,4 +30,4 @@ dist-ssr
 .env.*.local
 
 # Supabase Edge Functions (contains sensitive code)
-
+.supabase/*
