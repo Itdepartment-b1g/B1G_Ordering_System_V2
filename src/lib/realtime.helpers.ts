@@ -10,6 +10,7 @@ import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/
 
 type TableName =
   | 'profiles'
+  | 'companies'
   | 'brands'
   | 'variants'
   | 'main_inventory'

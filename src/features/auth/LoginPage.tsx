@@ -55,6 +55,17 @@ export default function LoginPage() {
           ),
           variant: "destructive",
         });
+      } else if (result.error === 'company_inactive') {
+        toast({
+          title: "Company Account Deactivated",
+          description: (
+            <div className="flex items-center gap-2">
+              <XCircle className="h-5 w-5" />
+              <span>Your company account has been deactivated. Please contact your system administrator for assistance.</span>
+            </div>
+          ),
+          variant: "destructive",
+        });
       } else {
         toast({
           title: "Login failed",

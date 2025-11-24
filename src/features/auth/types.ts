@@ -7,13 +7,14 @@ export interface User extends Profile {
 
 export interface LoginResult {
     success: boolean;
-    error?: 'invalid_credentials' | 'account_restricted';
+    error?: 'invalid_credentials' | 'account_restricted' | 'company_inactive';
 }
 
 export interface AuthContextType {
     user: User | null;
     login: (email: string, password: string) => Promise<LoginResult>;
     logout: () => Promise<void>;
+    refreshProfile: () => Promise<void>;
     isAuthenticated: boolean;
     isLoading: boolean;
 }

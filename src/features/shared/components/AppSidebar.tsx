@@ -141,7 +141,6 @@ const leaderMenuItems: MenuItem[] = [
 
 const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', icon: LayoutDashboard },
-  { title: 'System Admin', url: '/system-admin', icon: Crown },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 

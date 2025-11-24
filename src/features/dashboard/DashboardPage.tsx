@@ -2,6 +2,7 @@ import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp, Users, Package, DollarSign, CheckCircle, XCircle, Bell, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { Badge } from '@/components/ui/badge';
@@ -20,7 +21,17 @@ import {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
+
+  // Redirect system administrators and super admins to their respective dashboards
+  useEffect(() => {
+    if (user?.role === 'system_administrator') {
+      navigate('/sys-admin-dashboard', { replace: true });
+    } else if (user?.role === 'super_admin') {
+      navigate('/super-admin-dashboard', { replace: true });
+    }
+  }, [user?.role, navigate]);
 
   // Admin stats
   const [totalRevenue, setTotalRevenue] = useState(0);

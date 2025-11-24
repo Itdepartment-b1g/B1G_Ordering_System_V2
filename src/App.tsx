@@ -3,7 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider, ProtectedRoute, LoginPage } from "@/features/auth";
+import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
 import { DashboardPage, AdminHistoryPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
 import { ProfilePage } from "@/features/profile";
 import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
@@ -34,7 +34,7 @@ const App = () => (
                 <Sonner />
                 <BrowserRouter>
                   <Routes>
-                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/" element={<RoleBasedRedirect />} />
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
                     <Route path="/member-management" element={<ProtectedRoute><SalesAgentsPage /></ProtectedRoute>} />

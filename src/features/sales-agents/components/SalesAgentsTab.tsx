@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 import { UserRole } from '@/types/database.types';
+import { useAuth } from '@/features/auth';
 
 interface SalesAgent {
   id: string;
@@ -51,6 +52,7 @@ interface Variant {
 }
 
 export function SalesAgentsTab() {
+  const { user, refreshProfile } = useAuth();
   const [agents, setAgents] = useState<SalesAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -73,13 +75,33 @@ export function SalesAgentsTab() {
   const [selectedAgentForAllocation, setSelectedAgentForAllocation] = useState<SalesAgent | null>(null);
   const [agentInventory, setAgentInventory] = useState<Variant[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
+const roleRequiresTerritory = (role?: UserRole | '') =>
+    role === 'team_leader' || role === 'mobile_sales' || role === 'manager';
+
+const getRoleLabel = (role?: UserRole | '') => {
+  switch (role) {
+    case 'admin':
+      return 'Admin';
+    case 'finance':
+      return 'Finance';
+    case 'manager':
+      return 'Manager';
+    case 'team_leader':
+      return 'Team Leader';
+    case 'mobile_sales':
+      return 'Mobile Sales';
+    default:
+      return '—';
+  }
+};
+
   const [newAgent, setNewAgent] = useState({
     name: '',
     email: '',
     phone: '',
     region: '',
     cities: [] as string[],
-    role: 'mobile_sales' as UserRole
+    role: '' as UserRole | ''
   });
   const [editForm, setEditForm] = useState({
     name: '',
@@ -95,6 +117,8 @@ export function SalesAgentsTab() {
   // City input state for adding cities
   const [currentCityInput, setCurrentCityInput] = useState('');
   const [editCityInput, setEditCityInput] = useState('');
+  const isRoleSelected = Boolean(newAgent.role);
+  const addDialogRequiresTerritory = roleRequiresTerritory(newAgent.role);
 
   const { toast } = useToast();
 
@@ -113,7 +137,7 @@ export function SalesAgentsTab() {
     try {
       setLoading(true);
 
-      // Fetch agents with their sales data
+      // Fetch all users in the company except the logged-in user (RLS will handle company isolation)
       const { data: agentsData, error: agentsError } = await supabase
         .from('profiles')
         .select(`
@@ -126,12 +150,12 @@ export function SalesAgentsTab() {
           status,
           role
         `)
-        .eq('role', 'sales_agent')
+        .neq('id', user?.id || '')
         .order('created_at', { ascending: false });
 
       if (agentsError) throw agentsError;
 
-      // Fetch sales data for each agent
+      // Fetch sales data for each user
       const agentsWithSales = await Promise.all(
         (agentsData || []).map(async (agent: any) => {
           // Get total sales and orders count
@@ -142,7 +166,7 @@ export function SalesAgentsTab() {
             .eq('status', 'approved');
 
           if (salesError) {
-            console.error('Error fetching sales data for agent', agent.id, salesError);
+            console.error('Error fetching sales data for user', agent.id, salesError);
           }
 
           const totalSales = (salesData || []).reduce((sum: number, order: any) => {
@@ -159,7 +183,7 @@ export function SalesAgentsTab() {
             region: agent.region || '',
             cities: agent.city ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map(c => c.trim()).filter(c => c)) : [],
             status: agent.status || 'active',
-            role: agent.role || 'sales_agent',
+            role: agent.role || 'mobile_sales',
             totalSales,
             ordersCount
           };
@@ -168,10 +192,10 @@ export function SalesAgentsTab() {
 
       setAgents(agentsWithSales);
     } catch (error) {
-      console.error('Error fetching agents:', error);
+      console.error('Error fetching users:', error);
       toast({
         title: 'Error',
-        description: 'Failed to load sales agents',
+        description: 'Failed to load users',
         variant: 'destructive'
       });
     } finally {
@@ -338,17 +362,117 @@ export function SalesAgentsTab() {
     }
   };
 
+  const handleRoleChange = (value: UserRole) => {
+    setNewAgent((prev) => ({
+      ...prev,
+      role: value,
+      region: roleRequiresTerritory(value) ? prev.region : '',
+      cities: roleRequiresTerritory(value) ? prev.cities : [],
+    }));
+  };
+
   const handleAddAgent = async () => {
     try {
-      // 1) Create auth user via Edge Function
+      if (!newAgent.role) {
+        toast({
+          title: 'Role Required',
+          description: 'Please select a role for the new user before continuing.',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      if (!newAgent.name?.trim() || !newAgent.email?.trim() || !newAgent.phone?.trim()) {
+        toast({
+          title: 'Missing Information',
+          description: 'Name, email, and phone are required for all roles.',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      const needsTerritoryFields = roleRequiresTerritory(newAgent.role);
+      if (needsTerritoryFields) {
+        if (!newAgent.region?.trim()) {
+          toast({
+            title: 'Region Required',
+            description: 'Please provide the region for this role.',
+            variant: 'destructive'
+          });
+          return;
+        }
+        if (newAgent.cities.length === 0) {
+          toast({
+            title: 'Cities Required',
+            description: 'Please add at least one city for this role.',
+            variant: 'destructive'
+          });
+          return;
+        }
+      }
+
+      // Validate that the super admin has a company_id
+      let companyId = user?.company_id;
+      
+      if (!companyId) {
+        console.error('User object missing company_id:', user);
+        
+        // Try to fetch company_id directly from the database
+        console.log('🔄 Fetching company_id from database...');
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('id', user?.id)
+          .single();
+        
+        if (profileError) {
+          console.error('Error fetching profile:', profileError);
+          toast({
+            title: 'Profile Issue',
+            description: 'Unable to load your profile. Please refresh the page or contact support.',
+            variant: 'destructive'
+          });
+          return;
+        }
+        
+        if (profileData?.company_id) {
+          companyId = profileData.company_id;
+          // Refresh the profile to update the user object
+          await refreshProfile();
+        } else {
+          toast({
+            title: 'Profile Issue',
+            description: 'Your profile is missing company information. Please contact support.',
+            variant: 'destructive'
+          });
+          return;
+        }
+      }
+
+      // Prepare city value - use null if empty array, otherwise join with comma
+      const regionValue = needsTerritoryFields ? newAgent.region?.trim() || null : null;
+      const cityValue =
+        needsTerritoryFields && newAgent.cities.length > 0
+          ? newAgent.cities.join(',')
+          : null;
+
+      console.log('Creating user with company_id:', companyId);
+
+      // Create auth user and profile via Edge Function with all fields
       const { data: fnRes, error: fnErr } = await supabase.functions.invoke('create-agent', {
         body: {
           email: newAgent.email?.trim(),
           password: 'tempPassword123!',
           full_name: newAgent.name?.trim(),
-          role: newAgent.role || 'sales_agent'
+          role: (newAgent.role as UserRole) || 'mobile_sales',
+          phone: newAgent.phone || null,
+          region: regionValue,
+          city: cityValue,
+          status: 'active',
+          company_id: companyId
         }
       });
+
       if (fnErr) {
         const detailedMessage =
           (fnErr as any)?.context?.error ||
@@ -357,32 +481,14 @@ export function SalesAgentsTab() {
           'Failed to create auth user';
         throw new Error(detailedMessage);
       }
-      const userId = (fnRes as any)?.userId as string | undefined;
-      if (!userId) throw new Error('Auth user not created');
 
-      // 2) Insert profile row with additional fields
-      // Prepare city value - use null if empty array, otherwise join with comma
-      const cityValue = newAgent.cities.length > 0
-        ? newAgent.cities.join(',')
-        : null;
-
-      const { error: profileErr } = await supabase
-        .from('profiles')
-        .insert({
-          id: userId,
-          full_name: newAgent.name,
-          email: newAgent.email,
-          phone: newAgent.phone || null,
-          region: newAgent.region || null,
-          city: cityValue,
-          role: newAgent.role || 'sales_agent',
-          status: 'active'
-        });
-
-      if (profileErr) {
-        console.error('Profile creation error:', profileErr);
-        // Don't throw - profile might already be created by trigger
+      // Check if the response contains an error (even if fnErr is null)
+      if (fnRes && (fnRes as any).error) {
+        throw new Error((fnRes as any).error);
       }
+
+      const userId = (fnRes as any)?.userId as string | undefined;
+      if (!userId) throw new Error('User not created');
 
       toast({
         title: 'Success',
@@ -396,12 +502,12 @@ export function SalesAgentsTab() {
         phone: '',
         region: '',
         cities: [],
-        role: 'mobile_sales'
+        role: ''
       });
       setCurrentCityInput('');
       fetchAgents();
     } catch (error: any) {
-      console.error('Error creating agent:', error);
+      console.error('Error creating user:', error);
       toast({
         title: 'Error',
         description: error.message || 'Failed to create user',
@@ -606,7 +712,7 @@ export function SalesAgentsTab() {
                       {agent.status}
                     </Badge>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                     <div>
                       <div className="text-xs text-muted-foreground">Phone</div>
                       <div>{agent.phone || '—'}</div>
@@ -629,7 +735,10 @@ export function SalesAgentsTab() {
                         )}
                       </div>
                     </div>
-
+                      <div className="col-span-2">
+                        <div className="text-xs text-muted-foreground">Role</div>
+                        <Badge variant="outline">{getRoleLabel(agent.role)}</Badge>
+                      </div>
                     <div className="col-span-2">
                       <div className="text-xs text-muted-foreground">Total Sales</div>
                       <div className="font-semibold">₱{agent.totalSales.toLocaleString()}</div>
@@ -677,9 +786,9 @@ export function SalesAgentsTab() {
                   <TableHead className="text-center">Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
+                  <TableHead className="text-center">Role</TableHead>
                   <TableHead className="text-center">Region</TableHead>
                   <TableHead className="text-center">Cities</TableHead>
-
                   <TableHead className="text-center">Active Status</TableHead>
                   <TableHead className="text-center">
                     <TooltipProvider>
@@ -701,6 +810,9 @@ export function SalesAgentsTab() {
                     <TableCell className="font-medium text-center">{agent.name}</TableCell>
                     <TableCell className="text-center">{agent.email}</TableCell>
                     <TableCell className="text-center">{agent.phone}</TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="secondary">{getRoleLabel(agent.role)}</Badge>
+                    </TableCell>
                     <TableCell className="text-center">{agent.region}</TableCell>
                     <TableCell className="text-center">
                       {agent.cities.length > 0 ? (
@@ -982,87 +1094,12 @@ export function SalesAgentsTab() {
             <DialogTitle>Add New User</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="add-name">Name</Label>
-                <Input
-                  id="add-name"
-                  placeholder="Enter name"
-                  value={newAgent.name}
-                  onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label htmlFor="add-email">Email</Label>
-                <Input
-                  id="add-email"
-                  type="email"
-                  placeholder="Enter email"
-                  value={newAgent.email}
-                  onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="add-phone">Phone</Label>
-                <Input
-                  id="add-phone"
-                  value={newAgent.phone}
-                  onChange={(e) => {
-                    const formatted = formatPhoneNumber(e.target.value);
-                    setNewAgent({ ...newAgent, phone: formatted });
-                  }}
-                  placeholder="+63 917 555 0101"
-                  maxLength={17}
-                />
-              </div>
-              <div>
-                <Label htmlFor="add-region">Region</Label>
-                <Input
-                  id="add-region"
-                  placeholder="Enter region"
-                  value={newAgent.region}
-                  onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })}
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="add-city">Cities</Label>
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <Input
-                    id="add-city"
-                    placeholder="Enter city name"
-                    value={currentCityInput}
-                    onChange={(e) => setCurrentCityInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addCityToNewAgent()}
-                  />
-                  <Button type="button" onClick={addCityToNewAgent} variant="outline">
-                    Add
-                  </Button>
-                </div>
-                {newAgent.cities.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {newAgent.cities.map((city, index) => (
-                      <Badge key={index} variant="outline" className="text-xs">
-                        {city}
-                        <button
-                          type="button"
-                          onClick={() => removeCityFromNewAgent(city)}
-                          className="ml-1 hover:text-red-500"
-                        >
-                          ×
-                        </button>
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
             <div>
               <Label htmlFor="add-role">Role</Label>
-              <Select value={newAgent.role} onValueChange={(value: UserRole) => setNewAgent({ ...newAgent, role: value })}>
+              <Select
+                value={newAgent.role || undefined}
+                onValueChange={(value) => handleRoleChange(value as UserRole)}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
@@ -1074,12 +1111,117 @@ export function SalesAgentsTab() {
                   <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Choose a role to see which details are required.
+              </p>
             </div>
+
+            {!isRoleSelected && (
+              <div className="rounded-md border border-dashed bg-muted/40 p-3 text-sm text-muted-foreground">
+                Select a role above to unlock the rest of the form. Different roles require different sets of fields.
+              </div>
+            )}
+
+            <fieldset
+              disabled={!isRoleSelected}
+              className={`space-y-4 ${!isRoleSelected ? 'opacity-50 pointer-events-none select-none' : ''}`}
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="add-name">Name</Label>
+                  <Input
+                    id="add-name"
+                    placeholder="Enter name"
+                    value={newAgent.name}
+                    onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="add-email">Email</Label>
+                  <Input
+                    id="add-email"
+                    type="email"
+                    placeholder="Enter email"
+                    value={newAgent.email}
+                    onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className={`grid gap-4 ${addDialogRequiresTerritory ? 'md:grid-cols-2' : 'grid-cols-1 md:grid-cols-1'}`}>
+                <div>
+                  <Label htmlFor="add-phone">Phone</Label>
+                  <Input
+                    id="add-phone"
+                    value={newAgent.phone}
+                    onChange={(e) => {
+                      const formatted = formatPhoneNumber(e.target.value);
+                      setNewAgent({ ...newAgent, phone: formatted });
+                    }}
+                    placeholder="+63 917 555 0101"
+                    maxLength={17}
+                  />
+                </div>
+                {addDialogRequiresTerritory && (
+                  <div>
+                    <Label htmlFor="add-region">Region</Label>
+                    <Input
+                      id="add-region"
+                      placeholder="Enter region"
+                      value={newAgent.region}
+                      onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {addDialogRequiresTerritory && (
+                <div>
+                  <Label htmlFor="add-city">Cities</Label>
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <Input
+                        id="add-city"
+                        placeholder="Enter city name"
+                        value={currentCityInput}
+                        onChange={(e) => setCurrentCityInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addCityToNewAgent();
+                          }
+                        }}
+                      />
+                      <Button type="button" onClick={addCityToNewAgent} variant="outline">
+                        Add
+                      </Button>
+                    </div>
+                    {newAgent.cities.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {newAgent.cities.map((city, index) => (
+                          <Badge key={index} variant="outline" className="text-xs">
+                            {city}
+                            <button
+                              type="button"
+                              onClick={() => removeCityFromNewAgent(city)}
+                              className="ml-1 hover:text-red-500"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </fieldset>
+
             <div className="flex justify-end space-x-2">
               <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleAddAgent}>
+              <Button onClick={handleAddAgent} disabled={!isRoleSelected}>
                 Add User
               </Button>
             </div>

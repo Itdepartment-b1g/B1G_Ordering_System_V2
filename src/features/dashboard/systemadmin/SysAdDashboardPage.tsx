@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Plus, Building2, Mail, User, Calendar, Badge as BadgeIcon } from 'lucide-react';
+import { Loader2, Plus, Building2, Mail, User, Calendar, Badge as BadgeIcon, MoreHorizontal, Eye, Ban, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -25,6 +25,23 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import type { Company } from '@/types/database.types';
 
 export default function SysAdDashboardPage() {
@@ -34,6 +51,12 @@ export default function SysAdDashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [inactivateDialogOpen, setInactivateDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const [newCompany, setNewCompany] = useState({
     company_name: '',
@@ -197,6 +220,85 @@ export default function SysAdDashboardPage() {
       return <Badge variant="default">Active</Badge>;
     }
     return <Badge variant="destructive">Inactive</Badge>;
+  };
+
+  const handleViewDetails = (company: Company) => {
+    setSelectedCompany(company);
+    setDetailsDialogOpen(true);
+  };
+
+  const handleInactivate = (company: Company) => {
+    setSelectedCompany(company);
+    setInactivateDialogOpen(true);
+  };
+
+  const handleDelete = (company: Company) => {
+    setSelectedCompany(company);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmInactivate = async () => {
+    if (!selectedCompany) return;
+
+    try {
+      setIsUpdating(true);
+      const { error } = await supabase
+        .from('companies')
+        .update({ status: 'inactive' })
+        .eq('id', selectedCompany.id);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: 'Company has been inactivated',
+      });
+
+      setInactivateDialogOpen(false);
+      setSelectedCompany(null);
+      fetchCompanies();
+    } catch (error: any) {
+      console.error('Error inactivating company:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message || 'Failed to inactivate company',
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!selectedCompany) return;
+
+    try {
+      setIsDeleting(true);
+      const { error } = await supabase
+        .from('companies')
+        .delete()
+        .eq('id', selectedCompany.id);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: 'Company has been deleted',
+      });
+
+      setDeleteDialogOpen(false);
+      setSelectedCompany(null);
+      fetchCompanies();
+    } catch (error: any) {
+      console.error('Error deleting company:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message || 'Failed to delete company',
+      });
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   if (isLoading) {
@@ -367,6 +469,7 @@ export default function SysAdDashboardPage() {
                     <TableHead className="h-12">Super Admin Email</TableHead>
                     <TableHead className="h-12">Status</TableHead>
                     <TableHead className="h-12">Created At</TableHead>
+                    <TableHead className="h-12 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -393,6 +496,71 @@ export default function SysAdDashboardPage() {
                           {new Date(company.created_at).toLocaleDateString()}
                         </div>
                       </TableCell>
+                      <TableCell className="py-4 text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" className="h-8 w-8 p-0">
+                              <span className="sr-only">Open menu</span>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuItem onClick={() => handleViewDetails(company)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View Details
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            {company.status === 'active' && (
+                              <DropdownMenuItem
+                                onClick={() => handleInactivate(company)}
+                                className="text-orange-600"
+                              >
+                                <Ban className="mr-2 h-4 w-4" />
+                                Inactivate
+                              </DropdownMenuItem>
+                            )}
+                            {company.status === 'inactive' && (
+                              <DropdownMenuItem
+                                onClick={async () => {
+                                  try {
+                                    setIsUpdating(true);
+                                    const { error } = await supabase
+                                      .from('companies')
+                                      .update({ status: 'active' })
+                                      .eq('id', company.id);
+                                    if (error) throw error;
+                                    toast({
+                                      title: 'Success',
+                                      description: 'Company has been activated',
+                                    });
+                                    fetchCompanies();
+                                  } catch (error: any) {
+                                    toast({
+                                      variant: 'destructive',
+                                      title: 'Error',
+                                      description: error.message || 'Failed to activate company',
+                                    });
+                                  } finally {
+                                    setIsUpdating(false);
+                                  }
+                                }}
+                                className="text-green-600"
+                              >
+                                <Ban className="mr-2 h-4 w-4" />
+                                Activate
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => handleDelete(company)}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -401,6 +569,115 @@ export default function SysAdDashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Company Details Dialog */}
+      <Dialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Company Details</DialogTitle>
+            <DialogDescription>
+              Detailed information about the selected company
+            </DialogDescription>
+          </DialogHeader>
+          {selectedCompany && (
+            <div className="space-y-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm font-semibold">Company Name</Label>
+                  <p className="text-sm mt-1">{selectedCompany.company_name}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Company Email</Label>
+                  <p className="text-sm mt-1">{selectedCompany.company_email}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Super Admin Name</Label>
+                  <p className="text-sm mt-1">{selectedCompany.super_admin_name}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Super Admin Email</Label>
+                  <p className="text-sm mt-1">{selectedCompany.super_admin_email}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Status</Label>
+                  <div className="mt-1">{getStatusBadge(selectedCompany.status)}</div>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Created At</Label>
+                  <p className="text-sm mt-1">
+                    {new Date(selectedCompany.created_at).toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Updated At</Label>
+                  <p className="text-sm mt-1">
+                    {selectedCompany.updated_at 
+                      ? new Date(selectedCompany.updated_at).toLocaleString()
+                      : 'N/A'}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-sm font-semibold">Company ID</Label>
+                  <p className="text-sm mt-1 font-mono text-xs">{selectedCompany.id}</p>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDetailsDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Inactivate Company Dialog */}
+      <AlertDialog open={inactivateDialogOpen} onOpenChange={setInactivateDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Inactivate Company</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to inactivate <strong>{selectedCompany?.company_name}</strong>? 
+              The company and its users will not be able to access the system until reactivated.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isUpdating}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmInactivate}
+              disabled={isUpdating}
+              className="bg-orange-600 hover:bg-orange-700"
+            >
+              {isUpdating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Inactivate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Company Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Company</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{selectedCompany?.company_name}</strong>? 
+              This action cannot be undone. All company data, users, and related records will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

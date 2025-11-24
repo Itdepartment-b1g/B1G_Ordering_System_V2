@@ -172,9 +172,31 @@ export default function ProfilePage() {
             <div className="text-center">
               <p className="font-semibold text-base md:text-lg">{profile.full_name}</p>
               <Badge variant="secondary" className="mt-2 text-xs">
-                {user?.role === 'admin' 
-                  ? 'ADMIN' 
-                  : ((profile.position || '').toLowerCase().includes('leader') ? 'LEADER' : 'SALES AGENT')}
+                {(() => {
+                  const role = user?.role || profile.role;
+                  switch (role) {
+                    case 'system_administrator':
+                      return 'SYSTEM ADMINISTRATOR';
+                    case 'super_admin':
+                      return 'SUPER ADMIN';
+                    case 'admin':
+                      return 'ADMIN';
+                    case 'finance':
+                      return 'FINANCE';
+                    case 'manager':
+                      return 'MANAGER';
+                    case 'team_leader':
+                      return 'TEAM LEADER';
+                    case 'mobile_sales':
+                      return 'SALES AGENT';
+                    default:
+                      // Fallback: check position for leader
+                      if ((profile.position || '').toLowerCase().includes('leader')) {
+                        return 'LEADER';
+                      }
+                      return 'SALES AGENT';
+                  }
+                })()}
               </Badge>
             </div>
             <div className="space-y-3 pt-4">
