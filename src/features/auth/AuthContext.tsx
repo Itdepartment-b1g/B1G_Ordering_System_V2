@@ -11,14 +11,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Load user session on mount
   useEffect(() => {
-    loadUserProfile();
+    console.log('🚀 [AuthContext] Initializing auth...');
+    initializeAuth(); // Call the new initialization function
 
-    // Listen for auth state changes
+    // Set up the auth state change listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        await loadUserProfile();
+      console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
+
+      if (session?.user) {
+        // If we have a session, load the profile
+        // We pass the session user ID to ensure we load the correct profile
+        await loadUserProfile(session);
       } else if (event === 'SIGNED_OUT') {
+        // When a user signs out, clear the user and set loading to false
+        console.log('👋 [AuthContext] User signed out, clearing user');
         setUser(null);
+        setIsLoading(false);
       }
     });
 
@@ -27,10 +35,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const loadUserProfile = async () => {
+  const initializeAuth = async () => {
     try {
       setIsLoading(true);
-      console.log('🔍 [AuthContext] Starting profile load...');
 
       // Get current session
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -43,116 +50,101 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (!session?.user) {
-        console.log('ℹ️ [AuthContext] No session found');
+        // No session is normal for unauthenticated users
         setUser(null);
         setIsLoading(false);
         return;
       }
 
-      console.log('✅ [AuthContext] Session found, user ID:', session.user.id);
+      // Only load profile if we actually have a session
+      await loadUserProfile(session);
+    } catch (error) {
+      console.error('❌ [AuthContext] Auth initialization error:', error);
+      setUser(null);
+      setIsLoading(false);
+    }
+  };
+
+  const loadUserProfile = async (session: any) => {
+    const userId = session.user.id;
+    const metadata = session.user.user_metadata;
+
+    // 1. OPTIMISTIC UPDATE: Set user immediately from session metadata
+    // This ensures the UI renders INSTANTLY without waiting for the DB
+    const optimisticUser: User = {
+      id: userId,
+      email: session.user.email || '',
+      role: metadata?.role || 'mobile_sales', // Default fallback
+      status: 'active', // Assume active initially to allow access
+      full_name: metadata?.full_name || 'User',
+      company_id: metadata?.company_id || '', // Try to get from metadata if available
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    console.log('⚡ [AuthContext] Optimistic login for:', optimisticUser.email);
+    setUser(optimisticUser);
+    setIsLoading(false); // <--- CRITICAL: Unblock UI immediately
+
+    // 2. BACKGROUND VERIFICATION: Fetch fresh data from DB
+    try {
+      console.log('🔍 [AuthContext] Verifying profile in background...');
 
       // Fetch user profile from profiles table with timeout
-      // Wrap Supabase query in a promise that can actually timeout
       const profileQuery = supabase
         .from('profiles')
         .select('*')
-        .eq('id', session.user.id)
-        .maybeSingle(); // Use maybeSingle() instead of single() to handle 0 rows gracefully
+        .eq('id', userId)
+        .maybeSingle();
 
-      // Create a timeout promise
+      // Create a timeout promise (shorter timeout for background sync)
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Profile fetch timeout after 10 seconds')), 10000)
+        setTimeout(() => reject(new Error('Background profile fetch timeout')), 10000)
       );
 
-      console.log('⏳ [AuthContext] Fetching profile (10s timeout)...');
       const startTime = Date.now();
 
       // Race between the query and timeout
-      // If timeout wins, it will reject and be caught in the catch block
       const result = await Promise.race([
         profileQuery,
         timeoutPromise
       ]) as { data: any; error: any };
 
       const elapsed = Date.now() - startTime;
-      console.log(`⏱️ [AuthContext] Profile query completed in ${elapsed}ms`);
+      console.log(`⏱️ [AuthContext] Background sync completed in ${elapsed}ms`);
 
-      // If we get here, the query completed (timeout didn't win)
-      // Check for errors from the query
       if (result.error) {
-        console.error('❌ [AuthContext] Error fetching profile:', result.error);
-        console.error('   Error code:', result.error.code);
-        console.error('   Error message:', result.error.message);
-        // If it's a recursion error, log it clearly
-        if (result.error.code === '42P17' || result.error.message?.includes('recursion')) {
-          console.error('⚠️ [AuthContext] INFINITE RECURSION DETECTED!');
-          console.error('   Please run fix_client_orders_and_profiles_policies.sql in Supabase SQL Editor');
-
-          toast({
-            title: "Database Error: Infinite Recursion",
-            description: "Please run the fix_client_orders_and_profiles_policies.sql script in Supabase.",
-            variant: "destructive",
-            duration: 10000,
-          });
-        }
-        setUser(null);
-        setIsLoading(false);
+        console.warn('⚠️ [AuthContext] Background profile sync failed:', result.error);
+        // We don't show an error to the user because they are already logged in optimistically
+        // and we don't want to disrupt their flow.
         return;
       }
 
       const profile = result.data;
-      console.log('✅ [AuthContext] Profile fetched successfully:', profile?.email || 'N/A');
 
       if (!profile) {
-        console.warn('Profile not found for user:', session.user.id);
-        setUser(null);
-        setIsLoading(false);
+        console.warn('⚠️ [AuthContext] Profile not found in DB (using optimistic data)');
         return;
       }
 
-      // Check if account is active
       if (profile.status !== 'active') {
-        setUser(null);
-        setIsLoading(false);
+        console.warn('❌ [AuthContext] User account is not active (revoking access)');
+        setUser(null); // Revoke access if DB says inactive
+        toast({
+          title: "Access Denied",
+          description: "Your account is not active.",
+          variant: "destructive",
+        });
         return;
       }
 
+      // Update with fresh data from DB
+      console.log('✅ [AuthContext] Profile verified and updated from DB');
       setUser(profile as User);
-      console.log('✅ [AuthContext] User profile loaded successfully');
+
     } catch (error: any) {
-      console.error('❌ [AuthContext] Exception caught:', error);
-      // Handle timeout specifically
-      if (error?.message?.includes('timeout')) {
-        console.error('⚠️ [AuthContext] PROFILE FETCH TIMED OUT AFTER 10 SECONDS');
-        console.error('   This usually indicates:');
-        console.error('   1. RLS policy infinite recursion - Run fix_client_orders_and_profiles_policies.sql');
-        console.error('   2. Network connectivity issues');
-        console.error('   3. Database performance issues');
-        console.error('   Error details:', error);
-
-        toast({
-          title: "Profile Load Timeout",
-          description: "Loading took too long. This might be due to database policies. Please run the fix script.",
-          variant: "destructive",
-          duration: 10000,
-        });
-      } else if (error?.code === '42P17' || error?.message?.includes('recursion')) {
-        console.error('⚠️ [AuthContext] INFINITE RECURSION DETECTED!');
-        console.error('   Please run fix_client_orders_and_profiles_policies.sql in Supabase SQL Editor');
-
-        toast({
-          title: "Database Error: Infinite Recursion",
-          description: "Please run the fix_client_orders_and_profiles_policies.sql script in Supabase.",
-          variant: "destructive",
-          duration: 10000,
-        });
-      } else {
-        console.error('   Profile fetch error:', error);
-      }
-      setUser(null);
-    } finally {
-      setIsLoading(false);
-      console.log('🏁 [AuthContext] Profile load finished, isLoading set to false');
+      console.warn('⚠️ [AuthContext] Background sync exception:', error);
+      // Ignore errors to keep the session alive
     }
   };
 

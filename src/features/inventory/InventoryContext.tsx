@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { AuthContext } from '@/features/auth/hooks';
 
 export interface Variant {
   id: string;
@@ -84,7 +85,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       const transformedBrands: Brand[] = (brandsData || []).map(brand => {
         console.log(`\n🏷️ Processing brand: ${brand.name}`);
         console.log('Variants:', brand.variants);
-        
+
         return {
           id: brand.id,
           name: brand.name,
@@ -150,8 +151,17 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Use the user from AuthContext to control fetching
+  const { user } = useContext(AuthContext) || {};
+
   useEffect(() => {
-    fetchInventory();
+    // Only fetch inventory if we have a user
+    if (user) {
+      console.log('📦 [InventoryProvider] User authenticated, fetching inventory...');
+      fetchInventory();
+    } else {
+      setLoading(false);
+    }
 
     // Debounce timer for smooth real-time updates
     let updateTimer: NodeJS.Timeout | null = null;
@@ -183,7 +193,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       if (updateTimer) clearTimeout(updateTimer);
       channels.forEach(unsubscribe);
     };
-  }, []);
+  }, [user]);
 
   const addOrUpdateInventory = async (
     brandName: string,
@@ -226,7 +236,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
           .from('variants')
           .insert({
             brand_id: brand.id,
-          name: variantName,
+            name: variantName,
             variant_type: variantType,
             sku,
           } as any)
@@ -257,7 +267,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
           .from('main_inventory')
           .insert({
             variant_id: variant.id,
-          stock: quantity,
+            stock: quantity,
             unit_price: unitPrice,
             reorder_level: variantType === 'flavor' ? 50 : 30,
           } as any);
@@ -278,7 +288,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       if (error) throw error;
 
       console.log(`✅ Brand name updated to: ${newName}`);
-      
+
       // Real-time will handle updating the list
     } catch (err) {
       console.error('Error updating brand name:', err);
@@ -315,7 +325,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
         // Update existing inventory record
         const { error: updateError } = await supabase
           .from('main_inventory')
-          .update({ 
+          .update({
             stock,
             unit_price: price,
             ...(sellingPrice !== undefined ? { selling_price: sellingPrice } : {}),
@@ -328,7 +338,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
           console.error('Error updating inventory:', updateError);
           throw updateError;
         }
-        
+
         console.log(`✅ Inventory UPDATED for variant ${variantId}: Stock: ${stock}, Price: ₱${price}`);
       } else {
         // Insert new inventory record if it doesn't exist
@@ -348,12 +358,12 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
           console.error('Error inserting inventory:', insertError);
           throw insertError;
         }
-        
+
         console.log(`✅ Inventory CREATED for variant ${variantId}: Stock: ${stock}, Price: ₱${price}`);
       }
 
       console.log(`✅ Variant updated: ${name}, Stock: ${stock}, Price: ₱${price}`);
-      
+
       // Real-time will handle updating the list
     } catch (err) {
       console.error('Error updating variant:', err);

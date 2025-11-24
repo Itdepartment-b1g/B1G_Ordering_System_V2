@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { AuthContext } from '@/features/auth/hooks';
 
 export interface OrderItem {
   id: string;
@@ -20,7 +21,7 @@ export interface Order {
   id: string;
   orderNumber: string;
   agentId: string;
-  
+
   agentName: string;
   clientId: string;
   clientName: string;
@@ -156,10 +157,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           });
           ordersWithEmbeddedItems[row.client_order_id] = list;
         });
-        
+
         console.log('Fetched items fallback:', itemsFallback?.length || 0, 'items for', orderIdsNeedingItems.length, 'orders');
       }
-      
+
       // Debug: Log orders with items
       console.log('Orders with embedded items:', Object.keys(ordersWithEmbeddedItems).length);
 
@@ -170,12 +171,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           const variant = item.variant || {};
           const brand = variant.brand || {};
           const brandName = (typeof brand === 'object' && brand.name) ? brand.name : (typeof brand === 'string' ? brand : 'Unknown');
-          
+
           const inv = Array.isArray(variant?.main_inventory) ? variant.main_inventory[0] : variant?.main_inventory;
           const selling = inv?.selling_price;
           const cost = inv?.unit_price;
           const effectiveUnit = (order.status === 'approved') ? ((typeof selling === 'number') ? selling : (typeof cost === 'number' ? cost : item.unit_price)) : item.unit_price;
-          
+
           return {
             id: item.id,
             brandName: brandName,
@@ -186,7 +187,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             total: (item.quantity || 0) * (effectiveUnit || item.unit_price || 0),
           };
         });
-        
+
         // Debug log for orders with no items
         if (items.length === 0 && rawItems.length > 0) {
           console.warn('Order', order.order_number, 'has raw items but transformed to empty:', rawItems);
@@ -225,8 +226,18 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Use the user from AuthContext instead of listening to onAuthStateChange directly
+  // This ensures we only fetch orders AFTER the profile has been fully loaded and the user is "ready"
+  const { user } = useContext(AuthContext) || {};
+
   useEffect(() => {
-    fetchOrders();
+    // Only fetch orders if we have a user (deferred until after auth)
+    if (user) {
+      console.log('📦 [OrderProvider] User authenticated and profile loaded, fetching orders...');
+      fetchOrders();
+    } else {
+      setLoading(false);
+    }
 
     // Real-time subscriptions - listen for INSERT, UPDATE, DELETE events
     const channel = supabase
@@ -262,7 +273,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [user]); // Depend on user from AuthContext
 
   const addOrder = async (order: Order) => {
     try {
@@ -386,7 +397,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
         const currentStock = agentInv.stock as number;
         const newStock = currentStock - item.quantity;
-        
+
         if (currentStock < item.quantity) {
           throw new Error(`Insufficient agent inventory. Available: ${currentStock}, Required: ${item.quantity}`);
         }
@@ -396,7 +407,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         // Update agent inventory
         const { data: updateResult, error: updateError } = await supabase
           .from('agent_inventory')
-          .update({ 
+          .update({
             stock: newStock,
             updated_at: new Date().toISOString()
           } as any)
@@ -411,7 +422,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
         console.log(`✅ Deducted ${item.quantity} from agent inventory. Update result:`, updateResult);
       }
-      
+
       console.log('✅ All agent inventory updates complete');
 
       // Return the generated order number so the UI can show it

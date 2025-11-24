@@ -55,7 +55,7 @@ const adminMenuItems: MenuItem[] = [
     icon: Users,
     hasSubmenu: true,
     submenu: [
-      { title: 'Sales Agents', url: '/sales-agents', icon: Users },
+      { title: 'User Management', url: '/sales-agents', icon: Users },
       { title: 'Team Management', url: '/team-management', icon: Crown },
     ]
   },
@@ -154,7 +154,7 @@ const superAdminMenuItems: MenuItem[] = [
     icon: Users,
     hasSubmenu: true,
     submenu: [
-      { title: 'Sales Agents', url: '/sales-agents', icon: Users },
+      { title: 'User Management', url: '/sales-agents', icon: Users },
       { title: 'Team Management', url: '/team-management', icon: Crown },
     ]
   },
@@ -224,7 +224,7 @@ export function AppSidebar() {
         }
         // If item has submenu, filter submenu items too
         if (item.hasSubmenu && item.submenu) {
-          const filteredSubmenu = item.submenu.filter(subItem => 
+          const filteredSubmenu = item.submenu.filter(subItem =>
             checkPermission(subItem.url)
           );
           // Only show parent if it has at least one accessible submenu item

@@ -26,6 +26,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+import { UserRole } from '@/types/database.types';
+
 interface SalesAgent {
   id: string;
   name: string;
@@ -34,8 +36,8 @@ interface SalesAgent {
   region: string;
   cities: string[];
   status: 'active' | 'inactive';
-  position?: 'Leader' | 'Mobile Sales' | 'Hermanos Sales Agent';
-  role?: 'admin' | 'sales_agent';
+
+  role?: UserRole;
   totalSales: number;
   ordersCount: number;
 }
@@ -77,7 +79,7 @@ export function SalesAgentsTab() {
     phone: '',
     region: '',
     cities: [] as string[],
-    position: ''
+    role: 'mobile_sales' as UserRole
   });
   const [editForm, setEditForm] = useState({
     name: '',
@@ -85,21 +87,9 @@ export function SalesAgentsTab() {
     phone: '',
     region: '',
     cities: [] as string[],
-    status: 'active' as 'active' | 'inactive',
-    position: ''
+    status: 'active' as 'active' | 'inactive'
   });
-  const getPositionBadgeStyles = (position?: string) => {
-    switch (position) {
-      case 'Leader':
-        return { variant: 'default' as const, className: 'bg-blue-100 text-blue-700' };
-      case 'Mobile Sales':
-        return { variant: 'secondary' as const, className: 'bg-green-100 text-green-700' };
-      case 'Hermanos Sales Agent':
-        return { variant: 'secondary' as const, className: 'bg-purple-100 text-purple-700' };
-      default:
-        return { variant: 'outline' as const, className: 'text-muted-foreground' };
-    }
-  };
+
 
 
   // City input state for adding cities
@@ -111,7 +101,7 @@ export function SalesAgentsTab() {
   const filteredAgents = agents.filter(agent => {
     // Status filter
     if (statusFilter !== 'all' && agent.status !== statusFilter) return false;
-    
+
     // Search filter
     return agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       agent.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -122,7 +112,7 @@ export function SalesAgentsTab() {
   const fetchAgents = async () => {
     try {
       setLoading(true);
-      
+
       // Fetch agents with their sales data
       const { data: agentsData, error: agentsError } = await supabase
         .from('profiles')
@@ -134,7 +124,6 @@ export function SalesAgentsTab() {
           region,
           city,
           status,
-          position,
           role
         `)
         .eq('role', 'sales_agent')
@@ -170,7 +159,6 @@ export function SalesAgentsTab() {
             region: agent.region || '',
             cities: agent.city ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map(c => c.trim()).filter(c => c)) : [],
             status: agent.status || 'active',
-            position: agent.position || undefined,
             role: agent.role || 'sales_agent',
             totalSales,
             ordersCount
@@ -214,7 +202,7 @@ export function SalesAgentsTab() {
 
       toast({
         title: 'Success',
-        description: `Agent status set to ${newStatus ? 'active' : 'inactive'} successfully`
+        description: `User status set to ${newStatus ? 'active' : 'inactive'} successfully`
       });
 
       fetchAgents();
@@ -223,7 +211,7 @@ export function SalesAgentsTab() {
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to update agent status',
+        description: 'Failed to update user status',
         variant: 'destructive'
       });
     }
@@ -242,8 +230,7 @@ export function SalesAgentsTab() {
       phone: agent.phone || '',
       region: agent.region || '',
       cities: agent.cities || [],
-      status: agent.status || 'active',
-      position: agent.position || ''
+      status: agent.status || 'active'
     });
     setEditDialogOpen(true);
   };
@@ -260,13 +247,13 @@ export function SalesAgentsTab() {
 
   const handleConfirmResetPassword = async () => {
     if (!agentToReset) return;
-    
+
     setResettingPassword(true);
     try {
       // Get current user info ONCE to avoid multiple auth calls that might affect session
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       const userId = currentUser?.id || '00000000-0000-0000-0000-000000000000';
-      
+
       // Get admin name ONCE
       let adminName = 'Admin';
       if (userId && userId !== '00000000-0000-0000-0000-000000000000') {
@@ -280,7 +267,7 @@ export function SalesAgentsTab() {
 
       // Use the existing Edge Function for password reset
       const { data: fnRes, error: fnErr } = await supabase.functions.invoke('create-agent', {
-        body: { 
+        body: {
           email: agentToReset.email,
           password: 'tempPassword123!',
           full_name: agentToReset.name,
@@ -288,16 +275,16 @@ export function SalesAgentsTab() {
           reset_password: true
         }
       });
-      
+
       if (fnErr) {
         console.error('Edge Function error:', fnErr);
         throw new Error(fnErr.message || 'Edge Function failed');
       }
-      
+
       if (!fnRes?.success && !fnRes?.userId) {
         throw new Error('Password reset failed - no success confirmation');
       }
-      
+
       // Verify admin session is still valid after the call
       const { data: { session: sessionAfter } } = await supabase.auth.getSession();
       if (!sessionAfter || sessionAfter.user?.id !== userId) {
@@ -355,11 +342,11 @@ export function SalesAgentsTab() {
     try {
       // 1) Create auth user via Edge Function
       const { data: fnRes, error: fnErr } = await supabase.functions.invoke('create-agent', {
-        body: { 
+        body: {
           email: newAgent.email?.trim(),
           password: 'tempPassword123!',
           full_name: newAgent.name?.trim(),
-          role: 'sales_agent'
+          role: newAgent.role || 'sales_agent'
         }
       });
       if (fnErr) {
@@ -375,8 +362,8 @@ export function SalesAgentsTab() {
 
       // 2) Insert profile row with additional fields
       // Prepare city value - use null if empty array, otherwise join with comma
-      const cityValue = newAgent.cities.length > 0 
-        ? newAgent.cities.join(',') 
+      const cityValue = newAgent.cities.length > 0
+        ? newAgent.cities.join(',')
         : null;
 
       const { error: profileErr } = await supabase
@@ -388,8 +375,7 @@ export function SalesAgentsTab() {
           phone: newAgent.phone || null,
           region: newAgent.region || null,
           city: cityValue,
-          position: newAgent.position || null,
-          role: 'sales_agent',
+          role: newAgent.role || 'sales_agent',
           status: 'active'
         });
 
@@ -400,7 +386,7 @@ export function SalesAgentsTab() {
 
       toast({
         title: 'Success',
-        description: 'Agent created successfully'
+        description: 'User created successfully'
       });
 
       setAddDialogOpen(false);
@@ -410,7 +396,7 @@ export function SalesAgentsTab() {
         phone: '',
         region: '',
         cities: [],
-        position: ''
+        role: 'mobile_sales'
       });
       setCurrentCityInput('');
       fetchAgents();
@@ -418,7 +404,7 @@ export function SalesAgentsTab() {
       console.error('Error creating agent:', error);
       toast({
         title: 'Error',
-        description: error.message || 'Failed to create agent',
+        description: error.message || 'Failed to create user',
         variant: 'destructive'
       });
     }
@@ -494,8 +480,8 @@ export function SalesAgentsTab() {
       }
 
       // Prepare city value - use null if empty array, otherwise join with comma
-      const cityValue = editForm.cities.length > 0 
-        ? editForm.cities.join(',') 
+      const cityValue = editForm.cities.length > 0
+        ? editForm.cities.join(',')
         : null;
 
       const { error } = await supabase
@@ -506,8 +492,7 @@ export function SalesAgentsTab() {
           phone: editForm.phone || null,
           region: editForm.region || null,
           city: cityValue,
-          status: editForm.status,
-          position: editForm.position || null
+          status: editForm.status
         })
         .eq('id', editingAgent.id);
 
@@ -518,7 +503,7 @@ export function SalesAgentsTab() {
 
       toast({
         title: 'Success',
-        description: 'Agent updated successfully'
+        description: 'User updated successfully'
       });
 
       setEditDialogOpen(false);
@@ -529,7 +514,7 @@ export function SalesAgentsTab() {
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to update agent',
+        description: 'Failed to update user',
         variant: 'destructive'
       });
     }
@@ -549,7 +534,7 @@ export function SalesAgentsTab() {
 
       toast({
         title: 'Success',
-        description: 'Agent set to inactive successfully'
+        description: 'User set to inactive successfully'
       });
 
       setDeleteDialogOpen(false);
@@ -557,7 +542,7 @@ export function SalesAgentsTab() {
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to update agent status',
+        description: 'Failed to update user status',
         variant: 'destructive'
       });
     }
@@ -568,7 +553,7 @@ export function SalesAgentsTab() {
       <div className="flex items-center justify-center py-12">
         <div className="flex items-center gap-2">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span>Loading sales agents...</span>
+          <span>Loading users...</span>
         </div>
       </div>
     );
@@ -582,7 +567,7 @@ export function SalesAgentsTab() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search agents by name, email, region, or city..."
+                placeholder="Search users by name, email, region, or city..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
@@ -593,14 +578,14 @@ export function SalesAgentsTab() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Agents</SelectItem>
+                <SelectItem value="all">All Users</SelectItem>
                 <SelectItem value="active">Active Only</SelectItem>
                 <SelectItem value="inactive">Inactive Only</SelectItem>
               </SelectContent>
             </Select>
             <Button onClick={() => setAddDialogOpen(true)}>
               <UserPlus className="mr-2 h-4 w-4" />
-              Add Agent
+              Add User
             </Button>
           </div>
         </CardHeader>
@@ -608,7 +593,7 @@ export function SalesAgentsTab() {
           {/* Mobile: card list */}
           <div className="md:hidden space-y-3">
             {filteredAgents.length === 0 ? (
-              <div className="text-center text-muted-foreground py-6">No agents found</div>
+              <div className="text-center text-muted-foreground py-6">No users found</div>
             ) : (
               filteredAgents.map((agent) => (
                 <div key={agent.id} className="rounded-lg border bg-background p-4 shadow-sm">
@@ -644,23 +629,7 @@ export function SalesAgentsTab() {
                         )}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Position</div>
-                      <div>
-                        {agent.position ? (
-                          (() => {
-                            const badge = getPositionBadgeStyles(agent.position);
-                            return (
-                              <Badge variant={badge.variant} className={`text-xs ${badge.className}`}>
-                            {agent.position}
-                          </Badge>
-                            );
-                          })()
-                        ) : (
-                          <span className="text-muted-foreground text-xs">Not set</span>
-                        )}
-                      </div>
-                    </div>
+
                     <div className="col-span-2">
                       <div className="text-xs text-muted-foreground">Total Sales</div>
                       <div className="font-semibold">₱{agent.totalSales.toLocaleString()}</div>
@@ -673,8 +642,8 @@ export function SalesAgentsTab() {
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                     <div className="text-sm text-muted-foreground">
                       <span className="mr-2">Active:</span>
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="ghost"
                         size="sm"
                         className={agent.status === 'active' ? 'text-green-700' : 'text-gray-600'}
                         onClick={() => handleStatusToggle(agent, agent.status !== 'active')}
@@ -710,7 +679,7 @@ export function SalesAgentsTab() {
                   <TableHead className="text-center">Phone</TableHead>
                   <TableHead className="text-center">Region</TableHead>
                   <TableHead className="text-center">Cities</TableHead>
-                  <TableHead className="text-center">Position</TableHead>
+
                   <TableHead className="text-center">Active Status</TableHead>
                   <TableHead className="text-center">
                     <TooltipProvider>
@@ -733,45 +702,30 @@ export function SalesAgentsTab() {
                     <TableCell className="text-center">{agent.email}</TableCell>
                     <TableCell className="text-center">{agent.phone}</TableCell>
                     <TableCell className="text-center">{agent.region}</TableCell>
-                  <TableCell className="text-center">
-                    {agent.cities.length > 0 ? (
-                      <div className="flex flex-wrap justify-center gap-1">
-                        {agent.cities.map((city, index) => (
-                          <Badge key={index} variant="outline" className="text-xs">
-                            {city}
-                          </Badge>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">No cities</span>
-                    )}
-                  </TableCell>
                     <TableCell className="text-center">
-                      {agent.position ? (
-                      (() => {
-                        const badge = getPositionBadgeStyles(agent.position);
-                        return (
-                          <Badge variant={badge.variant} className={`text-xs ${badge.className}`}>
-                          {agent.position}
-                        </Badge>
-                        );
-                      })()
+                      {agent.cities.length > 0 ? (
+                        <div className="flex flex-wrap justify-center gap-1">
+                          {agent.cities.map((city, index) => (
+                            <Badge key={index} variant="outline" className="text-xs">
+                              {city}
+                            </Badge>
+                          ))}
+                        </div>
                       ) : (
-                        <span className="text-muted-foreground text-xs">Not set</span>
+                        <span className="text-muted-foreground text-xs">No cities</span>
                       )}
                     </TableCell>
+
                     <TableCell className="text-center">
-                      <div 
-                        className={`inline-flex items-center gap-2 px-3 py-1 rounded-full cursor-pointer transition-colors ${
-                          agent.status === 'active' 
-                            ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        }`}
+                      <div
+                        className={`inline-flex items-center gap-2 px-3 py-1 rounded-full cursor-pointer transition-colors ${agent.status === 'active'
+                          ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
                         onClick={() => handleStatusToggle(agent, agent.status !== 'active')}
                       >
-                        <div className={`w-2 h-2 rounded-full ${
-                          agent.status === 'active' ? 'bg-green-500' : 'bg-gray-400'
-                        }`}></div>
+                        <div className={`w-2 h-2 rounded-full ${agent.status === 'active' ? 'bg-green-500' : 'bg-gray-400'
+                          }`}></div>
                         <span className="text-sm font-medium">
                           {agent.status === 'active' ? 'Active' : 'Inactive'}
                         </span>
@@ -785,33 +739,33 @@ export function SalesAgentsTab() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-48">
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             onClick={() => handleOpenView(agent)}
                             className="focus:bg-gray-100 hover:bg-gray-100 text-black focus:text-black"
                           >
                             <Eye className="h-4 w-4 mr-2" />
                             View Details
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             onClick={() => handleOpenEdit(agent)}
                             className="focus:bg-gray-100 hover:bg-gray-100 text-black focus:text-black"
                           >
                             <Edit className="h-4 w-4 mr-2" />
-                            Edit Agent
+                            Edit User
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             onClick={() => handleResetPassword(agent)}
                             className="focus:bg-gray-100 hover:bg-gray-100 text-black focus:text-black"
                           >
                             <Rewind className="h-4 w-4 mr-2" />
                             Reset Password
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             onClick={() => handleOpenDelete(agent)}
                             className="text-red-600 focus:text-red-600 focus:bg-red-50 hover:bg-red-50"
                           >
                             <Trash2 className="h-4 w-4 mr-2" />
-                            Deactivate Agent
+                            Deactivate User
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -828,7 +782,7 @@ export function SalesAgentsTab() {
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Edit Agent</DialogTitle>
+            <DialogTitle>Edit User</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -837,7 +791,7 @@ export function SalesAgentsTab() {
                 <Input
                   id="name"
                   value={editForm.name}
-                  onChange={(e) => setEditForm({...editForm, name: e.target.value})}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                 />
               </div>
               <div>
@@ -846,7 +800,7 @@ export function SalesAgentsTab() {
                   id="email"
                   type="email"
                   value={editForm.email}
-                  onChange={(e) => setEditForm({...editForm, email: e.target.value})}
+                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                 />
               </div>
             </div>
@@ -858,7 +812,7 @@ export function SalesAgentsTab() {
                   value={editForm.phone}
                   onChange={(e) => {
                     const formatted = formatPhoneNumber(e.target.value);
-                    setEditForm({...editForm, phone: formatted});
+                    setEditForm({ ...editForm, phone: formatted });
                   }}
                   placeholder="+63 917 555 0101"
                   maxLength={17}
@@ -869,7 +823,7 @@ export function SalesAgentsTab() {
                 <Input
                   id="region"
                   value={editForm.region}
-                  onChange={(e) => setEditForm({...editForm, region: e.target.value})}
+                  onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
                 />
               </div>
             </div>
@@ -906,24 +860,12 @@ export function SalesAgentsTab() {
                 )}
               </div>
             </div>
-            <div>
-              <Label htmlFor="position">Position</Label>
-              <Select value={editForm.position} onValueChange={(value) => setEditForm({...editForm, position: value})}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select position" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Leader">Leader</SelectItem>
-                  <SelectItem value="Mobile Sales">Mobile Sales</SelectItem>
-                  <SelectItem value="Hermanos Sales Agent">Hermanos Sales Agent</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+
             <div className="flex items-center space-x-2">
               <Switch
                 id="status"
                 checked={editForm.status === 'active'}
-                onCheckedChange={(checked) => setEditForm({...editForm, status: checked ? 'active' : 'inactive'})}
+                onCheckedChange={(checked) => setEditForm({ ...editForm, status: checked ? 'active' : 'inactive' })}
               />
               <Label htmlFor="status">Active</Label>
             </div>
@@ -998,26 +940,10 @@ export function SalesAgentsTab() {
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase">Role & Status</h3>
                 <div className="space-y-2">
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Position:</span>
-                    <div>
-                      {viewingAgent.position ? (
-                        (() => {
-                          const badge = getPositionBadgeStyles(viewingAgent.position);
-                          return (
-                            <Badge variant={badge.variant} className={`text-xs ${badge.className}`}>
-                          {viewingAgent.position}
-                        </Badge>
-                          );
-                        })()
-                      ) : (
-                        <span className="text-sm text-muted-foreground">—</span>
-                      )}
-                    </div>
-                  </div>
+
                   <div className="flex items-start gap-3 py-2">
                     <span className="text-sm font-medium text-muted-foreground w-20">Status:</span>
-                    <Badge 
+                    <Badge
                       variant={viewingAgent.status === 'active' ? 'default' : 'secondary'}
                       className={viewingAgent.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}
                     >
@@ -1035,9 +961,9 @@ export function SalesAgentsTab() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Deactivate Agent</AlertDialogTitle>
+            <AlertDialogTitle>Deactivate User</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to deactivate {agentToDelete?.name}? This will prevent the agent from accessing the system. You can reactivate them later if needed.
+              Are you sure you want to deactivate {agentToDelete?.name}? This will prevent the user from accessing the system. You can reactivate them later if needed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1053,7 +979,7 @@ export function SalesAgentsTab() {
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add New Agent</DialogTitle>
+            <DialogTitle>Add New User</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -1061,8 +987,9 @@ export function SalesAgentsTab() {
                 <Label htmlFor="add-name">Name</Label>
                 <Input
                   id="add-name"
+                  placeholder="Enter name"
                   value={newAgent.name}
-                  onChange={(e) => setNewAgent({...newAgent, name: e.target.value})}
+                  onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
                 />
               </div>
               <div>
@@ -1070,8 +997,9 @@ export function SalesAgentsTab() {
                 <Input
                   id="add-email"
                   type="email"
+                  placeholder="Enter email"
                   value={newAgent.email}
-                  onChange={(e) => setNewAgent({...newAgent, email: e.target.value})}
+                  onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })}
                 />
               </div>
             </div>
@@ -1083,7 +1011,7 @@ export function SalesAgentsTab() {
                   value={newAgent.phone}
                   onChange={(e) => {
                     const formatted = formatPhoneNumber(e.target.value);
-                    setNewAgent({...newAgent, phone: formatted});
+                    setNewAgent({ ...newAgent, phone: formatted });
                   }}
                   placeholder="+63 917 555 0101"
                   maxLength={17}
@@ -1093,8 +1021,9 @@ export function SalesAgentsTab() {
                 <Label htmlFor="add-region">Region</Label>
                 <Input
                   id="add-region"
+                  placeholder="Enter region"
                   value={newAgent.region}
-                  onChange={(e) => setNewAgent({...newAgent, region: e.target.value})}
+                  onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })}
                 />
               </div>
             </div>
@@ -1132,15 +1061,17 @@ export function SalesAgentsTab() {
               </div>
             </div>
             <div>
-              <Label htmlFor="add-position">Position</Label>
-              <Select value={newAgent.position} onValueChange={(value) => setNewAgent({...newAgent, position: value})}>
+              <Label htmlFor="add-role">Role</Label>
+              <Select value={newAgent.role} onValueChange={(value: UserRole) => setNewAgent({ ...newAgent, role: value })}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select position" />
+                  <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Leader">Leader</SelectItem>
-                  <SelectItem value="Mobile Sales">Mobile Sales</SelectItem>
-                  <SelectItem value="Hermanos Sales Agent">Hermanos Sales Agent</SelectItem>
+                  <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                  <SelectItem value="team_leader">Team Leader</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                  <SelectItem value="finance">Finance</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1149,7 +1080,7 @@ export function SalesAgentsTab() {
                 Cancel
               </Button>
               <Button onClick={handleAddAgent}>
-                Add Agent
+                Add User
               </Button>
             </div>
           </div>
@@ -1168,8 +1099,8 @@ export function SalesAgentsTab() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleConfirmStatusChange} 
+            <AlertDialogAction
+              onClick={handleConfirmStatusChange}
               className={newStatus ? 'bg-green-600 hover:bg-green-700' : 'bg-orange-600 hover:bg-orange-700'}
             >
               Set to {newStatus ? 'Active' : 'Inactive'}
@@ -1182,16 +1113,16 @@ export function SalesAgentsTab() {
       <AlertDialog open={editConfirmDialogOpen} onOpenChange={setEditConfirmDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Agent Update</AlertDialogTitle>
+            <AlertDialogTitle>Confirm User Update</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to save these changes for {editingAgent?.name}? 
-              This will update the agent's information in the system.
+              Are you sure you want to save these changes for {editingAgent?.name}?
+              This will update the user's information in the system.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleSaveEdit} 
+            <AlertDialogAction
+              onClick={handleSaveEdit}
               className="bg-blue-600 hover:bg-blue-700"
             >
               Save Changes
@@ -1206,14 +1137,14 @@ export function SalesAgentsTab() {
           <AlertDialogHeader>
             <AlertDialogTitle>Reset Password</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to reset the password for <strong>{agentToReset?.name}</strong>? 
-              The password will be changed to <strong>"tempPassword123!"</strong> and the agent will need to use this new password to log in.
+              Are you sure you want to reset the password for <strong>{agentToReset?.name}</strong>?
+              The password will be changed to <strong>"tempPassword123!"</strong> and the user will need to use this new password to log in.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={resettingPassword}>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleConfirmResetPassword} 
+            <AlertDialogAction
+              onClick={handleConfirmResetPassword}
               disabled={resettingPassword}
               className="bg-blue-600 text-white hover:bg-blue-700"
             >
