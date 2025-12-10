@@ -20,7 +20,10 @@ import {
   ArrowLeft,
   Clock,
   Send,
-  Brain
+  Brain,
+  Building2,
+  Tag,
+  Map
 } from 'lucide-react';
 import {
   Sidebar,
@@ -86,6 +89,7 @@ const adminMenuItems: MenuItem[] = [
   { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
   { title: 'Finance', url: '/finance', icon: DollarSign },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
+  { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -183,9 +187,20 @@ const superAdminMenuItems: MenuItem[] = [
     ]
   },
   { title: 'Order List', url: '/orders', icon: ShoppingCart },
+  {
+    title: 'Procurement',
+    url: '/purchase-order-management',
+    icon: ClipboardList,
+    hasSubmenu: true,
+    submenu: [
   { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
+      { title: 'Brands & Variants', url: '/brands', icon: Tag },
+      { title: 'Suppliers', url: '/suppliers', icon: Building2 },
+    ]
+  },
   { title: 'Finance', url: '/finance', icon: DollarSign },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
+  { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'System History', url: '/system-history', icon: History },
   {
     title: 'Tasks',

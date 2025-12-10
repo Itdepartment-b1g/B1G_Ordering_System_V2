@@ -20,6 +20,7 @@ export interface Brand {
   name: string;
   flavors: Variant[];
   batteries: Variant[];
+  posms: Variant[];
 }
 
 interface InventoryContextType {
@@ -33,8 +34,9 @@ interface InventoryContextType {
     unitPrice: number
   ) => Promise<void>;
   updateBrandName: (brandId: string, newName: string) => Promise<void>;
-  updateVariant: (variantId: string, name: string, stock: number, price: number, sellingPrice?: number, dspPrice?: number, rspPrice?: number) => Promise<void>;
+  updateVariant: (variantId: string, name: string, stock: number, price: number, sellingPrice?: number, dspPrice?: number, rspPrice?: number, skipRefresh?: boolean) => Promise<void>;
   setBrands: (brands: Brand[]) => void;
+  refreshInventory: () => Promise<void>;
 }
 
 const InventoryContext = createContext<InventoryContextType | undefined>(undefined);
@@ -135,11 +137,35 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
               };
             }) || [])
             .filter(Boolean) as any,
+          posms: (brand.variants
+            ?.filter((v: any) => v.variant_type === 'POSM' || v.variant_type === 'posm')
+            .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+            .map((v: any) => {
+              const inventory = Array.isArray(v.main_inventory) ? v.main_inventory[0] : v.main_inventory;
+              console.log(`  📦 POSM: ${v.name}`, { inventory, stock: inventory?.stock, price: inventory?.unit_price });
+              // Hide variants that don't have a main_inventory row yet (appear only after PO approval)
+              if (!inventory) return null;
+              return {
+                id: v.id,
+                name: v.name,
+                stock: inventory.stock,
+                price: inventory.unit_price,
+                // POSM items should default to 0 for all prices
+                sellingPrice: inventory.selling_price ?? 0,
+                dspPrice: inventory.dsp_price ?? 0,
+                rspPrice: inventory.rsp_price ?? 0,
+                status: calculateStatus(
+                  inventory.stock,
+                  inventory.reorder_level || 30
+                ),
+              };
+            }) || [])
+            .filter(Boolean) as any,
         };
       });
 
       // Hide brands that currently have no items in main_inventory (i.e., PO not yet approved)
-      const filteredBrands = transformedBrands.filter(b => (b.flavors.length + b.batteries.length) > 0);
+      const filteredBrands = transformedBrands.filter(b => (b.flavors.length + b.batteries.length + b.posms.length) > 0);
       console.log('✅ Transformed brands (filtered):', filteredBrands);
       setBrands(filteredBrands);
     } catch (err) {
@@ -272,6 +298,9 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
             reorder_level: variantType === 'flavor' ? 50 : 30,
           } as any);
       }
+
+      // Immediately refresh inventory for instant UI feedback
+      await fetchInventory(false);
     } catch (err) {
       console.error('Error updating inventory:', err);
       throw err;
@@ -289,14 +318,15 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
 
       console.log(`✅ Brand name updated to: ${newName}`);
 
-      // Real-time will handle updating the list
+      // Immediately refresh inventory for instant UI feedback
+      await fetchInventory(false);
     } catch (err) {
       console.error('Error updating brand name:', err);
       throw err;
     }
   };
 
-  const updateVariant = async (variantId: string, name: string, stock: number, price: number, sellingPrice?: number, dspPrice?: number, rspPrice?: number) => {
+  const updateVariant = async (variantId: string, name: string, stock: number, price: number, sellingPrice?: number, dspPrice?: number, rspPrice?: number, skipRefresh?: boolean) => {
     try {
       // Update variant name
       const { error: variantError } = await supabase
@@ -364,7 +394,10 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
 
       console.log(`✅ Variant updated: ${name}, Stock: ${stock}, Price: ₱${price}`);
 
-      // Real-time will handle updating the list
+      // Immediately refresh inventory for instant UI feedback (unless skipRefresh is true for bulk operations)
+      if (!skipRefresh) {
+        await fetchInventory(false);
+      }
     } catch (err) {
       console.error('Error updating variant:', err);
       throw err;
@@ -372,7 +405,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <InventoryContext.Provider value={{ brands, loading, addOrUpdateInventory, updateBrandName, updateVariant, setBrands }}>
+    <InventoryContext.Provider value={{ brands, loading, addOrUpdateInventory, updateBrandName, updateVariant, setBrands, refreshInventory: () => fetchInventory(false) }}>
       {children}
     </InventoryContext.Provider>
   );

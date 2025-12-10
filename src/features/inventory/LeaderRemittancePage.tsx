@@ -42,7 +42,7 @@ export default function LeaderRemittancePage() {
   const [remittanceOrders, setRemittanceOrders] = useState<any[]>([]);
 
   useEffect(() => {
-    if (user?.role === 'sales_agent' && user?.position === 'Leader') {
+    if (user?.role === 'team_leader') {
       fetchTeamRemittances();
     }
 
@@ -50,7 +50,7 @@ export default function LeaderRemittancePage() {
     const channels = [
       subscribeToTable('remittances_log', () => {
         console.log('🔄 Real-time: Team remittance updated');
-        if (user?.role === 'sales_agent' && user?.position === 'Leader') {
+        if (user?.role === 'team_leader') {
           fetchTeamRemittances();
         }
       }),
@@ -190,7 +190,7 @@ export default function LeaderRemittancePage() {
   const totalRevenue = remittances.reduce((sum, r) => sum + r.total_revenue, 0);
   const totalOrders = remittances.reduce((sum, r) => sum + r.orders_count, 0);
 
-  if (user?.role !== 'sales_agent' || user?.position !== 'Leader') {
+  if (user?.role !== 'team_leader') {
     return (
       <div className="container mx-auto p-6">
         <Card>

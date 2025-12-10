@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { usePurchaseOrders } from './hooks';
+import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import {
   AlertDialog,
@@ -24,24 +25,16 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-// Buyer (B1G) Information - constant
-const BUYER_INFO = {
-  companyName: 'B1G Sales & Distribution',
-  address: '789 Business District, Makati City, Philippines',
-  contactPerson: 'Admin User',
-  phone: '+63 917 555 1234',
-  email: 'admin@b1gsales.ph'
-};
-
 interface BrandVariant {
   id: string;
   name: string;
-  variant_type: 'flavor' | 'battery';
+  variant_type: 'flavor' | 'battery' | 'posm';
   brand_id: string;
   brand_name: string;
 }
 
 export default function PurchaseOrdersPage() {
+  const { user } = useAuth();
   const { purchaseOrders, suppliers, loading, createPurchaseOrder, approvePurchaseOrder, rejectPurchaseOrder } = usePurchaseOrders();
   const [searchQuery, setSearchQuery] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -57,6 +50,9 @@ export default function PurchaseOrdersPage() {
   const [orderToView, setOrderToView] = useState<any>(null);
 
   const { toast } = useToast();
+  
+  // Company information for buyer section
+  const [companyInfo, setCompanyInfo] = useState<any>(null);
 
   // Available brands and variants for selection
   const [availableVariants, setAvailableVariants] = useState<BrandVariant[]>([]);
@@ -68,10 +64,16 @@ export default function PurchaseOrdersPage() {
   const [newItemTab, setNewItemTab] = useState<'existing' | 'new'>('existing');
   const [newBrandName, setNewBrandName] = useState('');
   const [existingBrandId, setExistingBrandId] = useState('');
+  
+  // For existing items selection (Add Existing tab)
+  const [selectedBrandForExisting, setSelectedBrandForExisting] = useState('');
+  const [filteredVariantsForBrand, setFilteredVariantsForBrand] = useState<BrandVariant[]>([]);
+  
   const [flavorInput, setFlavorInput] = useState({ name: '', quantity: 0, unit_price: 0 });
   const [batteryInput, setBatteryInput] = useState({ name: '', quantity: 0, unit_price: 0 });
+  const [posmInput, setPosmInput] = useState({ name: '', quantity: 0, unit_price: 0 });
   const [newItemsDraft, setNewItemsDraft] = useState<Array<{
-    type: 'flavor' | 'battery';
+    type: 'flavor' | 'battery' | 'posm';
     name: string;
     quantity: number;
     unit_price: number;
@@ -86,13 +88,23 @@ export default function PurchaseOrdersPage() {
   const [selectedVariantId, setSelectedVariantId] = useState('');
   const [itemQuantity, setItemQuantity] = useState(0);
   const [itemPrice, setItemPrice] = useState(0);
+  
+  // Auto-set price to 0 for POSM variants
+  useEffect(() => {
+    if (selectedVariantId) {
+      const selectedVariant = availableVariants.find(v => v.id === selectedVariantId);
+      if (selectedVariant?.variant_type === 'posm') {
+        setItemPrice(0);
+      }
+    }
+  }, [selectedVariantId, availableVariants]);
 
   // Lists to be added
   const [itemsToAdd, setItemsToAdd] = useState<Array<{
     variant_id: string; // may be empty for new items; will be resolved on submit
     brand_name: string;
     variant_name: string;
-    variant_type: 'flavor' | 'battery';
+    variant_type: 'flavor' | 'battery' | 'posm';
     quantity: number;
     unit_price: number;
     total: number;
@@ -102,6 +114,45 @@ export default function PurchaseOrdersPage() {
   const [discount, setDiscount] = useState(0);
   const [notes, setNotes] = useState('');
   const [creatingOrder, setCreatingOrder] = useState(false);
+
+  // Fetch company information for buyer section using user's company_id
+  useEffect(() => {
+    const fetchCompanyInfo = async () => {
+      if (!user?.company_id) {
+        console.warn('[PurchaseOrdersPage] No company_id found for user:', user);
+        return;
+      }
+      
+      console.log('[PurchaseOrdersPage] Fetching company info for company_id:', user.company_id);
+      
+      try {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('company_name, company_email')
+          .eq('id', user.company_id)
+          .single();
+        
+        if (error) {
+          console.error('[PurchaseOrdersPage] Error fetching company:', error);
+          throw error;
+        }
+        
+        console.log('[PurchaseOrdersPage] Company info loaded successfully:', data);
+        setCompanyInfo(data);
+      } catch (error: any) {
+        console.error('[PurchaseOrdersPage] Failed to fetch company info:', error);
+        toast({
+          title: 'Warning',
+          description: `Could not load company information: ${error.message || 'Unknown error'}`,
+          variant: 'default'
+        });
+      }
+    };
+
+    if (user?.company_id) {
+      fetchCompanyInfo();
+    }
+  }, [user?.company_id]);
 
   // Auto-select default supplier: B1G Corporation when dialog opens
   useEffect(() => {
@@ -138,7 +189,7 @@ export default function PurchaseOrdersPage() {
         const formattedVariants: BrandVariant[] = (data || []).map((v: any) => ({
           id: v.id,
           name: v.name,
-          variant_type: v.variant_type,
+          variant_type: v.variant_type.toLowerCase() as 'flavor' | 'battery' | 'posm',
           brand_id: v.brands?.id || '',
           brand_name: v.brands?.name || 'Unknown',
         }));
@@ -171,6 +222,17 @@ export default function PurchaseOrdersPage() {
     fetchBrands();
   }, []);
 
+  // Filter variants when brand is selected in "Add Existing" tab
+  useEffect(() => {
+    if (selectedBrandForExisting) {
+      const filtered = availableVariants.filter(v => v.brand_id === selectedBrandForExisting);
+      setFilteredVariantsForBrand(filtered);
+      setSelectedVariantId(''); // Reset variant selection when brand changes
+    } else {
+      setFilteredVariantsForBrand(availableVariants);
+    }
+  }, [selectedBrandForExisting, availableVariants]);
+
   const filteredOrders = purchaseOrders.filter(order =>
     order.po_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
     order.supplier.company_name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -193,10 +255,6 @@ export default function PurchaseOrdersPage() {
       toast({ title: 'Error', description: 'Quantity must be greater than 0', variant: 'destructive' });
       return;
     }
-    if (itemPrice <= 0) {
-      toast({ title: 'Error', description: 'Price must be greater than 0', variant: 'destructive' });
-      return;
-    }
 
     const selectedVariant = availableVariants.find(v => v.id === selectedVariantId);
     if (!selectedVariant) {
@@ -204,14 +262,23 @@ export default function PurchaseOrdersPage() {
       return;
     }
 
+    // Allow 0 price for POSM, but require price for other types
+    if (selectedVariant.variant_type !== 'posm' && itemPrice <= 0) {
+      toast({ title: 'Error', description: 'Price must be greater than 0', variant: 'destructive' });
+      return;
+    }
+    
+    // Ensure POSM price is always 0
+    const finalPrice = selectedVariant.variant_type === 'posm' ? 0 : itemPrice;
+
     const newItem = {
       variant_id: selectedVariant.id,
       brand_name: selectedVariant.brand_name,
       variant_name: selectedVariant.name,
       variant_type: selectedVariant.variant_type,
       quantity: itemQuantity,
-      unit_price: itemPrice,
-      total: itemQuantity * itemPrice
+      unit_price: finalPrice,
+      total: itemQuantity * finalPrice
     };
 
     setItemsToAdd([...itemsToAdd, newItem]);
@@ -226,16 +293,19 @@ export default function PurchaseOrdersPage() {
   };
 
   const handleCreateOrder = async () => {
-    // Resolve supplier: prefer selected, fallback to B1G Corporation, then first supplier
+    // Always use B1G Corporation as the supplier
     let supplierId = selectedSupplierId;
+    
+    // Try to find B1G Corporation supplier
     if (!supplierId) {
       const defaultSupplier = suppliers.find(s => s.company_name === 'B1G Corporation');
-      if (defaultSupplier) supplierId = defaultSupplier.id;
-      else if (suppliers[0]) supplierId = suppliers[0].id;
-      if (supplierId) setSelectedSupplierId(supplierId);
+      if (defaultSupplier) {
+        supplierId = defaultSupplier.id;
+        setSelectedSupplierId(supplierId);
+      }
     }
 
-    // If still not resolved (e.g., suppliers not loaded yet), fetch or create B1G Corporation on the fly
+    // If still not found, try fetching it directly
     if (!supplierId) {
       try {
         const { data: existing, error: findErr } = await supabase
@@ -243,37 +313,22 @@ export default function PurchaseOrdersPage() {
           .select('id, company_name')
           .ilike('company_name', 'B1G Corporation')
           .maybeSingle();
+        
         if (!findErr && existing) {
           supplierId = existing.id;
-          setSelectedSupplierId(supplierId);
-        } else {
-          // Create minimal supplier record
-          const { data: created, error: createErr } = await supabase
-            .from('suppliers')
-            .insert({
-              company_name: 'B1G Corporation',
-              contact_person: 'Procurement',
-              email: 'procurement@b1g-corp.local',
-              phone: 'N/A',
-              address: 'N/A',
-              status: 'active'
-            })
-            .select()
-            .single();
-          if (createErr) {
-            console.error('Failed to create default supplier:', createErr);
-          } else if (created) {
-            supplierId = created.id;
             setSelectedSupplierId(supplierId);
-          }
         }
       } catch (e) {
-        console.error('Supplier auto-resolution failed:', e);
+        console.error('Error finding B1G Corporation supplier:', e);
       }
     }
 
     if (!supplierId) {
-      toast({ title: 'Error', description: 'Please select a supplier', variant: 'destructive' });
+      toast({ 
+        title: 'Error', 
+        description: 'B1G Corporation supplier not found. Please contact system administrator.', 
+        variant: 'destructive' 
+      });
       return;
     }
 
@@ -318,17 +373,21 @@ export default function PurchaseOrdersPage() {
 
         // Create variants and push into itemsToAdd list for this PO
         for (const draft of newItemsDraft) {
+          // Convert 'posm' to 'POSM' for database constraint
+          const dbVariantType = draft.type === 'posm' ? 'POSM' : draft.type;
           const { data: v, error: vErr } = await supabase
             .from('variants')
-            .insert({ name: draft.name, variant_type: draft.type, brand_id: brandId })
+            .insert({ name: draft.name, variant_type: dbVariantType, brand_id: brandId })
             .select()
             .single();
           if (vErr) throw vErr;
+          // Convert back to lowercase for TypeScript consistency
+          const variantType = v.variant_type.toLowerCase() as 'flavor' | 'battery' | 'posm';
           itemsPayload.push({
             variant_id: v.id,
             brand_name: brandName,
             variant_name: v.name,
-            variant_type: v.variant_type as 'flavor' | 'battery',
+            variant_type: variantType,
             quantity: draft.quantity,
             unit_price: draft.unit_price,
             total: draft.quantity * draft.unit_price,
@@ -365,6 +424,9 @@ export default function PurchaseOrdersPage() {
       setNewItemsDraft([]);
       setExistingBrandId('');
       setNewBrandName('');
+      setFlavorInput({ name: '', quantity: 0, unit_price: 0 });
+      setBatteryInput({ name: '', quantity: 0, unit_price: 0 });
+      setPosmInput({ name: '', quantity: 0, unit_price: 0 });
       setExpectedDelivery('');
       setDiscount(0);
       setTaxRate(0);
@@ -486,23 +548,23 @@ export default function PurchaseOrdersPage() {
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <p className="text-muted-foreground">Company</p>
-                    <p className="font-medium">{BUYER_INFO.companyName}</p>
+                    <p className="font-medium">{companyInfo?.company_name || 'Loading...'}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Contact Person</p>
-                    <p className="font-medium">{BUYER_INFO.contactPerson}</p>
+                    <p className="font-medium">{user?.full_name || 'N/A'}</p>
                   </div>
                   <div className="col-span-2">
                     <p className="text-muted-foreground">Address</p>
-                    <p className="font-medium">{BUYER_INFO.address}</p>
+                    <p className="font-medium">{user?.address || 'N/A'}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Phone</p>
-                    <p className="font-medium">{BUYER_INFO.phone}</p>
+                    <p className="font-medium">{user?.phone || 'N/A'}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Email</p>
-                    <p className="font-medium">{BUYER_INFO.email}</p>
+                    <p className="font-medium">{user?.email || 'N/A'}</p>
                   </div>
                 </div>
               </div>
@@ -512,23 +574,33 @@ export default function PurchaseOrdersPage() {
                 <Label className="text-base font-semibold">Supplier</Label>
                 <div className="space-y-2">
                   <Label>Select Supplier</Label>
-                  <Input
-                    value={(() => {
-                      const supplier = suppliers.find(s => s.id === selectedSupplierId) || suppliers.find(s => s.company_name === 'B1G Corporation');
-                      return supplier ? supplier.company_name : 'B1G Corporation';
-                    })()}
-                    readOnly
-                  />
+                  <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id}>
+                          {supplier.company_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   {selectedSupplierId && suppliers.find(s => s.id === selectedSupplierId) && (
                     <div className="mt-3 bg-muted p-3 rounded-lg space-y-1 text-sm">
                       {(() => {
                         const supplier = suppliers.find(s => s.id === selectedSupplierId);
                         return supplier ? (
                           <>
-                            <p><span className="text-muted-foreground">Contact:</span> {supplier.contact_person}</p>
+                            <p><span className="text-muted-foreground">Contact Person:</span> {supplier.contact_person}</p>
                             <p><span className="text-muted-foreground">Phone:</span> {supplier.phone}</p>
                             <p><span className="text-muted-foreground">Email:</span> {supplier.email}</p>
                             <p><span className="text-muted-foreground">Address:</span> {supplier.address}</p>
+                            <p>
+                              <Badge variant={supplier.status === 'active' ? 'default' : 'secondary'} className="mt-1">
+                                {supplier.status.charAt(0).toUpperCase() + supplier.status.slice(1)}
+                              </Badge>
+                            </p>
                           </>
                         ) : null;
                       })()}
@@ -550,15 +622,41 @@ export default function PurchaseOrdersPage() {
                   {/* Existing Item Tab */}
                   <TabsContent value="existing" className="space-y-3 bg-muted/30 p-4 rounded-lg">
                     <div className="space-y-2">
-                      <Label>Select Product</Label>
-                      <Select value={selectedVariantId} onValueChange={setSelectedVariantId}>
+                      <Label>Select Brand</Label>
+                      <Select value={selectedBrandForExisting} onValueChange={setSelectedBrandForExisting}>
                         <SelectTrigger>
-                          <SelectValue placeholder="Choose a product" />
+                          <SelectValue placeholder="Choose a brand" />
                         </SelectTrigger>
                         <SelectContent>
-                          {availableVariants.map((variant) => (
+                          <SelectItem value="all">All Brands</SelectItem>
+                          {brands.map((brand) => (
+                            <SelectItem key={brand.id} value={brand.id}>
+                              {brand.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Select Variant</Label>
+                      <Select 
+                        value={selectedVariantId} 
+                        onValueChange={setSelectedVariantId}
+                        disabled={!selectedBrandForExisting || filteredVariantsForBrand.length === 0}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={
+                            !selectedBrandForExisting 
+                              ? "Select a brand first" 
+                              : filteredVariantsForBrand.length === 0 
+                                ? "No variants available" 
+                                : "Choose a variant"
+                          } />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {filteredVariantsForBrand.map((variant) => (
                             <SelectItem key={variant.id} value={variant.id}>
-                              {variant.brand_name} - {variant.name} ({variant.variant_type})
+                              {variant.name} ({variant.variant_type.toUpperCase()})
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -584,7 +682,12 @@ export default function PurchaseOrdersPage() {
                           placeholder="0.00"
                           value={itemPrice || ''}
                           onChange={(e) => setItemPrice(parseFloat(e.target.value) || 0)}
+                          disabled={selectedVariantId && availableVariants.find(v => v.id === selectedVariantId)?.variant_type === 'posm'}
+                          className={selectedVariantId && availableVariants.find(v => v.id === selectedVariantId)?.variant_type === 'posm' ? 'bg-muted cursor-not-allowed' : ''}
                         />
+                        {selectedVariantId && availableVariants.find(v => v.id === selectedVariantId)?.variant_type === 'posm' && (
+                          <p className="text-xs text-muted-foreground">POSM items have 0 price</p>
+                        )}
                       </div>
                     </div>
                     <Button
@@ -632,14 +735,14 @@ export default function PurchaseOrdersPage() {
                     {/* Variants Section */}
                     <div className="space-y-3">
                       <Label className="text-base font-semibold">Variants</Label>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         {/* Flavor */}
                         <div className="border rounded-lg p-4 space-y-3">
                           <Label className="text-primary font-semibold">Flavor</Label>
                           <div className="space-y-2">
                             <Label>Flavor Name</Label>
                             <Input
-                              placeholder="e.g., Mint, Mango"
+                              placeholder="Flavor Code"
                               value={flavorInput.name}
                               onChange={(e) => setFlavorInput({ ...flavorInput, name: e.target.value })}
                             />
@@ -680,7 +783,7 @@ export default function PurchaseOrdersPage() {
                           <div className="space-y-2">
                             <Label>Battery Name</Label>
                             <Input
-                              placeholder="e.g., Standard, Premium"
+                              placeholder="Battery Code"
                               value={batteryInput.name}
                               onChange={(e) => setBatteryInput({ ...batteryInput, name: e.target.value })}
                             />
@@ -714,6 +817,48 @@ export default function PurchaseOrdersPage() {
                             <Plus className="h-4 w-4 mr-2" /> Add to List
                           </Button>
                         </div>
+
+                        {/* POSM */}
+                        <div className="border rounded-lg p-4 space-y-3">
+                          <Label className="text-purple-700 font-semibold">POSM</Label>
+                          <div className="space-y-2">
+                            <Label>POSM Name</Label>
+                            <Input
+                              placeholder="Marketin Materials"
+                              value={posmInput.name}
+                              onChange={(e) => setPosmInput({ ...posmInput, name: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                              <Label>Quantity</Label>
+                              <Input
+                                type="number" min="0" placeholder="0"
+                                value={posmInput.quantity || ''}
+                                onChange={(e) => setPosmInput({ ...posmInput, quantity: parseInt(e.target.value) || 0 })}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Price (₱)</Label>
+                              <Input
+                                type="number"
+                                value="0.00"
+                                disabled
+                                className="bg-muted cursor-not-allowed"
+                              />
+                            </div>
+                          </div>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              if (!posmInput.name.trim() || posmInput.quantity <= 0) return;
+                              setNewItemsDraft([...newItemsDraft, { type: 'posm', name: posmInput.name.trim(), quantity: posmInput.quantity, unit_price: 0 }]);
+                              setPosmInput({ name: '', quantity: 0, unit_price: 0 });
+                            }}
+                          >
+                            <Plus className="h-4 w-4 mr-2" /> Add to List
+                          </Button>
+                        </div>
                       </div>
 
                       {/* Draft list */}
@@ -724,8 +869,12 @@ export default function PurchaseOrdersPage() {
                             {newItemsDraft.map((d, idx) => (
                               <div key={idx} className="flex items-center justify-between bg-background p-2 rounded">
                                 <div className="flex items-center gap-2 text-sm">
-                                  <Badge variant="secondary" className={d.type === 'flavor' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}>
-                                    {d.type}
+                                  <Badge variant="secondary" className={
+                                    d.type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
+                                    d.type === 'battery' ? 'bg-green-100 text-green-700' : 
+                                    'bg-purple-100 text-purple-700'
+                                  }>
+                                    {d.type.toUpperCase()}
                                   </Badge>
                                   <span className="font-medium">{d.name}</span>
                                   <span className="text-muted-foreground">•</span>
@@ -767,9 +916,13 @@ export default function PurchaseOrdersPage() {
                               <p className="font-medium">{item.variant_name}</p>
                               <Badge
                                 variant="secondary"
-                                className={item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}
+                                className={
+                                  item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
+                                  item.variant_type === 'battery' ? 'bg-green-100 text-green-700' : 
+                                  'bg-purple-100 text-purple-700'
+                                }
                               >
-                                {item.variant_type}
+                                {item.variant_type.toUpperCase()}
                               </Badge>
                             </div>
                             <div>
@@ -1087,9 +1240,13 @@ export default function PurchaseOrdersPage() {
                             <span>{item.variant_name}</span>
                             <Badge
                               variant="secondary"
-                              className={item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}
+                              className={
+                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
+                                item.variant_type === 'battery' ? 'bg-green-100 text-green-700' : 
+                                'bg-purple-100 text-purple-700'
+                              }
                             >
-                              {item.variant_type}
+                              {item.variant_type.toUpperCase()}
                             </Badge>
                           </div>
                           <span className="font-semibold">+{item.quantity} units</span>
@@ -1179,11 +1336,11 @@ export default function PurchaseOrdersPage() {
                 <div className="space-y-2">
                   <h4 className="font-semibold text-lg">Buyer Information</h4>
                   <div className="bg-muted p-4 rounded-lg space-y-1">
-                    <p className="font-medium">{BUYER_INFO.companyName}</p>
-                    <p className="text-sm text-muted-foreground">{BUYER_INFO.address}</p>
-                    <p className="text-sm">Contact: {BUYER_INFO.contactPerson}</p>
-                    <p className="text-sm">Phone: {BUYER_INFO.phone}</p>
-                    <p className="text-sm">Email: {BUYER_INFO.email}</p>
+                    <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
+                    <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
+                    <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
+                    <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
+                    <p className="text-sm">Email: {user?.email || 'N/A'}</p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -1207,7 +1364,16 @@ export default function PurchaseOrdersPage() {
                     <div key={item.id} className="rounded-lg border bg-background p-3">
                       <div className="flex items-center justify-between">
                         <div className="font-medium">{item.brand_name} • {item.variant_name}</div>
-                        <Badge variant={item.variant_type === 'flavor' ? 'default' : 'secondary'}>{item.variant_type}</Badge>
+                        <Badge 
+                          variant="secondary"
+                          className={
+                            item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
+                            item.variant_type === 'battery' ? 'bg-green-100 text-green-700' : 
+                            'bg-purple-100 text-purple-700'
+                          }
+                        >
+                          {item.variant_type.toUpperCase()}
+                        </Badge>
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                         <div>
@@ -1245,8 +1411,15 @@ export default function PurchaseOrdersPage() {
                           <TableCell className="font-medium">{item.brand_name}</TableCell>
                           <TableCell>{item.variant_name}</TableCell>
                           <TableCell>
-                            <Badge variant={item.variant_type === 'flavor' ? 'default' : 'secondary'}>
-                              {item.variant_type}
+                            <Badge 
+                              variant="secondary"
+                              className={
+                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
+                                item.variant_type === 'battery' ? 'bg-green-100 text-green-700' : 
+                                'bg-purple-100 text-purple-700'
+                              }
+                            >
+                              {item.variant_type.toUpperCase()}
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">{item.quantity}</TableCell>

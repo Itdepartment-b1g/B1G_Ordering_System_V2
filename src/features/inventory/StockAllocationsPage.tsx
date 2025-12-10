@@ -23,13 +23,12 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { getAllAgentsInventory } from '@/lib/database.helpers';
 import { supabase } from '@/lib/supabase';
 import { useInventory } from '@/features/inventory/InventoryContext';
 import { unsubscribe } from '@/lib/realtime.helpers';
 
 export default function StockAllocationsPage() {
-  const { brands, loading: loadingBrands } = useInventory();
+  const { brands, loading: loadingBrands, refreshInventory } = useInventory();
   const [agentsInventory, setAgentsInventory] = useState<any[]>([]);
   const [loadingAllocations, setLoadingAllocations] = useState(false);
   const [allocationSearchQuery, setAllocationSearchQuery] = useState('');
@@ -116,15 +115,42 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
       if (showLoading) {
         setLoadingAllocations(true);
       }
-      const data = await getAllAgentsInventory();
+      
+      // Fetch agent inventory for leaders only
+      const { data, error } = await supabase
+        .from('agent_inventory')
+        .select(`
+          id,
+          agent_id,
+          variant_id,
+          stock,
+          allocated_price,
+          profiles!agent_inventory_agent_id_fkey (
+            id,
+            full_name,
+            email,
+            role
+          ),
+          variants (
+            id,
+            name,
+            variant_type,
+            brands (
+              name
+            )
+          )
+        `)
+        .eq('profiles.role', 'team_leader');
+
+      if (error) throw error;
       
       // Group by agent
       const agentsMap = new Map();
       
-      data.forEach((item: any) => {
-        // Skip items where agent data is null (shouldn't happen with proper filtering, but safety check)
-        if (!item.profiles) {
-          console.warn('Skipping inventory item with null agent data:', item);
+      data?.forEach((item: any) => {
+        // Skip items where agent data is null or not a leader
+        if (!item.profiles || item.profiles.role !== 'team_leader') {
+          console.warn('Skipping inventory item with null/non-leader agent data:', item);
           return;
         }
         
@@ -148,10 +174,10 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
         agent.totalValue += item.stock * (item.allocated_price || 0);
         agent.items.push({
           id: item.id,
-          variantId: item.variant.id,
-          variantName: item.variant.name,
-          variantType: item.variant.variant_type,
-          brandName: item.variant.brand?.name || 'Unknown',
+          variantId: item.variants?.id,
+          variantName: item.variants?.name || 'Unknown',
+          variantType: item.variants?.variant_type || 'unknown',
+          brandName: item.variants?.brands?.name || 'Unknown',
           stock: item.stock,
           allocatedPrice: item.allocated_price || 0,
           totalValue: item.stock * (item.allocated_price || 0)
@@ -185,6 +211,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
     // Real-time subscriptions for seamless updates
     let inventoryUpdateTimer: NodeJS.Timeout | null = null;
     let allocatedUpdateTimer: NodeJS.Timeout | null = null;
+    let mainInventoryUpdateTimer: NodeJS.Timeout | null = null;
 
     const debouncedInventoryRefresh = () => {
       if (inventoryUpdateTimer) clearTimeout(inventoryUpdateTimer);
@@ -199,6 +226,14 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
       allocatedUpdateTimer = setTimeout(() => {
         console.log('🔄 Real-time update: Refreshing allocated stock...');
         fetchAllocatedStock(false); // Pass false to skip loading state
+      }, 300);
+    };
+
+    const debouncedMainInventoryRefresh = () => {
+      if (mainInventoryUpdateTimer) clearTimeout(mainInventoryUpdateTimer);
+      mainInventoryUpdateTimer = setTimeout(() => {
+        console.log('🔄 Real-time update: Refreshing main inventory...');
+        refreshInventory(); // Refresh main inventory for available stock
       }, 300);
     };
 
@@ -252,11 +287,37 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
         }
       });
 
+    // Subscribe to main_inventory changes (affects available stock)
+    const mainInventoryChannel = supabase
+      .channel('stock-allocations-main-inventory-changes')
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'main_inventory',
+        },
+        (payload) => {
+          console.log('🔄 Real-time event received for main_inventory:', payload.eventType, payload);
+          debouncedMainInventoryRefresh();
+          debouncedAllocatedRefresh(); // Also refresh allocated stock calculations
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription active for main_inventory');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error for main_inventory');
+        }
+      });
+
     return () => {
       if (inventoryUpdateTimer) clearTimeout(inventoryUpdateTimer);
       if (allocatedUpdateTimer) clearTimeout(allocatedUpdateTimer);
+      if (mainInventoryUpdateTimer) clearTimeout(mainInventoryUpdateTimer);
       unsubscribe(inventoryChannel);
       unsubscribe(teamsChannel);
+      unsubscribe(mainInventoryChannel);
     };
   }, []);
 
@@ -273,11 +334,9 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
           region,
           city,
           status,
-          position,
           role
         `)
-        .eq('role', 'sales_agent')
-        .eq('position', 'Leader')
+        .eq('role', 'team_leader')
         .order('created_at', { ascending: false });
 
       if (leadersError) throw leadersError;
@@ -302,7 +361,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             region: leader.region || '',
             cities: leader.city ? (Array.isArray(leader.city) ? leader.city : leader.city.split(',').map(c => c.trim()).filter(c => c)) : [],
             status: leader.status || 'active',
-            position: leader.position || undefined,
+            role: leader.role || 'team_leader',
             totalSales,
             ordersCount
           };
@@ -338,7 +397,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             region,
             city,
             status,
-            position
+            role
           )
         `)
         .eq('leader_id', leaderId);
@@ -373,7 +432,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
               region: agent.region || '',
               cities: agent.city ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map(c => c.trim()).filter(c => c)) : [],
               status: agent.status || 'active',
-              position: agent.position || undefined,
+              role: agent.role || 'mobile_sales',
               totalStock: 0,
               totalValue: 0,
               items: []
@@ -408,7 +467,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             region: agent.region || '',
             cities: agent.city ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map(c => c.trim()).filter(c => c)) : [],
             status: agent.status || 'active',
-            position: agent.position || undefined,
+            role: agent.role || 'mobile_sales',
             totalStock,
             totalValue,
             items
@@ -557,7 +616,14 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
       setVariantQuantities({});
       setAllocationOpen(false);
 
-      // Data will refresh automatically via real-time subscriptions
+      // Immediately refresh all data for instant UI feedback
+      await Promise.all([
+        fetchAgentsInventory(false),
+        fetchAllocatedStock(false),
+        refreshInventory() // Refresh main inventory to update available stock
+      ]);
+
+      // Real-time subscriptions will also keep data updated in the background
     } catch (error) {
       console.error('Error allocating stock:', error);
       toast({
@@ -858,75 +924,125 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
 
       {/* Agent Details Dialog */}
       <Dialog open={showAgentDetails} onOpenChange={setShowAgentDetails}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
-              {selectedAgent?.name}'s Inventory Details
+            <DialogTitle className="flex items-center gap-3 text-2xl">
+              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <Package className="h-5 w-5 text-primary" />
+              </div>
+              {selectedAgent?.name}'s Inventory
             </DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              View detailed stock allocation and inventory value
+            </p>
           </DialogHeader>
           {selectedAgent && (
-            <div className="space-y-6">
-              {/* Agent Summary */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
-                <div className="text-center">
-                  <div className="text-2xl font-bold">{selectedAgent.totalStock.toLocaleString()}</div>
-                  <div className="text-sm text-muted-foreground">Total Stock</div>
+            <div className="space-y-6 pt-4">
+              {/* Enhanced Summary Cards */}
+              <div className="grid grid-cols-3 gap-4">
+                <Card className="border-blue-200 bg-blue-50/50">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-3">
+                      <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
+                        <Package className="h-6 w-6 text-blue-600" />
                 </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold">₱{selectedAgent.totalValue.toLocaleString()}</div>
-                  <div className="text-sm text-muted-foreground">Total Value</div>
+                      <div>
+                        <div className="text-3xl font-bold text-blue-900">{selectedAgent.totalStock.toLocaleString()}</div>
+                        <div className="text-sm text-blue-700">Total Units</div>
                 </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold">{selectedAgent.items.length}</div>
-                  <div className="text-sm text-muted-foreground">Total Categorys</div>
                 </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-green-200 bg-green-50/50">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-3">
+                      <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
+                        <TrendingUp className="h-6 w-6 text-green-600" />
+                      </div>
+                      <div>
+                        <div className="text-3xl font-bold text-green-900">₱{selectedAgent.totalValue.toLocaleString()}</div>
+                        <div className="text-sm text-green-700">Total Value</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-purple-200 bg-purple-50/50">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-3">
+                      <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
+                        <BarChart3 className="h-6 w-6 text-purple-600" />
+                      </div>
+                      <div>
+                        <div className="text-3xl font-bold text-purple-900">{selectedAgent.items.length}</div>
+                        <div className="text-sm text-purple-700">Product Types</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
 
-              {/* Inventory Items Table */}
-              <div className="overflow-x-auto">
+              {/* Inventory Items with improved styling */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Inventory Breakdown</h3>
+                  <Badge variant="outline">{selectedAgent.items.length} items</Badge>
+                </div>
+                
+                <div className="border rounded-lg overflow-hidden">
                 <Table>
-                  <TableHeader>
+                    <TableHeader className="bg-muted/50">
                     <TableRow>
-                      <TableHead>Brand</TableHead>
-                      <TableHead>Variant</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead className="text-right">Stock</TableHead>
-                      <TableHead className="text-right">Price</TableHead>
-                      <TableHead className="text-right">Value</TableHead>
+                        <TableHead className="font-semibold">Product</TableHead>
+                        <TableHead className="font-semibold">Type</TableHead>
+                        <TableHead className="text-center font-semibold">Stock</TableHead>
+                        <TableHead className="text-right font-semibold">Unit Price</TableHead>
+                        <TableHead className="text-right font-semibold">Total Value</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {selectedAgent.items.map((item: any) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="font-medium">{item.brandName}</TableCell>
-                        <TableCell>{item.variantName}</TableCell>
+                      {selectedAgent.items.map((item: any, index: number) => (
+                        <TableRow key={item.id} className={index % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
                         <TableCell>
-                          <Badge variant="outline">
+                            <div>
+                              <div className="font-medium">{item.brandName}</div>
+                              <div className="text-sm text-muted-foreground">{item.variantName}</div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
                             {item.variantType}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">{item.stock.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">₱{item.allocatedPrice.toLocaleString()}</TableCell>
-                        <TableCell className="text-right font-semibold">
-                          ₱{item.totalValue.toLocaleString()}
+                          <TableCell className="text-center">
+                            <span className="font-semibold">{item.stock.toLocaleString()}</span>
+                            <span className="text-muted-foreground text-sm"> units</span>
+                          </TableCell>
+                          <TableCell className="text-right text-muted-foreground">
+                            ₱{item.allocatedPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                          </TableCell>
+                          <TableCell className="text-right font-bold text-primary">
+                            ₱{item.totalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </div>
 
-              {/* View Full Details Button */}
-              <div className="flex justify-center pt-4">
+              {/* View Team Button */}
+              <div className="flex justify-center pt-2 border-t">
                 <Button
                   onClick={() => {
                     fetchLeaderAgents(selectedAgent.id);
                     setShowFullDetails(true);
                   }}
                   className="gap-2"
+                  size="lg"
                 >
-                  <Users className="h-4 w-4" />
-                  View Full Details (Team Members)
+                  <Users className="h-5 w-5" />
+                  View Team Members' Inventory
+                  <ArrowRight className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -936,97 +1052,152 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
 
       {/* Full Details Modal - Team Members */}
       <Dialog open={showFullDetails} onOpenChange={setShowFullDetails}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
-              {selectedAgent?.name}'s Team Members Inventory
+            <DialogTitle className="flex items-center gap-3 text-2xl">
+              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <Users className="h-5 w-5 text-primary" />
+              </div>
+              {selectedAgent?.name}'s Team Inventory
             </DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Complete overview of all team members and their allocated stock
+            </p>
           </DialogHeader>
           {loadingLeaderAgents ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Loading team members...</span>
+            <div className="flex items-center justify-center py-20">
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                <span className="text-lg font-medium">Loading team members...</span>
+                <p className="text-sm text-muted-foreground">Please wait while we fetch the data</p>
               </div>
             </div>
           ) : leaderAgents.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-              <h3 className="text-lg font-semibold mb-2">No team members found</h3>
-              <p className="text-muted-foreground">
-                This leader doesn't have any agents assigned to their team yet.
+            <div className="text-center py-20">
+              <div className="h-20 w-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
+                <Users className="h-10 w-10 text-muted-foreground" />
+              </div>
+              <h3 className="text-xl font-semibold mb-2">No team members found</h3>
+              <p className="text-muted-foreground max-w-md mx-auto">
+                This leader doesn't have any agents assigned to their team yet. Assign agents from the Team Management section.
               </p>
             </div>
           ) : (
-            <div className="space-y-6">
-              {/* Team Summary */}
-              <div className="grid grid-cols-4 gap-4 p-4 bg-muted rounded-lg">
+            <div className="space-y-6 pt-4">
+              {/* Enhanced Team Summary Cards */}
+              <div className="grid grid-cols-4 gap-4">
+                <Card className="border-blue-200 bg-blue-50/50">
+                  <CardContent className="pt-6">
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{leaderAgents.length}</div>
-                  <div className="text-sm text-muted-foreground">Team Members</div>
+                      <div className="text-3xl font-bold text-blue-900">{leaderAgents.length}</div>
+                      <div className="text-sm text-blue-700 mt-1">Team Members</div>
                 </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-green-200 bg-green-50/50">
+                  <CardContent className="pt-6">
                 <div className="text-center">
-                  <div className="text-2xl font-bold">
+                      <div className="text-3xl font-bold text-green-900">
                     {leaderAgents.reduce((sum, agent) => sum + agent.totalStock, 0).toLocaleString()}
                   </div>
-                  <div className="text-sm text-muted-foreground">Total Stock</div>
+                      <div className="text-sm text-green-700 mt-1">Total Units</div>
                 </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-purple-200 bg-purple-50/50">
+                  <CardContent className="pt-6">
                 <div className="text-center">
-                  <div className="text-2xl font-bold">
+                      <div className="text-3xl font-bold text-purple-900">
                     ₱{leaderAgents.reduce((sum, agent) => sum + agent.totalValue, 0).toLocaleString()}
                   </div>
-                  <div className="text-sm text-muted-foreground">Total Value</div>
+                      <div className="text-sm text-purple-700 mt-1">Total Value</div>
                 </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-orange-200 bg-orange-50/50">
+                  <CardContent className="pt-6">
                 <div className="text-center">
-                  <div className="text-2xl font-bold">
+                      <div className="text-3xl font-bold text-orange-900">
                     {leaderAgents.reduce((sum, agent) => sum + agent.items.length, 0)}
                   </div>
-                  <div className="text-sm text-muted-foreground">Total Categorys</div>
+                      <div className="text-sm text-orange-700 mt-1">Product Types</div>
                 </div>
+                  </CardContent>
+                </Card>
               </div>
 
-              {/* Team Members List */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Team Members Inventory</h3>
+              {/* Team Members Grid */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Team Members</h3>
+                  <Badge variant="outline" className="text-sm">{leaderAgents.length} agents</Badge>
+                </div>
+                
                 <div className="grid gap-4">
                   {leaderAgents.map((agent) => (
-                    <Card key={agent.id} className="hover:shadow-md transition-shadow">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
+                    <Card key={agent.id} className="hover:shadow-lg transition-all border-2 hover:border-primary/50">
+                      <CardHeader className="pb-4 bg-gradient-to-r from-muted/30 to-muted/10">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start gap-3">
+                            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                              <span className="text-lg font-bold text-primary">{agent.name.charAt(0)}</span>
+                            </div>
                           <div>
-                            <CardTitle className="text-lg">{agent.name}</CardTitle>
-                            <p className="text-sm text-muted-foreground">{agent.email}</p>
-                            <p className="text-xs text-muted-foreground">{agent.region}</p>
+                              <CardTitle className="text-xl">{agent.name}</CardTitle>
+                              <p className="text-sm text-muted-foreground mt-1">{agent.email}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">📍 {agent.region}</p>
                           </div>
-                          <div className="text-right">
-                            <Badge variant="secondary" className="mb-2">
-                              {agent.position || 'Mobile Sales'}
+                          </div>
+                          <div className="text-right space-y-2">
+                            <Badge variant={agent.role === 'team_leader' ? 'default' : 'secondary'} className="text-xs">
+                              {agent.role === 'team_leader' ? '👑 Team Leader' : '📱 Mobile Sales'}
                             </Badge>
-                            <div className="text-sm">
-                              <div className="font-semibold">{agent.totalStock.toLocaleString()} stock</div>
-                              <div className="text-muted-foreground">₱{agent.totalValue.toLocaleString()} value</div>
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-end gap-2 text-sm">
+                                <Package className="h-4 w-4 text-blue-600" />
+                                <span className="font-bold text-blue-900">{agent.totalStock.toLocaleString()}</span>
+                                <span className="text-muted-foreground">units</span>
+                              </div>
+                              <div className="flex items-center justify-end gap-2 text-sm">
+                                <TrendingUp className="h-4 w-4 text-green-600" />
+                                <span className="font-bold text-green-900">₱{agent.totalValue.toLocaleString()}</span>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className="pt-4">
                         {agent.items.length === 0 ? (
-                          <div className="text-center py-4 text-muted-foreground">
-                            No inventory allocated yet
+                          <div className="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
+                            <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                            <p>No inventory allocated yet</p>
                           </div>
                         ) : (
-                          <div className="space-y-2">
-                            <div className="text-sm font-medium">Inventory Items:</div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-semibold">Inventory Breakdown</div>
+                              <Badge variant="outline">{agent.items.length} products</Badge>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                               {agent.items.map((item: any) => (
-                                <div key={item.id} className="flex justify-between items-center p-2 bg-muted rounded text-sm">
-                                  <div className="flex-1">
-                                    <div className="font-medium">{item.brandName} - {item.variantName}</div>
-                                    <div className="text-muted-foreground">{item.variantType}</div>
+                                <div key={item.id} className="border rounded-lg p-3 bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-shadow">
+                                  <div className="flex justify-between items-start gap-2 mb-2">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-semibold text-sm truncate">{item.brandName}</div>
+                                      <div className="text-xs text-muted-foreground truncate">{item.variantName}</div>
                                   </div>
-                                  <div className="text-right">
-                                    <div className="font-semibold">{item.stock} units</div>
-                                    <div className="text-muted-foreground">₱{item.totalValue.toLocaleString()}</div>
+                                    <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'} className="text-xs shrink-0">
+                                      {item.variantType}
+                                    </Badge>
+                                  </div>
+                                  <div className="flex justify-between items-center pt-2 border-t">
+                                    <div className="text-sm">
+                                      <span className="font-bold">{item.stock}</span>
+                                      <span className="text-muted-foreground text-xs"> units</span>
+                                    </div>
+                                    <div className="text-sm font-semibold text-primary">
+                                      ₱{item.totalValue.toLocaleString()}
+                                    </div>
                                   </div>
                                 </div>
                               ))}
@@ -1045,34 +1216,65 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
 
       {/* Stock Allocation Dialog */}
       <Dialog open={allocationOpen} onOpenChange={setAllocationOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Allocate Stock to Leader</DialogTitle>
+            <DialogTitle className="flex items-center gap-3 text-2xl">
+              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <ArrowRight className="h-5 w-5 text-primary" />
+              </div>
+              Allocate Stock to Team Leader
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Select a leader, choose products, and allocate stock from main inventory
+            </p>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            {/* Leader Selection */}
-            <div className="space-y-2">
-              <Label>Select Leader</Label>
+          <div className="space-y-5 py-4">
+            {/* Selection Cards */}
+            <div className="grid grid-cols-2 gap-4">
+              {/* Leader Selection Card */}
+              <Card className="border-2">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Select Team Leader
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
               <Select 
                 value={allocation.agentId} 
                 onValueChange={(value) => setAllocation({...allocation, agentId: value})}
               >
-                <SelectTrigger>
+                    <SelectTrigger className="h-11">
                   <SelectValue placeholder="Choose a leader" />
                 </SelectTrigger>
                 <SelectContent>
                   {agents.filter(a => a.status === 'active').map(leader => (
                     <SelectItem key={leader.id} value={leader.id}>
-                      {leader.name} ({leader.region})
+                          <div className="flex items-center gap-2">
+                            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold">
+                              {leader.name.charAt(0)}
+                            </div>
+                            <div>
+                              <div className="font-medium">{leader.name}</div>
+                              <div className="text-xs text-muted-foreground">📍 {leader.region}</div>
+                            </div>
+                          </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+                </CardContent>
+              </Card>
 
-            {/* Brand Selection */}
-            <div className="space-y-2">
-              <Label>Select Brand</Label>
+              {/* Brand Selection Card */}
+              <Card className="border-2">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Package className="h-4 w-4" />
+                    Select Brand
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
               <Select 
                 value={allocation.brandId} 
                 onValueChange={(value) => {
@@ -1083,7 +1285,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                 }}
                 disabled={loadingBrands}
               >
-                <SelectTrigger>
+                    <SelectTrigger className="h-11">
                   <SelectValue placeholder={loadingBrands ? "Loading brands..." : "Choose a brand"} />
                 </SelectTrigger>
                 <SelectContent>
@@ -1091,25 +1293,35 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                     <SelectItem key={brand.id} value={brand.id}>
                       <div className="flex items-center gap-2">
                         <Package className="h-4 w-4" />
-                        {brand.name}
+                            <span className="font-medium">{brand.name}</span>
                       </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+                </CardContent>
+              </Card>
             </div>
 
             {allocation.brandId && brands.find(b => b.id === allocation.brandId) && (
               <>
-                {/* Add Variants Section with Tabs */}
-                <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
-                  <Label className="text-base font-semibold">Add Variants to Allocate</Label>
+                {/* Add Variants Section with Enhanced Tabs */}
+                <Card className="border-2">
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Package className="h-5 w-5" />
+                      Select Products to Allocate
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
                   <Tabs defaultValue="flavor" className="w-full">
-                    <TabsList className="grid w-full grid-cols-2">
-                      <TabsTrigger value="flavor">
+                      <TabsList className="grid w-full grid-cols-2 h-12">
+                        <TabsTrigger value="flavor" className="gap-2">
+                          <div className="h-2 w-2 rounded-full bg-blue-500"></div>
                         Flavors ({brands.find(b => b.id === allocation.brandId)?.flavors.filter(v => getVariantAvailableStock(v) > 0).length || 0})
                       </TabsTrigger>
-                      <TabsTrigger value="battery">
+                        <TabsTrigger value="battery" className="gap-2">
+                          <div className="h-2 w-2 rounded-full bg-green-500"></div>
                         Batteries ({brands.find(b => b.id === allocation.brandId)?.batteries.filter(v => getVariantAvailableStock(v) > 0).length || 0})
                       </TabsTrigger>
                     </TabsList>
@@ -1230,34 +1442,55 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                       )}
                     </TabsContent>
                   </Tabs>
-                </div>
+                  </CardContent>
+                </Card>
 
-                {/* Allocation Items List */}
+                {/* Enhanced Allocation Items List */}
                 {allocationItems.length > 0 && (
-                  <div className="border rounded-lg p-4 space-y-3">
-                    <Label className="text-base font-semibold">Items to Allocate</Label>
+                  <Card className="border-2 border-green-200 bg-green-50/20">
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <CheckCircle className="h-5 w-5 text-green-600" />
+                          Selected Items ({allocationItems.length})
+                        </CardTitle>
+                        <Badge variant="default" className="bg-green-600">
+                          Total: ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
                     <div className="space-y-2">
                       {allocationItems.map((item, index) => (
-                        <div key={index} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                          <div key={index} className="flex items-center justify-between p-4 bg-background rounded-lg border-2 hover:border-primary/50 transition-colors">
                           <div className="flex-1">
-                            <div className="font-medium">{item.brand_name} - {item.variant_name}</div>
-                            <div className="text-sm text-muted-foreground">
-                              {item.variant_type} • Selling Price: ₱{item.selling_price.toFixed(2)}
+                              <div className="font-semibold text-lg">{item.brand_name}</div>
+                              <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
+                                <span>{item.variant_name}</span>
+                                <span>•</span>
+                                <Badge variant="outline" className="text-xs">
+                                  {item.variant_type}
+                                </Badge>
+                                <span>•</span>
+                                <span>Unit Price: ₱{item.selling_price.toFixed(2)}</span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary">
+                            <div className="flex items-center gap-3">
+                              <div className="text-right">
+                                <div className="text-lg font-bold text-blue-600">
                               {item.quantity} units
-                            </Badge>
-                            <Badge variant="outline">
-                              ₱{item.total_value.toFixed(2)}
-                            </Badge>
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                  ₱{item.total_value.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                </div>
+                              </div>
                             <Button
                               variant="ghost"
-                              size="sm"
+                                size="icon"
                               onClick={() => handleRemoveVariant(item.variant_id)}
+                                className="hover:bg-red-100 hover:text-red-600"
                             >
-                              <Trash2 className="h-4 w-4" />
+                                <Trash2 className="h-5 w-5" />
                             </Button>
                           </div>
                         </div>
@@ -1265,42 +1498,79 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                     </div>
                     
                     {/* Total Summary */}
-                    <div className="border-t pt-3">
-                      <div className="flex justify-between items-center">
-                        <span className="font-semibold">Total Categorys: {allocationItems.length}</span>
-                        <span className="font-semibold">
-                          Total Value: ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toFixed(2)}
+                      <div className="border-t-2 pt-4 mt-4">
+                        <div className="flex justify-between items-center text-lg">
+                          <div className="flex items-center gap-2">
+                            <Package className="h-5 w-5 text-blue-600" />
+                            <span className="font-bold">Total Items: {allocationItems.length}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <TrendingUp className="h-5 w-5 text-green-600" />
+                            <span className="font-bold text-green-600">
+                              ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
                         </span>
                       </div>
                     </div>
                   </div>
+                    </CardContent>
+                  </Card>
                 )}
 
                 {allocationWarnings.length > 0 && (
-                  <div className="border border-yellow-300 bg-yellow-50 p-3 rounded-lg flex items-start gap-3">
-                    <AlertTriangle className="h-5 w-5 text-yellow-700 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-semibold text-yellow-800">Selling price required before allocation</p>
-                      <ul className="mt-1 space-y-1 text-sm text-yellow-800 list-disc list-inside">
+                  <Card className="border-2 border-yellow-400 bg-yellow-50/50">
+                    <CardContent className="pt-6">
+                      <div className="flex items-start gap-3">
+                        <div className="h-10 w-10 rounded-full bg-yellow-100 flex items-center justify-center shrink-0">
+                          <AlertTriangle className="h-5 w-5 text-yellow-700" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-semibold text-yellow-900 mb-2">⚠️ Action Required: Set Prices First</p>
+                          <ul className="space-y-1.5 text-sm text-yellow-800">
                         {allocationWarnings.map((warning, index) => (
-                          <li key={index}>{warning}</li>
+                              <li key={index} className="flex items-start gap-2">
+                                <span className="text-yellow-600 mt-0.5">•</span>
+                                <span>{warning}</span>
+                              </li>
                         ))}
                       </ul>
                     </div>
                   </div>
+                    </CardContent>
+                  </Card>
                 )}
 
-                {/* Action Buttons */}
-                <div className="flex justify-end space-x-2">
-                  <Button variant="outline" onClick={() => setAllocationOpen(false)}>
+                {/* Enhanced Action Buttons */}
+                <div className="flex justify-between items-center pt-4 border-t-2">
+                  <div className="text-sm text-muted-foreground">
+                    {allocationItems.length > 0 ? (
+                      <span className="flex items-center gap-2">
+                        <CheckCircle className="h-4 w-4 text-green-600" />
+                        {allocationItems.length} item{allocationItems.length > 1 ? 's' : ''} ready for allocation
+                      </span>
+                    ) : (
+                      <span>Select products above to begin allocation</span>
+                    )}
+                  </div>
+                  <div className="flex gap-3">
+                    <Button 
+                      variant="outline" 
+                      size="lg"
+                      onClick={() => setAllocationOpen(false)}
+                      className="gap-2"
+                    >
                     Cancel
                   </Button>
                   <Button 
+                      size="lg"
                     onClick={handleConfirmAllocation}
                     disabled={!allocation.agentId || allocationItems.length === 0 || allocationWarnings.length > 0}
+                      className="gap-2"
                   >
-                    Allocate Stock
+                      <CheckCircle className="h-5 w-5" />
+                      Allocate Stock Now
+                      <ArrowRight className="h-4 w-4" />
                   </Button>
+                  </div>
                 </div>
               </>
             )}

@@ -75,7 +75,7 @@ export default function MyTeamPage() {
 
         const { data: profiles, error: profilesError } = await supabase
           .from('profiles')
-          .select('id, full_name, email, phone, region, city, status, position, created_at')
+          .select('id, full_name, email, phone, region, city, status, role, created_at')
           .in('id', agentIds);
 
         if (profilesError) throw profilesError;

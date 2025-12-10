@@ -3,7 +3,7 @@
 
 export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales';
 export type UserStatus = 'active' | 'inactive';
-export type VariantType = 'flavor' | 'battery';
+export type VariantType = 'flavor' | 'battery' | 'posm';
 export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
 export type AgentInventoryStatus = 'available' | 'low' | 'none';
 export type OrderStatus = 'pending' | 'approved' | 'rejected';
@@ -182,6 +182,7 @@ export interface Client {
   category: ClientCategory;
   status: UserStatus;
   approval_status: ClientApprovalStatus;
+  has_forge: boolean;
   approval_notes?: string;
   approval_requested_at?: string;
   approved_at?: string;

@@ -1,0 +1,2 @@
+export { WarRoomPage } from './WarRoomPage';
+

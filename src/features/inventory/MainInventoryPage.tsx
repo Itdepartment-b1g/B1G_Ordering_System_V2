@@ -12,7 +12,7 @@ import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
 
 export default function MainInventoryPage() {
-  const { brands, setBrands, updateBrandName, updateVariant, addOrUpdateInventory } = useInventory();
+  const { brands, setBrands, updateBrandName, updateVariant, addOrUpdateInventory, refreshInventory } = useInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
   const [allocatedStock, setAllocatedStock] = useState<Record<string, number>>({});
@@ -26,7 +26,7 @@ export default function MainInventoryPage() {
   const [editingVariant, setEditingVariant] = useState<{
     brandId: string;
     variantId: string;
-    variantType: 'flavor' | 'battery';
+    variantType: 'flavor' | 'battery' | 'posm';
     name: string;
     stock: number;
     price: number;
@@ -50,6 +50,8 @@ export default function MainInventoryPage() {
   const [bulkPriceType, setBulkPriceType] = useState<'flavors' | 'batteries' | null>(null);
   const [bulkPriceBrandId, setBulkPriceBrandId] = useState<string | null>(null);
   const [bulkPriceValue, setBulkPriceValue] = useState<string>('');
+  const [bulkDspValue, setBulkDspValue] = useState<string>('');
+  const [bulkRspValue, setBulkRspValue] = useState<string>('');
   const [updatingBulkPrice, setUpdatingBulkPrice] = useState(false);
   
   const { toast } = useToast();
@@ -63,7 +65,7 @@ export default function MainInventoryPage() {
       const { data: leaderProfiles, error: leaderErr } = await supabase
         .from('profiles')
         .select('id')
-        .eq('position', 'Leader');
+        .eq('role', 'team_leader');
 
       if (leaderErr) throw leaderErr;
 
@@ -123,13 +125,15 @@ export default function MainInventoryPage() {
 
   const getTotalStock = (brand: Brand) => {
     return brand.flavors.reduce((sum, f) => sum + f.stock, 0) + 
-           brand.batteries.reduce((sum, b) => sum + b.stock, 0);
+           brand.batteries.reduce((sum, b) => sum + b.stock, 0) +
+           (brand.posms || []).reduce((sum, p) => sum + p.stock, 0);
   };
 
   const getAllocatedStock = (brand: Brand) => {
     const flavorAllocated = brand.flavors.reduce((sum, f) => sum + (allocatedStock[f.id] || 0), 0);
     const batteryAllocated = brand.batteries.reduce((sum, b) => sum + (allocatedStock[b.id] || 0), 0);
-    return flavorAllocated + batteryAllocated;
+    const posmAllocated = (brand.posms || []).reduce((sum, p) => sum + (allocatedStock[p.id] || 0), 0);
+    return flavorAllocated + batteryAllocated + posmAllocated;
   };
 
   const getAvailableStock = (brand: Brand) => {
@@ -144,7 +148,7 @@ export default function MainInventoryPage() {
     return variant.stock - getVariantAllocatedStock(variant.id);
   };
 
-  const handleEditVariant = (brandId: string, variant: Variant, type: 'flavor' | 'battery') => {
+  const handleEditVariant = (brandId: string, variant: Variant, type: 'flavor' | 'battery' | 'posm') => {
     const currentUnitPrice = variant.price || 0;
     const currentSellingPrice = (variant as any).sellingPrice || 0;
     const currentDspPrice = (variant as any).dspPrice || 0;
@@ -240,17 +244,22 @@ export default function MainInventoryPage() {
     setBulkPriceBrandId(brandId);
     setBulkPriceType(type);
     setBulkPriceValue('');
+    setBulkDspValue('');
+    setBulkRspValue('');
     setBulkPriceDialogOpen(true);
   };
 
   const handleConfirmBulkPriceUpdate = async () => {
     if (!bulkPriceBrandId || !bulkPriceType) return;
 
-    const price = bulkPriceValue === '' ? 0 : Number(bulkPriceValue);
-    if (isNaN(price) || price < 0) {
+    const sellingPrice = bulkPriceValue === '' ? 0 : Number(bulkPriceValue);
+    const dspPrice = bulkDspValue === '' ? 0 : Number(bulkDspValue);
+    const rspPrice = bulkRspValue === '' ? 0 : Number(bulkRspValue);
+    
+    if (isNaN(sellingPrice) || sellingPrice < 0 || isNaN(dspPrice) || dspPrice < 0 || isNaN(rspPrice) || rspPrice < 0) {
       toast({
         title: "Error",
-        description: "Please enter a valid price",
+        description: "Please enter valid prices",
         variant: "destructive",
       });
       return;
@@ -265,28 +274,36 @@ export default function MainInventoryPage() {
 
       const variants = bulkPriceType === 'flavors' ? brand.flavors : brand.batteries;
       
-      // Update all variants in parallel
+      // Update all variants in parallel (skip individual refreshes for performance)
       const updatePromises = variants.map(variant => 
         updateVariant(
           variant.id,
           variant.name,
           variant.stock,
           (variant as any).price || 0, // Keep existing unit_price
-          price // Set new selling_price
+          sellingPrice, // Set new selling_price
+          dspPrice, // Set new dspPrice
+          rspPrice, // Set new rspPrice
+          true // skipRefresh - we'll refresh once after all updates
         )
       );
 
       await Promise.all(updatePromises);
 
+      // Refresh inventory once after all updates complete
+      await refreshInventory();
+
       toast({
         title: "Success",
-        description: `Updated selling price for all ${bulkPriceType} to ₱${price.toFixed(2)}`,
+        description: `Updated prices for all ${bulkPriceType}`,
       });
 
       setBulkPriceDialogOpen(false);
       setBulkPriceBrandId(null);
       setBulkPriceType(null);
       setBulkPriceValue('');
+      setBulkDspValue('');
+      setBulkRspValue('');
     } catch (error) {
       console.error('Error updating bulk prices:', error);
       toast({
@@ -302,14 +319,15 @@ export default function MainInventoryPage() {
 
   // Calculate stats
   const totalBrands = brands.length;
-  const totalVariants = brands.reduce((sum, brand) => sum + brand.flavors.length + brand.batteries.length, 0);
+  const totalVariants = brands.reduce((sum, brand) => sum + brand.flavors.length + brand.batteries.length + (brand.posms || []).length, 0);
   const totalStock = brands.reduce((sum, brand) => sum + getTotalStock(brand), 0);
   const totalAllocatedStock = brands.reduce((sum, brand) => sum + getAllocatedStock(brand), 0);
   const totalAvailableStock = totalStock - totalAllocatedStock;
   const lowStockItems = brands.reduce((sum, brand) => {
     const lowFlavors = brand.flavors.filter((f: any) => f.status === 'low-stock').length;
     const lowBatteries = brand.batteries.filter((b: any) => b.status === 'low-stock').length;
-    return sum + lowFlavors + lowBatteries;
+    const lowPosms = (brand.posms || []).filter((p: any) => p.status === 'low-stock').length;
+    return sum + lowFlavors + lowBatteries + lowPosms;
   }, 0);
 
   return (
@@ -440,14 +458,14 @@ export default function MainInventoryPage() {
                           expandedBrands.includes(brand.id) ? 'rotate-90' : ''
                         }`} 
                       />
-                      {(brand.flavors.some((f: any) => !f.sellingPrice || f.sellingPrice === 0) || 
-                        brand.batteries.some((b: any) => !b.sellingPrice || b.sellingPrice === 0)) && (
+                      {(brand.flavors.some((f: any) => !f.sellingPrice && f.sellingPrice !== 0) || 
+                        brand.batteries.some((b: any) => !b.sellingPrice && b.sellingPrice !== 0)) && (
                         <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
                       )}
                       <div>
                         <h3 className="font-semibold text-lg">{brand.name}</h3>
                         <div className="text-sm text-muted-foreground">
-                          {brand.flavors.length} Flavors • {brand.batteries.length} Batteries • 
+                          {brand.flavors.length} Flavors • {brand.batteries.length} Batteries • {(brand.posms || []).length} POSM • 
                           <span className={`ml-1 ${getTotalStock(brand) > 0 ? 'text-blue-700' : 'text-red-600'}`}>
                             Total Stock: {getTotalStock(brand)}
                           </span>
@@ -458,15 +476,19 @@ export default function MainInventoryPage() {
                     <Badge 
                       variant={
                         getTotalStock(brand) === 0 ? 'destructive' : 
-                        (brand.flavors.some((f: any) => !f.sellingPrice || f.sellingPrice === 0) || 
-                         brand.batteries.some((b: any) => !b.sellingPrice || b.sellingPrice === 0)) ? 'secondary' :
-                        (brand.flavors.some((f: any) => f.status === 'low-stock') || brand.batteries.some((b: any) => b.status === 'low-stock')) ? 'secondary' : 'default'
+                        (brand.flavors.some((f: any) => !f.sellingPrice && f.sellingPrice !== 0) || 
+                         brand.batteries.some((b: any) => !b.sellingPrice && b.sellingPrice !== 0)) ? 'secondary' :
+                        (brand.flavors.some((f: any) => f.status === 'low-stock') || 
+                         brand.batteries.some((b: any) => b.status === 'low-stock') ||
+                         (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'secondary' : 'default'
                       }
                     >
                       {getTotalStock(brand) === 0 ? 'Out of Stock' : 
-                       (brand.flavors.some((f: any) => !f.sellingPrice || f.sellingPrice === 0) || 
-                        brand.batteries.some((b: any) => !b.sellingPrice || b.sellingPrice === 0)) ? 'Missing Prices' :
-                       (brand.flavors.some((f: any) => f.status === 'low-stock') || brand.batteries.some((b: any) => b.status === 'low-stock')) ? 'Low Stock' : 'In Stock'}
+                       (brand.flavors.some((f: any) => !f.sellingPrice && f.sellingPrice !== 0) || 
+                        brand.batteries.some((b: any) => !b.sellingPrice && b.sellingPrice !== 0)) ? 'Missing Prices' :
+                       (brand.flavors.some((f: any) => f.status === 'low-stock') || 
+                        brand.batteries.some((b: any) => b.status === 'low-stock') ||
+                        (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'Low Stock' : 'In Stock'}
                     </Badge>
                       <Button variant="ghost" size="sm" onClick={(e) => {
                         e.stopPropagation();
@@ -504,13 +526,15 @@ export default function MainInventoryPage() {
                         <Table>
                           <TableHeader>
                             <TableRow className="bg-blue-50/30">
-                              <TableHead className="text-blue-800">Flavor Name</TableHead>
-                              <TableHead className="text-blue-800">Total Stock</TableHead>
-                              <TableHead className="text-blue-800">Allocated</TableHead>
-                              <TableHead className="text-blue-800">Available</TableHead>
-                              <TableHead className="text-blue-800 text-right">Price</TableHead>
-                              <TableHead className="text-blue-800 text-right">Status</TableHead>
-                              <TableHead className="text-blue-800 text-right">Actions</TableHead>
+                              <TableHead className="text-blue-800 text-center">Flavor Name</TableHead>
+                              <TableHead className="text-blue-800 text-center">Total Stock</TableHead>
+                              <TableHead className="text-blue-800 text-center">Allocated</TableHead>
+                              <TableHead className="text-blue-800 text-center">Available</TableHead>
+                              <TableHead className="text-blue-800 text-center">Selling Price</TableHead>
+                              <TableHead className="text-blue-800 text-center">DSP</TableHead>
+                              <TableHead className="text-blue-800 text-center">RSP</TableHead>
+                              <TableHead className="text-blue-800 text-center">Status</TableHead>
+                              <TableHead className="text-blue-800 text-center">Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -525,19 +549,25 @@ export default function MainInventoryPage() {
                                     hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-blue-50/10'
                                   }`}
                                 >
-                                  <TableCell className="font-medium">
-                                    <div className="flex items-center gap-2">
+                                  <TableCell className="font-medium text-center">
+                                    <div className="flex items-center justify-center gap-2">
                                       {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600 flex-shrink-0" />}
                                       <span>{flavor.name}</span>
                                     </div>
                                   </TableCell>
-                                  <TableCell className="font-semibold">{flavor.stock}</TableCell>
-                                  <TableCell className="text-orange-600 font-medium">{allocated}</TableCell>
-                                  <TableCell className="text-green-600 font-medium">{available}</TableCell>
-                                  <TableCell className="text-right">
+                                  <TableCell className="font-semibold text-center">{flavor.stock}</TableCell>
+                                  <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
+                                  <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+                                  <TableCell className="text-center">
                                     {typeof (flavor as any).sellingPrice === 'number' ? `₱${(flavor as any).sellingPrice.toFixed(2)}` : '-'}
                                   </TableCell>
-                                  <TableCell className="text-right">
+                                  <TableCell className="text-center">
+                                    {typeof (flavor as any).dspPrice === 'number' ? `₱${(flavor as any).dspPrice.toFixed(2)}` : '-'}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    {typeof (flavor as any).rspPrice === 'number' ? `₱${(flavor as any).rspPrice.toFixed(2)}` : '-'}
+                                  </TableCell>
+                                  <TableCell className="text-center">
                                     <Badge 
                                       variant={
                                         flavor.stock === 0 ? 'destructive' :
@@ -550,7 +580,7 @@ export default function MainInventoryPage() {
                                        (flavor as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
                                     </Badge>
                                   </TableCell>
-                                  <TableCell className="text-right">
+                                  <TableCell className="text-center">
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -590,13 +620,15 @@ export default function MainInventoryPage() {
                         <Table>
                           <TableHeader>
                             <TableRow className="bg-green-50/30">
-                              <TableHead className="text-green-800">Battery Name</TableHead>
-                              <TableHead className="text-green-800">Total Stock</TableHead>
-                              <TableHead className="text-green-800">Allocated</TableHead>
-                              <TableHead className="text-green-800">Available</TableHead>
-                              <TableHead className="text-green-800 text-right">Price</TableHead>
-                              <TableHead className="text-green-800 text-right">Status</TableHead>
-                              <TableHead className="text-green-800 text-right">Actions</TableHead>
+                              <TableHead className="text-green-800 text-center">Battery Name</TableHead>
+                              <TableHead className="text-green-800 text-center">Total Stock</TableHead>
+                              <TableHead className="text-green-800 text-center">Allocated</TableHead>
+                              <TableHead className="text-green-800 text-center">Available</TableHead>
+                              <TableHead className="text-green-800 text-center">Selling Price</TableHead>
+                              <TableHead className="text-green-800 text-center">DSP</TableHead>
+                              <TableHead className="text-green-800 text-center">RSP</TableHead>
+                              <TableHead className="text-green-800 text-center">Status</TableHead>
+                              <TableHead className="text-green-800 text-center">Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -611,19 +643,25 @@ export default function MainInventoryPage() {
                                     hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-green-50/10'
                                   }`}
                                 >
-                                  <TableCell className="font-medium">
-                                    <div className="flex items-center gap-2">
+                                  <TableCell className="font-medium text-center">
+                                    <div className="flex items-center justify-center gap-2">
                                       {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600 flex-shrink-0" />}
                                       <span>{battery.name}</span>
                                     </div>
                                   </TableCell>
-                                  <TableCell className="font-semibold">{battery.stock}</TableCell>
-                                  <TableCell className="text-orange-600 font-medium">{allocated}</TableCell>
-                                  <TableCell className="text-green-600 font-medium">{available}</TableCell>
-                                  <TableCell className="text-right">
+                                  <TableCell className="font-semibold text-center">{battery.stock}</TableCell>
+                                  <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
+                                  <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+                                  <TableCell className="text-center">
                                     {typeof (battery as any).sellingPrice === 'number' ? `₱${(battery as any).sellingPrice.toFixed(2)}` : '-'}
                                   </TableCell>
-                                  <TableCell className="text-right">
+                                  <TableCell className="text-center">
+                                    {typeof (battery as any).dspPrice === 'number' ? `₱${(battery as any).dspPrice.toFixed(2)}` : '-'}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    {typeof (battery as any).rspPrice === 'number' ? `₱${(battery as any).rspPrice.toFixed(2)}` : '-'}
+                                  </TableCell>
+                                  <TableCell className="text-center">
                                     <Badge 
                                       variant={
                                         battery.stock === 0 ? 'destructive' :
@@ -636,7 +674,7 @@ export default function MainInventoryPage() {
                                        (battery as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
                                     </Badge>
                                   </TableCell>
-                                  <TableCell className="text-right">
+                                  <TableCell className="text-center">
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -652,9 +690,91 @@ export default function MainInventoryPage() {
                         </Table>
                       </div>
                     )}
+
+                    {/* POSM Section */}
+                    {(brand as any).posms && (brand as any).posms.length > 0 && (
+                      <div className="bg-purple-50/20">
+                        <div className="px-4 py-3 border-b border-purple-200">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 w-2 rounded-full bg-purple-500"></div>
+                            <h4 className="font-semibold text-purple-800">POSM ({(brand as any).posms.length})</h4>
+                          </div>
+                        </div>
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-purple-50/30">
+                              <TableHead className="text-purple-800 text-center">POSM Name</TableHead>
+                              <TableHead className="text-purple-800 text-center">Total Stock</TableHead>
+                              <TableHead className="text-purple-800 text-center">Allocated</TableHead>
+                              <TableHead className="text-purple-800 text-center">Available</TableHead>
+                              <TableHead className="text-purple-800 text-center">Selling Price</TableHead>
+                              <TableHead className="text-purple-800 text-center">DSP</TableHead>
+                              <TableHead className="text-purple-800 text-center">RSP</TableHead>
+                              <TableHead className="text-purple-800 text-center">Status</TableHead>
+                              <TableHead className="text-purple-800 text-center">Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {(brand as any).posms.map((posm: any) => {
+                              const allocated = getVariantAllocatedStock(posm.id);
+                              const available = getVariantAvailableStock(posm);
+                              const hasNoPrice = !(posm as any).sellingPrice || (posm as any).sellingPrice === 0 || Number((posm as any).sellingPrice) === 0;
+                              return (
+                                <TableRow 
+                                  key={`posm-${posm.id}`} 
+                                  className={`hover:bg-purple-50/20 ${
+                                    hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-purple-50/10'
+                                  }`}
+                                >
+                                  <TableCell className="font-medium text-center">
+                                    <div className="flex items-center justify-center gap-2">
+                                      {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600 flex-shrink-0" />}
+                                      <span>{posm.name}</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="font-semibold text-center">{posm.stock}</TableCell>
+                                  <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
+                                  <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+                                  <TableCell className="text-center">
+                                    {typeof (posm as any).sellingPrice === 'number' ? `₱${(posm as any).sellingPrice.toFixed(2)}` : '-'}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    {typeof (posm as any).dspPrice === 'number' ? `₱${(posm as any).dspPrice.toFixed(2)}` : '-'}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    {typeof (posm as any).rspPrice === 'number' ? `₱${(posm as any).rspPrice.toFixed(2)}` : '-'}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <Badge 
+                                      variant={
+                                        posm.stock === 0 ? 'destructive' :
+                                        (posm as any).status === 'low-stock' ? 'secondary' : 'default'
+                                      }
+                                    >
+                                      {posm.stock === 0 ? 'Out of Stock' : 
+                                       (posm as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleEditVariant(brand.id, posm, 'posm')}
+                                      className="text-purple-600 hover:text-purple-800 hover:bg-purple-100"
+                                    >
+                                      <Edit className="h-4 w-4" />
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                     
                     {/* Empty state if no variants */}
-                    {brand.flavors.length === 0 && brand.batteries.length === 0 && (
+                    {brand.flavors.length === 0 && brand.batteries.length === 0 && brand.posms.length === 0 && (
                       <div className="text-center py-8 text-muted-foreground">
                         <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
                         <p>No variants found for this brand</p>
@@ -703,21 +823,6 @@ export default function MainInventoryPage() {
                   value={editingVariant.stock}
                   readOnly
                   className="bg-muted"
-                />
-              </div>
-              <div>
-                <Label htmlFor="unit_price">Unit Price (Buying Price)</Label>
-                <Input
-                  id="unit_price"
-                  type="number"
-                  value={priceInputValue}
-                  placeholder={editingVariant.price === 0 ? '0' : String(editingVariant.price)}
-                  onChange={(e) => {
-                    const inputValue = e.target.value;
-                    setPriceInputValue(inputValue);
-                    const value = inputValue === '' ? 0 : Number(inputValue);
-                    setEditingVariant({...editingVariant, price: value});
-                  }}
                 />
               </div>
               <div>
@@ -817,7 +922,7 @@ export default function MainInventoryPage() {
       <Dialog open={bulkPriceDialogOpen} onOpenChange={setBulkPriceDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Set Price for All {bulkPriceType === 'flavors' ? 'Flavors' : 'Batteries'}</DialogTitle>
+            <DialogTitle>Set Prices for All {bulkPriceType === 'flavors' ? 'Flavors' : 'Batteries'}</DialogTitle>
           </DialogHeader>
           {bulkPriceBrandId && bulkPriceType && (
             <div className="space-y-4">
@@ -831,20 +936,52 @@ export default function MainInventoryPage() {
                   step="0.01"
                   min="0"
                   value={bulkPriceValue}
-                  placeholder="Enter price"
+                  placeholder="Enter selling price"
                   onChange={(e) => setBulkPriceValue(e.target.value)}
                   disabled={updatingBulkPrice}
                 />
-                <p className="text-sm text-muted-foreground mt-1">
-                  This will update the selling price for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand.
-                </p>
               </div>
+              <div>
+                <Label htmlFor="bulkDsp">
+                  DSP (₱) for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand
+                </Label>
+                <Input
+                  id="bulkDsp"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={bulkDspValue}
+                  placeholder="Enter DSP"
+                  onChange={(e) => setBulkDspValue(e.target.value)}
+                  disabled={updatingBulkPrice}
+                />
+              </div>
+              <div>
+                <Label htmlFor="bulkRsp">
+                  RSP (₱) for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand
+                </Label>
+                <Input
+                  id="bulkRsp"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={bulkRspValue}
+                  placeholder="Enter RSP"
+                  onChange={(e) => setBulkRspValue(e.target.value)}
+                  disabled={updatingBulkPrice}
+                />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                This will update Selling Price, DSP, and RSP for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand.
+              </p>
               <div className="flex justify-end space-x-2">
                 <Button 
                   variant="outline" 
                   onClick={() => {
                     setBulkPriceDialogOpen(false);
                     setBulkPriceValue('');
+                    setBulkDspValue('');
+                    setBulkRspValue('');
                   }}
                   disabled={updatingBulkPrice}
                 >
@@ -852,7 +989,7 @@ export default function MainInventoryPage() {
                 </Button>
                 <Button 
                   onClick={handleConfirmBulkPriceUpdate}
-                  disabled={updatingBulkPrice || bulkPriceValue === ''}
+                  disabled={updatingBulkPrice}
                 >
                   {updatingBulkPrice ? 'Updating...' : 'Update All Prices'}
                 </Button>

@@ -13,6 +13,7 @@ import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { useAuth } from '@/features/auth';
 import { exportClientsToExcel } from '@/lib/excel.helpers';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -68,6 +69,7 @@ export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [allClientsRevenue, setAllClientsRevenue] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [roleResolved, setRoleResolved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -102,6 +104,7 @@ export default function ClientsPage() {
     email: '',
     phone: '',
     address: '',
+    has_forge: false,
     city: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
@@ -229,6 +232,7 @@ export default function ClientsPage() {
       try {
         if (!user?.id) {
           setIsAdmin(false);
+          setIsSuperAdmin(false);
           setRoleResolved(true);
           return;
         }
@@ -237,9 +241,12 @@ export default function ClientsPage() {
           .select('role')
           .eq('id', user.id)
           .single();
-        setIsAdmin((data?.role || '') === 'admin');
+        const userRole = data?.role || '';
+        setIsAdmin(userRole === 'admin' || userRole === 'super_admin');
+        setIsSuperAdmin(userRole === 'super_admin');
       } catch {
         setIsAdmin(false);
+        setIsSuperAdmin(false);
       } finally {
         setRoleResolved(true);
       }
@@ -396,6 +403,7 @@ export default function ClientsPage() {
 
       const formattedClients: Client[] = (data || []).map((client: any) => ({
         id: client.id,
+        company_id: client.company_id,
         agent_id: client.agent_id,
         agent_name: client.profiles?.full_name || undefined,
         name: client.name,
@@ -412,7 +420,10 @@ export default function ClientsPage() {
         city: client.city,
         total_orders: ordersByClient[client.id]?.count || 0,
         total_spent: ordersByClient[client.id]?.total || 0,
+        account_type: client.account_type || 'Standard Accounts',
+        category: client.category || 'Open',
         status: client.status || 'active',
+        has_forge: client.has_forge || false,
         last_order_date: ordersByClient[client.id]?.last || client.last_order_date,
         created_at: client.created_at,
         updated_at: client.updated_at,
@@ -501,11 +512,15 @@ export default function ClientsPage() {
 
   const handleOpenEdit = (client: Client) => {
     setEditingClient(client);
+    // Strip +63 prefix from phone for editing
+    const phoneNumber = client.phone || '';
+    const phoneWithoutPrefix = phoneNumber.startsWith('+63 ') ? phoneNumber.slice(4) : phoneNumber;
+    
     setEditForm({
       name: client.name,
       company: client.company || '',
       email: client.email || '',
-      phone: client.phone || '',
+      phone: phoneWithoutPrefix,
       address: client.address || '',
       city: client.city || '',
       account_type: client.account_type || 'Standard Accounts',
@@ -536,7 +551,7 @@ export default function ClientsPage() {
           name: editForm.name,
           company: editForm.company || null,
           email: editForm.email || null,
-          phone: editForm.phone || null,
+          phone: editForm.phone ? `+63 ${editForm.phone}` : null,
           account_type: editForm.account_type,
           category: editForm.category,
           // address and city are read-only - do not update them
@@ -619,11 +634,14 @@ export default function ClientsPage() {
 
   // Helper function to determine if a client is unassigned (assigned to admin)
   const isClientUnassigned = (client: Client) => {
-    // A client is considered unassigned if it's assigned to an admin
-    const agent = agents.find(a => a.id === client.agent_id);
+    // A client is considered unassigned if:
+    // 1. agent_id is null (created by super admin without assignment)
+    // 2. agent_id points to an admin (legacy behavior)
+    // 3. agent_id is the current admin user (legacy behavior)
+    if (!client.agent_id) return true; // Super admin created unassigned client
     
-    // Check if the agent is an admin, or if the client is assigned to the current admin user
-    return agent?.role === 'admin' || (isAdmin && client.agent_id === user?.id);
+    const agent = agents.find(a => a.id === client.agent_id);
+    return agent?.role === 'admin' || agent?.role === 'super_admin' || (isAdmin && client.agent_id === user?.id);
   };
 
   // Update agent cities by MERGING with cities from their client assignments
@@ -971,7 +989,12 @@ export default function ClientsPage() {
       let cityMatches = true;
       const clientCityValue = addForm.city?.trim() || '';
 
-      if (!isAdmin) {
+      // Super admins can add clients without city validation or agent assignment
+      if (isSuperAdmin) {
+        // Super admins bypass all city and agent validations
+        cityMatches = true;
+      } else if (!isAdmin) {
+        // Regular agents must follow city validation
         if (agentCities.length > 0) {
           if (!clientCityValue) {
             toast({
@@ -1007,9 +1030,10 @@ export default function ClientsPage() {
         }
       }
 
-      // For admin-created clients, assign to admin but mark as floating
-      // For agent-created clients, assign to the current agent
-      const agentId = user?.id; // Always use current user's ID due to RLS policy
+      // For super admin: no agent assignment (null)
+      // For admin-created clients: assign to admin
+      // For agent-created clients: assign to the current agent
+      const agentId = isSuperAdmin ? null : user?.id;
 
       const nowIso = new Date().toISOString();
       const approvalStatus = isAdmin || cityMatches ? 'approved' : 'pending';
@@ -1017,21 +1041,28 @@ export default function ClientsPage() {
       const approvalNotes = (!isAdmin && !cityMatches) ? `City "${clientCityValue || 'N/A'}" outside assigned cities: ${agentCities.join(', ')}` : null;
       const approvedAt = approvalStatus === 'approved' ? nowIso : null;
       
+      // Validate company_id
+      if (!user?.company_id) {
+        throw new Error('User company_id not found');
+      }
+      
       const { error } = await supabase
         .from('clients')
         .insert({
+          company_id: user.company_id,
           name: addForm.name,
           company: addForm.company || null,
           email: addForm.email || null,
-          phone: addForm.phone || null,
+          phone: addForm.phone ? `+63 ${addForm.phone}` : null,
           address: addForm.address || null,
           city: addForm.city || null,
-          agent_id: agentId, // Always use current user's ID due to RLS policy
+          agent_id: agentId, // Can be null for super admins, or user id for others
           total_orders: 0,
           total_spent: 0,
           account_type: addForm.account_type,
           category: addForm.category,
           status: 'active',
+          has_forge: addForm.has_forge,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           location_latitude: capturedLocation?.latitude || null,
@@ -1051,8 +1082,8 @@ export default function ClientsPage() {
         title: approvalStatus === 'approved' ? 'Client Added' : 'Client Pending Approval', 
         description: approvalStatus === 'approved'
           ? (capturedLocation 
-              ? `${addForm.name} has been added successfully with photo and location verification${isAdmin ? ' (no agent assigned)' : ''}` 
-              : `${addForm.name} has been added successfully with photo verification${isAdmin ? ' (no agent assigned)' : ''}`)
+              ? `${addForm.name} has been added successfully with photo and location verification${isSuperAdmin ? ' (unassigned - no agent)' : isAdmin ? ' (assigned to you)' : ''}` 
+              : `${addForm.name} has been added successfully with photo verification${isSuperAdmin ? ' (unassigned - no agent)' : isAdmin ? ' (assigned to you)' : ''}`)
           : `${addForm.name} has been added and sent for admin approval. Orders and other actions remain disabled until approval.`
       });
       
@@ -1290,6 +1321,36 @@ export default function ClientsPage() {
     }
   };
 
+  // Philippine phone number formatter
+  const formatPhilippinePhone = (value: string): string => {
+    // Remove all non-digit characters
+    const digits = value.replace(/\D/g, '');
+    
+    // If starts with 63, remove it (we'll add +63 prefix separately)
+    let phoneDigits = digits.startsWith('63') ? digits.slice(2) : digits;
+    
+    // Limit to 10 digits (after country code)
+    phoneDigits = phoneDigits.slice(0, 10);
+    
+    // Format: 9XX-XXX-XXXX
+    if (phoneDigits.length <= 3) {
+      return phoneDigits;
+    } else if (phoneDigits.length <= 6) {
+      return `${phoneDigits.slice(0, 3)}-${phoneDigits.slice(3)}`;
+    } else {
+      return `${phoneDigits.slice(0, 3)}-${phoneDigits.slice(3, 6)}-${phoneDigits.slice(6)}`;
+    }
+  };
+
+  const handlePhoneChange = (value: string, formType: 'add' | 'edit') => {
+    const formatted = formatPhilippinePhone(value);
+    if (formType === 'add') {
+      setAddForm({ ...addForm, phone: formatted });
+    } else {
+      setEditForm({ ...editForm, phone: formatted });
+    }
+  };
+
   const reverseGeocode = async (latitude: number, longitude: number): Promise<{ address: string; city: string }> => {
     try {
       const response = await fetch(
@@ -1487,7 +1548,10 @@ export default function ClientsPage() {
       email: '',
       phone: '',
       address: '',
-      city: ''
+      has_forge: false,
+      city: '',
+      account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
+      category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
     });
     setNewClientPhoto(null);
     setCapturedLocation(null);
@@ -1748,12 +1812,23 @@ export default function ClientsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Phone</Label>
+                <Label>Phone Number</Label>
+                <div className="flex gap-2">
+                  <div className="w-16">
                 <Input 
-                  placeholder="555-0000" 
+                      value="+63"
+                      disabled
+                      className="bg-muted text-center font-semibold"
+                    />
+                  </div>
+                  <Input 
+                    placeholder="9XX-XXX-XXXX" 
                   value={addForm.phone}
-                  onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
+                    onChange={(e) => handlePhoneChange(e.target.value, 'add')}
+                    maxLength={12}
                 />
+                </div>
+                <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
@@ -1878,6 +1953,30 @@ export default function ClientsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              
+              {/* Has Forge Field */}
+              <div className="space-y-3">
+                <Label>Has Forge?</Label>
+                <RadioGroup
+                  value={addForm.has_forge ? 'yes' : 'no'}
+                  onValueChange={(value) => setAddForm({ ...addForm, has_forge: value === 'yes' })}
+                  className="flex gap-4"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="yes" id="has-forge-yes" />
+                    <Label htmlFor="has-forge-yes" className="font-normal cursor-pointer">
+                      Yes
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="no" id="has-forge-no" />
+                    <Label htmlFor="has-forge-no" className="font-normal cursor-pointer">
+                      No
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
               <Button className="w-full" onClick={handleAddClient} disabled={adding}>
                 {adding ? (
                   <>
@@ -2304,12 +2403,23 @@ export default function ClientsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Phone</Label>
+                <Label>Phone Number</Label>
+                <div className="flex gap-2">
+                  <div className="w-16">
                 <Input 
-                  placeholder="555-0000" 
+                      value="+63"
+                      disabled
+                      className="bg-muted text-center font-semibold"
+                    />
+                  </div>
+                  <Input 
+                    placeholder="9XX-XXX-XXXX" 
                   value={editForm.phone}
-                  onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                    onChange={(e) => handlePhoneChange(e.target.value, 'edit')}
+                    maxLength={12}
                 />
+                </div>
+                <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
               </div>
               <div className="space-y-2">
                 <Label>

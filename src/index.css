@@ -116,3 +116,26 @@ All colors MUST be HSL.
     @apply bg-background text-foreground overflow-x-hidden;
   }
 }
+
+/* Leaflet Map Custom Styles */
+.custom-map-marker {
+  background: transparent;
+  border: none;
+}
+
+.custom-map-marker svg {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+  transition: transform 0.2s ease;
+}
+
+.custom-map-marker:hover svg {
+  transform: scale(1.1);
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+}
+
+.leaflet-popup-content {
+  margin: 8px;
+}

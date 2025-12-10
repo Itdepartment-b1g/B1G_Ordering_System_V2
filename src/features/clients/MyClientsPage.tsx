@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
@@ -66,7 +67,8 @@ export default function MyClientsPage() {
     city: '',
     address: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
-    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
+    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
+    has_forge: false
   });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -250,12 +252,16 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
   const handleOpenEdit = (client: Client) => {
     setEditingClient(client);
+    // Strip +63 prefix from phone for editing
+    const phoneNumber = client.phone || '';
+    const phoneWithoutPrefix = phoneNumber.startsWith('+63 ') ? phoneNumber.slice(4) : phoneNumber;
+    
     setEditForm({
       photo: client.photo || '',
       name: client.name,
       company: client.company,
       email: client.email,
-      phone: client.phone,
+      phone: phoneWithoutPrefix,
       account_type: client.account_type || 'Standard Accounts',
       category: client.category || 'Open'
     });
@@ -334,7 +340,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
         .update({
           name: editForm.name,
           email: editForm.email,
-          phone: editForm.phone || null,
+          phone: editForm.phone ? `+63 ${editForm.phone}` : null,
           company: editForm.company || null,
           account_type: editForm.account_type,
           category: editForm.category,
@@ -846,13 +852,44 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
       city: '',
       address: '',
       account_type: 'Standard Accounts',
-      category: 'Open'
+      category: 'Open',
+      has_forge: false
     });
     setNewClientPhoto(null);
     setCapturedLocation(null);
     setPrewarmPosition(null);
     setIsPrewarmingLocation(false);
     closeCamera();
+  };
+
+  // Philippine phone number formatter
+  const formatPhilippinePhone = (value: string): string => {
+    // Remove all non-digit characters
+    const digits = value.replace(/\D/g, '');
+    
+    // If starts with 63, remove it (we'll add +63 prefix separately)
+    let phoneDigits = digits.startsWith('63') ? digits.slice(2) : digits;
+    
+    // Limit to 10 digits (after country code)
+    phoneDigits = phoneDigits.slice(0, 10);
+    
+    // Format: 9XX-XXX-XXXX
+    if (phoneDigits.length <= 3) {
+      return phoneDigits;
+    } else if (phoneDigits.length <= 6) {
+      return `${phoneDigits.slice(0, 3)}-${phoneDigits.slice(3)}`;
+    } else {
+      return `${phoneDigits.slice(0, 3)}-${phoneDigits.slice(3, 6)}-${phoneDigits.slice(6)}`;
+    }
+  };
+
+  const handlePhoneChange = (value: string, formType: 'add' | 'edit') => {
+    const formatted = formatPhilippinePhone(value);
+    if (formType === 'add') {
+      setFormData({ ...formData, phone: formatted });
+    } else {
+      setEditForm({ ...editForm, phone: formatted });
+    }
   };
 
   const handleAddClient = async () => {
@@ -976,19 +1013,26 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
       const approvalNotes = cityMatches ? null : `City "${clientCityValue || 'N/A'}" outside assigned cities: ${agentCities.join(', ')}`;
       const approvedAt = cityMatches ? nowIso : null;
 
+      // Validate company_id
+      if (!user.company_id) {
+        throw new Error('User company_id not found');
+      }
+
       // Save client to database
       const { data, error } = await supabase
         .from('clients')
         .insert({
+          company_id: user.company_id,
           agent_id: user.id,
           name: formData.name,
           email: formData.email,
-          phone: formData.phone || null,
+          phone: formData.phone ? `+63 ${formData.phone}` : null,
           company: formData.company || null,
           city: formData.city || null,
           address: formData.address || null,
           account_type: formData.account_type,
           category: formData.category,
+          has_forge: formData.has_forge,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           location_latitude: capturedLocation?.latitude || null,
@@ -1200,12 +1244,23 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Phone</Label>
+                <Label>Phone Number</Label>
+                <div className="flex gap-2">
+                  <div className="w-16">
                 <Input 
-                  placeholder="555-0000" 
+                      value="+63"
+                      disabled
+                      className="bg-muted text-center font-semibold"
+                    />
+                  </div>
+                  <Input 
+                    placeholder="9XX-XXX-XXXX" 
                   value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    onChange={(e) => handlePhoneChange(e.target.value, 'add')}
+                    maxLength={12}
                 />
+                </div>
+                <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
               </div>
               <div className="space-y-2">
                 <Label>
@@ -1330,6 +1385,30 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                   </SelectContent>
                 </Select>
               </div>
+              
+              {/* Has Forge Field */}
+              <div className="space-y-3">
+                <Label>Has Forge?</Label>
+                <RadioGroup
+                  value={formData.has_forge ? 'yes' : 'no'}
+                  onValueChange={(value) => setFormData({ ...formData, has_forge: value === 'yes' })}
+                  className="flex gap-4"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="yes" id="add-has-forge-yes" />
+                    <Label htmlFor="add-has-forge-yes" className="font-normal cursor-pointer">
+                      Yes
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="no" id="add-has-forge-no" />
+                    <Label htmlFor="add-has-forge-no" className="font-normal cursor-pointer">
+                      No
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
               <Button className="w-full" onClick={handleAddClient}>
                 Add Client
               </Button>
@@ -1833,12 +1912,23 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Phone</Label>
+                <Label>Phone Number</Label>
+                <div className="flex gap-2">
+                  <div className="w-16">
                 <Input 
-                  placeholder="555-0000" 
+                      value="+63"
+                      disabled
+                      className="bg-muted text-center font-semibold"
+                    />
+                  </div>
+                  <Input 
+                    placeholder="9XX-XXX-XXXX" 
                   value={editForm.phone}
-                  onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                    onChange={(e) => handlePhoneChange(e.target.value, 'edit')}
+                    maxLength={12}
                 />
+                </div>
+                <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
               </div>
               <div className="space-y-2">
                 <Label>Type Of Account</Label>

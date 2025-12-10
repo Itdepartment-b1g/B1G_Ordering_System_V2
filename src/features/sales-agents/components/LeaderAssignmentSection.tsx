@@ -41,12 +41,11 @@ export function LeaderAssignmentSection() {
     try {
       setLoading(true);
       
-      // Fetch mobile sales agents
+      // Fetch mobile sales agents (role = mobile_sales)
       const { data: agentsData, error: agentsError } = await supabase
         .from('profiles')
         .select('*')
-        .eq('role', 'sales_agent')
-        .eq('position', 'Mobile Sales')
+        .eq('role', 'mobile_sales')
         .order('created_at', { ascending: false });
 
       if (agentsError) throw agentsError;
@@ -108,10 +107,10 @@ export function LeaderAssignmentSection() {
     setPromoting(true);
     
     try {
-      // Update agent position to Leader in database
+      // Update agent role to team_leader in database
       const { error } = await supabase
         .from('profiles')
-        .update({ position: 'Leader' })
+        .update({ role: 'team_leader' })
         .eq('id', selectedAgent);
 
       if (error) throw error;
@@ -120,7 +119,7 @@ export function LeaderAssignmentSection() {
       
       toast({
         title: 'Success',
-        description: `${agent?.name} has been promoted to Leader position`
+        description: `${agent?.name} has been promoted to Team Leader`
       });
       
       // Refresh data

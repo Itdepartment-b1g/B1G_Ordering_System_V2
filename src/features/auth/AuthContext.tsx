@@ -2,6 +2,8 @@ import { useState, useEffect, ReactNode, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { getCachedProfile, setCachedProfile, clearProfileCache } from '@/lib/profileCache';
+import { startTokenMonitoring, stopTokenMonitoring, cleanupLocalStorage, logSecurityEvent } from '@/lib/security';
 import { AuthContext } from './hooks';
 import type { User, LoginResult } from './types';
 
@@ -14,18 +16,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Load user session on mount
   useEffect(() => {
     console.log('🚀 [AuthContext] Initializing auth...');
-    initializeAuth(); // Call the new initialization function
+    
+    // Clean up deprecated localStorage items
+    cleanupLocalStorage();
+    
+    // Start security monitoring
+    startTokenMonitoring(() => {
+      logSecurityEvent('Token tampering detected');
+      toast({
+        title: 'Security Alert',
+        description: 'Suspicious activity detected. Please log in again.',
+        variant: 'destructive'
+      });
+      logout();
+    });
+    
+    initializeAuth(); 
 
-    // Set up the auth state change listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
       if (session?.user) {
-        // Skip optimistic update for token refresh events if we already have a user
-        // This prevents overwriting the correct role from DB with wrong metadata
+   
         if (event === 'TOKEN_REFRESHED' && userRef.current?.id === session.user.id) {
           console.log('🔄 [AuthContext] Token refreshed, checking company status...');
-          // Still check company status on token refresh
           const currentUser = userRef.current;
           if (currentUser?.company_id && currentUser.role !== 'system_administrator') {
             const { data: company } = await supabase
@@ -49,25 +63,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return;
         }
-        
-        // If we have a session, load the profile
-        // We pass the session user ID to ensure we load the correct profile
+  
         await loadUserProfile(session);
       } else if (event === 'SIGNED_OUT') {
-        // When a user signs out, clear the user and set loading to false
         console.log('👋 [AuthContext] User signed out, clearing user');
-        // Clean up company status subscription
         if ((window as any).companyStatusChannel) {
           unsubscribe((window as any).companyStatusChannel);
           (window as any).companyStatusChannel = null;
         }
         setUser(null);
-        userRef.current = null; // Clear ref too
+        userRef.current = null; 
         setIsLoading(false);
       }
     });
 
-    // Set up periodic company status check as backup (every 60 seconds)
     const companyStatusCheckInterval = setInterval(async () => {
       const currentUser = userRef.current;
       if (currentUser?.company_id && currentUser.role !== 'system_administrator') {
@@ -89,19 +98,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         }
       }
-    }, 60000); // Check every 60 seconds
+    }, 60000); 
 
     return () => {
       subscription.unsubscribe();
       clearInterval(companyStatusCheckInterval);
+      stopTokenMonitoring();
     };
-  }, []);
+  }, [toast]);
 
   const initializeAuth = async () => {
     try {
       setIsLoading(true);
 
-      // Get current session
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
       if (sessionError) {
@@ -113,14 +122,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (!session?.user) {
-        // No session is normal for unauthenticated users
         setUser(null);
         userRef.current = null;
         setIsLoading(false);
         return;
       }
 
-      // Only load profile if we actually have a session
       await loadUserProfile(session);
     } catch (error) {
       console.error('❌ [AuthContext] Auth initialization error:', error);
@@ -132,36 +139,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loadUserProfile = async (session: any) => {
     const userId = session.user.id;
-    const metadata = session.user.user_metadata;
 
-    // 1. OPTIMISTIC UPDATE: Set user immediately from session metadata
-    // This ensures the UI renders INSTANTLY without waiting for the DB
-    // BUT: Only do optimistic update if we don't already have a user with a role from DB
-    // This prevents overwriting correct roles with wrong metadata on token refresh
-    const currentUser = userRef.current;
-    
-    // If we already have a user with a role from DB, don't overwrite with optimistic data
-    if (currentUser?.id === userId && currentUser?.role && currentUser.role !== 'mobile_sales') {
-      console.log('🛡️ [AuthContext] Preserving existing role from DB:', currentUser.role);
-      setIsLoading(false);
-      // Still fetch from DB in background to ensure we have latest data, but don't overwrite yet
+    // 1. CACHE-FIRST: Try to load from cache for instant rendering
+    const cachedProfile = getCachedProfile();
+    if (cachedProfile && cachedProfile.id === userId) {
+      console.log('⚡ [AuthContext] Cache hit - loading instantly');
+      setUser(cachedProfile);
+      userRef.current = cachedProfile;
+      setIsLoading(false); // Unblock UI immediately
+      // Continue to fetch fresh data in background
     } else {
-      // Otherwise, create optimistic user
-      const optimisticUser: User = {
-        id: userId,
-        email: session.user.email || '',
-        role: metadata?.role || 'mobile_sales', // Default fallback (will be updated from DB)
-        status: 'active', // Assume active initially to allow access
-        full_name: metadata?.full_name || 'User',
-        company_id: metadata?.company_id || undefined, // Will be updated from DB
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
+      // 2. FALLBACK: Use session metadata or existing user
+      const metadata = session.user.user_metadata;
+      const currentUser = userRef.current;
+      
+      if (currentUser?.id === userId && currentUser?.role && currentUser.role !== 'mobile_sales') {
+        console.log('🛡️ [AuthContext] Preserving existing user from memory');
+        setIsLoading(false);
+      } else {
+        const basicUser: User = {
+          id: userId,
+          email: session.user.email || '',
+          role: metadata?.role || 'mobile_sales', 
+          status: 'active', 
+          full_name: metadata?.full_name || 'User',
+          company_id: metadata?.company_id || undefined, 
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
 
-      console.log('⚡ [AuthContext] Optimistic login for:', optimisticUser.email);
-      setUser(optimisticUser);
-      userRef.current = optimisticUser;
-      setIsLoading(false); // <--- CRITICAL: Unblock UI immediately
+        console.log('⚡ [AuthContext] Using session metadata');
+        setUser(basicUser);
+        userRef.current = basicUser;
+        setIsLoading(false);
+      }
     }
 
     // 2. BACKGROUND VERIFICATION: Fetch fresh data from DB
@@ -224,6 +235,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const updatedUser = profile as User;
           setUser(updatedUser);
           userRef.current = updatedUser; // Keep ref in sync
+          setCachedProfile(updatedUser); // Cache for next time
         }
         return;
       }
@@ -293,6 +305,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const updatedUser = profile as User;
       setUser(updatedUser);
       userRef.current = updatedUser; // Keep ref in sync
+      setCachedProfile(updatedUser); // Cache for faster subsequent loads
 
       // Set up real-time subscription to monitor company status changes (only for non-system-admins with company_id)
       if (updatedUser.company_id && updatedUser.role !== 'system_administrator') {
@@ -315,7 +328,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 description: "Your company account has been deactivated. Please contact your system administrator.",
                 variant: "destructive",
               });
-            }
+      }
           }
         });
         
@@ -358,8 +371,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Check user status
           if (profile.status !== 'active') {
             await supabase.auth.signOut();
-            return { success: false, error: 'account_restricted' };
-          }
+          return { success: false, error: 'account_restricted' };
+        }
 
           // Check company status (skip for system_administrator)
           if (profile.company_id && profile.role !== 'system_administrator') {
@@ -397,6 +410,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await supabase.auth.signOut();
       setUser(null);
       userRef.current = null;
+      clearProfileCache(); // Clear cached profile on logout
+      stopTokenMonitoring(); // Stop security monitoring
+      console.log('👋 [AuthContext] Logged out and cleared cache');
     } catch (error) {
       console.error('Logout error:', error);
     } finally {

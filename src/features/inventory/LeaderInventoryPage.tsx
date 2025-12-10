@@ -54,7 +54,7 @@ export default function LeaderInventoryPage() {
 
   // Check if user is a leader or admin
   useEffect(() => {
-    if (user && user.position !== 'Leader' && user.role !== 'admin') {
+    if (user && user.role !== 'team_leader' && user.role !== 'admin') {
       toast({
         title: 'Access Denied',
         description: 'Only leaders and admins can access this page',
@@ -114,7 +114,7 @@ export default function LeaderInventoryPage() {
               position
             )
           `)
-          .eq('profiles.position', 'Leader')
+          .eq('profiles.role', 'team_leader')
           .gt('stock', 0);  // Only fetch items with stock > 0
 
         if (inventoryError) throw inventoryError;
@@ -338,7 +338,7 @@ export default function LeaderInventoryPage() {
               region,
               city,
               status,
-              position
+              role
             ),
             leader_profiles:profiles!leader_teams_leader_id_fkey(
               id,
@@ -363,7 +363,7 @@ export default function LeaderInventoryPage() {
               region,
               city,
               status,
-              position
+              role
             )
           `)
           .eq('leader_id', user.id);
@@ -466,7 +466,7 @@ export default function LeaderInventoryPage() {
   };
 
   useEffect(() => {
-    if (user && user.position === 'Leader') {
+    if (user && user.role === 'team_leader') {
       fetchLeaderInventory();
       fetchTeamMembers();
     }
@@ -474,7 +474,7 @@ export default function LeaderInventoryPage() {
 
   // Real-time subscriptions for seamless updates
   useEffect(() => {
-    if (!user || (user.position !== 'Leader' && user.role !== 'admin')) return;
+    if (!user || (user.role !== 'team_leader' && user.role !== 'admin')) return;
 
     // Debounce timer for smooth real-time updates
     let inventoryUpdateTimer: NodeJS.Timeout | null = null;
@@ -516,7 +516,7 @@ export default function LeaderInventoryPage() {
             console.log('🔄 Admin: Refreshing due to inventory change');
             debouncedInventoryRefresh();
             debouncedTeamRefresh();
-          } else if (user.position === 'Leader') {
+          } else if (user.role === 'team_leader') {
             // For leaders, check if the change affects them or their team
             const agentId = (payload.new as any)?.agent_id || (payload.old as any)?.agent_id;
             const oldStock = (payload.old as any)?.stock || 0;
@@ -848,7 +848,7 @@ export default function LeaderInventoryPage() {
       return acc;
     }, {} as Record<string, any[]>);
 
-  if (!user || (user.position !== 'Leader' && user.role !== 'admin')) {
+  if (!user || (user.role !== 'team_leader' && user.role !== 'admin')) {
     return (
       <div className="p-8 space-y-6">
         <Card>

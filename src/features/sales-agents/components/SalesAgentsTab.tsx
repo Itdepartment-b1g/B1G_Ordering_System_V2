@@ -119,6 +119,7 @@ const getRoleLabel = (role?: UserRole | '') => {
   const [editCityInput, setEditCityInput] = useState('');
   const isRoleSelected = Boolean(newAgent.role);
   const addDialogRequiresTerritory = roleRequiresTerritory(newAgent.role);
+  const editDialogRequiresTerritory = editingAgent ? roleRequiresTerritory(editingAgent.role) : false;
 
   const { toast } = useToast();
 
@@ -427,12 +428,12 @@ const getRoleLabel = (role?: UserRole | '') => {
         
         if (profileError) {
           console.error('Error fetching profile:', profileError);
-          toast({
+        toast({
             title: 'Profile Issue',
             description: 'Unable to load your profile. Please refresh the page or contact support.',
-            variant: 'destructive'
-          });
-          return;
+          variant: 'destructive'
+        });
+        return;
         }
         
         if (profileData?.company_id) {
@@ -453,8 +454,8 @@ const getRoleLabel = (role?: UserRole | '') => {
       const regionValue = needsTerritoryFields ? newAgent.region?.trim() || null : null;
       const cityValue =
         needsTerritoryFields && newAgent.cities.length > 0
-          ? newAgent.cities.join(',')
-          : null;
+        ? newAgent.cities.join(',')
+        : null;
 
       console.log('Creating user with company_id:', companyId);
 
@@ -712,7 +713,7 @@ const getRoleLabel = (role?: UserRole | '') => {
                       {agent.status}
                     </Badge>
                   </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                     <div>
                       <div className="text-xs text-muted-foreground">Phone</div>
                       <div>{agent.phone || '—'}</div>
@@ -916,7 +917,7 @@ const getRoleLabel = (role?: UserRole | '') => {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className={`grid gap-4 ${editDialogRequiresTerritory ? 'md:grid-cols-2' : 'grid-cols-1 md:grid-cols-1'}`}>
               <div>
                 <Label htmlFor="phone">Phone</Label>
                 <Input
@@ -930,6 +931,7 @@ const getRoleLabel = (role?: UserRole | '') => {
                   maxLength={17}
                 />
               </div>
+              {editDialogRequiresTerritory && (
               <div>
                 <Label htmlFor="region">Region</Label>
                 <Input
@@ -938,7 +940,9 @@ const getRoleLabel = (role?: UserRole | '') => {
                   onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
                 />
               </div>
+              )}
             </div>
+            {editDialogRequiresTerritory ? (
             <div>
               <Label htmlFor="city">Cities</Label>
               <div className="space-y-2">
@@ -948,7 +952,12 @@ const getRoleLabel = (role?: UserRole | '') => {
                     placeholder="Enter city name"
                     value={editCityInput}
                     onChange={(e) => setEditCityInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addCityToEditForm()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addCityToEditForm();
+                        }
+                      }}
                   />
                   <Button type="button" onClick={addCityToEditForm} variant="outline">
                     Add
@@ -972,6 +981,11 @@ const getRoleLabel = (role?: UserRole | '') => {
                 )}
               </div>
             </div>
+            ) : (
+              <div className="rounded-md border border-dashed bg-muted/40 p-3 text-xs text-muted-foreground">
+                Region and cities are not required for {getRoleLabel(editingAgent?.role)} users.
+              </div>
+            )}
 
             <div className="flex items-center space-x-2">
               <Switch
@@ -1104,11 +1118,11 @@ const getRoleLabel = (role?: UserRole | '') => {
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
-                  <SelectItem value="team_leader">Team Leader</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="finance">Finance</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="finance">Finance</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                  <SelectItem value="team_leader">Team Leader</SelectItem>
+                  <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
                 </SelectContent>
               </Select>
               <p className="mt-2 text-xs text-muted-foreground">
@@ -1127,93 +1141,93 @@ const getRoleLabel = (role?: UserRole | '') => {
               className={`space-y-4 ${!isRoleSelected ? 'opacity-50 pointer-events-none select-none' : ''}`}
             >
               <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <Label htmlFor="add-name">Name</Label>
-                  <Input
-                    id="add-name"
-                    placeholder="Enter name"
-                    value={newAgent.name}
-                    onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="add-email">Email</Label>
-                  <Input
-                    id="add-email"
-                    type="email"
-                    placeholder="Enter email"
-                    value={newAgent.email}
-                    onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })}
-                  />
-                </div>
+              <div>
+                <Label htmlFor="add-name">Name</Label>
+                <Input
+                  id="add-name"
+                  placeholder="Enter name"
+                  value={newAgent.name}
+                  onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
+                />
               </div>
+              <div>
+                <Label htmlFor="add-email">Email</Label>
+                <Input
+                  id="add-email"
+                  type="email"
+                  placeholder="Enter email"
+                  value={newAgent.email}
+                  onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })}
+                />
+              </div>
+            </div>
 
               <div className={`grid gap-4 ${addDialogRequiresTerritory ? 'md:grid-cols-2' : 'grid-cols-1 md:grid-cols-1'}`}>
-                <div>
-                  <Label htmlFor="add-phone">Phone</Label>
-                  <Input
-                    id="add-phone"
-                    value={newAgent.phone}
-                    onChange={(e) => {
-                      const formatted = formatPhoneNumber(e.target.value);
-                      setNewAgent({ ...newAgent, phone: formatted });
-                    }}
-                    placeholder="+63 917 555 0101"
-                    maxLength={17}
-                  />
-                </div>
-                {addDialogRequiresTerritory && (
-                  <div>
-                    <Label htmlFor="add-region">Region</Label>
-                    <Input
-                      id="add-region"
-                      placeholder="Enter region"
-                      value={newAgent.region}
-                      onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })}
-                    />
-                  </div>
-                )}
+              <div>
+                <Label htmlFor="add-phone">Phone</Label>
+                <Input
+                  id="add-phone"
+                  value={newAgent.phone}
+                  onChange={(e) => {
+                    const formatted = formatPhoneNumber(e.target.value);
+                    setNewAgent({ ...newAgent, phone: formatted });
+                  }}
+                  placeholder="+63 917 555 0101"
+                  maxLength={17}
+                />
               </div>
+                {addDialogRequiresTerritory && (
+              <div>
+                <Label htmlFor="add-region">Region</Label>
+                <Input
+                  id="add-region"
+                  placeholder="Enter region"
+                  value={newAgent.region}
+                  onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })}
+                />
+              </div>
+                )}
+            </div>
 
               {addDialogRequiresTerritory && (
-                <div>
-                  <Label htmlFor="add-city">Cities</Label>
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <Input
-                        id="add-city"
-                        placeholder="Enter city name"
-                        value={currentCityInput}
-                        onChange={(e) => setCurrentCityInput(e.target.value)}
+            <div>
+              <Label htmlFor="add-city">Cities</Label>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <Input
+                    id="add-city"
+                    placeholder="Enter city name"
+                    value={currentCityInput}
+                    onChange={(e) => setCurrentCityInput(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
                             addCityToNewAgent();
                           }
                         }}
-                      />
-                      <Button type="button" onClick={addCityToNewAgent} variant="outline">
-                        Add
-                      </Button>
-                    </div>
-                    {newAgent.cities.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {newAgent.cities.map((city, index) => (
-                          <Badge key={index} variant="outline" className="text-xs">
-                            {city}
-                            <button
-                              type="button"
-                              onClick={() => removeCityFromNewAgent(city)}
-                              className="ml-1 hover:text-red-500"
-                            >
-                              ×
-                            </button>
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  />
+                  <Button type="button" onClick={addCityToNewAgent} variant="outline">
+                    Add
+                  </Button>
                 </div>
+                {newAgent.cities.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {newAgent.cities.map((city, index) => (
+                      <Badge key={index} variant="outline" className="text-xs">
+                        {city}
+                        <button
+                          type="button"
+                          onClick={() => removeCityFromNewAgent(city)}
+                          className="ml-1 hover:text-red-500"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
               )}
             </fieldset>
 

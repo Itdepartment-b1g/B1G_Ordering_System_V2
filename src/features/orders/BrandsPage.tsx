@@ -1,0 +1,849 @@
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Plus, Search, Edit, Trash2, Loader2, Package } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/features/auth';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+interface Brand {
+  id: string;
+  name: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Variant {
+  id: string;
+  brand_id: string;
+  name: string;
+  variant_type: string;
+  description?: string;
+  sku?: string;
+  created_at: string;
+}
+
+export default function BrandsPage() {
+  const { user } = useAuth();
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [variants, setVariants] = useState<Variant[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedBrand, setSelectedBrand] = useState<string>('');
+  
+  // Dialog states
+  const [createBrandDialogOpen, setCreateBrandDialogOpen] = useState(false);
+  const [editBrandDialogOpen, setEditBrandDialogOpen] = useState(false);
+  const [deleteBrandDialogOpen, setDeleteBrandDialogOpen] = useState(false);
+  const [createVariantDialogOpen, setCreateVariantDialogOpen] = useState(false);
+  const [editVariantDialogOpen, setEditVariantDialogOpen] = useState(false);
+  const [deleteVariantDialogOpen, setDeleteVariantDialogOpen] = useState(false);
+  
+  // Form states
+  const [brandForm, setBrandForm] = useState({ name: '', description: '' });
+  const [variantForm, setVariantForm] = useState({ 
+    name: '', 
+    variant_type: 'flavor', 
+    description: '', 
+    sku: '',
+    brand_id: ''
+  });
+  const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
+  const [editingVariant, setEditingVariant] = useState<Variant | null>(null);
+  const [deletingBrand, setDeletingBrand] = useState<Brand | null>(null);
+  const [deletingVariant, setDeletingVariant] = useState<Variant | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const { toast } = useToast();
+
+  // Fetch brands and variants
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      
+      const { data: brandsData, error: brandsError } = await supabase
+        .from('brands')
+        .select('*')
+        .order('name');
+      
+      if (brandsError) throw brandsError;
+      setBrands(brandsData || []);
+
+      const { data: variantsData, error: variantsError } = await supabase
+        .from('variants')
+        .select('*')
+        .order('name');
+      
+      if (variantsError) throw variantsError;
+      setVariants(variantsData || []);
+    } catch (error: any) {
+      console.error('Error fetching data:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load brands and variants',
+        variant: 'destructive'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Filter brands by search query
+  const filteredBrands = brands.filter(brand =>
+    brand.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // Get variants for selected brand
+  const brandVariants = selectedBrand 
+    ? variants.filter(v => v.brand_id === selectedBrand)
+    : [];
+
+  // Create Brand
+  const handleCreateBrand = async () => {
+    if (!brandForm.name.trim()) {
+      toast({ title: 'Error', description: 'Brand name is required', variant: 'destructive' });
+      return;
+    }
+
+    if (!user?.company_id) {
+      toast({ title: 'Error', description: 'User company information not found', variant: 'destructive' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('brands')
+        .insert({
+          company_id: user.company_id,
+          name: brandForm.name.trim(),
+          description: brandForm.description.trim() || null
+        });
+
+      if (error) throw error;
+
+      toast({ title: 'Success', description: 'Brand created successfully' });
+      setBrandForm({ name: '', description: '' });
+      setCreateBrandDialogOpen(false);
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error creating brand:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to create brand',
+        variant: 'destructive'
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Edit Brand
+  const handleEditBrand = async () => {
+    if (!editingBrand || !brandForm.name.trim()) {
+      toast({ title: 'Error', description: 'Brand name is required', variant: 'destructive' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('brands')
+        .update({
+          name: brandForm.name.trim(),
+          description: brandForm.description.trim() || null
+        })
+        .eq('id', editingBrand.id);
+
+      if (error) throw error;
+
+      toast({ title: 'Success', description: 'Brand updated successfully' });
+      setEditBrandDialogOpen(false);
+      setEditingBrand(null);
+      setBrandForm({ name: '', description: '' });
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error updating brand:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to update brand',
+        variant: 'destructive'
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Delete Brand
+  const handleDeleteBrand = async () => {
+    if (!deletingBrand) return;
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('brands')
+        .delete()
+        .eq('id', deletingBrand.id);
+
+      if (error) throw error;
+
+      toast({ title: 'Success', description: 'Brand deleted successfully' });
+      setDeleteBrandDialogOpen(false);
+      setDeletingBrand(null);
+      if (selectedBrand === deletingBrand.id) {
+        setSelectedBrand('');
+      }
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error deleting brand:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to delete brand. It may have associated variants.',
+        variant: 'destructive'
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Create Variant
+  const handleCreateVariant = async () => {
+    if (!variantForm.name.trim() || !variantForm.brand_id) {
+      toast({ title: 'Error', description: 'Variant name and brand are required', variant: 'destructive' });
+      return;
+    }
+
+    if (!user?.company_id) {
+      toast({ title: 'Error', description: 'User company information not found', variant: 'destructive' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      // Convert 'posm' to 'POSM' for database
+      const dbVariantType = variantForm.variant_type === 'posm' ? 'POSM' : variantForm.variant_type;
+      
+      const { error } = await supabase
+        .from('variants')
+        .insert({
+          company_id: user.company_id,
+          brand_id: variantForm.brand_id,
+          name: variantForm.name.trim(),
+          variant_type: dbVariantType,
+          description: variantForm.description.trim() || null,
+          sku: variantForm.sku.trim() || null
+        });
+
+      if (error) throw error;
+
+      toast({ title: 'Success', description: 'Variant created successfully' });
+      setVariantForm({ name: '', variant_type: 'flavor', description: '', sku: '', brand_id: '' });
+      setCreateVariantDialogOpen(false);
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error creating variant:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to create variant',
+        variant: 'destructive'
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Edit Variant
+  const handleEditVariant = async () => {
+    if (!editingVariant || !variantForm.name.trim()) {
+      toast({ title: 'Error', description: 'Variant name is required', variant: 'destructive' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      // Convert 'posm' to 'POSM' for database
+      const dbVariantType = variantForm.variant_type === 'posm' ? 'POSM' : variantForm.variant_type;
+      
+      const { error } = await supabase
+        .from('variants')
+        .update({
+          name: variantForm.name.trim(),
+          variant_type: dbVariantType,
+          description: variantForm.description.trim() || null,
+          sku: variantForm.sku.trim() || null
+        })
+        .eq('id', editingVariant.id);
+
+      if (error) throw error;
+
+      toast({ title: 'Success', description: 'Variant updated successfully' });
+      setEditVariantDialogOpen(false);
+      setEditingVariant(null);
+      setVariantForm({ name: '', variant_type: 'flavor', description: '', sku: '', brand_id: '' });
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error updating variant:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to update variant',
+        variant: 'destructive'
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Delete Variant
+  const handleDeleteVariant = async () => {
+    if (!deletingVariant) return;
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('variants')
+        .delete()
+        .eq('id', deletingVariant.id);
+
+      if (error) throw error;
+
+      toast({ title: 'Success', description: 'Variant deleted successfully' });
+      setDeleteVariantDialogOpen(false);
+      setDeletingVariant(null);
+      await fetchData();
+    } catch (error: any) {
+      console.error('Error deleting variant:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to delete variant. It may be used in inventory.',
+        variant: 'destructive'
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openEditBrandDialog = (brand: Brand) => {
+    setEditingBrand(brand);
+    setBrandForm({ name: brand.name, description: brand.description || '' });
+    setEditBrandDialogOpen(true);
+  };
+
+  const openEditVariantDialog = (variant: Variant) => {
+    setEditingVariant(variant);
+    const variantType = variant.variant_type.toLowerCase() as 'flavor' | 'battery' | 'posm';
+    setVariantForm({
+      name: variant.name,
+      variant_type: variantType,
+      description: variant.description || '',
+      sku: variant.sku || '',
+      brand_id: variant.brand_id
+    });
+    setEditVariantDialogOpen(true);
+  };
+
+  const getVariantTypeBadge = (type: string) => {
+    const lowerType = type.toLowerCase();
+    if (lowerType === 'flavor') return 'bg-blue-100 text-blue-700';
+    if (lowerType === 'battery') return 'bg-green-100 text-green-700';
+    if (lowerType === 'posm') return 'bg-purple-100 text-purple-700';
+    return 'bg-gray-100 text-gray-700';
+  };
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-8 space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold">Brand Management</h1>
+          <p className="text-muted-foreground">Manage brands and their product variants</p>
+        </div>
+        <Button onClick={() => setCreateBrandDialogOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Create Brand
+        </Button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Brands</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{brands.length}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Variants</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{variants.length}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Variant Types</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {new Set(variants.map(v => v.variant_type)).size}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Brands List */}
+        <Card className="lg:col-span-1">
+          <CardHeader>
+            <CardTitle>Brands</CardTitle>
+            <div className="relative mt-2">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search brands..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 max-h-[600px] overflow-y-auto">
+              {filteredBrands.map(brand => (
+                <div
+                  key={brand.id}
+                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                    selectedBrand === brand.id 
+                      ? 'bg-primary/10 border-primary' 
+                      : 'hover:bg-muted'
+                  }`}
+                  onClick={() => setSelectedBrand(brand.id)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h4 className="font-medium">{brand.name}</h4>
+                      {brand.description && (
+                        <p className="text-sm text-muted-foreground truncate">
+                          {brand.description}
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {variants.filter(v => v.brand_id === brand.id).length} variants
+                      </p>
+                    </div>
+                    <div className="flex gap-1 ml-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditBrandDialog(brand);
+                        }}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeletingBrand(brand);
+                          setDeleteBrandDialogOpen(true);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Variants for Selected Brand */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>
+                  {selectedBrand 
+                    ? `${brands.find(b => b.id === selectedBrand)?.name} - Variants`
+                    : 'Select a Brand'}
+                </CardTitle>
+                {selectedBrand && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Manage variants for this brand
+                  </p>
+                )}
+              </div>
+              {selectedBrand && (
+                <Button 
+                  onClick={() => {
+                    setVariantForm({ ...variantForm, brand_id: selectedBrand });
+                    setCreateVariantDialogOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Variant
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {!selectedBrand ? (
+              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                <Package className="h-12 w-12 mb-2" />
+                <p>Select a brand to view and manage its variants</p>
+              </div>
+            ) : brandVariants.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                <Package className="h-12 w-12 mb-2" />
+                <p>No variants found for this brand</p>
+                <Button 
+                  variant="outline" 
+                  className="mt-4"
+                  onClick={() => {
+                    setVariantForm({ ...variantForm, brand_id: selectedBrand });
+                    setCreateVariantDialogOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add First Variant
+                </Button>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>SKU</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {brandVariants.map(variant => (
+                    <TableRow key={variant.id}>
+                      <TableCell className="font-medium">{variant.name}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className={getVariantTypeBadge(variant.variant_type)}>
+                          {variant.variant_type.toUpperCase()}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{variant.sku || '-'}</TableCell>
+                      <TableCell className="max-w-xs truncate">
+                        {variant.description || '-'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditVariantDialog(variant)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setDeletingVariant(variant);
+                              setDeleteVariantDialogOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Create Brand Dialog */}
+      <Dialog open={createBrandDialogOpen} onOpenChange={setCreateBrandDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Brand</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Brand Name *</Label>
+              <Input
+                placeholder="e.g., RELX, JUUL"
+                value={brandForm.name}
+                onChange={(e) => setBrandForm({ ...brandForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description (Optional)</Label>
+              <Input
+                placeholder="Brief description of the brand"
+                value={brandForm.description}
+                onChange={(e) => setBrandForm({ ...brandForm, description: e.target.value })}
+              />
+            </div>
+            <Button className="w-full" onClick={handleCreateBrand} disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Brand'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Brand Dialog */}
+      <Dialog open={editBrandDialogOpen} onOpenChange={setEditBrandDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Brand</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Brand Name *</Label>
+              <Input
+                placeholder="e.g., RELX, JUUL"
+                value={brandForm.name}
+                onChange={(e) => setBrandForm({ ...brandForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description (Optional)</Label>
+              <Input
+                placeholder="Brief description of the brand"
+                value={brandForm.description}
+                onChange={(e) => setBrandForm({ ...brandForm, description: e.target.value })}
+              />
+            </div>
+            <Button className="w-full" onClick={handleEditBrand} disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                'Update Brand'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Brand Confirmation */}
+      <AlertDialog open={deleteBrandDialogOpen} onOpenChange={setDeleteBrandDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Brand</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{deletingBrand?.name}</strong>? 
+              This action cannot be undone. All variants associated with this brand must be deleted or reassigned first.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteBrand}
+              disabled={submitting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Create Variant Dialog */}
+      <Dialog open={createVariantDialogOpen} onOpenChange={setCreateVariantDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create New Variant</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Variant Name *</Label>
+              <Input
+                placeholder="e.g., Mint, Mango, Display Stand"
+                value={variantForm.name}
+                onChange={(e) => setVariantForm({ ...variantForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Type *</Label>
+              <Tabs 
+                value={variantForm.variant_type} 
+                onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
+              >
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="flavor">Flavor</TabsTrigger>
+                  <TabsTrigger value="battery">Battery</TabsTrigger>
+                  <TabsTrigger value="posm">POSM</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+            <div className="space-y-2">
+              <Label>SKU (Optional)</Label>
+              <Input
+                placeholder="e.g., RELX-MINT-001"
+                value={variantForm.sku}
+                onChange={(e) => setVariantForm({ ...variantForm, sku: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description (Optional)</Label>
+              <Input
+                placeholder="Additional details about this variant"
+                value={variantForm.description}
+                onChange={(e) => setVariantForm({ ...variantForm, description: e.target.value })}
+              />
+            </div>
+            <Button className="w-full" onClick={handleCreateVariant} disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Variant'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Variant Dialog */}
+      <Dialog open={editVariantDialogOpen} onOpenChange={setEditVariantDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Variant</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Variant Name *</Label>
+              <Input
+                placeholder="e.g., Mint, Mango, Display Stand"
+                value={variantForm.name}
+                onChange={(e) => setVariantForm({ ...variantForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Type *</Label>
+              <Tabs 
+                value={variantForm.variant_type} 
+                onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
+              >
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="flavor">Flavor</TabsTrigger>
+                  <TabsTrigger value="battery">Battery</TabsTrigger>
+                  <TabsTrigger value="posm">POSM</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+            <div className="space-y-2">
+              <Label>SKU (Optional)</Label>
+              <Input
+                placeholder="e.g., RELX-MINT-001"
+                value={variantForm.sku}
+                onChange={(e) => setVariantForm({ ...variantForm, sku: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description (Optional)</Label>
+              <Input
+                placeholder="Additional details about this variant"
+                value={variantForm.description}
+                onChange={(e) => setVariantForm({ ...variantForm, description: e.target.value })}
+              />
+            </div>
+            <Button className="w-full" onClick={handleEditVariant} disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                'Update Variant'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Variant Confirmation */}
+      <AlertDialog open={deleteVariantDialogOpen} onOpenChange={setDeleteVariantDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Variant</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{deletingVariant?.name}</strong>? 
+              This action cannot be undone and may affect inventory records.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteVariant}
+              disabled={submitting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+

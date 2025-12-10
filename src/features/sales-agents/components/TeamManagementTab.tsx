@@ -35,7 +35,7 @@ interface Agent {
   name: string;
   email: string;
   region: string;
-  position?: 'Leader' | 'Mobile Sales' | 'Hermanos Sales Agent';
+  role: 'mobile_sales' | 'team_leader';
   status: 'active' | 'inactive';
   leaderId?: string;
   leaderName?: string;
@@ -65,18 +65,18 @@ export function TeamManagementTab() {
   const [unpromoting, setUnpromoting] = useState(false);
   const { toast } = useToast();
 
-  const unassignedAgents = agents.filter(agent => !agent.leaderId && agent.position !== 'Leader');
+  const unassignedAgents = agents.filter(agent => !agent.leaderId && agent.role !== 'team_leader');
 
   // Fetch data from database
   const fetchData = async () => {
     try {
       setLoading(true);
       
-      // Fetch all sales agents
+      // Fetch all sales agents (mobile_sales and team_leader)
       const { data: agentsData, error: agentsError } = await supabase
         .from('profiles')
         .select('*')
-        .eq('role', 'sales_agent')
+        .in('role', ['mobile_sales', 'team_leader'])
         .order('created_at', { ascending: false });
 
       if (agentsError) throw agentsError;
@@ -108,7 +108,7 @@ export function TeamManagementTab() {
           name: agent.full_name || '',
           email: agent.email || '',
           region: agent.region || '',
-          position: agent.position || undefined,
+          role: agent.role || 'mobile_sales',
           status: agent.status || 'active',
           leaderId: teamAssignment?.leader_id || undefined,
           leaderName: leaderProfile?.full_name || undefined,
@@ -133,7 +133,7 @@ export function TeamManagementTab() {
 
       // Add leaders who don't have teams yet
       processedAgents
-        .filter(agent => agent.position === 'Leader')
+        .filter(agent => agent.role === 'team_leader')
         .forEach(agent => {
           if (!leadersMap.has(agent.id)) {
             leadersMap.set(agent.id, {
@@ -299,10 +299,10 @@ export function TeamManagementTab() {
 
     setUnpromoting(true);
     try {
-      // 1) Update profile position back to Mobile Sales
+      // 1) Update profile role back to mobile_sales
       const { error: profileErr } = await supabase
         .from('profiles')
-        .update({ position: 'Mobile Sales' })
+        .update({ role: 'mobile_sales' })
         .eq('id', leaderToUnpromote);
       if (profileErr) throw profileErr;
 

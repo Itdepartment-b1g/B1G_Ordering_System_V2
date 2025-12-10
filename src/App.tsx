@@ -7,6 +7,8 @@ import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/fe
 import { DashboardPage, AdminHistoryPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
 import { ProfilePage } from "@/features/profile";
 import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
+import BrandsPage from "@/features/orders/BrandsPage";
+import SuppliersPage from "@/features/orders/SuppliersPage";
 import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, LeaderRemittancePage, RequestInventoryPage, PendingRequestsPage, AdminRequestsPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import { ClientsPage, MyClientsPage, PendingClientsPage } from "@/features/clients";
 import { AnalyticsPage } from "@/features/analytics";
@@ -18,6 +20,7 @@ import TeamManagementPage from "@/features/sales-agents/TeamManagementPage";
 import MyTeamPage from "@/features/sales-agents/MyTeamPage";
 import { FinancePage } from "@/features/finance";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
+import { WarRoomPage } from "@/features/war-room";
 import NotFound from "@/features/shared/NotFound";
 
 const queryClient = new QueryClient();
@@ -67,6 +70,9 @@ const App = () => (
                     <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
                     <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
                     <Route path="/purchase-orders" element={<ProtectedRoute><PurchaseOrdersPage /></ProtectedRoute>} />
+                    <Route path="/brands" element={<ProtectedRoute><BrandsPage /></ProtectedRoute>} />
+                    <Route path="/suppliers" element={<ProtectedRoute><SuppliersPage /></ProtectedRoute>} />
+                    <Route path="/war-room" element={<ProtectedRoute><WarRoomPage /></ProtectedRoute>} />
                     <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
                     <Route path="/system-admin" element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
                     <Route path="/sys-admin-dashboard" element={<ProtectedRoute><SysAdDashboardPage /></ProtectedRoute>} />

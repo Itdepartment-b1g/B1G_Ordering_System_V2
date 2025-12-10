@@ -14,7 +14,7 @@ import {
   AlertDialogHeader, 
   AlertDialogTitle 
 } from '@/components/ui/alert-dialog';
-import { UserCircle, Mail, Phone, MapPin, Save, Eye, EyeOff } from 'lucide-react';
+import { UserCircle, Mail, Phone, MapPin, Save, Eye, EyeOff, Building2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -49,12 +49,22 @@ export default function ProfilePage() {
   });
   const [assignedCities, setAssignedCities] = useState<string[]>([]);
   const [isAgentOrLeader, setIsAgentOrLeader] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<{
+    company_name: string;
+    company_email: string;
+  } | null>(null);
 
   useEffect(() => {
     if (user?.id) {
       fetchProfile(); 
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.company_id) {
+      fetchCompanyInfo();
+    }
+  }, [user?.company_id]);
 
   const fetchProfile = async () => {
     try {
@@ -99,6 +109,35 @@ export default function ProfilePage() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCompanyInfo = async () => {
+    try {
+      if (!user?.company_id) {
+        console.warn('No company_id found for user');
+        return;
+      }
+      
+      console.log('Fetching company info for company_id:', user.company_id);
+      
+      const { data, error } = await supabase
+        .from('companies')
+        .select('company_name, company_email')
+        .eq('id', user.company_id)
+        .single();
+      
+      if (error) throw error;
+      
+      console.log('Company info fetched:', data);
+      setCompanyInfo(data);
+    } catch (error) {
+      console.error('Error fetching company info:', error);
+      toast({
+        title: 'Warning',
+        description: 'Could not load company information',
+        variant: 'default'
+      });
     }
   };
 
@@ -199,7 +238,29 @@ export default function ProfilePage() {
                 })()}
               </Badge>
             </div>
-            <div className="space-y-3 pt-4">
+            
+            {/* Company Information */}
+            {companyInfo && (
+              <div className="pt-4 border-t space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Building2 className="h-4 w-4 text-primary" />
+                  <span>Company</span>
+                </div>
+                <div className="space-y-2 pl-6">
+                  <div className="text-sm">
+                    <p className="font-medium">{companyInfo.company_name}</p>
+                  </div>
+                  {companyInfo.company_email && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Mail className="h-3 w-3" />
+                      <span className="truncate">{companyInfo.company_email}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            <div className="space-y-3 pt-4 border-t">
               <div className="flex items-center gap-2 text-sm">
                 <Mail className="h-4 w-4 text-muted-foreground" />
                 <span className="truncate">{profile.email}</span>
@@ -272,7 +333,7 @@ export default function ProfilePage() {
                   maxLength={17}
                 />
               </div>
-              {user?.role === 'sales_agent' && (
+              {user?.role === 'mobile_sales' && (
                 <div className="space-y-2">
                   <Label htmlFor="region">Region</Label>
                   <Input
