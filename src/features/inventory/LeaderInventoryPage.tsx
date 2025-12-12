@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import {
   Search,
   Package,
@@ -22,7 +23,9 @@ import {
   Plus,
   Trash2,
   ArrowRight,
-  Crown
+  Crown,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
@@ -35,10 +38,20 @@ export default function LeaderInventoryPage() {
   const [loadingInventory, setLoadingInventory] = useState(false);
   const [loadingTeam, setLoadingTeam] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [selectedMember, setSelectedMember] = useState<any>(null);
   const [showMemberDetails, setShowMemberDetails] = useState(false);
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [sortBy, setSortBy] = useState<'name' | 'stock' | 'value'>('name');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
+  
+  // Inventory pagination and filtering
+  const [inventoryCurrentPage, setInventoryCurrentPage] = useState(1);
+  const [inventorySortBy, setInventorySortBy] = useState<'name' | 'stock' | 'value' | 'available'>('name');
+  const [inventoryTypeFilter, setInventoryTypeFilter] = useState<string>('all');
+  const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
+  const brandsPerPage = 10;
 
   // Stock allocation state
   const [allocationOpen, setAllocationOpen] = useState(false);
@@ -92,7 +105,7 @@ export default function LeaderInventoryPage() {
       // If user is admin, show all leader inventory
       // If user is leader, show only their inventory
       if (user.role === 'admin') {
-        // For admin, get all inventory and filter by leader position
+        // For admin, get all inventory and filter by leader role
         const { data: inventoryData, error: inventoryError } = await supabase
           .from('agent_inventory')
           .select(`
@@ -111,11 +124,11 @@ export default function LeaderInventoryPage() {
             profiles!agent_inventory_agent_id_fkey(
               id,
               full_name,
-              position
+              role
             )
           `)
           .eq('profiles.role', 'team_leader')
-          .gt('stock', 0);  // Only fetch items with stock > 0
+          .gt('stock', 0);
 
         if (inventoryError) throw inventoryError;
 
@@ -127,34 +140,14 @@ export default function LeaderInventoryPage() {
           variantType: item.variants.variant_type,
           brandName: item.variants.brands.name,
           stock: item.stock,
-          allocatedStock: 0, // Will be calculated separately
-          availableStock: item.stock, // Will be calculated separately
+          allocatedStock: 0,
+          availableStock: item.stock,
           allocatedPrice: item.allocated_price,
           totalValue: item.stock * item.allocated_price,
           agentName: item.profiles?.full_name || 'Unknown'
         }));
 
-        // Calculate allocated stock for each variant
-        const inventoryWithAllocated = await Promise.all(
-          processedInventory.map(async (item) => {
-            const { data: allocatedData } = await supabase
-              .from('client_orders')
-              .select('quantity')
-              .eq('variant_id', item.variantId)
-              .eq('agent_id', item.agentId)
-              .eq('status', 'confirmed');
-
-            const allocatedStock = allocatedData?.reduce((sum, order) => sum + order.quantity, 0) || 0;
-
-            return {
-              ...item,
-              allocatedStock,
-              availableStock: item.stock - allocatedStock
-            };
-          })
-        );
-
-        setLeaderInventory(inventoryWithAllocated);
+        setLeaderInventory(processedInventory);
         return;
       } else {
         query = query.eq('agent_id', user.id);
@@ -171,8 +164,8 @@ export default function LeaderInventoryPage() {
         variantType: item.variants.variant_type,
         brandName: item.variants.brands.name,
         stock: item.stock,
-        allocatedStock: 0, // Will be calculated separately
-        availableStock: item.stock, // Will be calculated separately
+        allocatedStock: 0,
+        availableStock: item.stock,
         allocatedPrice: item.allocated_price,
         dspPrice: item.dsp_price,
         rspPrice: item.rsp_price,
@@ -199,9 +192,6 @@ export default function LeaderInventoryPage() {
           const teamMemberIds = teamData.map(t => t.agent_id);
 
           // Get allocated stock for this variant across all team members
-          // This includes current agent inventory stock
-          // IMPORTANT: Query all agent_inventory records for team members, including those with stock = 0
-          // to ensure we capture all allocations
           const { data: allocatedData, error: allocatedError } = await supabase
             .from('agent_inventory')
             .select('stock, agent_id')
@@ -212,63 +202,24 @@ export default function LeaderInventoryPage() {
             console.error('Error fetching allocated stock:', allocatedError);
           }
 
-          // Sum up all agent stock (including newly allocated stock)
-          const currentAgentStock = allocatedData?.reduce((sum, alloc) => {
+          const allocatedStock = allocatedData?.reduce((sum, alloc) => {
             const stockValue = alloc.stock || 0;
             return sum + stockValue;
           }, 0) || 0;
 
-          // Debug logging
-          if (allocatedData && allocatedData.length > 0) {
-            console.log(`[${item.variantName}] Allocated stock calculation:`, {
-              teamMemberIds,
-              allocatedRecords: allocatedData,
-              currentAgentStock,
-              variantId: item.variantId
-            });
-          }
-
-          // Allocated stock = ONLY current agent stock (turnover from leader to agent)
-          // Do NOT include pending orders - those are sales, not allocations
-          // When agent creates order, their stock decreases, so allocated decreases
-          // When agent remits, their stock goes to 0, so allocated goes to 0
-          // Total stock of leader never changes on remittance (it was already counted)
-          const allocatedStock = currentAgentStock;
-
-          // Get pending orders quantity from ALL team members
-          // These orders reserve stock, so it should not be available for allocation
-          // IMPORTANT: Count ALL pending orders, even if agent has no stock
-          // When agent creates order, stock is deducted. When agent remits, stock goes to 0
-          // but the pending order still exists and that stock is still committed/reserved
-          // 
-          // EXCEPTION: Don't count orders that have been approved by leader (stage = 'leader_approved')
-          // because the stock has already been deducted from leader's inventory
-          // Example: Agent creates order of 500, then remits remaining 500
-          // - Allocated: 0 (agent has no stock)
-          // - Pending Orders: 500 (still exists, stock is committed to order)
-          // - Available: 1000 (1500 - 0 - 500)
-          // After leader approves:
-          // - Total: 1000 (stock deducted)
-          // - Allocated: 0
-          // - Pending Orders: 0 (order is leader_approved, stock already deducted)
-          // - Available: 1000 (1000 - 0 - 0)
-          // Get pending orders, but exclude those already approved by leader/admin
-          // because stock has already been deducted from leader's inventory
+          // Get pending orders quantity
           const { data: allPendingOrders } = await supabase
             .from('client_orders')
             .select('id, stage')
             .in('agent_id', teamMemberIds)
             .eq('status', 'pending');
 
-          // Filter out orders that have been approved (stage = 'leader_approved' or 'admin_approved')
-          // These orders have already had stock deducted, so they shouldn't reserve available stock
           const pendingOrders = allPendingOrders?.filter((o: any) =>
             o.stage !== 'leader_approved' && o.stage !== 'admin_approved'
           ) || [];
 
           const pendingOrderIds = pendingOrders?.map((o: any) => o.id) || [];
 
-          // Get quantities from order items for this variant
           const { data: pendingOrdersData } = pendingOrderIds.length > 0
             ? await supabase
               .from('client_order_items')
@@ -281,15 +232,12 @@ export default function LeaderInventoryPage() {
             return sum + (orderItem.quantity || 0);
           }, 0);
 
-          // Available = Total - Allocated - Pending Orders
-          // Pending orders reserve stock, so it's not available for new allocations
-          // Example: Total=1500, Allocated=500, Pending=500 → Available=500
           const availableStock = item.stock - allocatedStock - pendingOrdersQuantity;
 
           return {
             ...item,
             allocatedStock,
-            availableStock: Math.max(0, availableStock) // Ensure non-negative
+            availableStock: Math.max(0, availableStock)
           };
         })
       );
@@ -373,12 +321,12 @@ export default function LeaderInventoryPage() {
 
       if (teamError) throw teamError;
 
-      console.log('Team data fetched:', teamData);
-
       // Get inventory data for each team member
       const teamMembersWithInventory = await Promise.all(
-        teamData.map(async (member: any) => {
-          console.log(`Fetching inventory for team member: ${member.profiles.full_name} (ID: ${member.agent_id})`);
+        (teamData || []).map(async (member: any) => {
+          if (!member.profiles) {
+            return null;
+          }
 
           const { data: memberInventory, error: inventoryError } = await supabase
             .from('agent_inventory')
@@ -386,20 +334,17 @@ export default function LeaderInventoryPage() {
               id,
               stock,
               allocated_price,
-            dsp_price,
-            rsp_price,
-          variants!inner(
+              dsp_price,
+              rsp_price,
+              variants!inner(
                 id,
-            name,
-            variant_type,
-            brands!inner(name)
-          )
-        `)
+                name,
+                variant_type,
+                brands!inner(name)
+              )
+            `)
             .eq('agent_id', member.agent_id)
-            .gt('stock', 0);  // Only fetch items with stock > 0
-
-          console.log(`Inventory for ${member.profiles.full_name}:`, memberInventory);
-          console.log(`Inventory error for ${member.profiles.full_name}:`, inventoryError);
+            .gt('stock', 0);
 
           if (inventoryError) {
             console.error('Error fetching member inventory:', inventoryError);
@@ -411,14 +356,13 @@ export default function LeaderInventoryPage() {
               region: member.profiles.region || '',
               cities: member.profiles.city ? (Array.isArray(member.profiles.city) ? member.profiles.city : member.profiles.city.split(',').map(c => c.trim()).filter(c => c)) : [],
               status: member.profiles.status || 'active',
-              position: member.profiles.position || undefined,
               totalStock: 0,
               totalValue: 0,
               items: []
             };
           }
 
-          const processedItems = memberInventory.map((item: any) => ({
+          const processedItems = (memberInventory || []).map((item: any) => ({
             id: item.id,
             variantId: item.variants.id,
             variantName: item.variants.name,
@@ -440,7 +384,6 @@ export default function LeaderInventoryPage() {
             region: member.profiles.region || '',
             cities: member.profiles.city ? (Array.isArray(member.profiles.city) ? member.profiles.city : member.profiles.city.split(',').map(c => c.trim()).filter(c => c)) : [],
             status: member.profiles.status || 'active',
-            position: member.profiles.position || undefined,
             totalStock,
             totalValue,
             items: processedItems
@@ -448,7 +391,8 @@ export default function LeaderInventoryPage() {
         })
       );
 
-      setTeamMembers(teamMembersWithInventory);
+      const validTeamMembers = teamMembersWithInventory.filter(member => member !== null);
+      setTeamMembers(validTeamMembers);
     } catch (error) {
       console.error('Error fetching team members:', error);
       if (showLoading) {
@@ -598,6 +542,85 @@ export default function LeaderInventoryPage() {
     };
   }, [user?.id]);
 
+  // Filter inventory by brand, variant, or type (memoized for performance)
+  const filteredInventory = useMemo(() => {
+    return leaderInventory.filter(item => {
+      const matchesSearch = item.brandName.toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
+        item.variantName.toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
+        item.variantType.toLowerCase().includes(inventorySearchQuery.toLowerCase());
+      
+      const matchesType = inventoryTypeFilter === 'all' || item.variantType === inventoryTypeFilter;
+      
+      return matchesSearch && matchesType;
+    });
+  }, [leaderInventory, inventorySearchQuery, inventoryTypeFilter]);
+
+  // Group inventory by brand with calculated totals (memoized)
+  const groupedInventoryByBrand = useMemo(() => {
+    return filteredInventory.reduce((acc, item) => {
+      if (!acc[item.brandName]) {
+        acc[item.brandName] = [];
+      }
+      acc[item.brandName].push(item);
+      return acc;
+    }, {} as Record<string, typeof filteredInventory>);
+  }, [filteredInventory]);
+
+  // Calculate brand stats and sort (memoized)
+  const sortedBrandsWithStats = useMemo(() => {
+    const brandsWithStats = Object.keys(groupedInventoryByBrand).map(brand => {
+      const items = groupedInventoryByBrand[brand];
+      const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
+      const totalValue = items.reduce((sum, item) => sum + item.totalValue, 0);
+      const totalAvailable = items.reduce((sum, item) => sum + item.availableStock, 0);
+      
+      return {
+        brand,
+        items,
+        totalStock,
+        totalValue,
+        totalAvailable,
+        itemCount: items.length
+      };
+    });
+
+    return [...brandsWithStats].sort((a, b) => {
+      switch (inventorySortBy) {
+        case 'name':
+          return a.brand.localeCompare(b.brand);
+        case 'stock':
+          return b.totalStock - a.totalStock;
+        case 'value':
+          return b.totalValue - a.totalValue;
+        case 'available':
+          return b.totalAvailable - a.totalAvailable;
+        default:
+          return 0;
+      }
+    });
+  }, [groupedInventoryByBrand, inventorySortBy]);
+
+  // Paginate brands (memoized)
+  const { paginatedBrands, totalBrandPages, brandStartIndex, brandEndIndex } = useMemo(() => {
+    const totalPages = Math.ceil(sortedBrandsWithStats.length / brandsPerPage);
+    const startIndex = (inventoryCurrentPage - 1) * brandsPerPage;
+    const endIndex = startIndex + brandsPerPage;
+    const paginated = sortedBrandsWithStats.slice(startIndex, endIndex);
+    
+    return {
+      paginatedBrands: paginated,
+      totalBrandPages: totalPages,
+      brandStartIndex: startIndex,
+      brandEndIndex: endIndex
+    };
+  }, [sortedBrandsWithStats, inventoryCurrentPage, brandsPerPage]);
+
+  // Reset inventory page when filters change
+  useEffect(() => {
+    setInventoryCurrentPage(1);
+    setExpandedBrands([]);
+  }, [inventorySearchQuery, inventoryTypeFilter, inventorySortBy]);
+
   const filteredTeamMembers = teamMembers.filter(member =>
     member.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     member.email.toLowerCase().includes(searchQuery.toLowerCase())
@@ -615,6 +638,17 @@ export default function LeaderInventoryPage() {
         return 0;
     }
   });
+
+  // Pagination for team members
+  const totalPages = Math.ceil(sortedTeamMembers.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedTeamMembers = sortedTeamMembers.slice(startIndex, endIndex);
+
+  // Reset to page 1 when search or sort changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, sortBy]);
 
   // Calculate stats
   const totalTeamMembers = teamMembers.length;
@@ -660,17 +694,6 @@ export default function LeaderInventoryPage() {
       toast({
         title: 'Error',
         description: 'Please select a team member and enter quantities for at least one variant',
-        variant: 'destructive'
-      });
-      return;
-    }
-
-    // Validate that all items have a valid price
-    const itemsWithoutPrice = itemsToAllocate.filter(item => !item.price || item.price === 0);
-    if (itemsWithoutPrice.length > 0) {
-      toast({
-        title: 'Error',
-        description: `Cannot allocate stock without selling prices. Please ensure all selected items have prices set.`,
         variant: 'destructive'
       });
       return;
@@ -872,7 +895,7 @@ export default function LeaderInventoryPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">
-            {user.role === 'admin' ? 'All Leader Inventory' : 'Leader Inventory'}
+            {user.role === 'admin' ? 'All Leader Inventory' : 'Team Inventory Management'}
           </h1>
           <p className="text-muted-foreground">
             {user.role === 'admin'
@@ -880,26 +903,6 @@ export default function LeaderInventoryPage() {
               : 'Manage your allocated inventory and distribute to team members'
             }
           </p>
-        </div>
-        <div className="flex gap-2">
-          {user.role !== 'admin' && (
-            <Button
-              onClick={() => setAllocationOpen(true)}
-              disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
-            >
-              <ArrowRight className="mr-2 h-4 w-4" />
-              Allocate to Team
-            </Button>
-          )}
-          <Button
-            onClick={() => {
-              fetchLeaderInventory(false);
-              fetchTeamMembers(false);
-            }}
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
         </div>
       </div>
 
@@ -966,157 +969,363 @@ export default function LeaderInventoryPage() {
         </Card>
       </div>
 
-      {/* Your Inventory Section */}
+      {/* Your Allocated Inventory Section */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Crown className="h-5 w-5 text-yellow-600" />
-            Your Allocated Inventory
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loadingInventory ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Loading your inventory...</span>
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <CardTitle className="flex items-center gap-2">
+                <Crown className="h-5 w-5 text-yellow-600" />
+                Your Allocated Inventory
+              </CardTitle>
+              {user.role !== 'admin' && (
+                <Button
+                  onClick={() => setAllocationOpen(true)}
+                  disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
+                  size="sm"
+                >
+                  <ArrowRight className="mr-2 h-4 w-4" />
+                  Allocate to Team
+                </Button>
+              )}
+            </div>
+            
+            {/* Filters and Controls */}
+            <div className="flex flex-col sm:flex-row gap-3">
+              {/* Search Bar */}
+              <div className="relative flex-1 sm:max-w-xs">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by brand, variant, or type..."
+                  value={inventorySearchQuery}
+                  onChange={(e) => setInventorySearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              
+              {/* Type Filter */}
+              <select
+                value={inventoryTypeFilter}
+                onChange={(e) => setInventoryTypeFilter(e.target.value)}
+                className="flex h-10 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="all">All Types</option>
+                <option value="flavor">Flavors</option>
+                <option value="battery">Battery</option>
+                <option value="posm">POSM</option>
+              </select>
+              
+              {/* Sort Dropdown */}
+              <select
+                value={inventorySortBy}
+                onChange={(e) => setInventorySortBy(e.target.value as 'name' | 'stock' | 'value' | 'available')}
+                className="flex h-10 w-40 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="name">Sort: Name</option>
+                <option value="stock">Sort: Total Stock</option>
+                <option value="value">Sort: Total Value</option>
+                <option value="available">Sort: Available</option>
+              </select>
+              
+              {/* Expand/Collapse All */}
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (expandedBrands.length === paginatedBrands.length) {
+                      setExpandedBrands([]);
+                    } else {
+                      setExpandedBrands(paginatedBrands.map(b => b.brand));
+                    }
+                  }}
+                >
+                  {expandedBrands.length === paginatedBrands.length ? 'Collapse All' : 'Expand All'}
+                </Button>
               </div>
             </div>
-          ) : leaderInventory.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p>No inventory allocated to you yet</p>
-              <p className="text-sm">Contact your administrator to request stock allocation</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Brand</TableHead>
-                    <TableHead>Variant</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="text-right">Total Stock</TableHead>
-                    <TableHead className="text-right">Allocated</TableHead>
-                    <TableHead className="text-right">Available</TableHead>
-                    <TableHead className="text-right">Price</TableHead>
-                    <TableHead className="text-right">Value</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {leaderInventory.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.brandName}</TableCell>
-                      <TableCell>{item.variantName}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {item.variantType}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">{item.stock.toLocaleString()}</TableCell>
-                      <TableCell className="text-right text-orange-600">{item.allocatedStock.toLocaleString()}</TableCell>
-                      <TableCell className="text-right text-green-600">{item.availableStock.toLocaleString()}</TableCell>
-                      <TableCell className="text-right">₱{item.allocatedPrice.toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-semibold">
-                        ₱{item.totalValue.toFixed(2)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
+            
+            {/* Summary Stats */}
+            {filteredInventory.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2 border-t">
+                <div>
+                  <div className="text-sm text-muted-foreground">Total Brands</div>
+                  <div className="text-lg font-semibold">{sortedBrandsWithStats.length}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">Total Variants</div>
+                  <div className="text-lg font-semibold">{filteredInventory.length}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">Total Stock</div>
+                  <div className="text-lg font-semibold">
+                    {sortedBrandsWithStats.reduce((sum, b) => sum + b.totalStock, 0).toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">Available Stock</div>
+                  <div className="text-lg font-semibold text-green-600">
+                    {sortedBrandsWithStats.reduce((sum, b) => sum + b.totalAvailable, 0).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </CardHeader>
+            <CardContent>
+              {loadingInventory ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span>Loading your inventory...</span>
+                  </div>
+                </div>
+              ) : leaderInventory.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No inventory allocated to you yet</p>
+                  <p className="text-sm">Contact your administrator to request stock allocation</p>
+                </div>
+              ) : filteredInventory.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No inventory items match your search</p>
+                  <p className="text-sm">Try adjusting your search criteria</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="max-h-[600px] overflow-y-auto pr-2">
+                    <Accordion 
+                      type="multiple" 
+                      className="w-full space-y-2"
+                      value={expandedBrands}
+                      onValueChange={setExpandedBrands}
+                    >
+                      {paginatedBrands.map((brandData) => {
+                        const { brand, items, totalStock, totalValue, totalAvailable, itemCount } = brandData;
+                        const totalAllocated = items.reduce((sum, item) => sum + item.allocatedStock, 0);
+                        const lowStockItems = items.filter(item => item.availableStock < 10).length;
+                        
+                        return (
+                          <AccordionItem key={brand} value={brand} className="border rounded-lg px-4 bg-card">
+                            <AccordionTrigger className="hover:no-underline py-3">
+                              <div className="flex items-center justify-between w-full pr-4">
+                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                  <Package className="h-5 w-5 text-blue-600 shrink-0" />
+                                  <div className="text-left min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <h3 className="text-base font-semibold truncate">{brand}</h3>
+                                      {lowStockItems > 0 && (
+                                        <Badge variant="destructive" className="text-xs">
+                                          {lowStockItems} low stock
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                      {itemCount} {itemCount === 1 ? 'variant' : 'variants'}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm shrink-0">
+                                  <div className="text-right hidden sm:block">
+                                    <div className="text-muted-foreground text-xs">Stock</div>
+                                    <div className="font-semibold">{totalStock.toLocaleString()}</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-muted-foreground text-xs">Available</div>
+                                    <div className="font-semibold text-green-600">{totalAvailable.toLocaleString()}</div>
+                                  </div>
+                                  <div className="text-right hidden md:block">
+                                    <div className="text-muted-foreground text-xs">Value</div>
+                                    <div className="font-semibold">₱{(totalValue / 1000).toFixed(0)}k</div>
+                                  </div>
+                                </div>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <div className="overflow-x-auto pt-2 pb-2">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Variant</TableHead>
+                                      <TableHead>Type</TableHead>
+                                      <TableHead className="text-right">Total Stock</TableHead>
+                                      <TableHead className="text-right">Allocated</TableHead>
+                                      <TableHead className="text-right">Available</TableHead>
+                                      <TableHead className="text-right">Price</TableHead>
+                                      <TableHead className="text-right">Value</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {items.map((item) => (
+                                      <TableRow 
+                                        key={item.id}
+                                        className={item.availableStock < 10 ? 'bg-orange-50 dark:bg-orange-950/20' : ''}
+                                      >
+                                        <TableCell className="font-medium">{item.variantName}</TableCell>
+                                        <TableCell>
+                                          <Badge variant="outline" className="text-xs">
+                                            {item.variantType}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right">{item.stock.toLocaleString()}</TableCell>
+                                        <TableCell className="text-right text-orange-600">{item.allocatedStock.toLocaleString()}</TableCell>
+                                        <TableCell className={`text-right font-semibold ${item.availableStock < 10 ? 'text-red-600' : 'text-green-600'}`}>
+                                          {item.availableStock.toLocaleString()}
+                                        </TableCell>
+                                        <TableCell className="text-right">₱{item.allocatedPrice.toFixed(2)}</TableCell>
+                                        <TableCell className="text-right font-semibold">
+                                          ₱{item.totalValue.toFixed(2)}
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        );
+                      })}
+                    </Accordion>
+                  </div>
+                  
+                  {/* Pagination Controls */}
+                  {totalBrandPages > 1 && (
+                    <div className="flex items-center justify-between pt-4 border-t">
+                      <div className="text-sm text-muted-foreground">
+                        Showing {brandStartIndex + 1} to {Math.min(brandEndIndex, sortedBrandsWithStats.length)} of {sortedBrandsWithStats.length} brands
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setInventoryCurrentPage(prev => Math.max(1, prev - 1))}
+                          disabled={inventoryCurrentPage === 1}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Previous
+                        </Button>
+                        <div className="text-sm px-2">
+                          Page {inventoryCurrentPage} of {totalBrandPages}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setInventoryCurrentPage(prev => Math.min(totalBrandPages, prev + 1))}
+                          disabled={inventoryCurrentPage === totalBrandPages}
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
       </Card>
 
-      {/* Team Members Section */}
+      {/* Team Members Inventory Section */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-blue-600" />
-            Team Members Inventory
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-blue-600" />
+              Team Members Inventory
+            </CardTitle>
+            {user.role !== 'admin' && (
+              <Button
+                onClick={() => setAllocationOpen(true)}
+                disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
+                size="sm"
+              >
+                <ArrowRight className="mr-2 h-4 w-4" />
+                Allocate Stock
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
-          {/* Controls */}
-          <div className="flex flex-col lg:flex-row gap-4 items-center mb-6">
-            {/* Search */}
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search team members..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 h-11"
-              />
-            </div>
+              {/* Controls */}
+              <div className="flex flex-col lg:flex-row gap-4 items-center mb-6">
+                {/* Search */}
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search team members..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10 h-11"
+                  />
+                </div>
 
-            {/* Sort Dropdown */}
-            <div className="flex gap-2">
-              <Label className="text-sm font-medium text-muted-foreground self-center">Sort by:</Label>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'name' | 'stock' | 'value')}
-                className="flex h-11 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="name">Name</option>
-                <option value="stock">Stock</option>
-                <option value="value">Value</option>
-              </select>
-            </div>
+                {/* Sort Dropdown */}
+                <div className="flex gap-2">
+                  <Label className="text-sm font-medium text-muted-foreground self-center">Sort by:</Label>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as 'name' | 'stock' | 'value')}
+                    className="flex h-11 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="name">Name</option>
+                    <option value="stock">Stock</option>
+                    <option value="value">Value</option>
+                  </select>
+                </div>
 
-            {/* View Toggle */}
-            <div className="flex gap-2">
-              <Button
-                variant={viewMode === 'table' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('table')}
-                className="gap-2"
-              >
-                <BarChart3 className="h-4 w-4" />
-                Table
-              </Button>
-              <Button
-                variant={viewMode === 'cards' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('cards')}
-                className="gap-2"
-              >
-                <Package className="h-4 w-4" />
-                Cards
-              </Button>
-            </div>
-          </div>
-
-          {/* Team Members Display */}
-          {loadingTeam ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Loading team members...</span>
+                {/* View Toggle */}
+                <div className="flex gap-2">
+                  <Button
+                    variant={viewMode === 'table' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setViewMode('table')}
+                    className="gap-2"
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                    Table
+                  </Button>
+                  <Button
+                    variant={viewMode === 'cards' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setViewMode('cards')}
+                    className="gap-2"
+                  >
+                    <Package className="h-4 w-4" />
+                    Cards
+                  </Button>
+                </div>
               </div>
-            </div>
-          ) : sortedTeamMembers.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p>No team members found</p>
-              <p className="text-sm">Team members will appear here once they are assigned to you</p>
-            </div>
-          ) : viewMode === 'table' ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Member</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead className="text-right">Total Stock</TableHead>
-                    <TableHead className="text-right">Total Value</TableHead>
-                    <TableHead className="text-right">Items</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedTeamMembers.map((member) => (
+
+              {/* Team Members Display */}
+              {loadingTeam ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span>Loading team members...</span>
+                  </div>
+                </div>
+              ) : sortedTeamMembers.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>No team members found</p>
+                  <p className="text-sm">Team members will appear here once they are assigned to you</p>
+                </div>
+              ) : viewMode === 'table' ? (
+            <div className="space-y-4">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Member</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead className="text-right">Total Stock</TableHead>
+                      <TableHead className="text-right">Total Value</TableHead>
+                      <TableHead className="text-right">Items</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedTeamMembers.map((member) => (
                     <TableRow key={member.id}>
                       <TableCell className="font-medium">{member.name}</TableCell>
                       <TableCell className="text-muted-foreground">{member.email}</TableCell>
@@ -1145,13 +1354,46 @@ export default function LeaderInventoryPage() {
                         </Button>
                       </TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4 border-t">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {startIndex + 1} to {Math.min(endIndex, sortedTeamMembers.length)} of {sortedTeamMembers.length} members
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous
+                    </Button>
+                    <div className="text-sm">
+                      Page {currentPage} of {totalPages}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {sortedTeamMembers.map((member) => (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {paginatedTeamMembers.map((member) => (
                 <Card key={member.id} className="hover:shadow-md transition-shadow">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
@@ -1209,7 +1451,39 @@ export default function LeaderInventoryPage() {
                     </Button>
                   </CardContent>
                 </Card>
-              ))}
+                ))}
+              </div>
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4 border-t">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {startIndex + 1} to {Math.min(endIndex, sortedTeamMembers.length)} of {sortedTeamMembers.length} members
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous
+                    </Button>
+                    <div className="text-sm">
+                      Page {currentPage} of {totalPages}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -1354,12 +1628,15 @@ export default function LeaderInventoryPage() {
                       <p className="text-xs text-muted-foreground">Enter quantities for the variants you want to allocate. Leave as 0 to skip.</p>
 
                       <Tabs defaultValue="flavor" className="w-full">
-                        <TabsList className="grid w-full grid-cols-2">
+                        <TabsList className="grid w-full grid-cols-3">
                           <TabsTrigger value="flavor">
                             Flavors ({groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'flavor').length})
                           </TabsTrigger>
                           <TabsTrigger value="battery">
                             Batteries ({groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'battery').length})
+                          </TabsTrigger>
+                          <TabsTrigger value="posm">
+                            POSM ({groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'posm').length})
                           </TabsTrigger>
                         </TabsList>
 
@@ -1374,7 +1651,8 @@ export default function LeaderInventoryPage() {
                               {groupedInventory[allocation.brandId]
                                 .filter((item: any) => item.variantType === 'flavor')
                                 .map((item: any) => {
-                                  const hasNoPrice = !item.allocatedPrice || item.allocatedPrice === 0 || Number(item.allocatedPrice) === 0;
+                                  // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
+                                  const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
                                   return (
                                     <div
                                       key={item.variantId}
@@ -1426,7 +1704,61 @@ export default function LeaderInventoryPage() {
                               {groupedInventory[allocation.brandId]
                                 .filter((item: any) => item.variantType === 'battery')
                                 .map((item: any) => {
-                                  const hasNoPrice = !item.allocatedPrice || item.allocatedPrice === 0 || Number(item.allocatedPrice) === 0;
+                                  // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
+                                  const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
+                                  return (
+                                    <div
+                                      key={item.variantId}
+                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasNoPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                        }`}
+                                    >
+                                      <div className="flex-1">
+                                        <div className="font-medium flex items-center gap-2">
+                                          {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                          <span>{item.variantName}</span>
+                                        </div>
+                                        <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : `₱${item.allocatedPrice.toFixed(2)} each`} • Available: {item.stock} units
+                                        </div>
+                                      </div>
+                                      <div className="w-28">
+                                        <Input
+                                          type="number"
+                                          placeholder="0"
+                                          min="0"
+                                          max={item.stock}
+                                          value={variantQuantities[item.variantId] || ''}
+                                          onChange={(e) => {
+                                            const inputValue = parseInt(e.target.value) || 0;
+                                            const cappedValue = Math.max(0, Math.min(inputValue, item.stock));
+                                            setVariantQuantities(prev => ({
+                                              ...prev,
+                                              [item.variantId]: cappedValue
+                                            }));
+                                          }}
+                                          disabled={hasNoPrice}
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          )}
+                        </TabsContent>
+
+                        {/* POSM Tab */}
+                        <TabsContent value="posm" className="space-y-3 mt-4">
+                          {groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'posm').length === 0 ? (
+                            <p className="text-sm text-muted-foreground text-center py-4">
+                              No POSM available for this brand
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              {groupedInventory[allocation.brandId]
+                                .filter((item: any) => item.variantType === 'posm')
+                                .map((item: any) => {
+                                  // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
+                                  const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
                                   return (
                                     <div
                                       key={item.variantId}

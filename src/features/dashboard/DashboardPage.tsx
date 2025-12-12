@@ -1,8 +1,8 @@
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { TrendingUp, Users, Package, DollarSign, CheckCircle, XCircle, Bell, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { TrendingUp, Users, Package, DollarSign, CheckCircle, XCircle, Bell, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, Calendar, ArrowRight, ShoppingCart } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +23,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
+  const isLeader = user?.role === 'team_leader';
 
   // Redirect system administrators and super admins to their respective dashboards
   useEffect(() => {
@@ -47,6 +48,25 @@ export default function DashboardPage() {
   const [myCommission, setMyCommission] = useState(0);
   const [myClients, setMyClients] = useState(0);
 
+  // Leader stats
+  const [teamOrders, setTeamOrders] = useState(0);
+  const [teamClients, setTeamClients] = useState(0);
+  const [teamMembers, setTeamMembers] = useState(0);
+  const [pendingRequests, setPendingRequests] = useState(0);
+  const [teamRevenue, setTeamRevenue] = useState(0);
+
+  // Quick stats for leader
+  const [todayOrders, setTodayOrders] = useState(0);
+  const [todayRevenue, setTodayRevenue] = useState(0);
+  const [weekOrders, setWeekOrders] = useState(0);
+  const [weekRevenue, setWeekRevenue] = useState(0);
+  const [pendingLeaderOrders, setPendingLeaderOrders] = useState(0);
+  const [approvedOrders, setApprovedOrders] = useState(0);
+
+  // Pending actions
+  const [pendingStockRequests, setPendingStockRequests] = useState<any[]>([]);
+  const [pendingOrderApprovals, setPendingOrderApprovals] = useState<any[]>([]);
+
   // Charts
   const [revenueData, setRevenueData] = useState<any[]>([]);
   const [topProducts, setTopProducts] = useState<any[]>([]);
@@ -70,6 +90,16 @@ export default function DashboardPage() {
     if (isAdmin) {
       fetchAdminStats();
       fetchTopPerformers();
+    } else if (isLeader) {
+      fetchLeaderStats();
+      fetchRecentActivity();
+      
+      // Real-time subscription for notifications
+      const channel = subscribeToTable('notifications', () => {
+        fetchRecentActivity();
+      });
+      
+      return () => unsubscribe(channel);
     } else {
       fetchAgentStats();
       fetchRecentActivity();
@@ -81,7 +111,7 @@ export default function DashboardPage() {
       
       return () => unsubscribe(channel);
     }
-  }, [user?.id, isAdmin]);
+  }, [user?.id, isAdmin, isLeader]);
 
   const fetchAdminStats = async () => {
     try {
@@ -168,6 +198,127 @@ export default function DashboardPage() {
 
     } catch (error) {
       console.error('Error fetching admin stats:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchLeaderStats = async () => {
+    if (!user?.id) return;
+
+    try {
+      setLoading(true);
+
+      // Get team member IDs
+      const { data: teamData, error: teamError } = await supabase
+        .from('leader_teams')
+        .select('agent_id')
+        .eq('leader_id', user.id);
+
+      if (teamError) throw teamError;
+
+      const teamMemberIds = (teamData || []).map(t => t.agent_id);
+      setTeamMembers(teamMemberIds.length);
+
+      if (teamMemberIds.length === 0) {
+        setTeamOrders(0);
+        setTeamClients(0);
+        setPendingRequests(0);
+        setTeamRevenue(0);
+        setLoading(false);
+        return;
+      }
+
+      // Get team orders with dates
+      const { data: orders } = await supabase
+        .from('client_orders')
+        .select('id, total_amount, status, created_at, stage')
+        .in('agent_id', teamMemberIds);
+      
+      setTeamOrders(orders?.length || 0);
+      const revenue = (orders || []).reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
+      setTeamRevenue(revenue);
+
+      // Calculate today's stats
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayISO = today.toISOString();
+      const todayOrdersData = (orders || []).filter((o: any) => new Date(o.created_at) >= today);
+      setTodayOrders(todayOrdersData.length);
+      const todayRev = todayOrdersData.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
+      setTodayRevenue(todayRev);
+
+      // Calculate this week's stats
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      weekAgo.setHours(0, 0, 0, 0);
+      const weekAgoISO = weekAgo.toISOString();
+      const weekOrdersData = (orders || []).filter((o: any) => new Date(o.created_at) >= weekAgo);
+      setWeekOrders(weekOrdersData.length);
+      const weekRev = weekOrdersData.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
+      setWeekRevenue(weekRev);
+
+      // Get pending and approved orders
+      const pendingOrdersData = (orders || []).filter((o: any) => 
+        o.status === 'pending' && o.stage !== 'leader_approved' && o.stage !== 'admin_approved'
+      );
+      setPendingLeaderOrders(pendingOrdersData.length);
+      const approvedOrdersData = (orders || []).filter((o: any) => 
+        o.status === 'approved' || o.stage === 'leader_approved' || o.stage === 'admin_approved'
+      );
+      setApprovedOrders(approvedOrdersData.length);
+
+      // Get team clients
+      const { data: clients } = await supabase
+        .from('clients')
+        .select('id')
+        .in('agent_id', teamMemberIds);
+      
+      setTeamClients(clients?.length || 0);
+
+      // Get pending stock requests with details
+      const { data: requests } = await supabase
+        .from('stock_requests')
+        .select(`
+          id,
+          request_number,
+          requested_quantity,
+          requested_at,
+          agent_id,
+          variant_id,
+          profiles!stock_requests_agent_id_fkey(full_name),
+          variants(name, variant_type, brands(name))
+        `)
+        .in('agent_id', teamMemberIds)
+        .eq('status', 'pending')
+        .order('requested_at', { ascending: false })
+        .limit(5);
+      
+      setPendingRequests(requests?.length || 0);
+      setPendingStockRequests(requests || []);
+
+      // Get pending orders awaiting leader approval
+      const { data: pendingOrdersForApproval } = await supabase
+        .from('client_orders')
+        .select(`
+          id,
+          order_number,
+          total_amount,
+          created_at,
+          agent_id,
+          profiles!client_orders_agent_id_fkey(full_name)
+        `)
+        .in('agent_id', teamMemberIds)
+        .eq('status', 'pending')
+        .neq('stage', 'leader_approved')
+        .neq('stage', 'admin_approved')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      setPendingOrderApprovals(pendingOrdersForApproval || []);
+
+    } catch (error) {
+      console.error('Error fetching leader stats:', error);
     } finally {
       setLoading(false);
     }
@@ -484,9 +635,9 @@ export default function DashboardPage() {
   return (
     <div className="p-4 md:p-6 lg:p-8 space-y-4 md:space-y-6 lg:space-y-8">
       <div>
-        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">Welcome back, {user?.name}!</h1>
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">Welcome back, {user?.full_name || user?.email || 'User'}!</h1>
         <p className="text-sm md:text-base text-muted-foreground mt-1">
-          {isAdmin ? 'Overview of your sales operations' : 'Your sales performance overview'}
+          {isAdmin ? 'Overview of your sales operations' : isLeader ? 'Your team performance overview' : 'Your sales performance overview'}
         </p>
       </div>
 
@@ -687,6 +838,176 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </div>
+        </>
+      ) : isLeader ? (
+        <>
+          {/* Leader Stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Team Orders</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">{teamOrders}</div>
+                <p className="text-xs text-muted-foreground mt-1">Total team orders</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Team Clients</CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">{teamClients}</div>
+                <p className="text-xs text-muted-foreground mt-1">Total team clients</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Team Members</CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">{teamMembers}</div>
+                <p className="text-xs text-muted-foreground mt-1">Active team members</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Pending Requests</CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">{pendingRequests}</div>
+                <p className="text-xs text-muted-foreground mt-1">Stock requests to review</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Team Revenue Card */}
+          {teamRevenue > 0 && (
+            <Card className="border-l-4 border-l-primary">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Team Revenue</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">₱{teamRevenue.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground mt-1">Total revenue from team orders</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Pending Actions */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-orange-600" />
+                Pending Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Pending Stock Requests */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      Stock Requests ({pendingStockRequests.length})
+                    </h3>
+                    {pendingStockRequests.length > 0 && (
+                      <Link to="/inventory/pending-requests">
+                        <Button variant="ghost" size="sm" className="text-xs">
+                          View All <ArrowRight className="h-3 w-3 ml-1" />
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
+                  {pendingStockRequests.length === 0 ? (
+                    <div className="text-center py-4 text-muted-foreground text-sm">
+                      <Package className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                      <p>No pending stock requests</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {pendingStockRequests.slice(0, 3).map((request: any) => {
+                        const agentName = request.profiles?.full_name || 'Unknown Agent';
+                        const variant = request.variants;
+                        const brandName = variant?.brands?.name || variant?.brands?.[0]?.name || 'Unknown';
+                        const variantName = variant?.name || 'Unknown';
+                        return (
+                          <div key={request.id} className="flex items-center justify-between p-3 rounded-lg border bg-yellow-50/30 border-yellow-200">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{agentName}</p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {brandName} {variantName} • Qty: {request.requested_quantity}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {formatTimeAgo(request.requested_at)}
+                              </p>
+                            </div>
+                            <Link to="/inventory/pending-requests">
+                              <Button variant="outline" size="sm" className="ml-2">
+                                Review
+                              </Button>
+                            </Link>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Pending Order Approvals */}
+                <div className="border-t pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <ShoppingCart className="h-4 w-4" />
+                      Order Approvals ({pendingOrderApprovals.length})
+                    </h3>
+                    {pendingOrderApprovals.length > 0 && (
+                      <Link to="/orders">
+                        <Button variant="ghost" size="sm" className="text-xs">
+                          View All <ArrowRight className="h-3 w-3 ml-1" />
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
+                  {pendingOrderApprovals.length === 0 ? (
+                    <div className="text-center py-4 text-muted-foreground text-sm">
+                      <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                      <p>No pending order approvals</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {pendingOrderApprovals.slice(0, 3).map((order: any) => {
+                        const agentName = order.profiles?.full_name || 'Unknown Agent';
+                        return (
+                          <div key={order.id} className="flex items-center justify-between p-3 rounded-lg border bg-blue-50/30 border-blue-200">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{agentName}</p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                Order #{order.order_number} • ₱{order.total_amount?.toLocaleString() || '0'}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {formatTimeAgo(order.created_at)}
+                              </p>
+                            </div>
+                            <Link to="/orders">
+                              <Button variant="outline" size="sm" className="ml-2">
+                                Review
+                              </Button>
+                            </Link>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </>
       ) : (
         <>

@@ -26,7 +26,7 @@ import { useAuth } from '@/features/auth';
 export default function MyTeamPage() {
   const { user } = useAuth();
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
-  const [loadingTeam, setLoadingTeam] = useState(false);
+  const [loadingTeam, setLoadingTeam] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMember, setSelectedMember] = useState<any>(null);
   const [showMemberDetails, setShowMemberDetails] = useState(false);
@@ -37,7 +37,7 @@ export default function MyTeamPage() {
 
   // Check if user is a leader
   useEffect(() => {
-    if (user && user.position !== 'Leader') {
+    if (user && user.role !== 'team_leader') {
       toast({
         title: 'Access Denied',
         description: 'Only leaders can access this page',
@@ -46,140 +46,91 @@ export default function MyTeamPage() {
     }
   }, [user, toast]);
 
-  // Fetch team members with fallback approach
+  // Fetch team members
   const fetchTeamMembers = async () => {
     if (!user) return;
 
     try {
       setLoadingTeam(true);
 
-      // Try database function first, fallback to manual approach
-      try {
-        const { data: teamStats, error: statsError } = await supabase
-          .rpc('get_team_member_stats', { p_leader_id: user.id });
+      // Get team members from leader_teams
+      const { data: teamData, error: teamError } = await supabase
+        .from('leader_teams')
+        .select(`
+          agent_id,
+          profiles!leader_teams_agent_id_fkey(
+            id,
+            full_name,
+            email,
+            phone,
+            region,
+            city,
+            status,
+            created_at
+          )
+        `)
+        .eq('leader_id', user.id);
 
-        if (statsError) {
-          console.log('Database function not available, using fallback:', statsError);
-          throw new Error('Function not available');
-        }
+      if (teamError) throw teamError;
 
-        console.log('Team stats received:', teamStats);
+      if (!teamData || teamData.length === 0) {
+        setTeamMembers([]);
+        setLoadingTeam(false);
+        return;
+      }
 
-        // Get detailed profile information for team members
-        const agentIds = teamStats?.map(stat => stat.agent_id) || [];
+      // Get sales data for each team member
+      const teamMembersWithSales = await Promise.all(
+        teamData.map(async (member: any) => {
+          if (!member.profiles) {
+            console.warn('No profile data for member:', member.agent_id);
+            return null;
+          }
 
-        if (agentIds.length === 0) {
-          setTeamMembers([]);
-          return;
-        }
+          // Get sales data for this agent
+          const { data: salesData, error: salesError } = await supabase
+            .from('client_orders')
+            .select('total_amount, status, created_at')
+            .eq('agent_id', member.agent_id);
 
-        const { data: profiles, error: profilesError } = await supabase
-          .from('profiles')
-          .select('id, full_name, email, phone, region, city, status, role, created_at')
-          .in('id', agentIds);
+          if (salesError) {
+            console.error(`Error fetching sales data for ${member.profiles.full_name}:`, salesError);
+          }
 
-        if (profilesError) throw profilesError;
+          const totalSales = salesData?.reduce((sum: number, order: any) => sum + (order.total_amount || 0), 0) || 0;
+          const ordersCount = salesData?.length || 0;
+          const approvedOrders = salesData?.filter(order => order.status === 'approved').length || 0;
+          const pendingOrders = salesData?.filter(order => order.status === 'pending').length || 0;
+          const rejectedOrders = salesData?.filter(order => order.status === 'rejected').length || 0;
 
-        // Combine stats with profile data
-        const teamMembersWithStats = teamStats.map(stat => {
-          const profile = profiles.find(p => p.id === stat.agent_id);
-          if (!profile) return null;
+          // Get the most recent order date
+          const lastOrderDate = salesData && salesData.length > 0
+            ? salesData.sort((a: any, b: any) => 
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              )[0]?.created_at
+            : null;
 
           return {
-            id: profile.id,
-            name: profile.full_name,
-            email: profile.email,
-            phone: profile.phone || '',
-            region: profile.region || '',
-            cities: profile.city ? (Array.isArray(profile.city) ? profile.city : profile.city.split(',').map(c => c.trim()).filter(c => c)) : [],
-            status: profile.status || 'active',
-            position: profile.position || undefined,
-            totalSales: Number(stat.total_sales) || 0,
-            ordersCount: Number(stat.total_orders) || 0,
-            approvedOrders: Number(stat.approved_orders) || 0,
-            pendingOrders: Number(stat.pending_orders) || 0,
-            rejectedOrders: Number(stat.rejected_orders) || 0,
-            lastOrderDate: stat.last_order_date,
-            joinedDate: profile.created_at
+            id: member.profiles.id,
+            name: member.profiles.full_name,
+            email: member.profiles.email,
+            phone: member.profiles.phone || '',
+            region: member.profiles.region || '',
+            cities: member.profiles.city ? (Array.isArray(member.profiles.city) ? member.profiles.city : member.profiles.city.split(',').map(c => c.trim()).filter(c => c)) : [],
+            status: member.profiles.status || 'active',
+            totalSales,
+            ordersCount,
+            approvedOrders,
+            pendingOrders,
+            rejectedOrders,
+            lastOrderDate,
+            joinedDate: member.profiles.created_at
           };
-        }).filter(member => member !== null);
+        })
+      );
 
-        setTeamMembers(teamMembersWithStats);
-        return;
-
-      } catch (functionError) {
-        console.log('Using fallback approach for team member data');
-
-        // Fallback: Get team members manually
-        const { data: teamData, error: teamError } = await supabase
-          .from('leader_teams')
-          .select(`
-            agent_id,
-            profiles!leader_teams_agent_id_fkey(
-              id,
-              full_name,
-              email,
-              phone,
-              region,
-              city,
-              status,
-              position,
-              created_at
-            )
-          `)
-          .eq('leader_id', user.id);
-
-        if (teamError) throw teamError;
-
-        console.log('Team data received (fallback):', teamData);
-
-        // Get sales data for each team member manually
-        const teamMembersWithSales = await Promise.all(
-          teamData.map(async (member: any) => {
-            if (!member.profiles) {
-              console.warn('No profile data for member:', member.agent_id);
-              return null;
-            }
-
-            // Get sales data for this agent
-            const { data: salesData, error: salesError } = await supabase
-              .from('client_orders')
-              .select('total_amount, status, created_at')
-              .eq('agent_id', member.agent_id);
-
-            console.log(`Agent ID for ${member.profiles.full_name}:`, member.agent_id);
-            console.log(`Sales data for ${member.profiles.full_name}:`, salesData);
-            console.log(`Sales error for ${member.profiles.full_name}:`, salesError);
-
-            const totalSales = salesData?.reduce((sum: number, order: any) => sum + (order.total_amount || 0), 0) || 0;
-            const ordersCount = salesData?.length || 0;
-            const approvedOrders = salesData?.filter(order => order.status === 'approved').length || 0;
-            const pendingOrders = salesData?.filter(order => order.status === 'pending').length || 0;
-            const rejectedOrders = salesData?.filter(order => order.status === 'rejected').length || 0;
-
-            return {
-              id: member.profiles.id,
-              name: member.profiles.full_name,
-              email: member.profiles.email,
-              phone: member.profiles.phone || '',
-              region: member.profiles.region || '',
-              cities: member.profiles.city ? (Array.isArray(member.profiles.city) ? member.profiles.city : member.profiles.city.split(',').map(c => c.trim()).filter(c => c)) : [],
-              status: member.profiles.status || 'active',
-              position: member.profiles.position || undefined,
-              totalSales,
-              ordersCount,
-              approvedOrders,
-              pendingOrders,
-              rejectedOrders,
-              lastOrderDate: salesData?.[0]?.created_at,
-              joinedDate: member.profiles.created_at
-            };
-          })
-        );
-
-        const validTeamMembers = teamMembersWithSales.filter(member => member !== null);
-        setTeamMembers(validTeamMembers);
-      }
+      const validTeamMembers = teamMembersWithSales.filter(member => member !== null);
+      setTeamMembers(validTeamMembers);
 
     } catch (error) {
       console.error('Error fetching team members:', error);
@@ -194,7 +145,7 @@ export default function MyTeamPage() {
   };
 
   useEffect(() => {
-    if (user && user.position === 'Leader') {
+    if (user && user.role === 'team_leader') {
       fetchTeamMembers();
     }
   }, [user]);
@@ -225,7 +176,7 @@ export default function MyTeamPage() {
   const totalTeamOrders = teamMembers.reduce((sum, member) => sum + member.ordersCount, 0);
   const activeMembers = teamMembers.filter(member => member.status === 'active').length;
 
-  if (!user || user.position !== 'Leader') {
+  if (!user || user.role !== 'team_leader') {
     return (
       <div className="p-8 space-y-6">
         <Card>
@@ -244,156 +195,143 @@ export default function MyTeamPage() {
   }
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">My Team</h1>
-          <p className="text-muted-foreground">
-            Manage and view your team members
-          </p>
-        </div>
-        <Button onClick={fetchTeamMembers} disabled={loadingTeam}>
-          <RefreshCw className={`mr-2 h-4 w-4 ${loadingTeam ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+      <div className="space-y-2">
+        <h1 className="text-3xl font-bold tracking-tight">My Team</h1>
+        <p className="text-muted-foreground">
+          Manage and view your team members' performance and details
+        </p>
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-blue-600" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border-l-4 border-l-blue-500">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
               <div>
-                <div className="text-2xl font-bold">{totalTeamMembers}</div>
-                <div className="text-xs text-muted-foreground">Total Members</div>
+                <p className="text-sm font-medium text-muted-foreground mb-1">Total Members</p>
+                <p className="text-3xl font-bold">{totalTeamMembers}</p>
+              </div>
+              <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
+                <Users className="h-6 w-6 text-blue-600" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-green-600" />
+        <Card className="border-l-4 border-l-green-500">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
               <div>
-                <div className="text-2xl font-bold">₱{totalTeamSales.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Total Sales</div>
+                <p className="text-sm font-medium text-muted-foreground mb-1">Total Sales</p>
+                <p className="text-3xl font-bold">₱{totalTeamSales.toLocaleString()}</p>
+              </div>
+              <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
+                <TrendingUp className="h-6 w-6 text-green-600" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-purple-600" />
+        <Card className="border-l-4 border-l-purple-500">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
               <div>
-                <div className="text-2xl font-bold">{totalTeamOrders}</div>
-                <div className="text-xs text-muted-foreground">Total Orders</div>
+                <p className="text-sm font-medium text-muted-foreground mb-1">Total Orders</p>
+                <p className="text-3xl font-bold">{totalTeamOrders}</p>
+              </div>
+              <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
+                <BarChart3 className="h-6 w-6 text-purple-600" />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Crown className="h-4 w-4 text-orange-600" />
+        <Card className="border-l-4 border-l-orange-500">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
               <div>
-                <div className="text-2xl font-bold">{activeMembers}</div>
-                <div className="text-xs text-muted-foreground">Active Members</div>
+                <p className="text-sm font-medium text-muted-foreground mb-1">Active Members</p>
+                <p className="text-3xl font-bold">{activeMembers}</p>
+              </div>
+              <div className="h-12 w-12 rounded-full bg-orange-100 flex items-center justify-center">
+                <Crown className="h-6 w-6 text-orange-600" />
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Controls */}
+      {/* Controls and Team Members */}
       <Card>
-        <CardContent className="p-6">
-          <div className="flex flex-col lg:flex-row gap-4 items-center">
-            {/* Search */}
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search team members by name, email, region, or city..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 h-11"
-              />
-            </div>
+        <CardHeader className="pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <CardTitle>Team Members</CardTitle>
+            <div className="flex flex-col sm:flex-row gap-3">
+              {/* Search */}
+              <div className="relative flex-1 sm:max-w-xs">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search team members..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
 
-            {/* Sort Dropdown */}
-            <div className="flex gap-2">
-              <Label className="text-sm font-medium text-muted-foreground self-center">Sort by:</Label>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'name' | 'sales' | 'orders')}
-                className="flex h-11 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="name">Name</option>
-                <option value="sales">Sales</option>
-                <option value="orders">Orders</option>
-              </select>
-            </div>
-
-            {/* View Toggle */}
-            <div className="flex gap-2">
-              <Button
-                variant={viewMode === 'table' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('table')}
-                className="gap-2"
-              >
-                <BarChart3 className="h-4 w-4" />
-                Table
-              </Button>
-              <Button
-                variant={viewMode === 'cards' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('cards')}
-                className="gap-2"
-              >
-                <Users className="h-4 w-4" />
-                Cards
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Team Members Display */}
-      {loadingTeam ? (
-        <Card>
-          <CardContent className="p-12">
-            <div className="flex items-center justify-center">
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Loading team members...</span>
+              {/* Sort and View Toggle */}
+              <div className="flex gap-2">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as 'name' | 'sales' | 'orders')}
+                  className="flex h-10 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  <option value="name">Sort: Name</option>
+                  <option value="sales">Sort: Sales</option>
+                  <option value="orders">Sort: Orders</option>
+                </select>
+                <div className="flex border rounded-md">
+                  <Button
+                    variant={viewMode === 'table' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setViewMode('table')}
+                    className="rounded-r-none border-r"
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant={viewMode === 'cards' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setViewMode('cards')}
+                    className="rounded-l-none"
+                  >
+                    <Users className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
-      ) : sortedTeamMembers.length === 0 ? (
-        <Card>
-          <CardContent className="p-12">
-            <div className="text-center">
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          {/* Team Members Display */}
+          {loadingTeam ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-muted-foreground">Loading team members...</span>
+              </div>
+            </div>
+          ) : sortedTeamMembers.length === 0 ? (
+            <div className="text-center py-12">
               <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
               <h3 className="text-lg font-semibold mb-2">No team members found</h3>
               <p className="text-muted-foreground">
                 {searchQuery ? 'Try adjusting your search criteria' : 'No team members have been assigned to you yet'}
               </p>
             </div>
-          </CardContent>
-        </Card>
-      ) : viewMode === 'table' ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Team Members</CardTitle>
-          </CardHeader>
-          <CardContent>
+          ) : viewMode === 'table' ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -486,9 +424,7 @@ export default function MyTeamPage() {
                 </TableBody>
               </Table>
             </div>
-          </CardContent>
-        </Card>
-      ) : (
+          ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {sortedTeamMembers.map((member) => (
             <Card key={member.id} className="hover:shadow-md transition-shadow">
@@ -568,7 +504,9 @@ export default function MyTeamPage() {
             </Card>
           ))}
         </div>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
       {/* Team Member Details Dialog */}
       <Dialog open={showMemberDetails} onOpenChange={setShowMemberDetails}>
@@ -580,22 +518,6 @@ export default function MyTeamPage() {
           </DialogHeader>
           {selectedMember && (
             <div className="space-y-6">
-              {/* Member Summary */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
-                <div className="text-center">
-                  <div className="text-2xl font-bold">₱{selectedMember.totalSales.toLocaleString()}</div>
-                  <div className="text-sm text-muted-foreground">Total Sales</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold">{selectedMember.ordersCount}</div>
-                  <div className="text-sm text-muted-foreground">Total Orders</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold">{selectedMember.approvedOrders}</div>
-                  <div className="text-sm text-muted-foreground">Approved Orders</div>
-                </div>
-              </div>
-
               {/* Contact Information */}
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Contact Information</h3>
@@ -640,20 +562,36 @@ export default function MyTeamPage() {
               {/* Performance Summary */}
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold">Performance Summary</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 border rounded-lg">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-4 border rounded-lg bg-green-50">
                     <div className="text-2xl font-bold text-green-600">₱{selectedMember.totalSales.toLocaleString()}</div>
                     <div className="text-sm text-muted-foreground">Total Sales</div>
                   </div>
-                  <div className="p-4 border rounded-lg">
+                  <div className="p-4 border rounded-lg bg-blue-50">
                     <div className="text-2xl font-bold text-blue-600">{selectedMember.ordersCount}</div>
                     <div className="text-sm text-muted-foreground">Total Orders</div>
                   </div>
+                  <div className="p-4 border rounded-lg bg-purple-50">
+                    <div className="text-2xl font-bold text-purple-600">{selectedMember.approvedOrders}</div>
+                    <div className="text-sm text-muted-foreground">Approved Orders</div>
+                  </div>
                 </div>
-                <div className="p-4 border rounded-lg">
-                  <div className="text-2xl font-bold text-purple-600">{selectedMember.approvedOrders}</div>
-                  <div className="text-sm text-muted-foreground">Approved Orders</div>
-                </div>
+                {(selectedMember.pendingOrders > 0 || selectedMember.rejectedOrders > 0) && (
+                  <div className="grid grid-cols-2 gap-4">
+                    {selectedMember.pendingOrders > 0 && (
+                      <div className="p-4 border rounded-lg bg-orange-50">
+                        <div className="text-2xl font-bold text-orange-600">{selectedMember.pendingOrders}</div>
+                        <div className="text-sm text-muted-foreground">Pending Orders</div>
+                      </div>
+                    )}
+                    {selectedMember.rejectedOrders > 0 && (
+                      <div className="p-4 border rounded-lg bg-red-50">
+                        <div className="text-2xl font-bold text-red-600">{selectedMember.rejectedOrders}</div>
+                        <div className="text-sm text-muted-foreground">Rejected Orders</div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}

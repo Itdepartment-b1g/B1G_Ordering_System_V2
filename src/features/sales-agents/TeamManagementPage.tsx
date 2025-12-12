@@ -6,7 +6,7 @@ export default function TeamManagementPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Team Management</h1>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground mt-1">
             Manage sales teams and assign agents to leaders
           </p>
         </div>

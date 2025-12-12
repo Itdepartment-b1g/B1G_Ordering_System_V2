@@ -15,8 +15,10 @@
 --   JSON object with success status and message
 -- ============================================================================
 
--- Drop the function if it exists
+-- Drop the function if it exists (handle both possible parameter orders)
 DROP FUNCTION IF EXISTS remove_agent_from_team(UUID, UUID);
+DROP FUNCTION IF EXISTS remove_agent_from_team(p_agent_id UUID, p_admin_id UUID);
+DROP FUNCTION IF EXISTS remove_agent_from_team(p_admin_id UUID, p_agent_id UUID);
 
 -- Create the remove_agent_from_team function
 CREATE OR REPLACE FUNCTION remove_agent_from_team(

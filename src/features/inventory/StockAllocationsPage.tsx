@@ -504,8 +504,9 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
       if (quantity > 0) {
         const sellingPriceRaw = (flavor as any).sellingPrice;
         const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-        if (!sellingPrice || Number.isNaN(sellingPrice) || sellingPrice <= 0) {
-          warnings.push(`${selectedBrand.name} - ${flavor.name} has no selling price set.`);
+        // Allow selling price to be 0, only check for NaN or null/undefined
+        if (sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0) {
+          warnings.push(`${selectedBrand.name} - ${flavor.name} has invalid selling price.`);
           return;
         }
         const availableStock = getVariantAvailableStock(flavor);
@@ -518,6 +519,8 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             brand_name: selectedBrand.name,
             quantity: finalQuantity,
             selling_price: sellingPrice,
+            dsp_price: (flavor as any).dspPrice || null,
+            rsp_price: (flavor as any).rspPrice || null,
             total_value: finalQuantity * sellingPrice
           });
         }
@@ -530,8 +533,9 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
       if (quantity > 0) {
         const sellingPriceRaw = (battery as any).sellingPrice;
         const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-        if (!sellingPrice || Number.isNaN(sellingPrice) || sellingPrice <= 0) {
-          warnings.push(`${selectedBrand.name} - ${battery.name} has no selling price set. Please Proceed To The Main Inventory Page To Set The Selling Price.`);
+        // Allow selling price to be 0, only check for NaN or null/undefined
+        if (sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0) {
+          warnings.push(`${selectedBrand.name} - ${battery.name} has invalid selling price.`);
           return;
         }
         const availableStock = getVariantAvailableStock(battery);
@@ -544,11 +548,44 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             brand_name: selectedBrand.name,
             quantity: finalQuantity,
             selling_price: sellingPrice,
+            dsp_price: (battery as any).dspPrice || null,
+            rsp_price: (battery as any).rspPrice || null,
             total_value: finalQuantity * sellingPrice
           });
         }
       }
     });
+
+    // Process POSM
+    if ((selectedBrand as any).posms) {
+      (selectedBrand as any).posms.forEach((posm: any) => {
+        const quantity = variantQuantities[posm.id] || 0;
+        if (quantity > 0) {
+          const sellingPriceRaw = (posm as any).sellingPrice;
+          const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+          // Allow selling price to be 0, only check for NaN or null/undefined
+          if (sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0) {
+            warnings.push(`${selectedBrand.name} - ${posm.name} has invalid selling price.`);
+            return;
+          }
+          const availableStock = getVariantAvailableStock(posm);
+          const finalQuantity = Math.min(quantity, availableStock);
+          if (finalQuantity > 0) {
+            items.push({
+              variant_id: posm.id,
+              variant_name: posm.name,
+              variant_type: 'posm',
+              brand_name: selectedBrand.name,
+              quantity: finalQuantity,
+              selling_price: sellingPrice,
+              dsp_price: (posm as any).dspPrice || null,
+              rsp_price: (posm as any).rspPrice || null,
+              total_value: finalQuantity * sellingPrice
+            });
+          }
+        }
+      });
+    }
 
     return { items, warnings };
   };
@@ -1315,7 +1352,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                   </CardHeader>
                   <CardContent>
                   <Tabs defaultValue="flavor" className="w-full">
-                      <TabsList className="grid w-full grid-cols-2 h-12">
+                      <TabsList className="grid w-full grid-cols-3 h-12">
                         <TabsTrigger value="flavor" className="gap-2">
                           <div className="h-2 w-2 rounded-full bg-blue-500"></div>
                         Flavors ({brands.find(b => b.id === allocation.brandId)?.flavors.filter(v => getVariantAvailableStock(v) > 0).length || 0})
@@ -1323,6 +1360,10 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                         <TabsTrigger value="battery" className="gap-2">
                           <div className="h-2 w-2 rounded-full bg-green-500"></div>
                         Batteries ({brands.find(b => b.id === allocation.brandId)?.batteries.filter(v => getVariantAvailableStock(v) > 0).length || 0})
+                      </TabsTrigger>
+                        <TabsTrigger value="posm" className="gap-2">
+                          <div className="h-2 w-2 rounded-full bg-purple-500"></div>
+                        POSM ({((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).filter((v: any) => getVariantAvailableStock(v) > 0).length || 0})
                       </TabsTrigger>
                     </TabsList>
                     
@@ -1339,7 +1380,8 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                             .map(variant => {
                               const sellingPriceRaw = (variant as any).sellingPrice;
                               const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                              const hasNoPrice = !sellingPrice || Number.isNaN(sellingPrice) || sellingPrice <= 0;
+                              // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                              const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
                               const availableStock = getVariantAvailableStock(variant);
                               const quantity = variantQuantities[variant.id] || 0;
                               
@@ -1347,16 +1389,24 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                                 <div 
                                   key={variant.id} 
                                   className={`flex items-center gap-3 p-3 rounded-lg border ${
-                                    hasNoPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                    hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
                                   }`}
                                 >
                                   <div className="flex-1">
                                     <div className="font-medium flex items-center gap-2">
-                                      {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                      {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
                                       <span>{variant.name}</span>
                                     </div>
-                                    <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                      {hasNoPrice ? 'No Selling Price Set. Please Proceed To The Main Inventory Page To Set The Selling Price.' : `Selling Price: ₱${sellingPrice.toFixed(2)}`} • Available: {availableStock} units
+                                    <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                      {hasInvalidPrice ? (
+                                        'Invalid Selling Price. Please Proceed To The Main Inventory Page To Set The Selling Price.'
+                                      ) : (
+                                        <>
+                                          Selling Price: ₱{sellingPrice.toFixed(2)}
+                                          {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
+                                          {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
+                                        </>
+                                      )} • Available: {availableStock} units
                                     </div>
                                   </div>
                                   <div className="w-28">
@@ -1374,7 +1424,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                                           [variant.id]: cappedValue
                                         }));
                                       }}
-                                      disabled={hasNoPrice}
+                                      disabled={hasInvalidPrice}
                                     />
                                   </div>
                                 </div>
@@ -1397,7 +1447,8 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                             .map(variant => {
                               const sellingPriceRaw = (variant as any).sellingPrice;
                               const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                              const hasNoPrice = !sellingPrice || Number.isNaN(sellingPrice) || sellingPrice <= 0;
+                              // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                              const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
                               const availableStock = getVariantAvailableStock(variant);
                               const quantity = variantQuantities[variant.id] || 0;
                               
@@ -1405,16 +1456,24 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                                 <div 
                                   key={variant.id} 
                                   className={`flex items-center gap-3 p-3 rounded-lg border ${
-                                    hasNoPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                    hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
                                   }`}
                                 >
                                   <div className="flex-1">
                                     <div className="font-medium flex items-center gap-2">
-                                      {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                      {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
                                       <span>{variant.name}</span>
                                     </div>
-                                    <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                      {hasNoPrice ? 'No Selling Price Set' : `Selling Price: ₱${sellingPrice.toFixed(2)}`} • Available: {availableStock} units
+                                    <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                      {hasInvalidPrice ? (
+                                        'Invalid Selling Price'
+                                      ) : (
+                                        <>
+                                          Selling Price: ₱{sellingPrice.toFixed(2)}
+                                          {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
+                                          {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
+                                        </>
+                                      )} • Available: {availableStock} units
                                     </div>
                                   </div>
                                   <div className="w-28">
@@ -1432,7 +1491,74 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                                           [variant.id]: cappedValue
                                         }));
                                       }}
-                                      disabled={hasNoPrice}
+                                      disabled={hasInvalidPrice}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
+                    </TabsContent>
+
+                    {/* POSM Tab */}
+                    <TabsContent value="posm" className="space-y-3 mt-4">
+                      {((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          No POSM available for this brand
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {((brands.find(b => b.id === allocation.brandId) as any)?.posms || [])
+                            .filter((v: any) => getVariantAvailableStock(v) > 0)
+                            .map((variant: any) => {
+                              const sellingPriceRaw = variant.sellingPrice;
+                              const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+                              // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                              const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
+                              const availableStock = getVariantAvailableStock(variant);
+                              const quantity = variantQuantities[variant.id] || 0;
+                              
+                              return (
+                                <div 
+                                  key={variant.id} 
+                                  className={`flex items-center gap-3 p-3 rounded-lg border ${
+                                    hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                  }`}
+                                >
+                                  <div className="flex-1">
+                                    <div className="font-medium flex items-center gap-2">
+                                      {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                      <span>{variant.name}</span>
+                                    </div>
+                                    <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                      {hasInvalidPrice ? (
+                                        'Invalid Selling Price'
+                                      ) : (
+                                        <>
+                                          Selling Price: ₱{sellingPrice.toFixed(2)}
+                                          {variant.dspPrice && ` • DSP: ₱${variant.dspPrice.toFixed(2)}`}
+                                          {variant.rspPrice && ` • RSP: ₱${variant.rspPrice.toFixed(2)}`}
+                                        </>
+                                      )} • Available: {availableStock} units
+                                    </div>
+                                  </div>
+                                  <div className="w-28">
+                                    <Input
+                                      type="number"
+                                      placeholder="0"
+                                      min="0"
+                                      max={availableStock}
+                                      value={quantity === 0 ? '' : quantity}
+                                      onChange={(e) => {
+                                        const inputValue = parseInt(e.target.value) || 0;
+                                        const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
+                                        setVariantQuantities(prev => ({
+                                          ...prev,
+                                          [variant.id]: cappedValue
+                                        }));
+                                      }}
+                                      disabled={hasInvalidPrice}
                                     />
                                   </div>
                                 </div>
@@ -1465,14 +1591,26 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                           <div key={index} className="flex items-center justify-between p-4 bg-background rounded-lg border-2 hover:border-primary/50 transition-colors">
                           <div className="flex-1">
                               <div className="font-semibold text-lg">{item.brand_name}</div>
-                              <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
+                              <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1 flex-wrap">
                                 <span>{item.variant_name}</span>
                                 <span>•</span>
                                 <Badge variant="outline" className="text-xs">
                                   {item.variant_type}
                                 </Badge>
                                 <span>•</span>
-                                <span>Unit Price: ₱{item.selling_price.toFixed(2)}</span>
+                                <span>Selling: ₱{item.selling_price.toFixed(2)}</span>
+                                {item.dsp_price && (
+                                  <>
+                                    <span>•</span>
+                                    <span>DSP: ₱{item.dsp_price.toFixed(2)}</span>
+                                  </>
+                                )}
+                                {item.rsp_price && (
+                                  <>
+                                    <span>•</span>
+                                    <span>RSP: ₱{item.rsp_price.toFixed(2)}</span>
+                                  </>
+                                )}
                             </div>
                           </div>
                             <div className="flex items-center gap-3">

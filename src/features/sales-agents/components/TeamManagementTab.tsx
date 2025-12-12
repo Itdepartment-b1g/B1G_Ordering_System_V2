@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -12,7 +12,14 @@ import {
   Crown, 
   Loader2,
   UserMinus,
-  MoreHorizontal
+  MoreHorizontal,
+  ArrowRight,
+  Building2,
+  UserCheck,
+  UserX,
+  Sparkles,
+  Mail,
+  MapPin
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { LeaderAssignmentSection } from './LeaderAssignmentSection';
@@ -28,6 +35,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { supabase } from '@/lib/supabase';
+import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 // Database interfaces
 interface Agent {
@@ -66,11 +75,15 @@ export function TeamManagementTab() {
   const { toast } = useToast();
 
   const unassignedAgents = agents.filter(agent => !agent.leaderId && agent.role !== 'team_leader');
+  const assignedAgents = agents.filter(agent => agent.leaderId && agent.role !== 'mobile_sales');
+  const totalAgents = agents.filter(agent => agent.role === 'mobile_sales').length;
 
-  // Fetch data from database
-  const fetchData = async () => {
+  // Fetch data from database (with optional silent mode for real-time updates)
+  const fetchData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       
       // Fetch all sales agents (mobile_sales and team_leader)
       const { data: agentsData, error: agentsError } = await supabase
@@ -156,13 +169,68 @@ export function TeamManagementTab() {
         variant: 'destructive'
       });
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Real-time subscriptions for seamless updates
+  useEffect(() => {
+    const channels: RealtimeChannel[] = [];
+    let debounceTimer: NodeJS.Timeout | null = null;
+
+    // Subscribe to profiles table changes (for role changes, new agents, etc.)
+    // Only listen to mobile_sales and team_leader role changes
+    const profilesChannel = subscribeToTable('profiles', (payload) => {
+      // Only refresh if the change affects relevant roles
+      const newData = payload.new as any;
+      const oldData = payload.old as any;
+      
+      if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+        const role = newData?.role;
+        if (role === 'mobile_sales' || role === 'team_leader') {
+          console.log('🔄 Profiles changed:', payload.eventType);
+          // Debounce to prevent rapid successive updates
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            fetchData(true);
+          }, 300);
+        }
+      } else if (payload.eventType === 'DELETE') {
+        const role = oldData?.role;
+        if (role === 'mobile_sales' || role === 'team_leader') {
+          console.log('🔄 Profiles deleted:', payload.eventType);
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            fetchData(true);
+          }, 300);
+        }
+      }
+    });
+
+    // Subscribe to leader_teams table changes (for team assignments)
+    const teamsChannel = subscribeToTable('leader_teams', (payload) => {
+      console.log('🔄 Leader teams changed:', payload.eventType);
+      // Debounce to prevent rapid successive updates
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchData(true);
+      }, 300);
+    });
+
+    channels.push(profilesChannel, teamsChannel);
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      channels.forEach(channel => unsubscribe(channel));
+    };
+  }, []); // Only set up once on mount
 
   const handleAssignAgent = async () => {
     if (!selectedAgent || !selectedLeader) {
@@ -184,13 +252,24 @@ export function TeamManagementTab() {
       }
 
       // Use the database function to assign agent to leader
-      const { error } = await supabase.rpc('assign_agent_to_leader', {
+      const { data, error } = await supabase.rpc('assign_agent_to_leader', {
         p_agent_id: selectedAgent,
         p_leader_id: selectedLeader,
         p_admin_id: user.id
       });
 
       if (error) throw error;
+
+      // Check if the function returned a failure response
+      if (!data || !data.success) {
+        const errorMessage = data?.error || 'Failed to assign agent to team';
+        toast({
+          title: 'Error',
+          description: errorMessage,
+          variant: 'destructive'
+        });
+        return;
+      }
 
       toast({
         title: 'Success',
@@ -249,12 +328,23 @@ export function TeamManagementTab() {
       }
 
       // Use the database function to remove agent from team
-      const { error } = await supabase.rpc('remove_agent_from_team', {
+      const { data, error } = await supabase.rpc('remove_agent_from_team', {
         p_agent_id: agentToUnassign,
         p_admin_id: user.id
       });
 
       if (error) throw error;
+
+      // Check if the function returned a failure response
+      if (!data || !data.success) {
+        const errorMessage = data?.error || 'Failed to unassign agent from team';
+        toast({
+          title: 'Error',
+          description: errorMessage,
+          variant: 'destructive'
+        });
+        return;
+      }
 
       const agent = agents.find(a => a.id === agentToUnassign);
       
@@ -269,11 +359,11 @@ export function TeamManagementTab() {
       setUnassignDialogOpen(false);
       setAgentToUnassign('');
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error unassigning agent:', error);
       toast({
         title: 'Error',
-        description: 'Failed to unassign agent from team',
+        description: error?.message || 'Failed to unassign agent from team',
         variant: 'destructive'
       });
     } finally {
@@ -325,267 +415,492 @@ export function TeamManagementTab() {
     }
   };
 
-  return (
-    <div className="space-y-6">
-      {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="flex items-center gap-2">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            <span>Loading team data...</span>
-          </div>
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <span className="text-muted-foreground">Loading team data...</span>
         </div>
-      ) : (
-        <>
-          {/* Quick Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <Crown className="h-4 w-4 text-blue-600" />
-                  <div>
-                    <div className="text-2xl font-bold">{leaders.length}</div>
-                    <div className="text-xs text-muted-foreground">Leaders</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-green-600" />
-                  <div>
-                    <div className="text-2xl font-bold">{agents.filter(a => a.leaderId).length}</div>
-                    <div className="text-xs text-muted-foreground">Assigned</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <UserPlus className="h-4 w-4 text-amber-600" />
-                  <div>
-                    <div className="text-2xl font-bold">{unassignedAgents.length}</div>
-                    <div className="text-xs text-muted-foreground">Unassigned</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Assign Agent Dialog - Hidden, accessible via other actions */}
+      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Assign Agent to Team</DialogTitle>
+            <DialogDescription>
+              Select an unassigned agent and assign them to a team leader
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Select Agent</Label>
+              <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose an agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  {unassignedAgents.map(agent => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name} ({agent.region})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {unassignedAgents.length === 0 && (
+                <p className="text-sm text-muted-foreground">All agents are assigned</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Select Leader</Label>
+              <Select value={selectedLeader} onValueChange={setSelectedLeader}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a leader" />
+                </SelectTrigger>
+                <SelectContent>
+                  {leaders.map(leader => (
+                    <SelectItem key={leader.id} value={leader.id}>
+                      {leader.name} ({leader.region}) - {leader.teamSize} members
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button 
+              className="w-full" 
+              onClick={handleAssignClick}
+              disabled={!selectedAgent || !selectedLeader || assigning}
+            >
+              {assigning ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Assigning...
+                </>
+              ) : (
+                <>
+                  <ArrowRight className="h-4 w-4 mr-2" />
+                  Assign to Team
+                </>
+              )}
+            </Button>
           </div>
-          <Tabs defaultValue="assign" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="promote">Promote Leader</TabsTrigger>
-              <TabsTrigger value="leaders">Leaders</TabsTrigger>
-              <TabsTrigger value="assign">Assign Agents</TabsTrigger>
-              <TabsTrigger value="teams">Teams</TabsTrigger>
-            </TabsList>
+        </DialogContent>
+      </Dialog>
 
-            {/* Promote Leader */}
-            <TabsContent value="promote" className="space-y-4">
-              <LeaderAssignmentSection />
-            </TabsContent>
+      {/* Stats Bar */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4">
+              <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-100">
+                <Crown className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-semibold tracking-tight">{leaders.length}</p>
+                <p className="text-xs font-medium text-muted-foreground mt-0.5">Leaders</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4">
+              <div className="p-2.5 rounded-lg bg-green-50 border border-green-100">
+                <UserCheck className="h-5 w-5 text-green-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-semibold tracking-tight">{assignedAgents.length}</p>
+                <p className="text-xs font-medium text-muted-foreground mt-0.5">Assigned</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4">
+              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-100">
+                <UserX className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-semibold tracking-tight">{unassignedAgents.length}</p>
+                <p className="text-xs font-medium text-muted-foreground mt-0.5">Unassigned</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4">
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <Users className="h-5 w-5 text-slate-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-semibold tracking-tight">{totalAgents}</p>
+                <p className="text-xs font-medium text-muted-foreground mt-0.5">Total Agents</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-            {/* Assign Agents */}
-            <TabsContent value="assign" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>Team Assignment</CardTitle>
-                      <p className="text-sm text-muted-foreground">Assign agents to team leaders</p>
-                    </div>
-                    <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
-                      <DialogTrigger asChild>
-                        <Button>
-                          <UserPlus className="h-4 w-4 mr-2" />
-                          Assign Agent
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Assign Agent to Team</DialogTitle>
-                        </DialogHeader>
-                        <div className="space-y-4 py-4">
-                          <div className="space-y-2">
-                            <Label>Select Agent</Label>
-                            <Select value={selectedAgent} onValueChange={setSelectedAgent}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Choose an agent" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {unassignedAgents.map(agent => (
-                                  <SelectItem key={agent.id} value={agent.id}>
-                                    {agent.name} ({agent.region})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+      {/* Main Content Tabs */}
+      <Tabs defaultValue="teams" className="w-full">
+        <TabsList className="grid w-full grid-cols-3 bg-muted/50">
+          <TabsTrigger value="teams" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">Teams</TabsTrigger>
+          <TabsTrigger value="leaders" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">Leaders</TabsTrigger>
+          <TabsTrigger value="unassigned" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
+            Unassigned 
+            {unassignedAgents.length > 0 && (
+              <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
+                {unassignedAgents.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Teams Tab */}
+        <TabsContent value="teams" className="space-y-4 mt-6">
+          {leaders.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="py-20">
+                <div className="text-center max-w-md mx-auto">
+                  <div className="h-20 w-20 mx-auto mb-6 rounded-full bg-muted/50 flex items-center justify-center">
+                    <Building2 className="h-10 w-10 text-muted-foreground" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">No Teams Created</h3>
+                  <p className="text-muted-foreground mb-8 text-sm leading-relaxed">
+                    Get started by promoting a mobile sales agent to team leader
+                  </p>
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button className="shadow-sm">
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Promote First Leader
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[600px]">
+                      <LeaderAssignmentSection />
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {leaders.map(leader => {
+                const teamAgents = agents.filter(agent => agent.leaderId === leader.id);
+                return (
+                  <Card key={leader.id} className="overflow-hidden border-border/50 shadow-sm hover:shadow-md transition-all duration-200">
+                    <CardHeader className="bg-gradient-to-r from-muted/30 to-muted/10 border-b px-6 py-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center shadow-sm ring-2 ring-blue-100">
+                            <Crown className="h-6 w-6 text-white" />
                           </div>
-                          <div className="space-y-2">
-                            <Label>Select Leader</Label>
-                            <Select value={selectedLeader} onValueChange={setSelectedLeader}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Choose a leader" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {leaders.map(leader => (
-                                  <SelectItem key={leader.id} value={leader.id}>
-                                    {leader.name} ({leader.region})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                          <div>
+                            <CardTitle className="text-lg font-semibold">{leader.name}</CardTitle>
+                            <div className="flex items-center gap-2.5 mt-1.5">
+                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <MapPin className="h-3.5 w-3.5" />
+                                <span className="font-medium">{leader.region}</span>
+                              </div>
+                              <span className="text-muted-foreground">•</span>
+                              <Badge variant="secondary" className="text-xs font-medium">
+                                {teamAgents.length} {teamAgents.length === 1 ? 'member' : 'members'}
+                              </Badge>
+                            </div>
                           </div>
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-9 w-9">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuItem 
+                              onClick={() => handleUnpromoteClick(leader.id)}
+                              className="text-orange-600 focus:text-orange-600"
+                            >
+                              <UserMinus className="h-4 w-4 mr-2" />
+                              Unpromote Leader
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      {teamAgents.length === 0 ? (
+                        <div className="p-10 text-center border-t bg-muted/20">
+                          <div className="h-14 w-14 mx-auto mb-4 rounded-full bg-muted/50 flex items-center justify-center">
+                            <Users className="h-7 w-7 text-muted-foreground" />
+                          </div>
+                          <p className="text-sm font-medium text-muted-foreground mb-1">No agents assigned</p>
+                          <p className="text-xs text-muted-foreground mb-6">Assign agents to build this team</p>
                           <Button 
-                            className="w-full" 
-                            onClick={handleAssignClick}
-                            disabled={!selectedAgent || !selectedLeader || assigning}
+                            variant="outline" 
+                            size="sm"
+                            className="shadow-sm"
+                            onClick={() => {
+                              setAssignDialogOpen(true);
+                              setSelectedLeader(leader.id);
+                            }}
                           >
-                            {assigning ? (
-                              <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                Assigning...
-                              </>
-                            ) : (
-                              'Assign to Team'
-                            )}
+                            <UserPlus className="h-3.5 w-3.5 mr-2" />
+                            Assign Agent
                           </Button>
                         </div>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {unassignedAgents.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>All agents are assigned to teams</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <p className="text-sm text-muted-foreground">
-                        {unassignedAgents.length} agent(s) need assignment
-                      </p>
-                      <div className="space-y-2">
-                        {unassignedAgents.map(agent => (
-                          <div key={agent.id} className="flex items-center justify-between p-3 border rounded-lg">
-                            <div>
-                              <div className="font-medium">{agent.name}</div>
-                              <div className="text-sm text-muted-foreground">{agent.region}</div>
-                            </div>
-                            <Badge variant="outline">Unassigned</Badge>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Teams */}
-            <TabsContent value="teams" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Teams</CardTitle>
-                  <p className="text-sm text-muted-foreground">Current team structure</p>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {leaders.map(leader => {
-                      const teamAgents = agents.filter(agent => agent.leaderId === leader.id);
-                      return (
-                        <div key={leader.id} className="border rounded-lg p-4">
-                          <div className="flex items-center gap-3 mb-3">
-                            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                              <Crown className="h-4 w-4 text-blue-600" />
-                            </div>
-                            <div>
-                              <h3 className="font-semibold">{leader.name}</h3>
-                              <p className="text-sm text-muted-foreground">{leader.region}</p>
-                            </div>
-                          </div>
-                          {teamAgents.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No agents assigned</p>
-                          ) : (
-                            <div className="space-y-2">
-                              {teamAgents.map(agent => (
-                                <div key={agent.id} className="flex items-center justify-between p-2 bg-muted/50 rounded">
-                                  <div className="flex items-center gap-3">
-                                    <div className="h-6 w-6 rounded-full bg-green-100 flex items-center justify-center">
-                                      <Users className="h-3 w-3 text-green-600" />
+                      ) : (
+                        <div className="divide-y divide-border/50">
+                          {teamAgents.map((agent, index) => (
+                            <div 
+                              key={agent.id} 
+                              className="flex items-center justify-between px-6 py-4 hover:bg-muted/30 transition-colors duration-150"
+                            >
+                              <div className="flex items-center gap-4 flex-1 min-w-0">
+                                <div className="h-10 w-10 rounded-full bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center flex-shrink-0 shadow-sm ring-1 ring-green-100">
+                                  <Users className="h-5 w-5 text-white" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-semibold text-sm text-foreground">{agent.name}</p>
+                                  <div className="flex items-center gap-4 mt-1.5">
+                                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                      <Mail className="h-3 w-3" />
+                                      <span className="truncate max-w-[200px]">{agent.email}</span>
                                     </div>
-                                    <div>
-                                      <div className="text-sm font-medium">{agent.name}</div>
-                                      <div className="text-xs text-muted-foreground">{agent.region}</div>
+                                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                      <MapPin className="h-3 w-3" />
+                                      <span>{agent.region}</span>
                                     </div>
                                   </div>
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-6 w-6">
-                                        <MoreHorizontal className="h-3 w-3" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuItem 
-                                        onClick={() => handleUnassignClick(agent.id)}
-                                        className="text-red-600"
-                                      >
-                                        <UserMinus className="h-3 w-3 mr-2" />
-                                        Unassign from Team
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
                                 </div>
-                              ))}
+                              </div>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-muted">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48">
+                                  <DropdownMenuItem 
+                                    onClick={() => handleUnassignClick(agent.id)}
+                                    className="text-red-600 focus:text-red-600"
+                                  >
+                                    <UserMinus className="h-4 w-4 mr-2" />
+                                    Unassign from Team
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
-                          )}
+                          ))}
                         </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
 
-            {/* Leaders */}
-            <TabsContent value="leaders" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Leaders</CardTitle>
-                  <p className="text-sm text-muted-foreground">Manage existing leaders</p>
-                </CardHeader>
-                <CardContent>
-                  {leaders.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">No leaders yet</div>
-                  ) : (
-                    <div className="space-y-3">
-                      {leaders.map(l => (
-                        <div key={l.id} className="flex items-center justify-between p-3 border rounded-lg">
-                          <div className="flex items-center gap-3">
-                            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                              <Crown className="h-4 w-4 text-blue-600" />
-                            </div>
-                            <div>
-                              <div className="font-medium">{l.name}</div>
-                              <div className="text-xs text-muted-foreground">{l.region} • Team size: {l.teamSize}</div>
+        {/* Leaders Tab */}
+        <TabsContent value="leaders" className="space-y-4 mt-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">Team Leaders</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Manage existing leaders and promote new ones
+              </p>
+            </div>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button size="default" className="shadow-sm">
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Promote Leader
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[600px]">
+                <LeaderAssignmentSection />
+              </DialogContent>
+            </Dialog>
+          </div>
+          {leaders.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="py-16">
+                <div className="text-center max-w-sm mx-auto">
+                  <div className="h-16 w-16 mx-auto mb-5 rounded-full bg-muted/50 flex items-center justify-center">
+                    <Crown className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                  <h3 className="text-lg font-semibold mb-2">No Team Leaders</h3>
+                  <p className="text-sm text-muted-foreground mb-6">Promote a mobile sales agent to create your first team leader</p>
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button className="shadow-sm">
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Promote First Leader
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[600px]">
+                      <LeaderAssignmentSection />
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {leaders.map(leader => {
+                const teamAgents = agents.filter(agent => agent.leaderId === leader.id);
+                return (
+                  <Card key={leader.id} className="hover:shadow-md transition-all duration-200 border-border/50">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center flex-shrink-0 shadow-sm ring-2 ring-blue-100">
+                            <Crown className="h-6 w-6 text-white" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <CardTitle className="text-base font-semibold truncate">{leader.name}</CardTitle>
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <MapPin className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                              <p className="text-sm text-muted-foreground truncate">{leader.region}</p>
                             </div>
                           </div>
-                          <Button variant="outline" onClick={() => handleUnpromoteClick(l.id)}>
-                            Unpromote
-                          </Button>
                         </div>
-                      ))}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-44">
+                            <DropdownMenuItem 
+                              onClick={() => handleUnpromoteClick(leader.id)}
+                              className="text-orange-600 focus:text-orange-600"
+                            >
+                              <UserMinus className="h-4 w-4 mr-2" />
+                              Unpromote
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between py-2">
+                          <span className="text-sm font-medium text-muted-foreground">Team Size</span>
+                          <Badge variant="secondary" className="font-medium">{teamAgents.length} {teamAgents.length === 1 ? 'member' : 'members'}</Badge>
+                        </div>
+                        {teamAgents.length > 0 && (
+                          <div className="pt-3 border-t border-border/50">
+                            <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Team Members</p>
+                            <div className="space-y-2.5">
+                              {teamAgents.slice(0, 3).map(agent => (
+                                <div key={agent.id} className="flex items-center gap-2.5 text-sm">
+                                  <div className="h-7 w-7 rounded-full bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center flex-shrink-0 shadow-sm ring-1 ring-green-100">
+                                    <Users className="h-3.5 w-3.5 text-white" />
+                                  </div>
+                                  <span className="font-medium truncate">{agent.name}</span>
+                                </div>
+                              ))}
+                              {teamAgents.length > 3 && (
+                                <p className="text-xs text-muted-foreground pl-10 font-medium">
+                                  +{teamAgents.length - 3} more {teamAgents.length - 3 === 1 ? 'member' : 'members'}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* Unassigned Tab */}
+        <TabsContent value="unassigned" className="space-y-4 mt-6">
+          {unassignedAgents.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="py-16">
+                <div className="text-center max-w-sm mx-auto">
+                  <div className="h-16 w-16 mx-auto mb-5 rounded-full bg-green-50 border border-green-100 flex items-center justify-center">
+                    <UserCheck className="h-8 w-8 text-green-600" />
+                  </div>
+                  <h3 className="text-lg font-semibold mb-2">All Agents Assigned</h3>
+                  <p className="text-sm text-muted-foreground">Great job! All mobile sales agents are part of a team.</p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="border-border/50 shadow-sm">
+              <CardHeader className="pb-4">
+                <div>
+                  <CardTitle className="text-lg font-semibold">Unassigned Agents</CardTitle>
+                  <CardDescription className="mt-1.5">
+                    {unassignedAgents.length} agent{unassignedAgents.length !== 1 ? 's' : ''} waiting for team assignment
+                  </CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {unassignedAgents.map(agent => (
+                    <div 
+                      key={agent.id} 
+                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 hover:border-border transition-all duration-150 group"
+                    >
+                      <div className="flex items-center gap-4 flex-1 min-w-0">
+                        <div className="h-11 w-11 rounded-full bg-gradient-to-br from-amber-400 to-amber-500 flex items-center justify-center flex-shrink-0 shadow-sm ring-1 ring-amber-100">
+                          <Users className="h-5 w-5 text-white" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-sm text-foreground">{agent.name}</p>
+                          <div className="flex items-center gap-4 mt-1.5">
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Mail className="h-3 w-3" />
+                              <span className="truncate max-w-[200px]">{agent.email}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <MapPin className="h-3 w-3" />
+                              <span>{agent.region}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 font-medium">
+                          Unassigned
+                        </Badge>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          className="shadow-sm"
+                          onClick={() => {
+                            setAssignDialogOpen(true);
+                            setSelectedAgent(agent.id);
+                          }}
+                        >
+                          <UserPlus className="h-3.5 w-3.5 mr-2" />
+                          Assign
+                        </Button>
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-      
-      {/* Confirmation Dialog */}
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {/* Confirmation Dialogs */}
       <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -628,7 +943,6 @@ export function TeamManagementTab() {
         </AlertDialogContent>
       </AlertDialog>
       
-      {/* Unassign Confirmation Dialog */}
       <AlertDialog open={unassignDialogOpen} onOpenChange={setUnassignDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -669,7 +983,6 @@ export function TeamManagementTab() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Unpromote Leader Confirmation */}
       <AlertDialog open={unpromoteDialogOpen} onOpenChange={setUnpromoteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -697,8 +1010,6 @@ export function TeamManagementTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-        </>
-      )}
     </div>
   );
 }

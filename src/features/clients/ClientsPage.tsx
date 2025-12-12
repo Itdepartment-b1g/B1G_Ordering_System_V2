@@ -310,6 +310,51 @@ export default function ClientsPage() {
     }
   };
 
+  // Helper function to convert photo URL to signed URL if needed
+  const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<string | null> => {
+    if (!photoUrl) return null;
+    
+    // If it's already a signed URL, return as-is
+    if (photoUrl.includes('?token=')) {
+      return photoUrl;
+    }
+    
+    // If it's a public URL, extract the path and generate signed URL
+    // Public URL format: https://[project].supabase.co/storage/v1/object/public/client-photos/[path]
+    const publicUrlMatch = photoUrl.match(/\/storage\/v1\/object\/public\/client-photos\/(.+)$/);
+    if (publicUrlMatch) {
+      const filePath = publicUrlMatch[1];
+      const { data, error } = await supabase.storage
+        .from('client-photos')
+        .createSignedUrl(filePath, 3600); // 1 hour expiry
+      
+      if (!error && data?.signedUrl) {
+        return data.signedUrl;
+      }
+    }
+    
+    // Try to extract path from any URL format and generate signed URL
+    try {
+      const url = new URL(photoUrl);
+      const pathParts = url.pathname.split('/client-photos/');
+      if (pathParts.length > 1) {
+        const filePath = pathParts[1];
+        const { data, error } = await supabase.storage
+          .from('client-photos')
+          .createSignedUrl(filePath, 3600);
+        
+        if (!error && data?.signedUrl) {
+          return data.signedUrl;
+        }
+      }
+    } catch (e) {
+      // URL parsing failed, return original
+    }
+    
+    // If all else fails, return original URL
+    return photoUrl;
+  };
+
   const fetchClients = async () => {
     try {
       setLoading(true);
@@ -401,7 +446,18 @@ export default function ClientsPage() {
         }
       }
 
-      const formattedClients: Client[] = (data || []).map((client: any) => ({
+      // Convert photo URLs to signed URLs
+      const clientsWithSignedPhotos = await Promise.all(
+        (data || []).map(async (client: any) => {
+          const signedPhotoUrl = await getSignedPhotoUrl(client.photo_url);
+          return {
+            ...client,
+            photo_url: signedPhotoUrl
+          };
+        })
+      );
+
+      const formattedClients: Client[] = clientsWithSignedPhotos.map((client: any) => ({
         id: client.id,
         company_id: client.company_id,
         agent_id: client.agent_id,
@@ -978,12 +1034,16 @@ export default function ClientsPage() {
           throw new Error(`Failed to upload photo: ${uploadError.message}`);
         }
 
-        // Get public URL
-        const { data: urlData } = supabase.storage
+        // Get signed URL (required for private buckets)
+        const { data: urlData, error: urlError } = await supabase.storage
           .from('client-photos')
-          .getPublicUrl(fileName);
+          .createSignedUrl(fileName, 31536000); // 1 year expiry
         
-        photoUrl = urlData.publicUrl;
+        if (urlError || !urlData?.signedUrl) {
+          throw new Error(`Failed to generate signed URL: ${urlError?.message || 'Unknown error'}`);
+        }
+        
+        photoUrl = urlData.signedUrl;
       }
 
       let cityMatches = true;

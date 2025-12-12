@@ -312,7 +312,7 @@ export default function AdminRequestsPage() {
 
   if (loading) {
     return (
-      <div className="container mx-auto p-6">
+      <div className="container mx-auto max-w-6xl p-6">
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
@@ -321,7 +321,7 @@ export default function AdminRequestsPage() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="container mx-auto max-w-6xl p-6 space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">Inventory Requests</h1>

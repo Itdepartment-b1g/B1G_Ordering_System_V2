@@ -145,7 +145,10 @@ $$;
 -- ============================================================================
 -- REMOVE AGENT FROM TEAM FUNCTION
 -- ============================================================================
+-- Drop the function if it exists (handle both possible parameter orders)
 DROP FUNCTION IF EXISTS remove_agent_from_team(UUID, UUID);
+DROP FUNCTION IF EXISTS remove_agent_from_team(p_agent_id UUID, p_admin_id UUID);
+DROP FUNCTION IF EXISTS remove_agent_from_team(p_admin_id UUID, p_agent_id UUID);
 
 CREATE OR REPLACE FUNCTION remove_agent_from_team(
   p_agent_id UUID,

@@ -420,35 +420,47 @@ export default function MyInventory() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
-        <Card>
+        <Card className="border-l-4 border-l-primary">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">Total Brands</p>
-            <Package className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium text-muted-foreground">Total Brands</p>
+            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+              <Package className="h-5 w-5 text-primary" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-xl md:text-2xl font-bold">{agentBrands.length}</div>
+            <div className="text-2xl md:text-3xl font-bold">{agentBrands.length}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-l-4 border-l-blue-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">Total Variants</p>
+            <p className="text-sm font-medium text-muted-foreground">Total Variants</p>
+            <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
+              <Package className="h-5 w-5 text-blue-500" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-xl md:text-2xl font-bold">{getTotalVariants()}</div>
+            <div className="text-2xl md:text-3xl font-bold">{getTotalVariants()}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-l-4 border-l-yellow-500">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">Low Stock Items</p>
+            <p className="text-sm font-medium text-muted-foreground">Low Stock Items</p>
+            <div className="h-10 w-10 rounded-full bg-yellow-500/10 flex items-center justify-center">
+              <Package className="h-5 w-5 text-yellow-600" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-xl md:text-2xl font-bold text-yellow-600">{getLowStockCount()}</div>
+            <div className="text-2xl md:text-3xl font-bold text-yellow-600">{getLowStockCount()}</div>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">Inventory Details</h2>
+            <p className="text-sm text-muted-foreground">Browse and manage your allocated inventory</p>
+          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -466,21 +478,24 @@ export default function MyInventory() {
               <div className="text-center text-muted-foreground py-6">No inventory yet</div>
             ) : (
               filteredBrands.map((brand) => (
-                <div key={brand.id} className="rounded-lg border bg-background p-4 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold">{brand.name}</div>
-                      <div className="text-xs text-muted-foreground">{brand.flavors.length}F / {brand.batteries.length}B</div>
+                <div key={brand.id} className="rounded-lg border bg-background p-4 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex-1">
+                      <div className="font-semibold text-base">{brand.name}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {brand.flavors.length} {brand.flavors.length === 1 ? 'Flavor' : 'Flavors'}
+                        {brand.batteries.length > 0 && ` • ${brand.batteries.length} ${brand.batteries.length === 1 ? 'Battery' : 'Batteries'}`}
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Stock</div>
-                      <div className="font-bold">{getTotalStock(brand)}</div>
+                    <div className="text-right ml-4">
+                      <div className="text-xs text-muted-foreground mb-1">Total Stock</div>
+                      <div className="text-xl font-bold">{getTotalStock(brand)}</div>
                       {(() => {
                         const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low');
                         const total = getTotalStock(brand);
                         const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700';
                         const label = total === 0 ? 'Out of stock' : hasLow ? 'Low stock' : 'In stock';
-                        return <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-xs font-medium ${pillClass}`}>{label}</span>;
+                        return <span className={`mt-1.5 inline-block px-2 py-0.5 rounded-full text-xs font-medium ${pillClass}`}>{label}</span>;
                       })()}
                     </div>
                   </div>
@@ -496,6 +511,11 @@ export default function MyInventory() {
                                 <span>{f.name}</span>
                                 <div className="text-right">
                                   <div className="font-medium">{f.stock} • ₱{f.price.toFixed(2)}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {f.dspPrice && `DSP: ₱${f.dspPrice.toFixed(2)}`}
+                                    {f.dspPrice && f.rspPrice && ' • '}
+                                    {f.rspPrice && `RSP: ₱${f.rspPrice.toFixed(2)}`}
+                                  </div>
                                   <span className={`text-xs ${f.stock === 0 ? 'text-red-600' : (f as any).status === 'low' ? 'text-orange-600' : 'text-blue-700'}`}>
                                     {(f as any).status === 'low' ? 'low' : f.stock === 0 ? 'out' : 'in'}
                                   </span>
@@ -514,6 +534,11 @@ export default function MyInventory() {
                                 <span>{b.name}</span>
                                 <div className="text-right">
                                   <div className="font-medium">{b.stock} • ₱{b.price.toFixed(2)}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {b.dspPrice && `DSP: ₱${b.dspPrice.toFixed(2)}`}
+                                    {b.dspPrice && b.rspPrice && ' • '}
+                                    {b.rspPrice && `RSP: ₱${b.rspPrice.toFixed(2)}`}
+                                  </div>
                                   <span className={`text-xs ${b.stock === 0 ? 'text-red-600' : (b as any).status === 'low' ? 'text-orange-600' : 'text-blue-700'}`}>
                                     {(b as any).status === 'low' ? 'low' : b.stock === 0 ? 'out' : 'in'}
                                   </span>
@@ -537,14 +562,17 @@ export default function MyInventory() {
 
           {/* Desktop/Tablet: table */}
           <div className="hidden md:block w-full overflow-x-auto">
-            <Table className="min-w-[720px]">
+            <Table className="min-w-[1000px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10"></TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Type</TableHead>
+                  <TableHead className="text-right">Variants</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
                   <TableHead className="text-right">Price</TableHead>
+                  <TableHead className="text-right">DSP</TableHead>
+                  <TableHead className="text-right">RSP</TableHead>
                   <TableHead className="text-right">Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -566,12 +594,18 @@ export default function MyInventory() {
                       <TableCell>
                         <Badge variant="default">Brand</Badge>
                       </TableCell>
-                      <TableCell className="text-right cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
+                      <TableCell className="text-right text-muted-foreground cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
+                        <span className="text-xs">
+                          {brand.flavors.length} {brand.flavors.length === 1 ? 'Flavor' : 'Flavors'}
+                          {brand.batteries.length > 0 && ` • ${brand.batteries.length} ${brand.batteries.length === 1 ? 'Battery' : 'Batteries'}`}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-semibold cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
                         {getTotalStock(brand)}
                       </TableCell>
-                      <TableCell className="text-right text-muted-foreground cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        {brand.flavors.length}F / {brand.batteries.length}B
-                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">-</TableCell>
+                      <TableCell className="text-right text-muted-foreground">-</TableCell>
+                      <TableCell className="text-right text-muted-foreground">-</TableCell>
                       <TableCell className="text-right">
                         {(() => {
                           const total = getTotalStock(brand);
@@ -587,22 +621,29 @@ export default function MyInventory() {
                     {expandedBrands.includes(brand.id) && brand.flavors.length > 0 && (
                       <TableRow className="bg-blue-50/50">
                         <TableCell></TableCell>
-                        <TableCell colSpan={5} className="pl-8 py-2">
+                        <TableCell colSpan={8} className="pl-8 py-2">
                           <span className="text-xs font-semibold text-blue-600">FLAVORS</span>
                         </TableCell>
                       </TableRow>
                     )}
                     {expandedBrands.includes(brand.id) && brand.flavors.map((flavor) => (
-                      <TableRow key={flavor.id} className="bg-muted/10">
+                      <TableRow key={flavor.id} className="bg-muted/10 hover:bg-muted/20">
                         <TableCell></TableCell>
-                        <TableCell className="pl-12 text-sm">
+                        <TableCell className="pl-12 text-sm font-medium">
                           <span className="text-muted-foreground">↳</span> {flavor.name}
                         </TableCell>
                         <TableCell>
                           <Badge variant="secondary" className="bg-blue-100 text-blue-700">Flavor</Badge>
                         </TableCell>
-                        <TableCell className="text-right">{flavor.stock}</TableCell>
-                        <TableCell className="text-right">₱{flavor.price.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground">-</TableCell>
+                        <TableCell className="text-right font-semibold">{flavor.stock}</TableCell>
+                        <TableCell className="text-right font-medium">₱{flavor.price.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground text-sm">
+                          {flavor.dspPrice ? `₱${flavor.dspPrice.toFixed(2)}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground text-sm">
+                          {flavor.rspPrice ? `₱${flavor.rspPrice.toFixed(2)}` : '-'}
+                        </TableCell>
                         <TableCell className="text-right">
                           <Badge
                             variant={
@@ -610,6 +651,7 @@ export default function MyInventory() {
                                 flavor.status === 'low' ? 'secondary' :
                                   'destructive'
                             }
+                            className="text-xs"
                           >
                             {flavor.status}
                           </Badge>
@@ -621,22 +663,29 @@ export default function MyInventory() {
                     {expandedBrands.includes(brand.id) && brand.batteries.length > 0 && (
                       <TableRow className="bg-green-50/50">
                         <TableCell></TableCell>
-                        <TableCell colSpan={5} className="pl-8 py-2">
+                        <TableCell colSpan={8} className="pl-8 py-2">
                           <span className="text-xs font-semibold text-green-600">BATTERIES</span>
                         </TableCell>
                       </TableRow>
                     )}
                     {expandedBrands.includes(brand.id) && brand.batteries.map((battery) => (
-                      <TableRow key={battery.id} className="bg-muted/10">
+                      <TableRow key={battery.id} className="bg-muted/10 hover:bg-muted/20">
                         <TableCell></TableCell>
-                        <TableCell className="pl-12 text-sm">
+                        <TableCell className="pl-12 text-sm font-medium">
                           <span className="text-muted-foreground">↳</span> {battery.name}
                         </TableCell>
                         <TableCell>
                           <Badge variant="secondary" className="bg-green-100 text-green-700">Battery</Badge>
                         </TableCell>
-                        <TableCell className="text-right">{battery.stock}</TableCell>
-                        <TableCell className="text-right">₱{battery.price.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground">-</TableCell>
+                        <TableCell className="text-right font-semibold">{battery.stock}</TableCell>
+                        <TableCell className="text-right font-medium">₱{battery.price.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground text-sm">
+                          {battery.dspPrice ? `₱${battery.dspPrice.toFixed(2)}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground text-sm">
+                          {battery.rspPrice ? `₱${battery.rspPrice.toFixed(2)}` : '-'}
+                        </TableCell>
                         <TableCell className="text-right">
                           <Badge
                             variant={
@@ -644,6 +693,7 @@ export default function MyInventory() {
                                 battery.status === 'low' ? 'secondary' :
                                   'destructive'
                             }
+                            className="text-xs"
                           >
                             {battery.status}
                           </Badge>

@@ -13,7 +13,8 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
 
   // Fetch agent inventory from Supabase
   const fetchAgentInventory = async () => {
-    if (!user || user.role !== 'mobile_sales') {
+    // Support both mobile_sales agents and team_leaders
+    if (!user || (user.role !== 'mobile_sales' && user.role !== 'team_leader')) {
       setLoading(false);
       return;
     }
@@ -131,7 +132,8 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
 
     let channel: RealtimeChannel | null = null;
 
-    if (user?.id && user.role === 'mobile_sales') {
+    // Subscribe to agent_inventory changes for both mobile_sales and team_leader
+    if (user?.id && (user.role === 'mobile_sales' || user.role === 'team_leader')) {
       // Subscribe to agent_inventory changes for this user
       channel = subscribeToTable(
         'agent_inventory',

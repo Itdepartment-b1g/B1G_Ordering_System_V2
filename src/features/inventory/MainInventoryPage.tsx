@@ -444,8 +444,14 @@ export default function MainInventoryPage() {
                 {/* Brand Header Row */}
                 <div 
                   className={`p-4 cursor-pointer hover:bg-muted/70 transition-colors ${
-                    (brand.flavors.some((f: any) => !f.sellingPrice || f.sellingPrice === 0) || 
-                     brand.batteries.some((b: any) => !b.sellingPrice || b.sellingPrice === 0))
+                    (brand.flavors.some((f: any) => {
+                      const sp = (f as any).sellingPrice;
+                      return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                    }) || 
+                     brand.batteries.some((b: any) => {
+                      const sp = (b as any).sellingPrice;
+                      return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                    }))
                       ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' 
                       : 'bg-muted/50'
                   }`}
@@ -458,8 +464,14 @@ export default function MainInventoryPage() {
                           expandedBrands.includes(brand.id) ? 'rotate-90' : ''
                         }`} 
                       />
-                      {(brand.flavors.some((f: any) => !f.sellingPrice && f.sellingPrice !== 0) || 
-                        brand.batteries.some((b: any) => !b.sellingPrice && b.sellingPrice !== 0)) && (
+                      {(brand.flavors.some((f: any) => {
+                        const sp = (f as any).sellingPrice;
+                        return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                      }) || 
+                        brand.batteries.some((b: any) => {
+                          const sp = (b as any).sellingPrice;
+                          return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                        })) && (
                         <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
                       )}
                       <div>
@@ -476,16 +488,28 @@ export default function MainInventoryPage() {
                     <Badge 
                       variant={
                         getTotalStock(brand) === 0 ? 'destructive' : 
-                        (brand.flavors.some((f: any) => !f.sellingPrice && f.sellingPrice !== 0) || 
-                         brand.batteries.some((b: any) => !b.sellingPrice && b.sellingPrice !== 0)) ? 'secondary' :
+                        (brand.flavors.some((f: any) => {
+                          const sp = (f as any).sellingPrice;
+                          return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                        }) || 
+                         brand.batteries.some((b: any) => {
+                          const sp = (b as any).sellingPrice;
+                          return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                        })) ? 'secondary' :
                         (brand.flavors.some((f: any) => f.status === 'low-stock') || 
                          brand.batteries.some((b: any) => b.status === 'low-stock') ||
                          (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'secondary' : 'default'
                       }
                     >
                       {getTotalStock(brand) === 0 ? 'Out of Stock' : 
-                       (brand.flavors.some((f: any) => !f.sellingPrice && f.sellingPrice !== 0) || 
-                        brand.batteries.some((b: any) => !b.sellingPrice && b.sellingPrice !== 0)) ? 'Missing Prices' :
+                       (brand.flavors.some((f: any) => {
+                         const sp = (f as any).sellingPrice;
+                         return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                       }) || 
+                        brand.batteries.some((b: any) => {
+                          const sp = (b as any).sellingPrice;
+                          return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                        })) ? 'Missing Prices' :
                        (brand.flavors.some((f: any) => f.status === 'low-stock') || 
                         brand.batteries.some((b: any) => b.status === 'low-stock') ||
                         (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'Low Stock' : 'In Stock'}
@@ -541,7 +565,9 @@ export default function MainInventoryPage() {
                             {brand.flavors.map((flavor) => {
                               const allocated = getVariantAllocatedStock(flavor.id);
                               const available = getVariantAvailableStock(flavor);
-                              const hasNoPrice = !(flavor as any).sellingPrice || (flavor as any).sellingPrice === 0 || Number((flavor as any).sellingPrice) === 0;
+                              // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
+                              const sellingPriceRaw = (flavor as any).sellingPrice;
+                              const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
                               return (
                                 <TableRow 
                                   key={`flavor-${flavor.id}`} 
@@ -571,12 +597,12 @@ export default function MainInventoryPage() {
                                     <Badge 
                                       variant={
                                         flavor.stock === 0 ? 'destructive' :
-                                        !(flavor as any).sellingPrice || (flavor as any).sellingPrice === 0 ? 'secondary' :
+                                        hasNoPrice ? 'secondary' :
                                         (flavor as any).status === 'low-stock' ? 'secondary' : 'default'
                                       }
                                     >
                                       {flavor.stock === 0 ? 'Out of Stock' : 
-                                       !(flavor as any).sellingPrice || (flavor as any).sellingPrice === 0 ? 'No Price Set' :
+                                       hasNoPrice ? 'No Price Set' :
                                        (flavor as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
                                     </Badge>
                                   </TableCell>
@@ -635,7 +661,9 @@ export default function MainInventoryPage() {
                             {brand.batteries.map((battery) => {
                               const allocated = getVariantAllocatedStock(battery.id);
                               const available = getVariantAvailableStock(battery);
-                              const hasNoPrice = !(battery as any).sellingPrice || (battery as any).sellingPrice === 0 || Number((battery as any).sellingPrice) === 0;
+                              // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
+                              const sellingPriceRaw = (battery as any).sellingPrice;
+                              const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
                               return (
                                 <TableRow 
                                   key={`battery-${battery.id}`} 
@@ -665,12 +693,12 @@ export default function MainInventoryPage() {
                                     <Badge 
                                       variant={
                                         battery.stock === 0 ? 'destructive' :
-                                        !(battery as any).sellingPrice || (battery as any).sellingPrice === 0 ? 'secondary' :
+                                        hasNoPrice ? 'secondary' :
                                         (battery as any).status === 'low-stock' ? 'secondary' : 'default'
                                       }
                                     >
                                       {battery.stock === 0 ? 'Out of Stock' : 
-                                       !(battery as any).sellingPrice || (battery as any).sellingPrice === 0 ? 'No Price Set' :
+                                       hasNoPrice ? 'No Price Set' :
                                        (battery as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
                                     </Badge>
                                   </TableCell>
@@ -718,7 +746,9 @@ export default function MainInventoryPage() {
                             {(brand as any).posms.map((posm: any) => {
                               const allocated = getVariantAllocatedStock(posm.id);
                               const available = getVariantAvailableStock(posm);
-                              const hasNoPrice = !(posm as any).sellingPrice || (posm as any).sellingPrice === 0 || Number((posm as any).sellingPrice) === 0;
+                              // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
+                              const sellingPriceRaw = (posm as any).sellingPrice;
+                              const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
                               return (
                                 <TableRow 
                                   key={`posm-${posm.id}`} 
