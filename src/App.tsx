@@ -8,8 +8,9 @@ import { DashboardPage, AdminHistoryPage, SysAdDashboardPage, SuperAdminDashboar
 import { ProfilePage } from "@/features/profile";
 import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
 import BrandsPage from "@/features/orders/BrandsPage";
+import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, LeaderRemittancePage, RequestInventoryPage, PendingRequestsPage, AdminRequestsPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, LeaderRemittancePage, LeaderCashDepositsPage, RequestInventoryPage, PendingRequestsPage, AdminRequestsPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import { ClientsPage, MyClientsPage, PendingClientsPage } from "@/features/clients";
 import { AnalyticsPage } from "@/features/analytics";
 import VoidedClientsPage from "@/features/clients/VoidedClientsPage";
@@ -48,6 +49,7 @@ const App = () => (
                     <Route path="/inventory/allocations" element={<ProtectedRoute><StockAllocationsPage /></ProtectedRoute>} />
                     <Route path="/inventory/remitted-stocks" element={<ProtectedRoute><RemittedStocksPage /></ProtectedRoute>} />
                     <Route path="/inventory/team-remittances" element={<ProtectedRoute><LeaderRemittancePage /></ProtectedRoute>} />
+                    <Route path="/inventory/cash-deposits" element={<ProtectedRoute><LeaderCashDepositsPage /></ProtectedRoute>} />
                     <Route path="/inventory/request" element={<ProtectedRoute><RequestInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/pending-requests" element={<ProtectedRoute><PendingRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-requests" element={<ProtectedRoute><AdminRequestsPage /></ProtectedRoute>} />
@@ -71,6 +73,7 @@ const App = () => (
                     <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
                     <Route path="/purchase-orders" element={<ProtectedRoute><PurchaseOrdersPage /></ProtectedRoute>} />
                     <Route path="/brands" element={<ProtectedRoute><BrandsPage /></ProtectedRoute>} />
+                    <Route path="/variant-types" element={<ProtectedRoute><VariantTypesPage /></ProtectedRoute>} />
                     <Route path="/suppliers" element={<ProtectedRoute><SuppliersPage /></ProtectedRoute>} />
                     <Route path="/war-room" element={<ProtectedRoute><WarRoomPage /></ProtectedRoute>} />
                     <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />

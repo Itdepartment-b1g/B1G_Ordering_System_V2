@@ -86,7 +86,18 @@ const adminMenuItems: MenuItem[] = [
     ]
   },
   { title: 'Order List', url: '/orders', icon: ShoppingCart },
-  { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
+  {
+    title: 'Procurement',
+    url: '/purchase-order-management',
+    icon: ClipboardList,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
+      { title: 'Brands & Variants', url: '/brands', icon: Tag },
+      { title: 'Variant Types', url: '/variant-types', icon: Tag },
+      { title: 'Suppliers', url: '/suppliers', icon: Building2 },
+    ]
+  },
   { title: 'Finance', url: '/finance', icon: DollarSign },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
@@ -123,7 +134,8 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'My Inventory', url: '/my-inventory', icon: Package },
       { title: 'Teams Inventory', url: '/leader-inventory', icon: Crown },
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
-      { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
+          { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
+          { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
     ]
   },
   {
@@ -170,9 +182,10 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
+      { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Clock },
       { title: 'Remitted Stocks', url: '/inventory/remitted-stocks', icon: ArrowLeft },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
-      { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Clock },
+      { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
     ]
   },
   {
@@ -193,15 +206,15 @@ const superAdminMenuItems: MenuItem[] = [
     icon: ClipboardList,
     hasSubmenu: true,
     submenu: [
-  { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
+      { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
       { title: 'Brands & Variants', url: '/brands', icon: Tag },
+      { title: 'Variant Types', url: '/variant-types', icon: Tag },
       { title: 'Suppliers', url: '/suppliers', icon: Building2 },
     ]
   },
   { title: 'Finance', url: '/finance', icon: DollarSign },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
-  { title: 'System History', url: '/system-history', icon: History },
   {
     title: 'Tasks',
     url: '/tasks',
@@ -213,10 +226,7 @@ const superAdminMenuItems: MenuItem[] = [
     ]
   },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
-  { title: 'My Inventory', url: '/my-inventory', icon: Package },
-  { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
-  { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
-  { title: 'My History', url: '/my-history', icon: History },
+  { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 

@@ -485,7 +485,7 @@ export default function MyInventory() {
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {brand.flavors.length} {brand.flavors.length === 1 ? 'Flavor' : 'Flavors'}
                         {brand.batteries.length > 0 && ` • ${brand.batteries.length} ${brand.batteries.length === 1 ? 'Battery' : 'Batteries'}`}
-                      </div>
+                    </div>
                     </div>
                     <div className="text-right ml-4">
                       <div className="text-xs text-muted-foreground mb-1">Total Stock</div>
@@ -562,7 +562,7 @@ export default function MyInventory() {
 
           {/* Desktop/Tablet: table */}
           <div className="hidden md:block w-full overflow-x-auto">
-            <Table className="min-w-[1000px]">
+            <Table className="min-w-[900px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10"></TableHead>
@@ -635,7 +635,8 @@ export default function MyInventory() {
                         <TableCell>
                           <Badge variant="secondary" className="bg-blue-100 text-blue-700">Flavor</Badge>
                         </TableCell>
-                        <TableCell className="text-right text-muted-foreground">-</TableCell>
+                        {/* Variants column (empty for child rows to keep alignment) */}
+                        <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
                         <TableCell className="text-right font-semibold">{flavor.stock}</TableCell>
                         <TableCell className="text-right font-medium">₱{flavor.price.toFixed(2)}</TableCell>
                         <TableCell className="text-right text-muted-foreground text-sm">
@@ -677,7 +678,8 @@ export default function MyInventory() {
                         <TableCell>
                           <Badge variant="secondary" className="bg-green-100 text-green-700">Battery</Badge>
                         </TableCell>
-                        <TableCell className="text-right text-muted-foreground">-</TableCell>
+                        {/* Variants column (empty for child rows to keep alignment) */}
+                        <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
                         <TableCell className="text-right font-semibold">{battery.stock}</TableCell>
                         <TableCell className="text-right font-medium">₱{battery.price.toFixed(2)}</TableCell>
                         <TableCell className="text-right text-muted-foreground text-sm">

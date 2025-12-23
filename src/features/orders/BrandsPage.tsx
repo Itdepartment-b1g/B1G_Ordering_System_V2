@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface Brand {
   id: string;
@@ -40,10 +41,20 @@ interface Variant {
   created_at: string;
 }
 
+interface VariantType {
+  id: string;
+  name: string;
+  display_name: string;
+  description?: string;
+  color_code?: string;
+  sort_order: number;
+}
+
 export default function BrandsPage() {
   const { user } = useAuth();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [variants, setVariants] = useState<Variant[]>([]);
+  const [variantTypes, setVariantTypes] = useState<VariantType[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBrand, setSelectedBrand] = useState<string>('');
@@ -60,7 +71,7 @@ export default function BrandsPage() {
   const [brandForm, setBrandForm] = useState({ name: '', description: '' });
   const [variantForm, setVariantForm] = useState({ 
     name: '', 
-    variant_type: 'flavor', 
+    variant_type: '', 
     description: '', 
     sku: '',
     brand_id: ''
@@ -73,7 +84,7 @@ export default function BrandsPage() {
 
   const { toast } = useToast();
 
-  // Fetch brands and variants
+  // Fetch brands, variants, and variant types
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -93,6 +104,47 @@ export default function BrandsPage() {
       
       if (variantsError) throw variantsError;
       setVariants(variantsData || []);
+
+      // Fetch variant types
+      const { data: typesData, error: typesError } = await supabase
+        .from('variant_types')
+        .select('id, name, display_name, description, color_code, sort_order')
+        .eq('is_active', true);
+      
+      // Sort: non-zero values first (ascending), then zero values (by display_name)
+      let sortedTypes = typesData || [];
+      if (typesData) {
+        sortedTypes = typesData.sort((a, b) => {
+          // If both are non-zero, sort by sort_order
+          if (a.sort_order > 0 && b.sort_order > 0) {
+            return a.sort_order - b.sort_order;
+          }
+          // If one is zero and one is not, non-zero comes first
+          if (a.sort_order > 0 && b.sort_order === 0) return -1;
+          if (a.sort_order === 0 && b.sort_order > 0) return 1;
+          // If both are zero, sort alphabetically by display_name
+          if (a.sort_order === 0 && b.sort_order === 0) {
+            return a.display_name.localeCompare(b.display_name);
+          }
+          return 0;
+        });
+      }
+      
+      if (typesError) {
+        console.warn('Error fetching variant types (may not exist yet):', typesError);
+        // If table doesn't exist, use fallback hardcoded types
+        setVariantTypes([
+          { id: 'flavor', name: 'flavor', display_name: 'Flavor', color_code: 'blue', sort_order: 1 },
+          { id: 'battery', name: 'battery', display_name: 'Battery', color_code: 'green', sort_order: 2 },
+          { id: 'posm', name: 'POSM', display_name: 'POSM', color_code: 'purple', sort_order: 3 },
+        ]);
+      } else {
+        setVariantTypes(sortedTypes);
+        // Set default variant type if none selected
+        if (sortedTypes && sortedTypes.length > 0 && !variantForm.variant_type) {
+          setVariantForm(prev => ({ ...prev, variant_type: sortedTypes[0].name }));
+        }
+      }
     } catch (error: any) {
       console.error('Error fetching data:', error);
       toast({
@@ -229,8 +281,8 @@ export default function BrandsPage() {
 
   // Create Variant
   const handleCreateVariant = async () => {
-    if (!variantForm.name.trim() || !variantForm.brand_id) {
-      toast({ title: 'Error', description: 'Variant name and brand are required', variant: 'destructive' });
+    if (!variantForm.name.trim() || !variantForm.brand_id || !variantForm.variant_type) {
+      toast({ title: 'Error', description: 'Variant name, brand, and type are required', variant: 'destructive' });
       return;
     }
 
@@ -241,24 +293,43 @@ export default function BrandsPage() {
 
     setSubmitting(true);
     try {
-      // Convert 'posm' to 'POSM' for database
-      const dbVariantType = variantForm.variant_type === 'posm' ? 'POSM' : variantForm.variant_type;
+      // Find the variant type to get its ID and name
+      const selectedType = variantTypes.find(t => t.name === variantForm.variant_type);
+      if (!selectedType) {
+        toast({ 
+          title: 'Error', 
+          description: 'Selected variant type not found', 
+          variant: 'destructive' 
+        });
+        return;
+      }
+
+      // Use variant_type_id if available, otherwise fall back to variant_type string
+      const insertData: any = {
+        company_id: user.company_id,
+        brand_id: variantForm.brand_id,
+        name: variantForm.name.trim(),
+        variant_type: selectedType.name, // Keep for backward compatibility
+        description: variantForm.description.trim() || null,
+        sku: variantForm.sku.trim() || null
+      };
+
+      // Try to use variant_type_id if the column exists
+      try {
+        insertData.variant_type_id = selectedType.id;
+      } catch (e) {
+        // Column might not exist yet, that's okay
+      }
       
       const { error } = await supabase
         .from('variants')
-        .insert({
-          company_id: user.company_id,
-          brand_id: variantForm.brand_id,
-          name: variantForm.name.trim(),
-          variant_type: dbVariantType,
-          description: variantForm.description.trim() || null,
-          sku: variantForm.sku.trim() || null
-        });
+        .insert(insertData);
 
       if (error) throw error;
 
       toast({ title: 'Success', description: 'Variant created successfully' });
-      setVariantForm({ name: '', variant_type: 'flavor', description: '', sku: '', brand_id: '' });
+      const defaultType = variantTypes.length > 0 ? variantTypes[0].name : '';
+      setVariantForm({ name: '', variant_type: defaultType, description: '', sku: '', brand_id: '' });
       setCreateVariantDialogOpen(false);
       await fetchData();
     } catch (error: any) {
@@ -275,24 +346,41 @@ export default function BrandsPage() {
 
   // Edit Variant
   const handleEditVariant = async () => {
-    if (!editingVariant || !variantForm.name.trim()) {
-      toast({ title: 'Error', description: 'Variant name is required', variant: 'destructive' });
+    if (!editingVariant || !variantForm.name.trim() || !variantForm.variant_type) {
+      toast({ title: 'Error', description: 'Variant name and type are required', variant: 'destructive' });
       return;
     }
 
     setSubmitting(true);
     try {
-      // Convert 'posm' to 'POSM' for database
-      const dbVariantType = variantForm.variant_type === 'posm' ? 'POSM' : variantForm.variant_type;
+      // Find the variant type to get its ID and name
+      const selectedType = variantTypes.find(t => t.name === variantForm.variant_type);
+      if (!selectedType) {
+        toast({ 
+          title: 'Error', 
+          description: 'Selected variant type not found', 
+          variant: 'destructive' 
+        });
+        return;
+      }
+
+      const updateData: any = {
+        name: variantForm.name.trim(),
+        variant_type: selectedType.name, // Keep for backward compatibility
+        description: variantForm.description.trim() || null,
+        sku: variantForm.sku.trim() || null
+      };
+
+      // Try to use variant_type_id if the column exists
+      try {
+        updateData.variant_type_id = selectedType.id;
+      } catch (e) {
+        // Column might not exist yet, that's okay
+      }
       
       const { error } = await supabase
         .from('variants')
-        .update({
-          name: variantForm.name.trim(),
-          variant_type: dbVariantType,
-          description: variantForm.description.trim() || null,
-          sku: variantForm.sku.trim() || null
-        })
+        .update(updateData)
         .eq('id', editingVariant.id);
 
       if (error) throw error;
@@ -300,7 +388,8 @@ export default function BrandsPage() {
       toast({ title: 'Success', description: 'Variant updated successfully' });
       setEditVariantDialogOpen(false);
       setEditingVariant(null);
-      setVariantForm({ name: '', variant_type: 'flavor', description: '', sku: '', brand_id: '' });
+      const defaultType = variantTypes.length > 0 ? variantTypes[0].name : '';
+      setVariantForm({ name: '', variant_type: defaultType, description: '', sku: '', brand_id: '' });
       await fetchData();
     } catch (error: any) {
       console.error('Error updating variant:', error);
@@ -351,10 +440,12 @@ export default function BrandsPage() {
 
   const openEditVariantDialog = (variant: Variant) => {
     setEditingVariant(variant);
-    const variantType = variant.variant_type.toLowerCase() as 'flavor' | 'battery' | 'posm';
+    // Try to match the variant type with available types, fallback to lowercase
+    const variantTypeName = variant.variant_type.toLowerCase();
+    const matchingType = variantTypes.find(t => t.name.toLowerCase() === variantTypeName);
     setVariantForm({
       name: variant.name,
-      variant_type: variantType,
+      variant_type: matchingType ? matchingType.name : variantTypeName,
       description: variant.description || '',
       sku: variant.sku || '',
       brand_id: variant.brand_id
@@ -364,10 +455,32 @@ export default function BrandsPage() {
 
   const getVariantTypeBadge = (type: string) => {
     const lowerType = type.toLowerCase();
+    const variantType = variantTypes.find(t => t.name.toLowerCase() === lowerType);
+    if (variantType && variantType.color_code) {
+      const colorMap: Record<string, string> = {
+        blue: 'bg-blue-100 text-blue-700',
+        green: 'bg-green-100 text-green-700',
+        purple: 'bg-purple-100 text-purple-700',
+        orange: 'bg-orange-100 text-orange-700',
+        red: 'bg-red-100 text-red-700',
+        yellow: 'bg-yellow-100 text-yellow-700',
+        pink: 'bg-pink-100 text-pink-700',
+        indigo: 'bg-indigo-100 text-indigo-700',
+        gray: 'bg-gray-100 text-gray-700',
+      };
+      return colorMap[variantType.color_code] || 'bg-gray-100 text-gray-700';
+    }
+    // Fallback for hardcoded types
     if (lowerType === 'flavor') return 'bg-blue-100 text-blue-700';
     if (lowerType === 'battery') return 'bg-green-100 text-green-700';
     if (lowerType === 'posm') return 'bg-purple-100 text-purple-700';
     return 'bg-gray-100 text-gray-700';
+  };
+
+  const getVariantTypeDisplayName = (type: string) => {
+    const lowerType = type.toLowerCase();
+    const variantType = variantTypes.find(t => t.name.toLowerCase() === lowerType);
+    return variantType ? variantType.display_name : type.toUpperCase();
   };
 
   if (loading) {
@@ -557,7 +670,7 @@ export default function BrandsPage() {
                       <TableCell className="font-medium">{variant.name}</TableCell>
                       <TableCell>
                         <Badge variant="secondary" className={getVariantTypeBadge(variant.variant_type)}>
-                          {variant.variant_type.toUpperCase()}
+                          {getVariantTypeDisplayName(variant.variant_type)}
                         </Badge>
                       </TableCell>
                       <TableCell>{variant.sku || '-'}</TableCell>
@@ -715,16 +828,71 @@ export default function BrandsPage() {
             </div>
             <div className="space-y-2">
               <Label>Type *</Label>
-              <Tabs 
-                value={variantForm.variant_type} 
-                onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
-              >
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="flavor">Flavor</TabsTrigger>
-                  <TabsTrigger value="battery">Battery</TabsTrigger>
-                  <TabsTrigger value="posm">POSM</TabsTrigger>
-                </TabsList>
-              </Tabs>
+              {variantTypes.length > 0 ? (
+                variantTypes.length <= 4 ? (
+                  // Use tabs for 4 or fewer types (cleaner visual)
+                  <Tabs 
+                    value={variantForm.variant_type} 
+                    onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
+                  >
+                    <TabsList className={`grid w-full ${variantTypes.length <= 2 ? 'grid-cols-2' : variantTypes.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+                      {variantTypes.map(type => (
+                        <TabsTrigger key={type.id} value={type.name}>
+                          {type.display_name}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                ) : (
+                  // Use Select dropdown for more than 4 types (scalable)
+                  <Select
+                    value={variantForm.variant_type}
+                    onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a variant type">
+                        {variantForm.variant_type ? (
+                          <div className="flex items-center gap-2">
+                            <Badge 
+                              variant="secondary" 
+                              className={`${getVariantTypeBadge(variantForm.variant_type)} w-fit`}
+                            >
+                              {getVariantTypeDisplayName(variantForm.variant_type)}
+                            </Badge>
+                          </div>
+                        ) : (
+                          'Select a variant type'
+                        )}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {variantTypes.map(type => (
+                        <SelectItem key={type.id} value={type.name}>
+                          <div className="flex items-center gap-2">
+                            <Badge 
+                              variant="secondary" 
+                              className={`${getVariantTypeBadge(type.name)} w-fit`}
+                            >
+                              {type.display_name}
+                            </Badge>
+                            {type.description && (
+                              <span className="text-xs text-muted-foreground ml-2">
+                                {type.description}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )
+              ) : (
+                <div className="p-4 border rounded-md bg-muted">
+                  <p className="text-sm text-muted-foreground">
+                    No variant types found. Please create variant types first in the Variant Types page.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label>SKU (Optional)</Label>
@@ -742,7 +910,7 @@ export default function BrandsPage() {
                 onChange={(e) => setVariantForm({ ...variantForm, description: e.target.value })}
               />
             </div>
-            <Button className="w-full" onClick={handleCreateVariant} disabled={submitting}>
+            <Button className="w-full" onClick={handleCreateVariant} disabled={submitting || variantTypes.length === 0}>
               {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -773,16 +941,71 @@ export default function BrandsPage() {
             </div>
             <div className="space-y-2">
               <Label>Type *</Label>
-              <Tabs 
-                value={variantForm.variant_type} 
-                onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
-              >
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="flavor">Flavor</TabsTrigger>
-                  <TabsTrigger value="battery">Battery</TabsTrigger>
-                  <TabsTrigger value="posm">POSM</TabsTrigger>
-                </TabsList>
-              </Tabs>
+              {variantTypes.length > 0 ? (
+                variantTypes.length <= 4 ? (
+                  // Use tabs for 4 or fewer types (cleaner visual)
+                  <Tabs 
+                    value={variantForm.variant_type} 
+                    onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
+                  >
+                    <TabsList className={`grid w-full ${variantTypes.length <= 2 ? 'grid-cols-2' : variantTypes.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+                      {variantTypes.map(type => (
+                        <TabsTrigger key={type.id} value={type.name}>
+                          {type.display_name}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                ) : (
+                  // Use Select dropdown for more than 4 types (scalable)
+                  <Select
+                    value={variantForm.variant_type}
+                    onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a variant type">
+                        {variantForm.variant_type ? (
+                          <div className="flex items-center gap-2">
+                            <Badge 
+                              variant="secondary" 
+                              className={`${getVariantTypeBadge(variantForm.variant_type)} w-fit`}
+                            >
+                              {getVariantTypeDisplayName(variantForm.variant_type)}
+                            </Badge>
+                          </div>
+                        ) : (
+                          'Select a variant type'
+                        )}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {variantTypes.map(type => (
+                        <SelectItem key={type.id} value={type.name}>
+                          <div className="flex items-center gap-2">
+                            <Badge 
+                              variant="secondary" 
+                              className={`${getVariantTypeBadge(type.name)} w-fit`}
+                            >
+                              {type.display_name}
+                            </Badge>
+                            {type.description && (
+                              <span className="text-xs text-muted-foreground ml-2">
+                                {type.description}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )
+              ) : (
+                <div className="p-4 border rounded-md bg-muted">
+                  <p className="text-sm text-muted-foreground">
+                    No variant types found. Please create variant types first in the Variant Types page.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label>SKU (Optional)</Label>

@@ -41,11 +41,13 @@ BEGIN
     );
   END IF;
 
-  -- Validate agent is a mobile sales agent
-  IF v_agent_role != 'mobile_sales' THEN
+  -- Validate agent is a mobile sales agent or team leader
+  -- If leader is a manager, they can have both mobile_sales and team_leader agents
+  -- If leader is a team_leader, they can only have mobile_sales agents
+  IF v_agent_role NOT IN ('mobile_sales', 'team_leader') THEN
     RETURN json_build_object(
       'success', false,
-      'error', 'Selected user is not a mobile sales agent'
+      'error', 'Selected user must be a mobile sales agent or team leader'
     );
   END IF;
 
@@ -61,11 +63,19 @@ BEGIN
     );
   END IF;
 
-  -- Validate leader is a team leader
-  IF v_leader_role != 'team_leader' THEN
+  -- Validate leader is a team leader or manager
+  IF v_leader_role NOT IN ('team_leader', 'manager') THEN
     RETURN json_build_object(
       'success', false,
-      'error', 'Selected user is not a team leader'
+      'error', 'Selected user is not a team leader or manager'
+    );
+  END IF;
+
+  -- If leader is a team_leader, they can only have mobile_sales agents
+  IF v_leader_role = 'team_leader' AND v_agent_role != 'mobile_sales' THEN
+    RETURN json_build_object(
+      'success', false,
+      'error', 'Team leaders can only have mobile sales agents in their team'
     );
   END IF;
 

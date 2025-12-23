@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/features/auth';
-import { History, ShoppingCart, Users, Boxes, ClipboardCheck, Wallet, UserCog, Filter } from 'lucide-react';
+import { History, ShoppingCart, Users, Boxes, ClipboardCheck, Wallet, UserCog, Filter, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -40,20 +40,34 @@ type EventRow = {
   actor_label?: string | null;
 };
 
+type Priority = 'all' | 'critical' | 'high' | 'medium' | 'low';
+
 const TAB_FILTERS: Record<string, (e: EventRow) => boolean> = {
   all: () => true,
   orders: (e) => (e.target_type === 'client_order' || e.target_type === 'client_order_item') && e.action !== 'approve' && e.action !== 'reject',
+  purchase_orders: (e) => e.target_type === 'purchase_order' || e.target_type === 'purchase_order_item',
   clients: (e) => e.target_type === 'client',
   allocations: (e) => e.action === 'allocate_stock' || e.action === 'remit_inventory' || e.target_type === 'stock_allocation' || e.target_type === 'agent_inventory' || e.target_type === 'leader_inventory',
   tasks: (e) => e.target_type === 'task',
   financial: (e) =>
     e.target_type === 'financial_transaction' ||
-    e.target_type === 'purchase_order' ||
-    e.target_type === 'purchase_order_item' ||
     (e.target_type === 'client_order' && (e.action === 'approve' || e.action === 'reject')) ||
     (e.target_type === 'purchase_order' && (e.action === 'approve' || e.action === 'reject')),
   teams: (e) => e.target_type === 'leader_team',
   inventory: (e) => e.target_type === 'main_inventory' || e.target_type === 'leader_inventory' || e.target_type === 'agent_inventory',
+  users: (e) => e.target_type === 'user' || e.target_type === 'profile' || e.target_type === 'company',
+  products: (e) => e.target_type === 'brand' || e.target_type === 'variant' || e.target_type === 'supplier' || e.target_type === 'product',
+  system: (e) => e.actor_role === 'system' || e.target_type === 'system' || e.target_type === 'config',
+  calendar: (e) => e.target_type === 'calendar' || e.target_type === 'event' || e.target_type === 'daily_task',
+};
+
+const getPriority = (event: EventRow): Exclude<Priority, 'all'> => {
+  const action = event.action || '';
+  const type = event.target_type || '';
+  if (['approve', 'reject', 'allocate_stock', 'remit_inventory'].includes(action)) return 'critical';
+  if (['insert', 'delete', 'company_created', 'company_deleted'].includes(action) || type === 'purchase_order') return 'high';
+  if (['update', 'order_created', 'client_created', 'inventory_request_created'].includes(action)) return 'medium';
+  return 'low';
 };
 
 export default function AdminHistoryPage() {
@@ -61,9 +75,10 @@ export default function AdminHistoryPage() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [tab, setTab] = useState<'all' | 'orders' | 'clients' | 'allocations' | 'tasks' | 'financial' | 'teams' | 'inventory'>('all');
+  const [tab, setTab] = useState<'all' | 'orders' | 'purchase_orders' | 'clients' | 'allocations' | 'tasks' | 'financial' | 'teams' | 'inventory' | 'users' | 'products' | 'system' | 'calendar'>('all');
   const [actorPositions, setActorPositions] = useState<Record<string, string | null>>({});
   const [selectedActions, setSelectedActions] = useState<string[]>([]);
+  const [priorityFilter, setPriorityFilter] = useState<Priority>('all');
 
   useEffect(() => {
     const load = async () => {
@@ -147,39 +162,6 @@ export default function AdminHistoryPage() {
     };
   }, [user?.id]);
 
-  const filtered = useMemo(() => {
-    const f = TAB_FILTERS[tab];
-    let rows = events.filter(f);
-
-    // Filter out rows that only have JSON details without a proper message
-    rows = rows.filter((e) => {
-      // If there's a message, keep it
-      if (e.details?.message) return true;
-      // If there's before/after data, keep it (structured change display)
-      if (e.details?.before && e.details?.after) return true;
-      // If there's actor and action_performed, keep it (formatted message)
-      if (e.details?.actor && e.details?.action_performed) return true;
-      // Otherwise, it's likely just raw JSON - hide it
-      return false;
-    });
-
-    if (selectedActions.length > 0) {
-      rows = rows.filter((e) => selectedActions.includes(e.action));
-    }
-
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      rows = rows.filter((e) =>
-        (e.target_label || '').toLowerCase().includes(q) ||
-        (e.actor_label || '').toLowerCase().includes(q) ||
-        e.action.toLowerCase().includes(q) ||
-        e.target_type.toLowerCase().includes(q) ||
-        (e.actor_role || '').toLowerCase().includes(q)
-      );
-    }
-    return rows;
-  }, [events, tab, search, selectedActions]);
-
   const availableActions = useMemo(() => {
     const set = new Set<string>();
     const inTab = events.filter(TAB_FILTERS[tab]);
@@ -195,7 +177,7 @@ export default function AdminHistoryPage() {
       return false;
     });
     const base: Record<string, number> = {};
-    (['all', 'orders', 'clients', 'allocations', 'tasks', 'financial', 'teams', 'inventory'] as const).forEach((k) => {
+    (['all', 'orders', 'purchase_orders', 'clients', 'allocations', 'tasks', 'financial', 'teams', 'inventory', 'users', 'products', 'system', 'calendar'] as const).forEach((k) => {
       base[k] = removeUndisplayable(events.filter(TAB_FILTERS[k])).length;
     });
     return base;
@@ -220,16 +202,100 @@ export default function AdminHistoryPage() {
     complete: 'bg-emerald-100 text-emerald-700',
   };
 
+  const priorityColors: Record<Exclude<Priority, 'all'>, string> = {
+    critical: 'bg-red-100 text-red-700',
+    high: 'bg-orange-100 text-orange-700',
+    medium: 'bg-blue-100 text-blue-700',
+    low: 'bg-gray-100 text-gray-700',
+  };
+
+  const priorityCounts = useMemo(() => {
+    const base = { critical: 0, high: 0, medium: 0, low: 0 };
+    events.forEach((e) => {
+      const p = getPriority(e);
+      base[p] += 1;
+    });
+    return base;
+  }, [events]);
+
+  const availableRoles = useMemo(() => {
+    const set = new Set<string>();
+    events.forEach((e) => {
+      if (e.actor_role) set.add(e.actor_role);
+    });
+    return Array.from(set);
+  }, [events]);
+
+  const [selectedRole, setSelectedRole] = useState<string>('all');
+
+  const filtered = useMemo(() => {
+    const f = TAB_FILTERS[tab];
+    let rows = events.filter(f);
+
+    // Filter out rows that only have JSON details without a proper message
+    rows = rows.filter((e) => {
+      if (e.details?.message) return true;
+      if (e.details?.before && e.details?.after) return true;
+      if (e.details?.actor && e.details?.action_performed) return true;
+      return false;
+    });
+
+    if (selectedActions.length > 0) {
+      rows = rows.filter((e) => selectedActions.includes(e.action));
+    }
+
+    if (priorityFilter !== 'all') {
+      rows = rows.filter((e) => getPriority(e) === priorityFilter);
+    }
+
+    if (selectedRole !== 'all') {
+      rows = rows.filter((e) => (e.actor_role || '').toLowerCase() === selectedRole.toLowerCase());
+    }
+
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      rows = rows.filter((e) =>
+        (e.target_label || '').toLowerCase().includes(q) ||
+        (e.actor_label || '').toLowerCase().includes(q) ||
+        e.action.toLowerCase().includes(q) ||
+        e.target_type.toLowerCase().includes(q) ||
+        (e.actor_role || '').toLowerCase().includes(q)
+      );
+    }
+    return rows;
+  }, [events, tab, search, selectedActions, priorityFilter, selectedRole]);
+
   return (
     <div className="p-8 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">System History</h1>
+          <p className="text-muted-foreground">Full audit trail across users, roles, and priorities</p>
+        </div>
+        <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+          <AlertTriangle className="h-4 w-4" />
+          Based on notification priority rules
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {(['critical', 'high', 'medium', 'low'] as const).map((p) => (
+          <Card key={p} className={`border-border/50 shadow-sm ${priorityFilter === p ? 'ring-1 ring-primary/30' : ''}`}>
+            <CardContent className="p-4 flex items-center justify-between">
       <div>
-        <h1 className="text-3xl font-bold">System History</h1>
-        <p className="text-muted-foreground">Complete audit trail of all system activities across all users</p>
+                <p className="text-xs uppercase text-muted-foreground">{p} priority</p>
+                <p className="text-2xl font-semibold">{priorityCounts[p]}</p>
+              </div>
+              <Badge className={`text-xs ${priorityColors[p]}`}>{p}</Badge>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
             <div className="flex-1">
               <Input
                 placeholder="Search by action, label, type, or actor..."
@@ -237,6 +303,7 @@ export default function AdminHistoryPage() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
+              <div className="flex flex-wrap gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="gap-2">
@@ -274,12 +341,71 @@ export default function AdminHistoryPage() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2">
+                      Priority
+                      {priorityFilter !== 'all' && (
+                        <span className={`ml-1 rounded-full px-2 py-0.5 text-xs ${priorityColors[priorityFilter as Exclude<Priority, 'all'>]}`}>
+                          {priorityFilter}
+                        </span>
+                      )}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuLabel>Filter by priority</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {(['all', 'critical', 'high', 'medium', 'low'] as Priority[]).map((p) => (
+                      <DropdownMenuCheckboxItem
+                        key={p}
+                        checked={priorityFilter === p}
+                        onCheckedChange={() => setPriorityFilter(p)}
+                      >
+                        {p === 'all' ? 'All priorities' : p.charAt(0).toUpperCase() + p.slice(1)}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2">
+                      Roles
+                      {selectedRole !== 'all' && (
+                        <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs">{selectedRole}</span>
+                      )}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuLabel>Filter by role</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuCheckboxItem
+                      checked={selectedRole === 'all'}
+                      onCheckedChange={() => setSelectedRole('all')}
+                    >
+                      All roles
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuSeparator />
+                    {availableRoles.map((r) => (
+                      <DropdownMenuCheckboxItem
+                        key={r}
+                        checked={selectedRole === r}
+                        onCheckedChange={() => setSelectedRole(r)}
+                      >
+                        {r.replace(/_/g, ' ')}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
             <div className="w-full">
-              <TabsList className="w-full flex gap-1 rounded-md bg-muted p-1 overflow-x-auto">
+              <TabsList className="w-full grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1 rounded-md bg-muted p-1 overflow-x-auto">
                 <TabsTrigger value="all" className="data-[state=active]:bg-background">
                   <History className="mr-2 h-4 w-4" />
                   All
@@ -289,6 +415,11 @@ export default function AdminHistoryPage() {
                   <ShoppingCart className="mr-2 h-4 w-4" />
                   Orders
                   <span className="ml-2 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{tabCounts.orders}</span>
+                </TabsTrigger>
+                <TabsTrigger value="purchase_orders" className="data-[state=active]:bg-background">
+                  <ClipboardCheck className="mr-2 h-4 w-4" />
+                  Purchase Orders
+                  <span className="ml-2 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{tabCounts.purchase_orders}</span>
                 </TabsTrigger>
                 <TabsTrigger value="clients" className="data-[state=active]:bg-background">
                   <UserCog className="mr-2 h-4 w-4" />
@@ -319,6 +450,26 @@ export default function AdminHistoryPage() {
                   <Boxes className="mr-2 h-4 w-4" />
                   Inventory
                   <span className="ml-2 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{tabCounts.inventory}</span>
+                </TabsTrigger>
+                <TabsTrigger value="users" className="data-[state=active]:bg-background">
+                  <UserCog className="mr-2 h-4 w-4" />
+                  Users
+                  <span className="ml-2 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{tabCounts.users}</span>
+                </TabsTrigger>
+                <TabsTrigger value="products" className="data-[state=active]:bg-background">
+                  <Boxes className="mr-2 h-4 w-4" />
+                  Products
+                  <span className="ml-2 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{tabCounts.products}</span>
+                </TabsTrigger>
+                <TabsTrigger value="system" className="data-[state=active]:bg-background">
+                  <AlertTriangle className="mr-2 h-4 w-4" />
+                  System
+                  <span className="ml-2 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{tabCounts.system}</span>
+                </TabsTrigger>
+                <TabsTrigger value="calendar" className="data-[state=active]:bg-background">
+                  <History className="mr-2 h-4 w-4" />
+                  Calendar
+                  <span className="ml-2 rounded-full bg-muted-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{tabCounts.calendar}</span>
                 </TabsTrigger>
               </TabsList>
             </div>

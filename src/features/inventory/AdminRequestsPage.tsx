@@ -16,6 +16,7 @@ import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 
 interface PendingRequest {
   id: string;
+  agent_id: string;
   variant_id: string;
   requested_quantity: number;
   requester_notes: string | null;
@@ -30,7 +31,7 @@ interface PendingRequest {
     id: string;
     full_name: string;
   };
-  variants?: {
+  variant?: {
     id: string;
     name: string;
     variant_type: string;
@@ -64,7 +65,7 @@ interface AllRequest {
     id: string;
     full_name: string;
   };
-  variants?: {
+  variant?: {
     id: string;
     name: string;
     variant_type: string;
@@ -97,10 +98,10 @@ export default function AdminRequestsPage() {
       fetchRequests();
     }
 
-    // Real-time subscriptions for inventory requests and main inventory
+    // Real-time subscriptions for stock requests and main inventory
     const channels = [
-      subscribeToTable('inventory_requests', (payload) => {
-        console.log('🔄 Real-time: Admin request updated', payload);
+      subscribeToTable('stock_requests', (payload) => {
+        console.log('🔄 Real-time: Admin stock request updated', payload);
         if (user?.id) {
           fetchRequests();
         }
@@ -121,29 +122,83 @@ export default function AdminRequestsPage() {
 
     setLoading(true);
     try {
-      // Fetch pending requests forwarded by leaders
-      const { data: pending, error: pendingError } = await supabase
-        .from('inventory_requests')
+      // Fetch pending requests forwarded by leaders (approved_by_leader → awaiting admin)
+      const { data: rawPending, error: pendingError } = await supabase
+        .from('stock_requests')
         .select(`
-          *,
-          requester:profiles!inventory_requests_requester_id_fkey(id, full_name),
-          approver:profiles!inventory_requests_approver_id_fkey(id, full_name),
-          variants(
+          id,
+          agent_id,
+          leader_id,
+          variant_id,
+          requested_quantity,
+          requested_at,
+          status,
+          leader_notes,
+          admin_notes,
+          rejection_reason,
+          agent:profiles!stock_requests_agent_id_fkey(id, full_name),
+          leader:profiles!stock_requests_leader_id_fkey(id, full_name),
+          variant:variants(
             id,
             name,
             variant_type,
             brand:brands(name)
           )
         `)
-        .eq('request_level', 'leader_to_admin')
-        .eq('status', 'pending')
+        .eq('status', 'approved_by_leader')
         .order('requested_at', { ascending: false });
 
       if (pendingError) throw pendingError;
 
-      // For each pending request, fetch admin's main inventory stock AND original agent request info
+      const basePending: PendingRequest[] = (rawPending || []).map((row: any) => {
+        // Supabase can return joined relations as arrays or single objects
+        const rawAgent = (row as any).agent;
+        const rawLeader = (row as any).leader;
+        const agent = Array.isArray(rawAgent) ? rawAgent[0] : rawAgent;
+        const leader = Array.isArray(rawLeader) ? rawLeader[0] : rawLeader;
+
+        return {
+          id: row.id,
+          agent_id: row.agent_id,
+          variant_id: row.variant_id,
+          requested_quantity: row.requested_quantity,
+          requested_at: row.requested_at,
+          requester_notes: row.leader_notes || null,
+          approver_notes: row.admin_notes || null,
+          parent_request_id: null,
+          requester: leader ? { id: leader.id, full_name: leader.full_name } : undefined,
+          approver: undefined,
+          variant: row.variant || undefined,
+          agent_info: agent
+            ? { id: agent.id, full_name: agent.full_name, notes: row.leader_notes || null }
+            : undefined,
+          admin_stock: 0,
+        };
+      });
+
+      // For each pending request, fetch admin's main inventory stock
       const requestsWithStock = await Promise.all(
-        (pending || []).map(async (req) => {
+        basePending.map(async (req) => {
+          // Start with any agent_info from the join
+          let agentInfo = req.agent_info;
+
+          // Fallback: if join didn't return an agent, fetch profile directly
+          if (!agentInfo && req.agent_id) {
+            const { data: agentProfile } = await supabase
+              .from('profiles')
+              .select('id, full_name')
+              .eq('id', req.agent_id)
+              .maybeSingle();
+
+            if (agentProfile) {
+              agentInfo = {
+                id: agentProfile.id,
+                full_name: agentProfile.full_name,
+                notes: req.requester_notes,
+              };
+            }
+          }
+
           // Fetch admin's main inventory
           const { data: inventoryData } = await supabase
             .from('main_inventory')
@@ -151,59 +206,58 @@ export default function AdminRequestsPage() {
             .eq('variant_id', req.variant_id)
             .single();
 
-          // Fetch original agent request info (parent request)
-          let agentInfo = null;
-          if (req.parent_request_id) {
-            const { data: parentRequest } = await supabase
-              .from('inventory_requests')
-              .select(`
-                requester_id,
-                requester_notes,
-                requester:profiles!inventory_requests_requester_id_fkey(id, full_name)
-              `)
-              .eq('id', req.parent_request_id)
-              .single();
-
-            if (parentRequest) {
-              const requesterData = parentRequest.requester as any;
-              agentInfo = {
-                id: requesterData?.id,
-                full_name: requesterData?.full_name,
-                notes: parentRequest.requester_notes
-              };
-            }
-          }
-
           return {
             ...req,
             admin_stock: inventoryData?.stock || 0,
-            agent_info: agentInfo
+            agent_info: agentInfo,
           };
         })
       );
 
       setPendingRequests(requestsWithStock);
 
-      // Fetch all leader-to-admin requests (for history)
-      const { data: all, error: allError } = await supabase
-        .from('inventory_requests')
+      // Fetch all leader-to-admin related requests (for history)
+      const { data: rawAll, error: allError } = await supabase
+        .from('stock_requests')
         .select(`
-          *,
-          requester:profiles!inventory_requests_requester_id_fkey(id, full_name),
-          approver:profiles!inventory_requests_approver_id_fkey(id, full_name),
-          variants(
+          id,
+          agent_id,
+          leader_id,
+          variant_id,
+          requested_quantity,
+          requested_at,
+          status,
+          leader_notes,
+          admin_notes,
+          rejection_reason,
+          leader:profiles!stock_requests_leader_id_fkey(id, full_name),
+          variant:variants(
             id,
             name,
             variant_type,
             brand:brands(name)
           )
         `)
-        .eq('request_level', 'leader_to_admin')
         .order('requested_at', { ascending: false });
 
       if (allError) throw allError;
 
-      setAllRequests(all || []);
+      const allMapped: AllRequest[] = (rawAll || []).map((row: any) => ({
+        id: row.id,
+        variant_id: row.variant_id,
+        requested_quantity: row.requested_quantity,
+        status: row.status,
+        requested_at: row.requested_at,
+        responded_at: null,
+        requester_notes: row.leader_notes || null,
+        approver_notes: row.admin_notes || null,
+        denial_reason: row.rejection_reason || null,
+        requester: row.leader ? { id: row.leader.id, full_name: row.leader.full_name } : undefined,
+        approver: undefined,
+        variant: row.variant || undefined,
+      }));
+
+      setAllRequests(allMapped);
     } catch (error: any) {
       console.error('Error fetching requests:', error);
       toast({
@@ -231,50 +285,51 @@ export default function AdminRequestsPage() {
     setProcessing(true);
     try {
       if (reviewAction === 'approve') {
-        const { data, error } = await supabase.rpc('approve_admin_request', {
+        // Approve & allocate from main inventory to leader
+        const { data, error } = await supabase.rpc('approve_stock_request_by_admin', {
           p_request_id: selectedRequest.id,
           p_admin_id: user.id,
-          p_quantity: parseInt(approveQuantity),
-          p_notes: notes || null
+          p_notes: notes || null,
         });
 
         if (error) throw error;
 
-        if (data.success) {
+        if (data?.success) {
           toast({
             title: 'Success',
-            description: data.message
+            description: data.message || 'Request approved and stock allocated',
           });
           setReviewDialogOpen(false);
           fetchRequests();
         } else {
           toast({
             title: 'Error',
-            description: data.message,
-            variant: 'destructive'
+            description: data?.message || 'Failed to approve request',
+            variant: 'destructive',
           });
         }
       } else if (reviewAction === 'deny') {
-        const { data, error } = await supabase.rpc('deny_request', {
+        // Deny request via reject_stock_request
+        const { data, error } = await supabase.rpc('reject_stock_request', {
           p_request_id: selectedRequest.id,
-          p_user_id: user.id,
-          p_reason: denialReason
+          p_rejector_id: user.id,
+          p_reason: denialReason,
         });
 
         if (error) throw error;
 
-        if (data.success) {
+        if (data?.success) {
           toast({
             title: 'Success',
-            description: data.message
+            description: data.message || 'Request denied',
           });
           setReviewDialogOpen(false);
           fetchRequests();
         } else {
           toast({
             title: 'Error',
-            description: data.message,
-            variant: 'destructive'
+            description: data?.message || 'Failed to deny request',
+            variant: 'destructive',
           });
         }
       }
@@ -291,19 +346,20 @@ export default function AdminRequestsPage() {
   };
 
   const formatProductName = (request: PendingRequest | AllRequest) => {
-    if (request.variants?.brand) {
-      return `${request.variants.brand.name} - ${request.variants.name}`;
+    if (request.variant?.brand) {
+      return `${request.variant.brand.name} - ${request.variant.name}`;
     }
-    return request.variants?.name || 'Unknown Product';
+    return request.variant?.name || 'Unknown Product';
   };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'pending':
         return <Badge className="bg-yellow-100 text-yellow-800"><AlertCircle className="h-3 w-3 mr-1" />Pending</Badge>;
-      case 'approved':
+      case 'approved_by_admin':
+      case 'fulfilled':
         return <Badge className="bg-green-100 text-green-800"><CheckCircle2 className="h-3 w-3 mr-1" />Approved</Badge>;
-      case 'denied':
+      case 'rejected':
         return <Badge className="bg-red-100 text-red-800"><XCircle className="h-3 w-3 mr-1" />Denied</Badge>;
       default:
         return <Badge>{status}</Badge>;

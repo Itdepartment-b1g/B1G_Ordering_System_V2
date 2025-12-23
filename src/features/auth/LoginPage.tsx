@@ -19,6 +19,15 @@ export default function LoginPage() {
 
   // Redirect based on role when user is authenticated
   useEffect(() => {
+    // Check if we just logged out - if so, clear the flag and don't redirect
+    const justLoggedOut = localStorage.getItem('just_logged_out');
+    if (justLoggedOut === 'true') {
+      localStorage.removeItem('just_logged_out');
+      // Don't redirect if we just logged out
+      return;
+    }
+    
+    // Only redirect if user is actually authenticated (not just loading)
     if (isAuthenticated && user) {
       if (user.role === 'system_administrator') {
         navigate('/sys-admin-dashboard', { replace: true });

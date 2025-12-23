@@ -125,6 +125,8 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
           variant_id,
           stock,
           allocated_price,
+          dsp_price,
+          rsp_price,
           profiles!agent_inventory_agent_id_fkey (
             id,
             full_name,
@@ -170,8 +172,14 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
         }
         
         const agent = agentsMap.get(agentId);
+        const unitPrice = item.allocated_price || 0;
+        const dspPrice = item.dsp_price || 0;
+        const rspPrice = item.rsp_price || 0;
+
         agent.totalStock += item.stock;
-        agent.totalValue += item.stock * (item.allocated_price || 0);
+        // Keep totalValue based on unit/allocated price for consistency with other pages
+        agent.totalValue += item.stock * unitPrice;
+
         agent.items.push({
           id: item.id,
           variantId: item.variants?.id,
@@ -179,8 +187,10 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
           variantType: item.variants?.variant_type || 'unknown',
           brandName: item.variants?.brands?.name || 'Unknown',
           stock: item.stock,
-          allocatedPrice: item.allocated_price || 0,
-          totalValue: item.stock * (item.allocated_price || 0)
+          allocatedPrice: unitPrice,
+          dspPrice,
+          rspPrice,
+          totalValue: item.stock * unitPrice
         });
       });
       
@@ -997,8 +1007,37 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                         <TrendingUp className="h-6 w-6 text-green-600" />
                       </div>
                       <div>
-                        <div className="text-3xl font-bold text-green-900">₱{selectedAgent.totalValue.toLocaleString()}</div>
-                        <div className="text-sm text-green-700">Total Value</div>
+                        <div className="text-3xl font-bold text-green-900">
+                          ₱{selectedAgent.totalValue.toLocaleString()}
+                        </div>
+                        <div className="text-sm text-green-700">
+                          Total Value (Unit Price)
+                        </div>
+                        <div className="text-xs text-green-700/80 mt-1">
+                          DSP: ₱
+                          {selectedAgent.items
+                            .reduce(
+                              (sum: number, item: any) =>
+                                sum + (item.dspPrice || 0) * item.stock,
+                              0
+                            )
+                            .toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          {' • '}
+                          RSP: ₱
+                          {selectedAgent.items
+                            .reduce(
+                              (sum: number, item: any) =>
+                                sum + (item.rspPrice || 0) * item.stock,
+                              0
+                            )
+                            .toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                        </div>
                       </div>
                     </div>
                   </CardContent>
@@ -1026,44 +1065,74 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                 </div>
                 
                 <div className="border rounded-lg overflow-hidden">
-                <Table>
+                  <Table>
                     <TableHeader className="bg-muted/50">
-                    <TableRow>
+                      <TableRow>
                         <TableHead className="font-semibold">Product</TableHead>
                         <TableHead className="font-semibold">Type</TableHead>
                         <TableHead className="text-center font-semibold">Stock</TableHead>
-                        <TableHead className="text-right font-semibold">Unit Price</TableHead>
-                        <TableHead className="text-right font-semibold">Total Value</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                      {selectedAgent.items.map((item: any, index: number) => (
-                        <TableRow key={item.id} className={index % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                        <TableCell>
-                            <div>
-                              <div className="font-medium">{item.brandName}</div>
-                              <div className="text-sm text-muted-foreground">{item.variantName}</div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
-                            {item.variantType}
-                          </Badge>
-                        </TableCell>
-                          <TableCell className="text-center">
-                            <span className="font-semibold">{item.stock.toLocaleString()}</span>
-                            <span className="text-muted-foreground text-sm"> units</span>
-                          </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
-                            ₱{item.allocatedPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                          </TableCell>
-                          <TableCell className="text-right font-bold text-primary">
-                            ₱{item.totalValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                        </TableCell>
+                        <TableHead className="text-right font-semibold">Unit / DSP / RSP</TableHead>
+                        <TableHead className="text-right font-semibold">Totals</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedAgent.items.map((item: any, index: number) => {
+                        const unitPrice = item.allocatedPrice || 0;
+                        const dspPrice = item.dspPrice || 0;
+                        const rspPrice = item.rspPrice || 0;
+
+                        const unitTotal = unitPrice * item.stock;
+                        const dspTotal = dspPrice * item.stock;
+                        const rspTotal = rspPrice * item.stock;
+
+                        return (
+                          <TableRow key={item.id} className={index % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                            <TableCell>
+                              <div>
+                                <div className="font-medium">{item.brandName}</div>
+                                <div className="text-sm text-muted-foreground">{item.variantName}</div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
+                                {item.variantType}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <span className="font-semibold">{item.stock.toLocaleString()}</span>
+                              <span className="text-muted-foreground text-sm"> units</span>
+                            </TableCell>
+                            <TableCell className="text-right text-xs sm:text-sm">
+                              <div className="flex flex-col items-end gap-0.5">
+                                <div>
+                                  Unit:{' '}
+                                  <span className="font-semibold">
+                                    ₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                                <div className="text-muted-foreground">
+                                  DSP: ₱{dspPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • RSP:{' '}
+                                  ₱{rspPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right text-xs sm:text-sm">
+                              <div className="flex flex-col items-end gap-0.5">
+                                <div className="font-bold text-primary">
+                                  Total:{' '}
+                                  ₱{unitTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                                <div className="text-muted-foreground">
+                                  DSP: ₱{dspTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • RSP:{' '}
+                                  ₱{rspTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
                 </div>
               </div>
 

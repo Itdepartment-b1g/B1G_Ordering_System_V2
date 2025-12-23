@@ -36,6 +36,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
+      // Check if we just logged out - ignore auth state changes if so
+      const justLoggedOut = localStorage.getItem('just_logged_out');
+      if (justLoggedOut === 'true' && event !== 'SIGNED_OUT') {
+        console.log('🚫 [AuthContext] Ignoring auth event after logout:', event);
+        return;
+      }
+
       if (session?.user) {
    
         if (event === 'TOKEN_REFRESHED' && userRef.current?.id === session.user.id) {
@@ -74,6 +81,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         userRef.current = null; 
         setIsLoading(false);
+        // Set flag to prevent session restoration
+        localStorage.setItem('just_logged_out', 'true');
       }
     });
 
@@ -110,6 +119,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initializeAuth = async () => {
     try {
       setIsLoading(true);
+
+      // Check if we just logged out - if so, skip session restoration
+      const justLoggedOut = localStorage.getItem('just_logged_out');
+      if (justLoggedOut === 'true') {
+        console.log('🚫 [AuthContext] Just logged out, skipping session restoration');
+        setUser(null);
+        userRef.current = null;
+        setIsLoading(false);
+        localStorage.removeItem('just_logged_out');
+        return;
+      }
 
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
@@ -406,17 +426,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
-      setIsLoading(true);
-      await supabase.auth.signOut();
+      // Set flag FIRST to prevent any auth state changes from restoring session
+      localStorage.setItem('just_logged_out', 'true');
+      
+      // Clean up real-time subscriptions immediately
+      if ((window as any).companyStatusChannel) {
+        unsubscribe((window as any).companyStatusChannel);
+        (window as any).companyStatusChannel = null;
+      }
+      
+      // Clear cached profile on logout
+      clearProfileCache();
+      
+      // Stop security monitoring
+      stopTokenMonitoring();
+      
+      // Clear state immediately (before signOut to prevent race conditions)
       setUser(null);
       userRef.current = null;
-      clearProfileCache(); // Clear cached profile on logout
-      stopTokenMonitoring(); // Stop security monitoring
+      setIsLoading(false);
+      
+      // Perform signOut to clear Supabase session
+      await supabase.auth.signOut();
+      
+      // Clear Supabase auth storage explicitly
+      try {
+        // Clear all Supabase-related localStorage items
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('sb-') || key.includes('supabase'))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+      } catch (e) {
+        console.warn('Could not clear Supabase storage:', e);
+      }
+      
+      // Redirect to login
+      window.location.href = '/login';
+      
       console.log('👋 [AuthContext] Logged out and cleared cache');
     } catch (error) {
       console.error('Logout error:', error);
-    } finally {
+      // Even on error, ensure we clear state and redirect
+      setUser(null);
+      userRef.current = null;
       setIsLoading(false);
+      localStorage.setItem('just_logged_out', 'true');
+      window.location.href = '/login';
     }
   };
 

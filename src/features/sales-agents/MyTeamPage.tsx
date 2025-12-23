@@ -54,24 +54,24 @@ export default function MyTeamPage() {
       setLoadingTeam(true);
 
       // Get team members from leader_teams
-      const { data: teamData, error: teamError } = await supabase
-        .from('leader_teams')
-        .select(`
-          agent_id,
-          profiles!leader_teams_agent_id_fkey(
-            id,
-            full_name,
-            email,
-            phone,
-            region,
-            city,
-            status,
-            created_at
-          )
-        `)
-        .eq('leader_id', user.id);
+        const { data: teamData, error: teamError } = await supabase
+          .from('leader_teams')
+          .select(`
+            agent_id,
+            profiles!leader_teams_agent_id_fkey(
+              id,
+              full_name,
+              email,
+              phone,
+              region,
+              city,
+              status,
+              created_at
+            )
+          `)
+          .eq('leader_id', user.id);
 
-      if (teamError) throw teamError;
+        if (teamError) throw teamError;
 
       if (!teamData || teamData.length === 0) {
         setTeamMembers([]);
@@ -80,28 +80,28 @@ export default function MyTeamPage() {
       }
 
       // Get sales data for each team member
-      const teamMembersWithSales = await Promise.all(
-        teamData.map(async (member: any) => {
-          if (!member.profiles) {
-            console.warn('No profile data for member:', member.agent_id);
-            return null;
-          }
+        const teamMembersWithSales = await Promise.all(
+          teamData.map(async (member: any) => {
+            if (!member.profiles) {
+              console.warn('No profile data for member:', member.agent_id);
+              return null;
+            }
 
-          // Get sales data for this agent
-          const { data: salesData, error: salesError } = await supabase
-            .from('client_orders')
-            .select('total_amount, status, created_at')
-            .eq('agent_id', member.agent_id);
+            // Get sales data for this agent
+            const { data: salesData, error: salesError } = await supabase
+              .from('client_orders')
+              .select('total_amount, status, created_at')
+              .eq('agent_id', member.agent_id);
 
           if (salesError) {
             console.error(`Error fetching sales data for ${member.profiles.full_name}:`, salesError);
           }
 
-          const totalSales = salesData?.reduce((sum: number, order: any) => sum + (order.total_amount || 0), 0) || 0;
-          const ordersCount = salesData?.length || 0;
-          const approvedOrders = salesData?.filter(order => order.status === 'approved').length || 0;
-          const pendingOrders = salesData?.filter(order => order.status === 'pending').length || 0;
-          const rejectedOrders = salesData?.filter(order => order.status === 'rejected').length || 0;
+            const totalSales = salesData?.reduce((sum: number, order: any) => sum + (order.total_amount || 0), 0) || 0;
+            const ordersCount = salesData?.length || 0;
+            const approvedOrders = salesData?.filter(order => order.status === 'approved').length || 0;
+            const pendingOrders = salesData?.filter(order => order.status === 'pending').length || 0;
+            const rejectedOrders = salesData?.filter(order => order.status === 'rejected').length || 0;
 
           // Get the most recent order date
           const lastOrderDate = salesData && salesData.length > 0
@@ -110,27 +110,27 @@ export default function MyTeamPage() {
               )[0]?.created_at
             : null;
 
-          return {
-            id: member.profiles.id,
-            name: member.profiles.full_name,
-            email: member.profiles.email,
-            phone: member.profiles.phone || '',
-            region: member.profiles.region || '',
-            cities: member.profiles.city ? (Array.isArray(member.profiles.city) ? member.profiles.city : member.profiles.city.split(',').map(c => c.trim()).filter(c => c)) : [],
-            status: member.profiles.status || 'active',
-            totalSales,
-            ordersCount,
-            approvedOrders,
-            pendingOrders,
-            rejectedOrders,
+            return {
+              id: member.profiles.id,
+              name: member.profiles.full_name,
+              email: member.profiles.email,
+              phone: member.profiles.phone || '',
+              region: member.profiles.region || '',
+              cities: member.profiles.city ? (Array.isArray(member.profiles.city) ? member.profiles.city : member.profiles.city.split(',').map(c => c.trim()).filter(c => c)) : [],
+              status: member.profiles.status || 'active',
+              totalSales,
+              ordersCount,
+              approvedOrders,
+              pendingOrders,
+              rejectedOrders,
             lastOrderDate,
-            joinedDate: member.profiles.created_at
-          };
-        })
-      );
+              joinedDate: member.profiles.created_at
+            };
+          })
+        );
 
-      const validTeamMembers = teamMembersWithSales.filter(member => member !== null);
-      setTeamMembers(validTeamMembers);
+        const validTeamMembers = teamMembersWithSales.filter(member => member !== null);
+        setTeamMembers(validTeamMembers);
 
     } catch (error) {
       console.error('Error fetching team members:', error);
@@ -198,10 +198,10 @@ export default function MyTeamPage() {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">My Team</h1>
-        <p className="text-muted-foreground">
+          <h1 className="text-3xl font-bold tracking-tight">My Team</h1>
+          <p className="text-muted-foreground">
           Manage and view your team members' performance and details
-        </p>
+          </p>
       </div>
 
       {/* Stats Overview */}
@@ -269,45 +269,45 @@ export default function MyTeamPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <CardTitle>Team Members</CardTitle>
             <div className="flex flex-col sm:flex-row gap-3">
-              {/* Search */}
+            {/* Search */}
               <div className="relative flex-1 sm:max-w-xs">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
                   placeholder="Search team members..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
-                />
-              </div>
+              />
+            </div>
 
               {/* Sort and View Toggle */}
-              <div className="flex gap-2">
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as 'name' | 'sales' | 'orders')}
+            <div className="flex gap-2">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'name' | 'sales' | 'orders')}
                   className="flex h-10 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
+              >
                   <option value="name">Sort: Name</option>
                   <option value="sales">Sort: Sales</option>
                   <option value="orders">Sort: Orders</option>
-                </select>
+              </select>
                 <div className="flex border rounded-md">
-                  <Button
+              <Button
                     variant={viewMode === 'table' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setViewMode('table')}
+                size="sm"
+                onClick={() => setViewMode('table')}
                     className="rounded-r-none border-r"
-                  >
-                    <BarChart3 className="h-4 w-4" />
-                  </Button>
-                  <Button
+              >
+                <BarChart3 className="h-4 w-4" />
+              </Button>
+              <Button
                     variant={viewMode === 'cards' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setViewMode('cards')}
+                size="sm"
+                onClick={() => setViewMode('cards')}
                     className="rounded-l-none"
-                  >
-                    <Users className="h-4 w-4" />
-                  </Button>
+              >
+                <Users className="h-4 w-4" />
+              </Button>
                 </div>
               </div>
             </div>
@@ -315,15 +315,15 @@ export default function MyTeamPage() {
         </CardHeader>
 
         <CardContent>
-          {/* Team Members Display */}
-          {loadingTeam ? (
+      {/* Team Members Display */}
+      {loadingTeam ? (
             <div className="flex items-center justify-center py-12">
               <div className="flex items-center gap-2">
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span className="text-muted-foreground">Loading team members...</span>
               </div>
             </div>
-          ) : sortedTeamMembers.length === 0 ? (
+      ) : sortedTeamMembers.length === 0 ? (
             <div className="text-center py-12">
               <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
               <h3 className="text-lg font-semibold mb-2">No team members found</h3>
@@ -331,7 +331,7 @@ export default function MyTeamPage() {
                 {searchQuery ? 'Try adjusting your search criteria' : 'No team members have been assigned to you yet'}
               </p>
             </div>
-          ) : viewMode === 'table' ? (
+      ) : viewMode === 'table' ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -424,7 +424,7 @@ export default function MyTeamPage() {
                 </TableBody>
               </Table>
             </div>
-          ) : (
+      ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {sortedTeamMembers.map((member) => (
             <Card key={member.id} className="hover:shadow-md transition-shadow">
@@ -504,7 +504,7 @@ export default function MyTeamPage() {
             </Card>
           ))}
         </div>
-          )}
+      )}
         </CardContent>
       </Card>
 
@@ -572,8 +572,8 @@ export default function MyTeamPage() {
                     <div className="text-sm text-muted-foreground">Total Orders</div>
                   </div>
                   <div className="p-4 border rounded-lg bg-purple-50">
-                    <div className="text-2xl font-bold text-purple-600">{selectedMember.approvedOrders}</div>
-                    <div className="text-sm text-muted-foreground">Approved Orders</div>
+                  <div className="text-2xl font-bold text-purple-600">{selectedMember.approvedOrders}</div>
+                  <div className="text-sm text-muted-foreground">Approved Orders</div>
                   </div>
                 </div>
                 {(selectedMember.pendingOrders > 0 || selectedMember.rejectedOrders > 0) && (

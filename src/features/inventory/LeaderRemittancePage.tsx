@@ -107,7 +107,47 @@ export default function LeaderRemittancePage() {
         agent_name: item.agent?.full_name || 'Unknown Agent'
       }));
 
-      setRemittances(formattedData);
+      // If there is no real data yet, populate with demo remittances
+      if (!formattedData.length) {
+        const now = new Date();
+        const today = format(now, 'yyyy-MM-dd');
+        const demoRemittances: RemittanceLog[] = [
+          {
+            id: 'demo-remit-1',
+            agent_id: 'demo-agent-1',
+            leader_id: user.id,
+            remittance_date: today,
+            remitted_at: now.toISOString(),
+            items_remitted: 3,
+            total_units: 42,
+            orders_count: 4,
+            total_revenue: 18500,
+            order_ids: [],
+            signature_url: null,
+            signature_path: null,
+            agent_name: 'Demo Mobile Sales 1'
+          },
+          {
+            id: 'demo-remit-2',
+            agent_id: 'demo-agent-2',
+            leader_id: user.id,
+            remittance_date: today,
+            remitted_at: new Date(now.getTime() - 1000 * 60 * 60).toISOString(),
+            items_remitted: 2,
+            total_units: 30,
+            orders_count: 2,
+            total_revenue: 9200,
+            order_ids: [],
+            signature_url: null,
+            signature_path: null,
+            agent_name: 'Demo Mobile Sales 2'
+          }
+        ];
+
+        setRemittances(demoRemittances);
+      } else {
+        setRemittances(formattedData);
+      }
     } catch (error: any) {
       console.error('Error fetching team remittances:', error);
       toast({

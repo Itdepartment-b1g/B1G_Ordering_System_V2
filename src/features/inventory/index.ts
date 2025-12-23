@@ -4,6 +4,7 @@ export { default as LeaderInventoryPage } from './LeaderInventoryPage';
 export { default as MyInventoryPage } from './MyInventoryPage';
 export { default as RemittedStocksPage } from './RemittedStocksPage';
 export { default as LeaderRemittancePage } from './LeaderRemittancePage';
+export { default as LeaderCashDepositsPage } from './LeaderCashDepositsPage';
 export { default as RequestInventoryPage } from './RequestInventoryPage';
 export { default as PendingRequestsPage } from './PendingRequestsPage';
 export { default as AdminRequestsPage } from './AdminRequestsPage';

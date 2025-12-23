@@ -334,15 +334,15 @@ export default function LeaderInventoryPage() {
               id,
               stock,
               allocated_price,
-              dsp_price,
-              rsp_price,
-              variants!inner(
+            dsp_price,
+            rsp_price,
+          variants!inner(
                 id,
-                name,
-                variant_type,
-                brands!inner(name)
-              )
-            `)
+            name,
+            variant_type,
+            brands!inner(name)
+          )
+        `)
             .eq('agent_id', member.agent_id)
             .gt('stock', 0);
 
@@ -974,10 +974,10 @@ export default function LeaderInventoryPage() {
         <CardHeader>
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <CardTitle className="flex items-center gap-2">
-                <Crown className="h-5 w-5 text-yellow-600" />
-                Your Allocated Inventory
-              </CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Crown className="h-5 w-5 text-yellow-600" />
+            Your Allocated Inventory
+          </CardTitle>
               {user.role !== 'admin' && (
                 <Button
                   onClick={() => setAllocationOpen(true)}
@@ -1072,20 +1072,20 @@ export default function LeaderInventoryPage() {
             )}
           </div>
         </CardHeader>
-            <CardContent>
-              {loadingInventory ? (
-                <div className="flex items-center justify-center py-8">
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    <span>Loading your inventory...</span>
-                  </div>
-                </div>
-              ) : leaderInventory.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No inventory allocated to you yet</p>
-                  <p className="text-sm">Contact your administrator to request stock allocation</p>
-                </div>
+        <CardContent>
+          {loadingInventory ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span>Loading your inventory...</span>
+              </div>
+            </div>
+          ) : leaderInventory.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>No inventory allocated to you yet</p>
+              <p className="text-sm">Contact your administrator to request stock allocation</p>
+            </div>
               ) : filteredInventory.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -1144,11 +1144,20 @@ export default function LeaderInventoryPage() {
                             </AccordionTrigger>
                             <AccordionContent>
                               <div className="overflow-x-auto pt-2 pb-2">
-                                <Table>
+                                <Table className="table-fixed w-full">
+                                  <colgroup>
+                                    <col style={{ width: '200px' }} />
+                                    <col style={{ width: '100px' }} />
+                                    <col style={{ width: '120px' }} />
+                                    <col style={{ width: '120px' }} />
+                                    <col style={{ width: '120px' }} />
+                                    <col style={{ width: '120px' }} />
+                                    <col style={{ width: '120px' }} />
+                                  </colgroup>
                                   <TableHeader>
                                     <TableRow>
-                                      <TableHead>Variant</TableHead>
-                                      <TableHead>Type</TableHead>
+                                      <TableHead className="text-left" style={{ paddingLeft: '0' }}>Variant</TableHead>
+                                      <TableHead className="text-left">Type</TableHead>
                                       <TableHead className="text-right">Total Stock</TableHead>
                                       <TableHead className="text-right">Allocated</TableHead>
                                       <TableHead className="text-right">Available</TableHead>
@@ -1162,8 +1171,8 @@ export default function LeaderInventoryPage() {
                                         key={item.id}
                                         className={item.availableStock < 10 ? 'bg-orange-50 dark:bg-orange-950/20' : ''}
                                       >
-                                        <TableCell className="font-medium">{item.variantName}</TableCell>
-                                        <TableCell>
+                                        <TableCell className="font-medium text-left" style={{ paddingLeft: '0' }}>{item.variantName}</TableCell>
+                                        <TableCell className="text-left">
                                           <Badge variant="outline" className="text-xs">
                                             {item.variantType}
                                           </Badge>
@@ -1220,19 +1229,19 @@ export default function LeaderInventoryPage() {
                       </div>
                     </div>
                   )}
-                </div>
-              )}
-            </CardContent>
+            </div>
+          )}
+        </CardContent>
       </Card>
 
       {/* Team Members Inventory Section */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-blue-600" />
-              Team Members Inventory
-            </CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-blue-600" />
+            Team Members Inventory
+          </CardTitle>
             {user.role !== 'admin' && (
               <Button
                 onClick={() => setAllocationOpen(true)}
@@ -1246,85 +1255,85 @@ export default function LeaderInventoryPage() {
           </div>
         </CardHeader>
         <CardContent>
-              {/* Controls */}
-              <div className="flex flex-col lg:flex-row gap-4 items-center mb-6">
-                {/* Search */}
-                <div className="relative flex-1 max-w-md">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search team members..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10 h-11"
-                  />
-                </div>
+          {/* Controls */}
+          <div className="flex flex-col lg:flex-row gap-4 items-center mb-6">
+            {/* Search */}
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search team members..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 h-11"
+              />
+            </div>
 
-                {/* Sort Dropdown */}
-                <div className="flex gap-2">
-                  <Label className="text-sm font-medium text-muted-foreground self-center">Sort by:</Label>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as 'name' | 'stock' | 'value')}
-                    className="flex h-11 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="name">Name</option>
-                    <option value="stock">Stock</option>
-                    <option value="value">Value</option>
-                  </select>
-                </div>
+            {/* Sort Dropdown */}
+            <div className="flex gap-2">
+              <Label className="text-sm font-medium text-muted-foreground self-center">Sort by:</Label>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'name' | 'stock' | 'value')}
+                className="flex h-11 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="name">Name</option>
+                <option value="stock">Stock</option>
+                <option value="value">Value</option>
+              </select>
+            </div>
 
-                {/* View Toggle */}
-                <div className="flex gap-2">
-                  <Button
-                    variant={viewMode === 'table' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setViewMode('table')}
-                    className="gap-2"
-                  >
-                    <BarChart3 className="h-4 w-4" />
-                    Table
-                  </Button>
-                  <Button
-                    variant={viewMode === 'cards' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setViewMode('cards')}
-                    className="gap-2"
-                  >
-                    <Package className="h-4 w-4" />
-                    Cards
-                  </Button>
-                </div>
+            {/* View Toggle */}
+            <div className="flex gap-2">
+              <Button
+                variant={viewMode === 'table' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('table')}
+                className="gap-2"
+              >
+                <BarChart3 className="h-4 w-4" />
+                Table
+              </Button>
+              <Button
+                variant={viewMode === 'cards' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('cards')}
+                className="gap-2"
+              >
+                <Package className="h-4 w-4" />
+                Cards
+              </Button>
+            </div>
+          </div>
+
+          {/* Team Members Display */}
+          {loadingTeam ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span>Loading team members...</span>
               </div>
-
-              {/* Team Members Display */}
-              {loadingTeam ? (
-                <div className="flex items-center justify-center py-8">
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    <span>Loading team members...</span>
-                  </div>
-                </div>
-              ) : sortedTeamMembers.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No team members found</p>
-                  <p className="text-sm">Team members will appear here once they are assigned to you</p>
-                </div>
-              ) : viewMode === 'table' ? (
+            </div>
+          ) : sortedTeamMembers.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>No team members found</p>
+              <p className="text-sm">Team members will appear here once they are assigned to you</p>
+            </div>
+          ) : viewMode === 'table' ? (
             <div className="space-y-4">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Member</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead className="text-right">Total Stock</TableHead>
-                      <TableHead className="text-right">Total Value</TableHead>
-                      <TableHead className="text-right">Items</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Member</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead className="text-right">Total Stock</TableHead>
+                    <TableHead className="text-right">Total Value</TableHead>
+                    <TableHead className="text-right">Items</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                     {paginatedTeamMembers.map((member) => (
                     <TableRow key={member.id}>
                       <TableCell className="font-medium">{member.name}</TableCell>
@@ -1354,9 +1363,9 @@ export default function LeaderInventoryPage() {
                         </Button>
                       </TableCell>
                     </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                  ))}
+                </TableBody>
+              </Table>
               </div>
               {/* Pagination Controls */}
               {totalPages > 1 && (
@@ -1392,7 +1401,7 @@ export default function LeaderInventoryPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {paginatedTeamMembers.map((member) => (
                 <Card key={member.id} className="hover:shadow-md transition-shadow">
                   <CardHeader className="pb-3">
@@ -1451,7 +1460,7 @@ export default function LeaderInventoryPage() {
                     </Button>
                   </CardContent>
                 </Card>
-                ))}
+              ))}
               </div>
               {/* Pagination Controls */}
               {totalPages > 1 && (

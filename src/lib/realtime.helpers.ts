@@ -26,6 +26,7 @@ type TableName =
   | 'notifications'
   | 'remittances_log'
   | 'inventory_requests'
+  | 'stock_requests'
   | 'leader_teams';
 
 type ChangeEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';

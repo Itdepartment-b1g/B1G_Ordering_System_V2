@@ -46,6 +46,7 @@ interface Client {
   account_type: 'Key Accounts' | 'Standard Accounts';
   category: 'Permanently Closed' | 'Renovating' | 'Open';
   status: 'active' | 'inactive';
+  has_forge: boolean;
   last_order_date?: string;
   created_at: string;
   updated_at: string;
@@ -86,7 +87,8 @@ export default function ClientsPage() {
     address: '',
     city: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
-    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
+    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
+    has_forge: false
   });
   
   // Delete Confirmation States
@@ -129,8 +131,14 @@ export default function ClientsPage() {
   const [isPrewarmingLocation, setIsPrewarmingLocation] = useState(false);
   const [prewarmPosition, setPrewarmPosition] = useState<GeolocationPosition | null>(null);
   const [agentCities, setAgentCities] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [importHeaders, setImportHeaders] = useState<string[]>([]);
+  const [importRows, setImportRows] = useState<Partial<Client>[]>([]);
+  const [importSummary, setImportSummary] = useState<{ total: number; valid: number; skipped: number }>({ total: 0, valid: 0, skipped: 0 });
   
   const { toast } = useToast();
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize all agent city tags based on current client assignments
   const initializeAgentCities = async () => {
@@ -506,6 +514,224 @@ export default function ClientsPage() {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    const header = 'name,company,email,phone,address,city,account_type,category\n';
+    const blob = new Blob([header], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'clients_template.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportClick = () => {
+    if (importInputRef.current) {
+      importInputRef.current.value = '';
+      importInputRef.current.click();
+    }
+  };
+
+  const handleImportClients = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+
+      if (lines.length <= 1) {
+        toast({
+          title: 'No data',
+          description: 'The template file is empty.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const [headerLine, ...rows] = lines;
+      const headers = headerLine.split(',').map(h => h.trim().toLowerCase());
+
+      const nameIdx = headers.indexOf('name');
+      const companyIdx = headers.indexOf('company');
+      const emailIdx = headers.indexOf('email');
+      const phoneIdx = headers.indexOf('phone');
+      const addressIdx = headers.indexOf('address');
+      const cityIdx = headers.indexOf('city');
+      const accountTypeIdx = headers.indexOf('account_type');
+      const categoryIdx = headers.indexOf('category');
+
+      if (nameIdx === -1) {
+        toast({
+          title: 'Invalid template',
+          description: 'The template must include at least a "name" column.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const isAdminUser = isAdmin || isSuperAdmin;
+
+      let total = 0;
+      let valid = 0;
+      let skipped = 0;
+
+      const previewRows = rows.map(row => {
+        const cols = row.split(',').map(c => c.trim());
+        if (cols.every(c => !c)) {
+          return null;
+        }
+        total += 1;
+        if (!cols[nameIdx]) {
+          skipped += 1;
+          return null;
+        }
+
+        const rawAccountType = accountTypeIdx >= 0 ? cols[accountTypeIdx] : '';
+        const rawCategory = categoryIdx >= 0 ? cols[categoryIdx] : '';
+
+        const account_type: Client['account_type'] =
+          rawAccountType === 'Key Accounts' ? 'Key Accounts' : 'Standard Accounts';
+        const category: Client['category'] =
+          rawCategory === 'Permanently Closed' || rawCategory === 'Renovating'
+            ? (rawCategory as Client['category'])
+            : 'Open';
+
+        valid += 1;
+
+        const rowObj: Partial<Client> = {
+          name: cols[nameIdx],
+          company: companyIdx >= 0 ? cols[companyIdx] || null : null,
+          email: emailIdx >= 0 ? cols[emailIdx] || null : null,
+          phone: phoneIdx >= 0 ? cols[phoneIdx] || null : null,
+          address: addressIdx >= 0 ? cols[addressIdx] || null : null,
+          city: cityIdx >= 0 ? cols[cityIdx] || null : null,
+          account_type,
+          category,
+          status: 'active',
+          approval_status: isAdminUser ? 'approved' : 'pending',
+          agent_id: isAdminUser ? null : user?.id || null,
+        };
+        return rowObj;
+      }).filter(Boolean) as Partial<Client>[];
+
+      if (previewRows.length === 0) {
+        toast({
+          title: 'No valid rows',
+          description: 'No valid client rows were found in the file.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      setImportHeaders(headers);
+      setImportRows(previewRows);
+      setImportSummary({ total, valid, skipped });
+      setImportPreviewOpen(true);
+    } catch (error: any) {
+      console.error('Error importing clients:', error);
+      toast({
+        title: 'Import failed',
+        description: error.message || 'An error occurred while importing clients.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleConfirmImportClients = async () => {
+    if (importRows.length === 0) {
+      toast({
+        title: 'Nothing to import',
+        description: 'There are no rows to import.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      if (!user?.company_id) {
+        throw new Error('User company_id not found');
+      }
+
+      setImporting(true);
+
+      const nowIso = new Date().toISOString();
+      const isAdminUser = isAdmin || isSuperAdmin;
+
+      // Build payload to match normal client creation and RLS expectations
+      const insertPayload = importRows.map((row) => {
+        const approvalStatus: Client['approval_status'] = isAdminUser ? 'approved' : 'pending';
+        const approvalRequestedAt = !isAdminUser ? nowIso : null;
+        const approvedAt = approvalStatus === 'approved' ? nowIso : null;
+
+        // For now, imports created by admins/super admins are unassigned (agent_id = null),
+        // imports by agents are assigned to themselves
+        const agentId = isAdminUser ? null : user.id;
+
+        return {
+          company_id: user.company_id,
+          name: row.name,
+          company: row.company || null,
+          email: row.email || null,
+          phone: row.phone || null,
+          address: row.address || null,
+          city: row.city || null,
+          account_type: row.account_type || 'Standard Accounts',
+          category: row.category || 'Open',
+          status: 'active',
+          has_forge: false,
+          total_orders: 0,
+          total_spent: 0,
+          photo_url: null,
+          photo_timestamp: null,
+          location_latitude: null,
+          location_longitude: null,
+          location_accuracy: null,
+          location_captured_at: null,
+          approval_status: approvalStatus,
+          approval_requested_at: approvalRequestedAt,
+          approval_notes: null,
+          approved_at: approvedAt,
+          approved_by: isAdminUser && approvedAt ? user.id : null,
+          agent_id: agentId,
+        };
+      });
+
+      const { error } = await supabase.from('clients').insert(insertPayload);
+      if (error) {
+        console.error('Import error:', error);
+        toast({
+          title: 'Import failed',
+          description: error.message || 'Failed to import clients from template.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      toast({
+        title: 'Import complete',
+        description: `${insertPayload.length} client(s) imported successfully.`,
+      });
+
+      setImportPreviewOpen(false);
+      setImportRows([]);
+      setImportHeaders([]);
+      setImportSummary({ total: 0, valid: 0, skipped: 0 });
+      await fetchClients();
+    } catch (error: any) {
+      console.error('Error importing clients:', error);
+      toast({
+        title: 'Import failed',
+        description: error.message || 'An error occurred while importing clients.',
+        variant: 'destructive',
+      });
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // Fetch revenue from ALL clients (active + inactive) for total revenue calculation
   const fetchAllClientsRevenue = async () => {
     try {
@@ -580,7 +806,8 @@ export default function ClientsPage() {
       address: client.address || '',
       city: client.city || '',
       account_type: client.account_type || 'Standard Accounts',
-      category: client.category || 'Open'
+      category: client.category || 'Open',
+      has_forge: client.has_forge || false
     });
     setEditDialogOpen(true);
   };
@@ -610,6 +837,7 @@ export default function ClientsPage() {
           phone: editForm.phone ? `+63 ${editForm.phone}` : null,
           account_type: editForm.account_type,
           category: editForm.category,
+          has_forge: editForm.has_forge,
           // address and city are read-only - do not update them
           updated_at: new Date().toISOString()
         })
@@ -1687,6 +1915,74 @@ export default function ClientsPage() {
 
   return (
     <div className="p-8 space-y-6">
+      {/* Import Preview Dialog */}
+      <Dialog open={importPreviewOpen} onOpenChange={setImportPreviewOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Import Clients Preview</DialogTitle>
+            <DialogDescription>
+              Review the rows below. Only rows with a name will be imported.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="text-xs text-muted-foreground">
+              Total rows (excluding header): <span className="font-semibold">{importSummary.total}</span> ·{' '}
+              Valid: <span className="font-semibold text-green-600">{importSummary.valid}</span> ·{' '}
+              Skipped: <span className="font-semibold text-red-600">{importSummary.skipped}</span>
+            </div>
+            <div className="border rounded-md overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {importHeaders.map((h) => (
+                      <TableHead key={h} className="uppercase text-[10px] tracking-wide">
+                        {h}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {importRows.map((row, idx) => (
+                    <TableRow key={idx}>
+                      {importHeaders.map((h) => {
+                        const key = h as keyof Client;
+                        const value = (row as any)[key] ?? '';
+                        return (
+                          <TableCell key={h} className="text-xs">
+                            {String(value)}
+                          </TableCell>
+                        );
+                      })}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setImportPreviewOpen(false)}
+              disabled={importing}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmImportClients}
+              disabled={importing || importRows.length === 0}
+            >
+              {importing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                'Confirm Import'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Clients Database</h1>
@@ -1711,6 +2007,32 @@ export default function ClientsPage() {
                 </>
               )}
             </Button>
+          )}
+          {isAdmin && (
+            <>
+              <Button
+                variant="outline"
+                onClick={handleDownloadTemplate}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Template
+              </Button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={handleImportClients}
+              />
+              <Button
+                variant="outline"
+                onClick={handleImportClick}
+                disabled={importing}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                {importing ? 'Importing...' : 'Import'}
+              </Button>
+            </>
           )}
           <Button variant="outline" onClick={handleOpenCityBulkTransfer}>
             <Users className="h-4 w-4 mr-2" />
@@ -2177,6 +2499,20 @@ export default function ClientsPage() {
                       <div>{client.city || '—'}</div>
                     </div>
                     <div className="text-right">
+                      <div className="text-xs text-muted-foreground">Forge</div>
+                      <div>
+                        {client.has_forge ? (
+                          <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-xs">
+                            Yes
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">
+                            No
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
                       <div className="text-xs text-muted-foreground">Orders</div>
                       <div className="font-medium">{client.total_orders}</div>
                     </div>
@@ -2214,6 +2550,7 @@ export default function ClientsPage() {
                 <TableHead className="text-center">City</TableHead>
                 <TableHead className="text-center">Account Type</TableHead>
                 <TableHead className="text-center">Category</TableHead>
+                <TableHead className="text-center">Forge</TableHead>
                 <TableHead className="text-center">Orders</TableHead>
                 <TableHead className="text-center">Total Spent</TableHead>
                 <TableHead className="text-center">Approval</TableHead>
@@ -2291,6 +2628,17 @@ export default function ClientsPage() {
                     >
                       {client.category}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {client.has_forge ? (
+                      <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-xs">
+                        Yes
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-xs">
+                        No
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-center">{client.total_orders}</TableCell>
                   <TableCell className="text-center font-semibold">
@@ -2541,6 +2889,27 @@ export default function ClientsPage() {
                     <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-3">
+                <Label>Has Forge?</Label>
+                <RadioGroup
+                  value={editForm.has_forge ? 'yes' : 'no'}
+                  onValueChange={(value) => setEditForm({ ...editForm, has_forge: value === 'yes' })}
+                  className="flex gap-4"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="yes" id="edit-has-forge-yes" />
+                    <Label htmlFor="edit-has-forge-yes" className="font-normal cursor-pointer">
+                      Yes
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="no" id="edit-has-forge-no" />
+                    <Label htmlFor="edit-has-forge-no" className="font-normal cursor-pointer">
+                      No
+                    </Label>
+                  </div>
+                </RadioGroup>
               </div>
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
                 <p className="font-medium">ℹ️ Note:</p>

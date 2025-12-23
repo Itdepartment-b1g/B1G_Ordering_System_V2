@@ -48,10 +48,14 @@ interface Request {
   requested_quantity: number;
   status: string;
   requested_at: string;
+  // Mapped from stock_requests.leader_notes (agent's notes to leader)
   requester_notes: string | null;
+  // Mapped from stock_requests.admin_notes (admin's response)
   approver_notes: string | null;
+  // Mapped from stock_requests.rejection_reason
   denial_reason: string | null;
-  variants?: Variant;
+  // Joined variant + brand
+  variant?: Variant;
 }
 
 interface GroupedRequest {
@@ -98,9 +102,9 @@ export default function RequestInventoryPage() {
       fetchMyRequests();
     }
 
-    // Real-time subscriptions for inventory requests
-    const channel = subscribeToTable('inventory_requests', (payload) => {
-      console.log('🔄 Real-time: Inventory request updated', payload);
+    // Real-time subscriptions for stock requests
+    const channel = subscribeToTable('stock_requests', (payload) => {
+      console.log('🔄 Real-time: Stock request updated', payload);
       if (user?.id) {
         fetchMyRequests(true); // Silent refresh
       }
@@ -146,27 +150,45 @@ export default function RequestInventoryPage() {
     if (!user?.id) return;
 
     if (!silent) {
-      setLoading(true);
+    setLoading(true);
     }
     try {
       const { data, error } = await supabase
-        .from('inventory_requests')
+        .from('stock_requests')
         .select(`
-          *,
-          variants(
+          id,
+          variant_id,
+          requested_quantity,
+          requested_at,
+          status,
+          leader_notes,
+          admin_notes,
+          rejection_reason,
+          variant:variants(
             id,
             name,
             variant_type,
             brand:brands(name)
           )
         `)
-        .eq('requester_id', user.id)
-        .eq('request_level', 'agent_to_leader')
+        .eq('agent_id', user.id)
         .order('requested_at', { ascending: false });
 
       if (error) throw error;
 
-      setRequests(data || []);
+      const mapped: Request[] = (data || []).map((row: any) => ({
+        id: row.id,
+        variant_id: row.variant_id,
+        requested_quantity: row.requested_quantity,
+        requested_at: row.requested_at,
+        status: row.status,
+        requester_notes: row.leader_notes || null,
+        approver_notes: row.admin_notes || null,
+        denial_reason: row.rejection_reason || null,
+        variant: row.variant || undefined,
+      }));
+
+      setRequests(mapped);
 
       // Group requests by timestamp (rounded to nearest 5 seconds) and notes
       const grouped = groupRequestsByBatch(data || []);
@@ -174,15 +196,15 @@ export default function RequestInventoryPage() {
     } catch (error: any) {
       console.error('Error fetching requests:', error);
       if (!silent) {
-        toast({
-          title: 'Error',
-          description: 'Failed to load your requests',
-          variant: 'destructive'
-        });
+      toast({
+        title: 'Error',
+        description: 'Failed to load your requests',
+        variant: 'destructive'
+      });
       }
     } finally {
       if (!silent) {
-        setLoading(false);
+      setLoading(false);
       }
     }
   };
@@ -270,29 +292,44 @@ export default function RequestInventoryPage() {
     setShowSubmitConfirm(false);
 
     try {
-      let successCount = 0;
-      let errorCount = 0;
+      // Find this agent's leader
+      const { data: leaderRow, error: leaderError } = await supabase
+        .from('leader_teams')
+        .select('leader_id')
+        .eq('agent_id', user.id)
+        .maybeSingle();
 
-      // Submit each request
-      for (const request of requestsToSubmit) {
-        const { data, error } = await supabase.rpc('request_inventory_from_leader', {
-          p_agent_id: user.id,
-          p_variant_id: request.variantId,
-          p_quantity: request.quantity,
-          p_notes: notes || null
+      if (leaderError) throw leaderError;
+      if (!leaderRow?.leader_id) {
+        toast({
+          title: 'No leader assigned',
+          description: 'You must be assigned to a team leader before you can request inventory.',
+          variant: 'destructive',
         });
-
-        if (error || !data.success) {
-          errorCount++;
-        } else {
-          successCount++;
-        }
+        return;
       }
 
-      if (successCount > 0) {
+      // Build stock_requests rows
+      const rows = requestsToSubmit.map((request) => ({
+        company_id: (user as any).company_id,
+        request_number: `SR-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, // client-side unique-ish
+        agent_id: user.id,
+        leader_id: leaderRow.leader_id,
+        variant_id: request.variantId,
+        requested_quantity: request.quantity,
+        status: 'pending',
+        leader_notes: notes || null,
+      }));
+
+      const { error: insertError } = await supabase
+        .from('stock_requests')
+        .insert(rows);
+
+      if (insertError) throw insertError;
+
         toast({
           title: 'Success',
-          description: `${successCount} product request(s) submitted successfully${errorCount > 0 ? `, ${errorCount} failed` : ''}`
+        description: `${rows.length} product request(s) submitted successfully`,
         });
 
         // Reset form
@@ -303,13 +340,6 @@ export default function RequestInventoryPage() {
 
         // Refresh requests
         fetchMyRequests();
-      } else {
-        toast({
-          title: 'Error',
-          description: 'Failed to submit requests',
-          variant: 'destructive'
-        });
-      }
     } catch (error: any) {
       console.error('Error submitting request:', error);
       toast({
@@ -331,26 +361,24 @@ export default function RequestInventoryPage() {
     if (!user?.id || !pendingCancelId) return;
 
     try {
-      const { data, error } = await supabase.rpc('cancel_request', {
-        p_request_id: pendingCancelId,
-        p_agent_id: user.id
-      });
+      const { error } = await supabase
+        .from('stock_requests')
+        .update({
+          status: 'rejected',
+          rejection_reason: 'Cancelled by agent',
+          rejected_at: new Date().toISOString(),
+          rejected_by: user.id,
+        } as any)
+        .eq('id', pendingCancelId)
+        .eq('agent_id', user.id);
 
       if (error) throw error;
 
-      if (data.success) {
         toast({
           title: 'Success',
-          description: data.message
+        description: 'Request cancelled successfully',
         });
         fetchMyRequests();
-      } else {
-        toast({
-          title: 'Error',
-          description: data.message,
-          variant: 'destructive'
-        });
-      }
     } catch (error: any) {
       console.error('Error cancelling request:', error);
       toast({
@@ -390,12 +418,18 @@ export default function RequestInventoryPage() {
       let errorCount = 0;
 
       for (const request of pendingRequests) {
-        const { data, error } = await supabase.rpc('cancel_request', {
-          p_request_id: request.id,
-          p_agent_id: user.id
-        });
+        const { error } = await supabase
+          .from('stock_requests')
+          .update({
+            status: 'rejected',
+            rejection_reason: 'Cancelled by agent',
+            rejected_at: new Date().toISOString(),
+            rejected_by: user.id,
+          } as any)
+          .eq('id', request.id)
+          .eq('agent_id', user.id);
 
-        if (error || !data.success) {
+        if (error) {
           errorCount++;
         } else {
           successCount++;
@@ -433,32 +467,89 @@ export default function RequestInventoryPage() {
     switch (status) {
       case 'pending':
         return <Badge variant="secondary" className="bg-amber-50 text-amber-700 border-amber-200"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
-      case 'forwarded':
-        return <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200"><ArrowUp className="h-3 w-3 mr-1" />With Admin</Badge>;
-      case 'approved':
-        return <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200"><CheckCircle2 className="h-3 w-3 mr-1" />Approved</Badge>;
-      case 'denied':
+      case 'approved_by_leader':
+        return (
+          <Badge
+            variant="secondary"
+            className="bg-blue-50 text-blue-700 border-blue-200"
+          >
+            <ArrowUp className="h-3 w-3 mr-1" />
+            Approved by Leader
+          </Badge>
+        );
+      case 'approved_by_admin':
+        return (
+          <Badge
+            variant="secondary"
+            className="bg-emerald-50 text-emerald-700 border-emerald-200"
+          >
+            <CheckCircle2 className="h-3 w-3 mr-1" />
+            Approved by Admin
+          </Badge>
+        );
+      case 'fulfilled':
+        return (
+          <Badge
+            variant="secondary"
+            className="bg-green-50 text-green-700 border-green-200"
+          >
+            <CheckCircle2 className="h-3 w-3 mr-1" />
+            Fulfilled
+          </Badge>
+        );
+      case 'rejected':
         return <Badge variant="secondary" className="bg-red-50 text-red-700 border-red-200"><XCircle className="h-3 w-3 mr-1" />Denied</Badge>;
       default:
         return <Badge>{status}</Badge>;
     }
   };
 
+  // Accent color helpers for request cards
+  const getStatusAccentClasses = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return 'border-l-4 border-l-amber-400';
+      case 'approved_by_leader':
+        return 'border-l-4 border-l-blue-400';
+      case 'approved_by_admin':
+      case 'fulfilled':
+        return 'border-l-4 border-l-green-500';
+      case 'rejected':
+        return 'border-l-4 border-l-red-500';
+      default:
+        return 'border-l border-l-border';
+    }
+  };
+
   const filterByStatus = (status?: string) => {
     if (!status) return groupedRequests;
-    return groupedRequests.filter(g => g.status === status);
+
+    return groupedRequests.filter(g => {
+      switch (status) {
+        case 'pending':
+          return g.status === 'pending';
+        case 'forwarded':
+          return g.status === 'approved_by_leader';
+        case 'approved':
+          return g.status === 'approved_by_admin' || g.status === 'fulfilled';
+        case 'denied':
+          return g.status === 'rejected';
+        default:
+          return true;
+      }
+    });
   };
 
   const formatProductName = (request: Request) => {
-    if (request.variants?.brand) {
-      return `${request.variants.brand.name} - ${request.variants.name}`;
+    if (request.variant?.brand) {
+      return `${request.variant.brand.name} - ${request.variant.name}`;
     }
-    return request.variants?.name || 'Unknown Product';
+    return request.variant?.name || 'Unknown Product';
   };
 
   const getBrandName = (groupedRequest: GroupedRequest): string => {
     const firstRequest = groupedRequest.requests[0];
-    return firstRequest.variants?.brand?.name || 'Unknown Brand';
+    return firstRequest.variant?.brand?.name || 'Unknown Brand';
   };
 
   // Filter requests by search query
@@ -503,17 +594,17 @@ export default function RequestInventoryPage() {
     <div className="container mx-auto max-w-6xl p-6 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
+      <div>
           <h1 className="text-3xl font-bold tracking-tight">Inventory Requests</h1>
-          <p className="text-muted-foreground mt-1">
-            Request products from your team leader
-          </p>
-        </div>
+        <p className="text-muted-foreground mt-1">
+            Create new stock requests and track their status with your leader and admin.
+        </p>
+      </div>
         <Dialog open={formOpen} onOpenChange={setFormOpen}>
           <DialogTrigger asChild>
-            <Button size="default" className="shadow-sm">
-              <Plus className="h-4 w-4 mr-2" />
-              New Request
+            <Button size="lg" className="shadow-sm gap-2">
+              <Plus className="h-4 w-4" />
+              New Inventory Request
             </Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
@@ -524,91 +615,91 @@ export default function RequestInventoryPage() {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-6 py-4">
-              {/* Brand Selection */}
-              <div className="space-y-2">
+          {/* Brand Selection */}
+          <div className="space-y-2">
                 <label className="text-sm font-semibold">Select Brand</label>
-                <Select value={selectedBrand} onValueChange={handleBrandChange}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose a brand..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {brands.map(brand => (
-                      <SelectItem key={brand.id} value={brand.id}>
-                        {brand.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <Select value={selectedBrand} onValueChange={handleBrandChange}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a brand..." />
+              </SelectTrigger>
+              <SelectContent>
+                {brands.map(brand => (
+                  <SelectItem key={brand.id} value={brand.id}>
+                    {brand.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-              {/* Products List with Quantities */}
-              {selectedBrand && filteredVariants.length > 0 && (
-                <div className="space-y-3">
+          {/* Products List with Quantities */}
+          {selectedBrand && filteredVariants.length > 0 && (
+            <div className="space-y-3">
                   <label className="text-sm font-semibold">Select Products & Enter Quantities</label>
                   <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
-                    {filteredVariants.map(variant => (
+                {filteredVariants.map(variant => (
                       <div key={variant.id} className="flex items-center gap-4 p-4 hover:bg-muted/30 transition-colors">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm">{variant.name}</p>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm">{variant.name}</p>
                           <p className="text-xs text-muted-foreground mt-0.5">{variant.variant_type}</p>
-                        </div>
+                    </div>
                         <div className="flex-shrink-0 w-28">
-                          <Input
-                            type="number"
+                      <Input
+                        type="number"
                             placeholder="0"
-                            value={productQuantities[variant.id] || ''}
-                            onChange={(e) => handleQuantityChange(variant.id, e.target.value)}
-                            min="0"
-                            className="text-center"
-                          />
-                        </div>
-                      </div>
-                    ))}
+                        value={productQuantities[variant.id] || ''}
+                        onChange={(e) => handleQuantityChange(variant.id, e.target.value)}
+                        min="0"
+                        className="text-center"
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
+                ))}
+              </div>
+            </div>
+          )}
 
-              {selectedBrand && filteredVariants.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
+          {selectedBrand && filteredVariants.length === 0 && (
+            <div className="text-center py-8 text-muted-foreground">
                   <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p className="text-sm">No products available for this brand</p>
-                </div>
-              )}
+              <p className="text-sm">No products available for this brand</p>
+            </div>
+          )}
 
-              {/* Notes */}
-              {selectedBrand && (
-                <div className="space-y-2">
+          {/* Notes */}
+          {selectedBrand && (
+              <div className="space-y-2">
                   <label className="text-sm font-semibold">Additional Notes (Optional)</label>
-                  <Textarea
-                    placeholder="e.g., I have 3 urgent client orders..."
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    rows={3}
+                <Textarea
+                  placeholder="e.g., I have 3 urgent client orders..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={3}
                     className="resize-none"
-                  />
-                </div>
+                />
+              </div>
               )}
 
               {/* Submit Button */}
               {selectedBrand && (
-                <Button
-                  onClick={handleSubmitRequest}
-                  disabled={submitting || Object.values(productQuantities).every(q => !q || parseInt(q) <= 0)}
-                  className="w-full"
+              <Button
+                onClick={handleSubmitRequest}
+                disabled={submitting || Object.values(productQuantities).every(q => !q || parseInt(q) <= 0)}
+                className="w-full"
                   size="lg"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       Submitting...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="h-4 w-4 mr-2" />
-                      Submit Request
-                    </>
-                  )}
-                </Button>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4 mr-2" />
+                    Submit Request
+                  </>
+                )}
+              </Button>
               )}
             </div>
           </DialogContent>
@@ -617,7 +708,7 @@ export default function RequestInventoryPage() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
+        <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow bg-gradient-to-br from-slate-50 to-white">
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
@@ -628,14 +719,14 @@ export default function RequestInventoryPage() {
                 <p className="text-xs text-muted-foreground">Total</p>
               </div>
             </div>
-          </CardContent>
-        </Card>
+        </CardContent>
+      </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-amber-50 border border-amber-100">
                 <Clock className="h-4 w-4 text-amber-600" />
-              </div>
+          </div>
               <div>
                 <p className="text-xl font-semibold">{stats.pending}</p>
                 <p className="text-xs text-muted-foreground">Pending</p>
@@ -644,16 +735,16 @@ export default function RequestInventoryPage() {
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-4">
+                <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-blue-50 border border-blue-100">
                 <ArrowUp className="h-4 w-4 text-blue-600" />
-              </div>
+                      </div>
               <div>
                 <p className="text-xl font-semibold">{stats.forwarded}</p>
                 <p className="text-xs text-muted-foreground">With Admin</p>
-              </div>
-            </div>
+                      </div>
+                    </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
@@ -662,7 +753,7 @@ export default function RequestInventoryPage() {
               <div className="p-2 rounded-lg bg-green-50 border border-green-100">
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
               </div>
-              <div>
+                      <div>
                 <p className="text-xl font-semibold">{stats.approved}</p>
                 <p className="text-xs text-muted-foreground">Approved</p>
               </div>
@@ -674,15 +765,15 @@ export default function RequestInventoryPage() {
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-red-50 border border-red-100">
                 <XCircle className="h-4 w-4 text-red-600" />
-              </div>
-              <div>
+                      </div>
+                      <div>
                 <p className="text-xl font-semibold">{stats.denied}</p>
                 <p className="text-xs text-muted-foreground">Denied</p>
-              </div>
+                      </div>
             </div>
           </CardContent>
         </Card>
-      </div>
+                    </div>
 
       {/* Requests List */}
       <Card className="border-border/50 shadow-sm">
@@ -709,7 +800,7 @@ export default function RequestInventoryPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={(value: any) => setActiveTab(value)} className="w-full">
-            <TabsList className="grid w-full grid-cols-5 bg-muted/50">
+            <TabsList className="grid w-full grid-cols-5 bg-muted/50 rounded-lg">
               <TabsTrigger value="all" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
                 All
                 {stats.total > 0 && (
@@ -780,52 +871,62 @@ export default function RequestInventoryPage() {
                 filteredRequests.map(groupedRequest => (
                   <Card 
                     key={groupedRequest.id} 
-                    className="hover:shadow-md transition-all duration-200 border-border/50 cursor-pointer"
-                    onClick={() => {
-                      setSelectedGroupedRequest(groupedRequest);
-                      setDetailsOpen(true);
-                    }}
+                    className={`hover:shadow-md transition-all duration-200 border-border/50 cursor-pointer ${getStatusAccentClasses(
+                      groupedRequest.status
+                    )}`}
+                        onClick={() => {
+                          setSelectedGroupedRequest(groupedRequest);
+                          setDetailsOpen(true);
+                        }}
                   >
                     <CardContent className="p-5">
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex items-start gap-4 flex-1 min-w-0">
-                          <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm">
-                            <Package className="h-6 w-6 text-white" />
-                          </div>
+                          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center flex-shrink-0 shadow-sm">
+                            <Package className="h-5 w-5 text-white" />
+                    </div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-3 mb-2">
-                              <h3 className="font-semibold text-base">{getBrandName(groupedRequest)}</h3>
-                              {getStatusBadge(groupedRequest.status)}
-                            </div>
-                            <div className="flex items-center gap-4 text-sm text-muted-foreground mb-2">
+                            <div className="flex items-center justify-between gap-3 mb-1">
+                              <h3 className="font-semibold text-base truncate">
+                                {getBrandName(groupedRequest)}
+                              </h3>
+                              <span className="hidden sm:inline-flex">{getStatusBadge(groupedRequest.status)}</span>
+                  </div>
+                            <div className="flex items-center flex-wrap gap-3 text-xs sm:text-sm text-muted-foreground mb-1.5">
                               <div className="flex items-center gap-1.5">
                                 <Package className="h-3.5 w-3.5" />
-                                <span>{groupedRequest.productCount} {groupedRequest.productCount === 1 ? 'product' : 'products'}</span>
+                                <span>
+                                  {groupedRequest.productCount}{' '}
+                                  {groupedRequest.productCount === 1 ? 'product' : 'products'}
+                                </span>
                               </div>
-                              <span>•</span>
+                              <span className="hidden sm:inline">•</span>
                               <div className="flex items-center gap-1.5">
                                 <span className="font-medium">{groupedRequest.totalQuantity} units</span>
                               </div>
-                              <span>•</span>
+                              <span className="hidden sm:inline">•</span>
                               <div className="flex items-center gap-1.5">
                                 <Calendar className="h-3.5 w-3.5" />
                                 <span>{format(new Date(groupedRequest.requested_at), 'MMM dd, yyyy')}</span>
                               </div>
                             </div>
+                            <div className="sm:hidden mb-1">{getStatusBadge(groupedRequest.status)}</div>
                             {groupedRequest.requester_notes && (
-                              <div className="flex items-start gap-2 mt-2 p-2 bg-muted/50 rounded text-sm">
+                              <div className="flex items-start gap-2 mt-2 p-2 bg-muted/50 rounded text-xs sm:text-sm">
                                 <FileText className="h-3.5 w-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
-                                <p className="text-muted-foreground line-clamp-2">{groupedRequest.requester_notes}</p>
-                              </div>
-                            )}
-                          </div>
+                                <p className="text-muted-foreground line-clamp-2">
+                                  {groupedRequest.requester_notes}
+                                </p>
+              </div>
+            )}
+          </div>
                         </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
+                        <div className="flex flex-col items-end gap-2 flex-shrink-0">
                           {groupedRequest.status === 'pending' && (
-                            <Button
-                              variant="ghost"
+                          <Button
+                            variant="ghost"
                               size="icon"
-                              className="h-9 w-9 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleCancelBatch(groupedRequest);
@@ -835,8 +936,8 @@ export default function RequestInventoryPage() {
                             </Button>
                           )}
                           <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      </div>
+            </div>
+          </div>
                     </CardContent>
                   </Card>
                 ))
@@ -864,7 +965,7 @@ export default function RequestInventoryPage() {
                   <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
                     <Package className="h-5 w-5 text-white" />
                   </div>
-                  <div>
+                <div>
                     <p className="font-semibold">{getBrandName(selectedGroupedRequest)}</p>
                     <div className="flex items-center gap-2 mt-1">
                       {getStatusBadge(selectedGroupedRequest.status)}
@@ -913,27 +1014,27 @@ export default function RequestInventoryPage() {
                         <div className="flex items-center justify-between">
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-sm">{formatProductName(request)}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">{request.variants?.variant_type}</p>
-                          </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">{request.variant?.variant_type}</p>
+                      </div>
                           <div className="flex items-center gap-4">
-                            <div className="text-right">
+                        <div className="text-right">
                               <p className="text-sm font-semibold">{request.requested_quantity} units</p>
-                            </div>
+                        </div>
                             <div className="w-28 flex justify-end">
-                              {getStatusBadge(request.status)}
-                            </div>
-                            {request.status === 'pending' && (
-                              <Button
-                                variant="ghost"
+                          {getStatusBadge(request.status)}
+                        </div>
+                        {request.status === 'pending' && (
+                          <Button
+                            variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => handleCancelRequest(request.id)}
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
+                            onClick={() => handleCancelRequest(request.id)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
                         {request.approver_notes && (
                           <div className="mt-3 pt-3 border-t">
                             <p className="text-xs font-medium text-blue-900 mb-1">Leader's Response</p>
@@ -961,7 +1062,7 @@ export default function RequestInventoryPage() {
                   </h4>
                   <Card className="border-border/50 bg-muted/30">
                     <CardContent className="p-4">
-                      <p className="text-sm">{selectedGroupedRequest.requester_notes}</p>
+                    <p className="text-sm">{selectedGroupedRequest.requester_notes}</p>
                     </CardContent>
                   </Card>
                 </div>
