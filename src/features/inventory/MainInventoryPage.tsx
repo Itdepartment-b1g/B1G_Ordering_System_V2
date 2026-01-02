@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
-import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
@@ -35,6 +36,8 @@ export default function MainInventoryPage() {
     dspPrice?: number;
     rspPrice?: number;
   } | null>(null);
+  const [deleteVariantId, setDeleteVariantId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [priceInputValue, setPriceInputValue] = useState<string>('');
   const [sellingPriceInputValue, setSellingPriceInputValue] = useState<string>('');
   const [dspPriceInputValue, setDspPriceInputValue] = useState<string>('');
@@ -97,6 +100,30 @@ export default function MainInventoryPage() {
       });
     } finally {
       setLoadingAllocations(false);
+    }
+  };
+
+  const handleDeleteVariant = async (variantId: string) => {
+    if (!user?.company_id) {
+      toast({ title: "Error", description: "User company ID not found.", variant: "destructive" });
+      return;
+    }
+    try {
+      setIsDeleting(true);
+      const { error } = await supabase.rpc('delete_inventory_variant', {
+        p_variant_id: variantId,
+        p_company_id: user.company_id
+      });
+      if (error) throw error;
+      toast({ title: "Product Deleted", description: "All related records have been removed." });
+      refreshInventory();
+      qc.invalidateQueries({ queryKey: ['inventory'] }); // Invalidate react-query cache
+    } catch (err: any) {
+      console.error('Error deleting variant:', err);
+      toast({ title: "Delete Failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsDeleting(false);
+      setDeleteVariantId(null);
     }
   };
 
@@ -601,13 +628,46 @@ export default function MainInventoryPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleEditVariant(brand.id, flavor, 'flavor')}
-                                    >
-                                      <Edit className="h-4 w-4" />
-                                    </Button>
+                                    <div className="flex items-center justify-center gap-1">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleEditVariant(brand.id, flavor, 'flavor')}
+                                      >
+                                        <Edit className="h-4 w-4" />
+                                      </Button>
+
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                            onClick={() => setDeleteVariantId(flavor.id)}
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              This will permanently delete <strong>{flavor.name}</strong> and all its related history (orders, transactions, stock records). This action cannot be undone.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction
+                                              onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
+                                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                              disabled={isDeleting}
+                                            >
+                                              {isDeleting ? "Deleting..." : "Delete Permanently"}
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    </div>
                                   </TableCell>
                                 </TableRow>
                               );
@@ -696,13 +756,46 @@ export default function MainInventoryPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleEditVariant(brand.id, battery, 'battery')}
-                                    >
-                                      <Edit className="h-4 w-4" />
-                                    </Button>
+                                    <div className="flex items-center justify-center gap-1">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleEditVariant(brand.id, battery, 'battery')}
+                                      >
+                                        <Edit className="h-4 w-4" />
+                                      </Button>
+
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                            onClick={() => setDeleteVariantId(battery.id)}
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              This will permanently delete <strong>{battery.name}</strong> and all its related history (orders, transactions, stock records). This action cannot be undone.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction
+                                              onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
+                                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                              disabled={isDeleting}
+                                            >
+                                              {isDeleting ? "Deleting..." : "Delete Permanently"}
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    </div>
                                   </TableCell>
                                 </TableRow>
                               );

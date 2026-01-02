@@ -28,6 +28,7 @@ import {
 
 import { UserRole } from '@/types/database.types';
 import { useAuth } from '@/features/auth';
+import { UserImportExport } from './UserImportExport';
 
 interface SalesAgent {
   id: string;
@@ -75,25 +76,25 @@ export function SalesAgentsTab() {
   const [selectedAgentForAllocation, setSelectedAgentForAllocation] = useState<SalesAgent | null>(null);
   const [agentInventory, setAgentInventory] = useState<Variant[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
-const roleRequiresTerritory = (role?: UserRole | '') =>
+  const roleRequiresTerritory = (role?: UserRole | '') =>
     role === 'team_leader' || role === 'mobile_sales' || role === 'manager';
 
-const getRoleLabel = (role?: UserRole | '') => {
-  switch (role) {
-    case 'admin':
-      return 'Admin';
-    case 'finance':
-      return 'Finance';
-    case 'manager':
-      return 'Manager';
-    case 'team_leader':
-      return 'Team Leader';
-    case 'mobile_sales':
-      return 'Mobile Sales';
-    default:
-      return '—';
-  }
-};
+  const getRoleLabel = (role?: UserRole | '') => {
+    switch (role) {
+      case 'admin':
+        return 'Admin';
+      case 'finance':
+        return 'Finance';
+      case 'manager':
+        return 'Manager';
+      case 'team_leader':
+        return 'Team Leader';
+      case 'mobile_sales':
+        return 'Mobile Sales';
+      default:
+        return '—';
+    }
+  };
 
   const [newAgent, setNewAgent] = useState({
     name: '',
@@ -414,10 +415,10 @@ const getRoleLabel = (role?: UserRole | '') => {
 
       // Validate that the super admin has a company_id
       let companyId = user?.company_id;
-      
+
       if (!companyId) {
         console.error('User object missing company_id:', user);
-        
+
         // Try to fetch company_id directly from the database
         console.log('🔄 Fetching company_id from database...');
         const { data: profileData, error: profileError } = await supabase
@@ -425,17 +426,17 @@ const getRoleLabel = (role?: UserRole | '') => {
           .select('company_id')
           .eq('id', user?.id)
           .single();
-        
+
         if (profileError) {
           console.error('Error fetching profile:', profileError);
-        toast({
+          toast({
             title: 'Profile Issue',
             description: 'Unable to load your profile. Please refresh the page or contact support.',
-          variant: 'destructive'
-        });
-        return;
+            variant: 'destructive'
+          });
+          return;
         }
-        
+
         if (profileData?.company_id) {
           companyId = profileData.company_id;
           // Refresh the profile to update the user object
@@ -454,8 +455,8 @@ const getRoleLabel = (role?: UserRole | '') => {
       const regionValue = needsTerritoryFields ? newAgent.region?.trim() || null : null;
       const cityValue =
         needsTerritoryFields && newAgent.cities.length > 0
-        ? newAgent.cities.join(',')
-        : null;
+          ? newAgent.cities.join(',')
+          : null;
 
       console.log('Creating user with company_id:', companyId);
 
@@ -690,6 +691,19 @@ const getRoleLabel = (role?: UserRole | '') => {
                 <SelectItem value="inactive">Inactive Only</SelectItem>
               </SelectContent>
             </Select>
+            <UserImportExport
+              users={agents.map(agent => ({
+                id: agent.id,
+                name: agent.name,
+                email: agent.email,
+                phone: agent.phone,
+                region: agent.region,
+                cities: agent.cities,
+                role: agent.role || 'mobile_sales',
+                status: agent.status
+              }))}
+              onRefresh={fetchAgents}
+            />
             <Button onClick={() => setAddDialogOpen(true)}>
               <UserPlus className="mr-2 h-4 w-4" />
               Add User
@@ -736,10 +750,10 @@ const getRoleLabel = (role?: UserRole | '') => {
                         )}
                       </div>
                     </div>
-                      <div className="col-span-2">
-                        <div className="text-xs text-muted-foreground">Role</div>
-                        <Badge variant="outline">{getRoleLabel(agent.role)}</Badge>
-                      </div>
+                    <div className="col-span-2">
+                      <div className="text-xs text-muted-foreground">Role</div>
+                      <Badge variant="outline">{getRoleLabel(agent.role)}</Badge>
+                    </div>
                     <div className="col-span-2">
                       <div className="text-xs text-muted-foreground">Total Sales</div>
                       <div className="font-semibold">₱{agent.totalSales.toLocaleString()}</div>
@@ -932,55 +946,55 @@ const getRoleLabel = (role?: UserRole | '') => {
                 />
               </div>
               {editDialogRequiresTerritory && (
-              <div>
-                <Label htmlFor="region">Region</Label>
-                <Input
-                  id="region"
-                  value={editForm.region}
-                  onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
-                />
-              </div>
+                <div>
+                  <Label htmlFor="region">Region</Label>
+                  <Input
+                    id="region"
+                    value={editForm.region}
+                    onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
+                  />
+                </div>
               )}
             </div>
             {editDialogRequiresTerritory ? (
-            <div>
-              <Label htmlFor="city">Cities</Label>
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <Input
-                    id="city"
-                    placeholder="Enter city name"
-                    value={editCityInput}
-                    onChange={(e) => setEditCityInput(e.target.value)}
+              <div>
+                <Label htmlFor="city">Cities</Label>
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <Input
+                      id="city"
+                      placeholder="Enter city name"
+                      value={editCityInput}
+                      onChange={(e) => setEditCityInput(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
                           addCityToEditForm();
                         }
                       }}
-                  />
-                  <Button type="button" onClick={addCityToEditForm} variant="outline">
-                    Add
-                  </Button>
-                </div>
-                {editForm.cities.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {editForm.cities.map((city, index) => (
-                      <Badge key={index} variant="outline" className="text-xs">
-                        {city}
-                        <button
-                          type="button"
-                          onClick={() => removeCityFromEditForm(city)}
-                          className="ml-1 hover:text-red-500"
-                        >
-                          ×
-                        </button>
-                      </Badge>
-                    ))}
+                    />
+                    <Button type="button" onClick={addCityToEditForm} variant="outline">
+                      Add
+                    </Button>
                   </div>
-                )}
+                  {editForm.cities.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {editForm.cities.map((city, index) => (
+                        <Badge key={index} variant="outline" className="text-xs">
+                          {city}
+                          <button
+                            type="button"
+                            onClick={() => removeCityFromEditForm(city)}
+                            className="ml-1 hover:text-red-500"
+                          >
+                            ×
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
             ) : (
               <div className="rounded-md border border-dashed bg-muted/40 p-3 text-xs text-muted-foreground">
                 Region and cities are not required for {getRoleLabel(editingAgent?.role)} users.
@@ -1141,93 +1155,93 @@ const getRoleLabel = (role?: UserRole | '') => {
               className={`space-y-4 ${!isRoleSelected ? 'opacity-50 pointer-events-none select-none' : ''}`}
             >
               <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <Label htmlFor="add-name">Name</Label>
-                <Input
-                  id="add-name"
-                  placeholder="Enter name"
-                  value={newAgent.name}
-                  onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
-                />
+                <div>
+                  <Label htmlFor="add-name">Name</Label>
+                  <Input
+                    id="add-name"
+                    placeholder="Enter name"
+                    value={newAgent.name}
+                    onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="add-email">Email</Label>
+                  <Input
+                    id="add-email"
+                    type="email"
+                    placeholder="Enter email"
+                    value={newAgent.email}
+                    onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })}
+                  />
+                </div>
               </div>
-              <div>
-                <Label htmlFor="add-email">Email</Label>
-                <Input
-                  id="add-email"
-                  type="email"
-                  placeholder="Enter email"
-                  value={newAgent.email}
-                  onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })}
-                />
-              </div>
-            </div>
 
               <div className={`grid gap-4 ${addDialogRequiresTerritory ? 'md:grid-cols-2' : 'grid-cols-1 md:grid-cols-1'}`}>
-              <div>
-                <Label htmlFor="add-phone">Phone</Label>
-                <Input
-                  id="add-phone"
-                  value={newAgent.phone}
-                  onChange={(e) => {
-                    const formatted = formatPhoneNumber(e.target.value);
-                    setNewAgent({ ...newAgent, phone: formatted });
-                  }}
-                  placeholder="+63 917 555 0101"
-                  maxLength={17}
-                />
-              </div>
+                <div>
+                  <Label htmlFor="add-phone">Phone</Label>
+                  <Input
+                    id="add-phone"
+                    value={newAgent.phone}
+                    onChange={(e) => {
+                      const formatted = formatPhoneNumber(e.target.value);
+                      setNewAgent({ ...newAgent, phone: formatted });
+                    }}
+                    placeholder="+63 917 555 0101"
+                    maxLength={17}
+                  />
+                </div>
                 {addDialogRequiresTerritory && (
-              <div>
-                <Label htmlFor="add-region">Region</Label>
-                <Input
-                  id="add-region"
-                  placeholder="Enter region"
-                  value={newAgent.region}
-                  onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })}
-                />
-              </div>
+                  <div>
+                    <Label htmlFor="add-region">Region</Label>
+                    <Input
+                      id="add-region"
+                      placeholder="Enter region"
+                      value={newAgent.region}
+                      onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })}
+                    />
+                  </div>
                 )}
-            </div>
+              </div>
 
               {addDialogRequiresTerritory && (
-            <div>
-              <Label htmlFor="add-city">Cities</Label>
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <Input
-                    id="add-city"
-                    placeholder="Enter city name"
-                    value={currentCityInput}
-                    onChange={(e) => setCurrentCityInput(e.target.value)}
+                <div>
+                  <Label htmlFor="add-city">Cities</Label>
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <Input
+                        id="add-city"
+                        placeholder="Enter city name"
+                        value={currentCityInput}
+                        onChange={(e) => setCurrentCityInput(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
                             addCityToNewAgent();
                           }
                         }}
-                  />
-                  <Button type="button" onClick={addCityToNewAgent} variant="outline">
-                    Add
-                  </Button>
-                </div>
-                {newAgent.cities.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {newAgent.cities.map((city, index) => (
-                      <Badge key={index} variant="outline" className="text-xs">
-                        {city}
-                        <button
-                          type="button"
-                          onClick={() => removeCityFromNewAgent(city)}
-                          className="ml-1 hover:text-red-500"
-                        >
-                          ×
-                        </button>
-                      </Badge>
-                    ))}
+                      />
+                      <Button type="button" onClick={addCityToNewAgent} variant="outline">
+                        Add
+                      </Button>
+                    </div>
+                    {newAgent.cities.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {newAgent.cities.map((city, index) => (
+                          <Badge key={index} variant="outline" className="text-xs">
+                            {city}
+                            <button
+                              type="button"
+                              onClick={() => removeCityFromNewAgent(city)}
+                              className="ml-1 hover:text-red-500"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
               )}
             </fieldset>
 
