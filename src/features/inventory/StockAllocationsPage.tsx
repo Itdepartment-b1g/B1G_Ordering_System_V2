@@ -167,6 +167,8 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             email: agentEmail,
             totalStock: 0,
             totalValue: 0,
+            totalDspValue: 0,
+            totalRspValue: 0,
             items: []
           });
         }
@@ -179,6 +181,8 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
         agent.totalStock += item.stock;
         // Keep totalValue based on unit/allocated price for consistency with other pages
         agent.totalValue += item.stock * unitPrice;
+        agent.totalDspValue += item.stock * dspPrice;
+        agent.totalRspValue += item.stock * rspPrice;
 
         agent.items.push({
           id: item.id,
@@ -865,6 +869,8 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                     <TableHead>Email</TableHead>
                     <TableHead className="text-right">Total Stock</TableHead>
                     <TableHead className="text-right">Total Value</TableHead>
+                    <TableHead className="text-right">Total DSP</TableHead>
+                    <TableHead className="text-right">Total RSP</TableHead>
                     <TableHead className="text-right">Items</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -879,6 +885,18 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                       </TableCell>
                       <TableCell className="text-right font-semibold">
                         ₱{agent.totalValue.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-foreground">
+                        ₱{(agent.totalDspValue || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-foreground">
+                        ₱{(agent.totalRspValue || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </TableCell>
                       <TableCell className="text-right">
                         <Badge variant="secondary">
@@ -1013,7 +1031,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                         <div className="text-sm text-green-700">
                           Total Value (Unit Price)
                         </div>
-                        <div className="text-xs text-green-700/80 mt-1">
+                        <div className="text-xs text-foreground font-medium mt-1">
                           DSP: ₱
                           {selectedAgent.items
                             .reduce(

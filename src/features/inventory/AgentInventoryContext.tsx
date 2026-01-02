@@ -76,7 +76,8 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
           id: brand.id,
           name: brand.name,
           flavors: [],
-          batteries: []
+          batteries: [],
+          posms: []
         });
       });
 
@@ -106,17 +107,19 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
             status: item.status
           };
 
-          if (variant.variant_type === 'flavor') {
+          if (variant.variant_type === 'flavor' || variant.variant_type === 'Flavor') {
             brand.flavors.push(agentVariant);
-          } else {
+          } else if (variant.variant_type === 'battery' || variant.variant_type === 'Battery') {
             brand.batteries.push(agentVariant);
+          } else if (variant.variant_type === 'POSM' || variant.variant_type === 'posm') {
+            brand.posms.push(agentVariant);
           }
         }
       });
 
       // Convert map to array and sort
       const formattedBrands = Array.from(brandsMap.values()).filter(b =>
-        b.flavors.length > 0 || b.batteries.length > 0
+        b.flavors.length > 0 || b.batteries.length > 0 || b.posms.length > 0
       );
 
       setAgentBrands(formattedBrands);
@@ -158,7 +161,7 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
   const reduceStock = (
     brandName: string,
     variantName: string,
-    variantType: 'flavor' | 'battery',
+    variantType: 'flavor' | 'battery' | 'posm',
     quantity: number
   ) => {
     // Optimistic update
@@ -179,7 +182,8 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
         return {
           ...brand,
           flavors: variantType === 'flavor' ? brand.flavors.map(updateVariant) : brand.flavors,
-          batteries: variantType === 'battery' ? brand.batteries.map(updateVariant) : brand.batteries
+          batteries: variantType === 'battery' ? brand.batteries.map(updateVariant) : brand.batteries,
+          posms: variantType === 'posm' ? brand.posms.map(updateVariant) : brand.posms
         };
       });
     });

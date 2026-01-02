@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useOrders, type OrderItem } from './OrderContext';
 import { useAuth } from '@/features/auth';
@@ -36,6 +37,7 @@ interface SelectedItem {
 export default function MyOrdersPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const canCustomizePricing = ['team_leader', 'manager', 'admin'].includes(user?.role || '');
   const { getOrdersByAgent, addOrder, orders: allOrders } = useOrders();
   const { agentBrands } = useAgentInventory();
   const [searchQuery, setSearchQuery] = useState('');
@@ -110,6 +112,7 @@ export default function MyOrdersPage() {
   const [clientName, setClientName] = useState('');
   const [clientCompany, setClientCompany] = useState('');
   const [selectedBrandName, setSelectedBrandName] = useState('');
+  const [pricingType, setPricingType] = useState<'rsp' | 'dsp' | 'special'>('rsp'); // Default to RSP
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [taxRate, setTaxRate] = useState(0);
   const [discount, setDiscount] = useState(0);
@@ -225,7 +228,7 @@ export default function MyOrdersPage() {
     brandName: string,
     variantName: string,
     variantType: 'flavor' | 'battery',
-    unitPrice: number,
+    baseUnitPrice: number, // current displayed/effective price
     availableStock: number,
     sellingPrice?: number,
     dspPrice?: number,
@@ -234,13 +237,33 @@ export default function MyOrdersPage() {
     const safeQuantity = Math.min(Math.max(0, quantity), availableStock);
     const existingItemIndex = selectedItems.findIndex(item => item.variantId === variantId);
 
+    // Determine the correct unit price based on privacy type strategy
+    let finalUnitPrice = baseUnitPrice;
+    const validDsp = dspPrice && dspPrice > 0 ? dspPrice : undefined;
+    const validRsp = rspPrice && rspPrice > 0 ? rspPrice : undefined;
+    const validSelling = sellingPrice && sellingPrice > 0 ? sellingPrice : undefined;
+
+    // For Special Price, if item exists, keep its edited price
+    // If it's new, we use the baseUnitPrice (which usually falls back to selling/rsp)
+    if (pricingType === 'special') {
+      if (existingItemIndex >= 0) {
+        finalUnitPrice = selectedItems[existingItemIndex].unitPrice;
+      } else {
+        finalUnitPrice = 0;
+      }
+    } else if (pricingType === 'dsp') {
+      finalUnitPrice = validDsp ?? validSelling ?? baseUnitPrice;
+    } else if (pricingType === 'rsp') {
+      finalUnitPrice = validRsp ?? validSelling ?? baseUnitPrice;
+    }
+
     if (safeQuantity > 0) {
       // Add or update item
       if (existingItemIndex >= 0) {
         // Update existing item
         setSelectedItems(selectedItems.map(item =>
           item.variantId === variantId
-            ? { ...item, quantity: safeQuantity }
+            ? { ...item, quantity: safeQuantity, unitPrice: finalUnitPrice }
             : item
         ));
       } else {
@@ -250,7 +273,7 @@ export default function MyOrdersPage() {
           brandName,
           variantName,
           variantType,
-          unitPrice,
+          unitPrice: finalUnitPrice,
           sellingPrice,
           dspPrice,
           rspPrice,
@@ -266,6 +289,72 @@ export default function MyOrdersPage() {
     }
   };
 
+  // Update item price manually (Special Pricing only)
+  const handlePriceChange = (variantId: string, newPrice: number) => {
+    if (pricingType !== 'special') return;
+
+    setSelectedItems(selectedItems.map(item =>
+      item.variantId === variantId
+        ? { ...item, unitPrice: newPrice }
+        : item
+    ));
+  };
+
+  // Update prices when pricing type changes (except for 'special', where we might reset or keep)
+  useEffect(() => {
+    if (selectedItems.length === 0) return;
+
+    // Recalculate prices for all items based on new pricing type
+    setSelectedItems(currentItems => currentItems.map(item => {
+      if (pricingType === 'special') {
+        return { ...item, unitPrice: 0 };
+      }
+      // Find the latest variant data from source of truth (agentBrands)
+      let foundVariant: any = null;
+      for (const brand of agentBrands) {
+        const flavor = brand.flavors.find(f => f.id === item.variantId);
+        if (flavor) {
+          foundVariant = flavor;
+          break;
+        }
+        const battery = brand.batteries.find(b => b.id === item.variantId);
+        if (battery) {
+          foundVariant = battery;
+          break;
+        }
+      }
+
+      // Use fresh data if available, otherwise fall back to stored item data
+      const sourceData = foundVariant || item;
+
+      // Extract prices (handling both direct properties from inventory and stored properties)
+      const dspPrice = sourceData.dspPrice;
+      const rspPrice = sourceData.rspPrice;
+      // Inventory items use 'price' or 'sellingPrice', stored items use 'sellingPrice'
+      const sellingPrice = sourceData.sellingPrice ?? sourceData.price;
+
+      const validDsp = dspPrice && dspPrice > 0 ? dspPrice : undefined;
+      const validRsp = rspPrice && rspPrice > 0 ? rspPrice : undefined;
+      const validSelling = sellingPrice && sellingPrice > 0 ? sellingPrice : undefined;
+
+      let newPrice = item.unitPrice;
+      if (pricingType === 'dsp') {
+        newPrice = validDsp ?? validSelling ?? item.unitPrice;
+      } else if (pricingType === 'rsp') {
+        newPrice = validRsp ?? validSelling ?? item.unitPrice;
+      }
+
+      // Return updated item with FRESH price data stored as well
+      return {
+        ...item,
+        unitPrice: newPrice,
+        sellingPrice: validSelling ?? item.sellingPrice,
+        dspPrice: validDsp ?? item.dspPrice,
+        rspPrice: validRsp ?? item.rspPrice
+      };
+    }));
+  }, [pricingType, agentBrands]);
+
   const handleRemoveItem = (variantId: string) => {
     setSelectedItems(selectedItems.filter(item => item.variantId !== variantId));
   };
@@ -276,6 +365,7 @@ export default function MyOrdersPage() {
     setClientCompany('');
     setClientEmail('');
     setSelectedBrandName('');
+    setPricingType('rsp'); // Reset to RSP
     setSelectedItems([]);
     setDiscount(0);
     setNotes('');
@@ -632,7 +722,8 @@ export default function MyOrdersPage() {
         status: 'pending' as const,
         signatureUrl, // Add signature URL to order
         paymentMethod, // Add payment method
-        paymentProofUrl // Add payment proof URL
+        paymentProofUrl, // Add payment proof URL
+        pricingStrategy: pricingType // Add pricing strategy selection
       };
 
       console.log('🛒 Creating order with signature:', newOrder);
@@ -721,6 +812,7 @@ export default function MyOrdersPage() {
           leaderName: leaderName,
           paymentMethod: paymentMethod,
           paymentProofUrl: paymentProofUrl,
+          pricingStrategy: pricingType,
           requestSalesInvoice: requestSalesInvoice
         });
 
@@ -966,6 +1058,51 @@ export default function MyOrdersPage() {
                 </p>
               </div>
 
+              {/* Pricing Type Selection (Leaders/Managers/Admin only) */}
+              {canCustomizePricing && (
+                <div className="space-y-2 pt-2 border-t mt-4">
+                  <Label className="text-base font-semibold text-primary">Pricing Strategy</Label>
+                  <RadioGroup
+                    value={pricingType}
+                    onValueChange={(value) => setPricingType(value as any)}
+                    className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+                  >
+                    <div>
+                      <RadioGroupItem value="rsp" id="rsp" className="peer sr-only" />
+                      <Label
+                        htmlFor="rsp"
+                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer h-full"
+                      >
+                        <span className="text-sm font-semibold">RSP Pricing</span>
+                        <span className="text-xs text-muted-foreground mt-1 text-center">Standard Retail Price</span>
+                      </Label>
+                    </div>
+                    <div>
+                      <RadioGroupItem value="dsp" id="dsp" className="peer sr-only" />
+                      <Label
+                        htmlFor="dsp"
+                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer h-full"
+                      >
+                        <span className="text-sm font-semibold">DSP Pricing</span>
+                        <span className="text-xs text-muted-foreground mt-1 text-center">Distributor Price</span>
+                      </Label>
+                    </div>
+                    <div>
+                      <RadioGroupItem value="special" id="special" className="peer sr-only" />
+                      <Label
+                        htmlFor="special"
+                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer h-full"
+                      >
+                        <span className="text-sm font-semibold">Special Pricing</span>
+                        <span className="text-xs text-muted-foreground mt-1 text-center">Custom Unit Prices</span>
+                      </Label>
+                    </div>
+                  </RadioGroup>
+                </div>
+              )}
+
+
+
               {/* Brand Selection */}
               <div className="space-y-2">
                 <Label>Select Brand *</Label>
@@ -1006,8 +1143,13 @@ export default function MyOrdersPage() {
                           const selectedItem = selectedItems.find(item => item.variantId === flavor.id);
                           const currentQuantity = selectedItem?.quantity || 0;
 
-                          // Prefer explicit sellingPrice when present (including 0); fallback to effective price
-                          const flavorUnitPrice = (flavor as any).sellingPrice ?? flavor.price;
+                          // Determine price to display based on selected pricing type
+                          let displayPrice = (flavor as any).sellingPrice ?? flavor.price;
+                          if (pricingType === 'dsp') {
+                            displayPrice = (flavor as any).dspPrice ?? displayPrice;
+                          } else if (pricingType === 'rsp') {
+                            displayPrice = (flavor as any).rspPrice ?? displayPrice;
+                          }
                           return (
                             <div key={flavor.id} className="p-3 sm:p-4 bg-blue-50/50 rounded-lg border border-blue-100">
                               {/* Mobile: Card Layout */}
@@ -1019,7 +1161,7 @@ export default function MyOrdersPage() {
                                       <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                         {flavor.stock} in stock
                                       </Badge>
-                                      <span className="text-sm font-semibold text-blue-700">₱{flavorUnitPrice.toFixed(2)}</span>
+                                      <span className="text-sm font-semibold text-blue-700">₱{displayPrice.toFixed(2)}</span>
                                     </div>
                                     {flavor.stock === 0 && (
                                       <p className="text-xs text-red-600 mt-1">No more stock available</p>
@@ -1043,7 +1185,7 @@ export default function MyOrdersPage() {
                                         selectedBrand.name,
                                         flavor.name,
                                         'flavor',
-                                        flavorUnitPrice,
+                                        displayPrice,
                                         flavor.stock,
                                         (flavor as any).sellingPrice,
                                         (flavor as any).dspPrice,
@@ -1062,7 +1204,7 @@ export default function MyOrdersPage() {
                                   <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                     {flavor.stock} in stock
                                   </Badge>
-                                  <span className="text-sm text-muted-foreground">₱{flavorUnitPrice.toFixed(2)}</span>
+                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
                                 </div>
                                 {flavor.stock === 0 ? (
                                   <span className="text-xs text-red-600">No more stock available</span>
@@ -1084,7 +1226,7 @@ export default function MyOrdersPage() {
                                           selectedBrand.name,
                                           flavor.name,
                                           'flavor',
-                                          flavorUnitPrice,
+                                          displayPrice,
                                           flavor.stock
                                         );
                                       }}
@@ -1113,7 +1255,14 @@ export default function MyOrdersPage() {
                           const selectedItem = selectedItems.find(item => item.variantId === battery.id);
                           const currentQuantity = selectedItem?.quantity || 0;
 
-                          const batteryUnitPrice = (battery as any).sellingPrice ?? battery.price;
+                          // Determine price to display based on selected pricing type
+                          let displayPrice = (battery as any).sellingPrice ?? battery.price;
+                          if (pricingType === 'dsp') {
+                            displayPrice = (battery as any).dspPrice ?? displayPrice;
+                          } else if (pricingType === 'rsp') {
+                            displayPrice = (battery as any).rspPrice ?? displayPrice;
+                          }
+
                           return (
                             <div key={battery.id} className="p-3 sm:p-4 bg-green-50/50 rounded-lg border border-green-100">
                               {/* Mobile: Card Layout */}
@@ -1125,7 +1274,7 @@ export default function MyOrdersPage() {
                                       <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                         {battery.stock} in stock
                                       </Badge>
-                                      <span className="text-sm font-semibold text-green-700">₱{batteryUnitPrice.toFixed(2)}</span>
+                                      <span className="text-sm font-semibold text-green-700">₱{displayPrice.toFixed(2)}</span>
                                     </div>
                                     {battery.stock === 0 && (
                                       <p className="text-xs text-red-600 mt-1">No more stock available</p>
@@ -1149,7 +1298,7 @@ export default function MyOrdersPage() {
                                         selectedBrand.name,
                                         battery.name,
                                         'battery',
-                                        batteryUnitPrice,
+                                        displayPrice,
                                         battery.stock,
                                         (battery as any).sellingPrice,
                                         (battery as any).dspPrice,
@@ -1168,7 +1317,7 @@ export default function MyOrdersPage() {
                                   <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                     {battery.stock} in stock
                                   </Badge>
-                                  <span className="text-sm text-muted-foreground">₱{batteryUnitPrice.toFixed(2)}</span>
+                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
                                 </div>
                                 {battery.stock === 0 ? (
                                   <span className="text-xs text-red-600">No more stock available</span>
@@ -1190,7 +1339,7 @@ export default function MyOrdersPage() {
                                           selectedBrand.name,
                                           battery.name,
                                           'battery',
-                                          batteryUnitPrice,
+                                          displayPrice,
                                           battery.stock
                                         );
                                       }}
@@ -1243,8 +1392,24 @@ export default function MyOrdersPage() {
                               <p className="font-medium">{item.quantity} units</p>
                             </div>
                             <div>
-                              <p className="text-xs text-muted-foreground">Unit Price</p>
-                              <p className="font-medium">₱{item.unitPrice.toLocaleString()}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {pricingType === 'dsp' ? 'DSP Price' : pricingType === 'rsp' ? 'RSP Price' : 'Special Price'}
+                              </p>
+                              {pricingType === 'special' ? (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs">₱</span>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    value={item.unitPrice === 0 ? '' : item.unitPrice}
+                                    onChange={(e) => handlePriceChange(item.variantId, parseFloat(e.target.value) || 0)}
+                                    placeholder="0"
+                                    className="h-7 w-20 text-right px-1"
+                                  />
+                                </div>
+                              ) : (
+                                <p className="font-medium">₱{item.unitPrice.toLocaleString()}</p>
+                              )}
                             </div>
                             <div className="col-span-2">
                               <p className="text-xs text-muted-foreground">Total</p>
@@ -1270,8 +1435,24 @@ export default function MyOrdersPage() {
                               <p>{item.quantity} units</p>
                             </div>
                             <div>
-                              <p className="text-xs text-muted-foreground">Unit Price</p>
-                              <p>₱{item.unitPrice.toLocaleString()}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {pricingType === 'dsp' ? 'DSP Price' : pricingType === 'rsp' ? 'RSP Price' : 'Special Price'}
+                              </p>
+                              {pricingType === 'special' ? (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-sm text-muted-foreground">₱</span>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    value={item.unitPrice === 0 ? '' : item.unitPrice}
+                                    onChange={(e) => handlePriceChange(item.variantId, parseFloat(e.target.value) || 0)}
+                                    placeholder="0"
+                                    className="h-8 w-24 text-right"
+                                  />
+                                </div>
+                              ) : (
+                                <p>₱{item.unitPrice.toLocaleString()}</p>
+                              )}
                             </div>
                             <div>
                               <p className="text-xs text-muted-foreground">Total</p>
@@ -1676,14 +1857,7 @@ export default function MyOrdersPage() {
             </Alert>
 
             <div className="grid grid-cols-1 gap-2 sm:gap-3">
-              <Button
-                variant={paymentMethod === 'GCASH' ? 'default' : 'outline'}
-                className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
-                onClick={() => handlePaymentMethodSelected('GCASH')}
-              >
-                <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
-                <span className="text-base sm:text-lg font-semibold">GCash</span>
-              </Button>
+
 
               <Button
                 variant={paymentMethod === 'BANK_TRANSFER' ? 'default' : 'outline'}
@@ -2157,8 +2331,19 @@ export default function MyOrdersPage() {
                   <p className="font-medium">{new Date(orderToView.date).toLocaleDateString()}</p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground">Client Name</Label>
+                  <h4 className="text-muted-foreground text-sm flex items-center gap-1">
+                    Client Name
+                  </h4>
                   <p className="font-medium">{orderToView.clientName}</p>
+                </div>
+                <div>
+                  <h4 className="text-muted-foreground text-sm flex items-center gap-1">
+                    Pricing Strategy
+                  </h4>
+                  <Badge variant="outline" className="capitalize font-semibold bg-primary/5">
+                    {orderToView.pricingStrategy === 'special' ? 'Special Pricing (Allocated)' :
+                      orderToView.pricingStrategy === 'dsp' ? 'DSP Pricing' : 'RSP Pricing'}
+                  </Badge>
                 </div>
               </div>
 

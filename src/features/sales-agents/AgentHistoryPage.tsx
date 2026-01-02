@@ -37,7 +37,8 @@ type EventRow = {
   action: string;
   target_type: string;
   target_id: string;
-  details: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  details: Record<string, any>;
   target_label?: string | null;
   actor_label?: string | null;
 };
@@ -95,6 +96,7 @@ export default function AgentHistoryPage() {
   const [actorPositions, setActorPositions] = useState<Record<string, string | null>>({});
   const [teamAgentIds, setTeamAgentIds] = useState<string[]>([]);
   const teamAgentIdsRef = useRef<string[]>([]);
+  const actorPositionsRef = useRef<Record<string, string | null>>({}); // Ref to access latest positions in effect
   const [selectedActions, setSelectedActions] = useState<string[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<GroupedAction | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -153,8 +155,8 @@ export default function AgentHistoryPage() {
             if (error) throw error;
 
             // Fetch positions for all unique actor_ids BEFORE setting events
-            const uniqueActorIds = [...new Set((data as any[]).map(e => e.actor_id).filter(Boolean))];
-            let positionsMap: Record<string, string | null> = {};
+            const uniqueActorIds = [...new Set((data as EventRow[]).map(e => e.actor_id).filter(Boolean))];
+            const positionsMap: Record<string, string | null> = {};
 
             if (uniqueActorIds.length > 0) {
               const { data: profilesData, error: profilesError } = await supabase
@@ -176,8 +178,9 @@ export default function AgentHistoryPage() {
             setTeamAgentIds(agentIds);
             teamAgentIdsRef.current = agentIds;
             setActorPositions(positionsMap);
+            actorPositionsRef.current = positionsMap;
             const uniqueLeaderEvents = Array.from(
-              new Map(((data || []) as any[]).map((event) => [event.id, event])).values()
+              new Map(((data || []) as EventRow[]).map((event) => [event.id, event])).values()
             ) as EventRow[];
 
             setEvents(uniqueLeaderEvents);
@@ -196,7 +199,7 @@ export default function AgentHistoryPage() {
           if (error) throw error;
 
           // Fetch position for the user BEFORE setting events
-          let positionsMap: Record<string, string | null> = {};
+          const positionsMap: Record<string, string | null> = {};
           const { data: profileData, error: profileError } = await supabase
             .from('profiles')
             .select('id, position, role')
@@ -211,15 +214,16 @@ export default function AgentHistoryPage() {
           // Batch all state updates together
           teamAgentIdsRef.current = [];
           setActorPositions(positionsMap);
+          actorPositionsRef.current = positionsMap;
           const uniqueAgentEvents = Array.from(
-            new Map(((data || []) as any[]).map((event) => [event.id, event])).values()
+            new Map(((data || []) as EventRow[]).map((event) => [event.id, event])).values()
           ) as EventRow[];
           setEvents(uniqueAgentEvents);
           initializedRef.current = true;
           setLoading(false);
         }
-      } catch (e) {
-        console.error('Load history error:', e);
+      } catch (err: any) {
+        console.error('Load history error:', err);
         setEvents([]);
         setActorPositions({});
         setLoading(false);
@@ -233,12 +237,12 @@ export default function AgentHistoryPage() {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'events' },
-        async (payload: any) => {
+        async (payload) => {
           // Ignore realtime events until initial load is complete to avoid UI flicker
           if (!initializedRef.current) return;
-          const newEvent = payload.new as EventRow;
-          const actorId = (newEvent as any)?.actor_id as string | null;
-          const details = (newEvent as any)?.details || {};
+          const newEvent = (payload as { new: EventRow }).new;
+          const actorId = newEvent?.actor_id as string | null;
+          const details = newEvent?.details || {};
           const targetLeaderId = details?.leader_id as string | undefined;
           const targetAgentId = details?.agent_id as string | undefined;
 
@@ -255,7 +259,7 @@ export default function AgentHistoryPage() {
           setEvents((prev) => {
             const limit = isLeader ? 500 : 200;
             const map = new Map<string, EventRow>();
-            map.set((newEvent as any).id, newEvent as EventRow);
+            map.set(newEvent.id, newEvent);
             for (const evt of prev) {
               if (!map.has(evt.id)) {
                 map.set(evt.id, evt);
@@ -264,7 +268,7 @@ export default function AgentHistoryPage() {
             return Array.from(map.values()).slice(0, limit);
           });
 
-          if (actorId && !actorPositions[actorId]) {
+          if (actorId && !actorPositionsRef.current[actorId]) {
             try {
               const { data: profileData } = await supabase
                 .from('profiles')
@@ -272,16 +276,26 @@ export default function AgentHistoryPage() {
                 .eq('id', actorId)
                 .single();
               if (profileData) {
-                setActorPositions((prev) => ({ ...prev, [actorId]: profileData.position || null }));
+                setActorPositions((prev) => {
+                  const newPositions = { ...prev, [actorId]: profileData.position || null };
+                  actorPositionsRef.current = newPositions;
+                  return newPositions;
+                });
               }
-            } catch { }
+            } catch (err) {
+              console.error('Error fetching realtime actor profile:', err);
+            }
           }
         }
       )
       .subscribe();
 
     return () => {
-      try { supabase.removeChannel(channel); } catch { }
+      try {
+        supabase.removeChannel(channel);
+      } catch (err) {
+        console.error('Error removing channel:', err);
+      }
     };
   }, [user?.id, isLeader]);
 
@@ -292,11 +306,13 @@ export default function AgentHistoryPage() {
     // Filter out rows that only have JSON details without a proper message
     rows = rows.filter((e) => {
       // If there's a message, keep it
-      if (e.details?.message) return true;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const details = e.details as any;
+      if (details?.message) return true;
       // If there's before/after data, keep it (structured change display)
-      if (e.details?.before && e.details?.after) return true;
+      if (details?.before && details?.after) return true;
       // If there's actor and action_performed, keep it (formatted message)
-      if (e.details?.actor && e.details?.action_performed) return true;
+      if (details?.actor && details?.action_performed) return true;
       // Otherwise, it's likely just raw JSON - hide it
       return false;
     });
@@ -385,9 +401,11 @@ export default function AgentHistoryPage() {
 
       // Filter out rows that only have JSON details without a proper message
       rows = rows.filter((e) => {
-        if (e.details?.message) return true;
-        if (e.details?.before && e.details?.after) return true;
-        if (e.details?.actor && e.details?.action_performed) return true;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const details = e.details as any;
+        if (details?.message) return true;
+        if (details?.before && details?.after) return true;
+        if (details?.actor && details?.action_performed) return true;
         return false;
       });
 
@@ -476,7 +494,7 @@ export default function AgentHistoryPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
+          <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
             <div className="w-full">
               <TabsList className="w-full flex gap-1 rounded-md bg-muted p-1 overflow-x-auto">
                 <TabsTrigger value="all" className="data-[state=active]:bg-background">
@@ -718,33 +736,41 @@ export default function AgentHistoryPage() {
                               </Badge>
                             </TableCell>
                             <TableCell className="align-top py-3">
-                              {event.details?.message ? (
-                                <p className="text-sm leading-relaxed">{event.details.message}</p>
-                              ) : event.details?.before && event.details?.after ? (
-                                <div className="space-y-1">
-                                  {Object.keys(event.details.before).map(key => {
-                                    const beforeVal = event.details.before[key];
-                                    const afterVal = event.details.after[key];
-                                    if (beforeVal !== afterVal) {
-                                      return (
-                                        <div key={key} className="text-xs">
-                                          <span className="font-medium capitalize">{key.replace(/_/g, ' ')}:</span>{' '}
-                                          <span className="text-red-600">{String(beforeVal)}</span>{' '}
-                                          →{' '}
-                                          <span className="text-green-600">{String(afterVal)}</span>
-                                        </div>
-                                      );
-                                    }
-                                    return null;
-                                  })}
-                                </div>
-                              ) : event.details?.actor && event.details?.action_performed ? (
-                                <p className="text-sm leading-relaxed">
-                                  {event.details.actor} {event.details.action_performed} {event.details.target_name || 'this record'}
-                                </p>
-                              ) : (
-                                <p className="text-xs text-muted-foreground">No additional details</p>
-                              )}
+                              {(() => {
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                const details = event.details as any;
+                                if (details?.message) {
+                                  return <p className="text-sm leading-relaxed">{details.message}</p>;
+                                } else if (details?.before && details?.after) {
+                                  return (
+                                    <div className="space-y-1">
+                                      {Object.keys(details.before).map(key => {
+                                        const beforeVal = details.before[key];
+                                        const afterVal = details.after[key];
+                                        if (beforeVal !== afterVal) {
+                                          return (
+                                            <div key={key} className="text-xs">
+                                              <span className="font-medium capitalize">{key.replace(/_/g, ' ')}:</span>{' '}
+                                              <span className="text-red-600">{String(beforeVal)}</span>{' '}
+                                              →{' '}
+                                              <span className="text-green-600">{String(afterVal)}</span>
+                                            </div>
+                                          );
+                                        }
+                                        return null;
+                                      })}
+                                    </div>
+                                  );
+                                } else if (details?.actor && details?.action_performed) {
+                                  return (
+                                    <p className="text-sm leading-relaxed">
+                                      {details.actor} {details.action_performed} {details.target_name || 'this record'}
+                                    </p>
+                                  );
+                                } else {
+                                  return <p className="text-xs text-muted-foreground">No additional details</p>;
+                                }
+                              })()}
                             </TableCell>
                           </TableRow>
                         );

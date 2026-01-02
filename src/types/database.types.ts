@@ -211,6 +211,7 @@ export interface ClientOrder {
   payment_method?: 'GCASH' | 'BANK_TRANSFER' | 'CASH';
   payment_proof_url?: string;
   stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected';
+  remitted?: boolean;
   created_at: string;
   approved_by?: string;
   approved_at?: string;

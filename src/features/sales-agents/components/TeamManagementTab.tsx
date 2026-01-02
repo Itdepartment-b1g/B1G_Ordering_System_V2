@@ -37,6 +37,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { useAuth } from '@/features/auth';
 
 // Database interfaces
 interface Agent {
@@ -59,6 +60,7 @@ interface Leader {
 }
 
 export function TeamManagementTab() {
+  const { user } = useAuth();
   const [leaders, setLeaders] = useState<Leader[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,104 +99,103 @@ export function TeamManagementTab() {
     return !isAssignedToManager;
   });
 
-  // Fetch data from database (with optional silent mode for real-time updates)
-  const fetchData = async (silent = false) => {
-    try {
-      if (!silent) {
+ // Fetch data from database (with optional silent mode for real-time updates)
+ const fetchData = async (silent = false) => {
+  try {
+    if (!silent) {
       setLoading(true);
-      }
-      
-      // Fetch all sales agents (mobile_sales, team_leader, and manager)
-      const { data: agentsData, error: agentsError } = await supabase
+    }
+    
+    // Build base queries with company filter applied upfront
+    const companyFilter = user?.company_id ? { company_id: user.company_id } : {};
+    
+    // Execute all queries in parallel for maximum speed
+    const [agentsResult, teamResult] = await Promise.all([
+      // Fetch all relevant profiles
+      supabase
         .from('profiles')
         .select('*')
         .in('role', ['mobile_sales', 'team_leader', 'manager'])
-        .order('created_at', { ascending: false });
-
-      if (agentsError) throw agentsError;
-
-      // Fetch team assignments
-      const { data: teamData, error: teamError } = await supabase
+        .match(companyFilter)
+        .order('created_at', { ascending: false })
+        .limit(200),
+      
+      // Fetch team assignments (trimmed and capped)
+      supabase
         .from('leader_teams')
-        .select('agent_id, leader_id');
+        .select('agent_id, leader_id')
+        .match(companyFilter)
+        .limit(200)
+    ]);
 
-      if (teamError) throw teamError;
+    if (agentsResult.error) throw agentsResult.error;
+    if (teamResult.error) throw teamResult.error;
 
-      // Fetch leader profiles separately (including managers)
-      const leaderIds = [...new Set(teamData?.map(t => t.leader_id) || [])];
-      const { data: leaderProfiles, error: leaderError } = await supabase
-        .from('profiles')
-        .select('id, full_name, region, role')
-        .in('id', leaderIds);
+    const agentsData = agentsResult.data || [];
+    const teamData = teamResult.data || [];
 
-      if (leaderError) throw leaderError;
+    // Create lookup maps for O(1) access
+    const teamMap = new Map(teamData.map(t => [t.agent_id, t.leader_id]));
+    const profileMap = new Map(agentsData.map(p => [p.id, p]));
 
-      // Process agents data
-      const processedAgents: Agent[] = (agentsData || []).map((agent: any) => {
-        // Find team assignment for this agent
-        const teamAssignment = teamData?.find(t => t.agent_id === agent.id);
-        const leaderProfile = leaderProfiles?.find(l => l.id === teamAssignment?.leader_id);
-        
-        return {
+    // Process agents data in a single pass
+    const processedAgents: Agent[] = agentsData.map((agent: any) => {
+      const leaderId = teamMap.get(agent.id);
+      const leaderProfile = leaderId ? profileMap.get(leaderId) : undefined;
+      
+      return {
+        id: agent.id,
+        name: agent.full_name || '',
+        email: agent.email || '',
+        region: agent.region || '',
+        role: agent.role || 'mobile_sales',
+        status: agent.status || 'active',
+        leaderId: leaderId,
+        leaderName: leaderProfile?.full_name,
+      };
+    });
+
+    // Build leaders map efficiently
+    const leadersMap = new Map<string, Leader>();
+    const teamSizeMap = new Map<string, number>();
+    
+    // Count team sizes
+    for (const assignment of teamData) {
+      teamSizeMap.set(
+        assignment.leader_id, 
+        (teamSizeMap.get(assignment.leader_id) || 0) + 1
+      );
+    }
+
+    // Add all leaders and managers
+    for (const agent of processedAgents) {
+      if (['team_leader', 'manager'].includes(agent.role)) {
+        leadersMap.set(agent.id, {
           id: agent.id,
-          name: agent.full_name || '',
-          email: agent.email || '',
-          region: agent.region || '',
-          role: agent.role || 'mobile_sales',
-          status: agent.status || 'active',
-          leaderId: teamAssignment?.leader_id || undefined,
-          leaderName: leaderProfile?.full_name || undefined,
-        };
-      });
-
-      // Process leaders data
-      const leadersMap = new Map<string, Leader>();
-      
-      // Add leaders from team assignments
-      leaderProfiles?.forEach(leader => {
-        if (!leadersMap.has(leader.id)) {
-          const teamSize = teamData?.filter(t => t.leader_id === leader.id).length || 0;
-          leadersMap.set(leader.id, {
-            id: leader.id,
-            name: leader.full_name,
-            region: leader.region,
-            teamSize: teamSize,
-            role: leader.role as 'team_leader' | 'manager'
-          });
-        }
-      });
-
-      // Add leaders and managers who don't have teams yet
-      processedAgents
-        .filter(agent => ['team_leader', 'manager'].includes(agent.role))
-        .forEach(agent => {
-          if (!leadersMap.has(agent.id)) {
-            leadersMap.set(agent.id, {
-              id: agent.id,
-              name: agent.name,
-              region: agent.region,
-              teamSize: 0,
-              role: agent.role as 'team_leader' | 'manager'
-            });
-          }
+          name: agent.name,
+          region: agent.region,
+          teamSize: teamSizeMap.get(agent.id) || 0,
+          role: agent.role as 'team_leader' | 'manager'
         });
-
-      setAgents(processedAgents);
-      setLeaders(Array.from(leadersMap.values()));
-      
-    } catch (error) {
-      console.error('Error fetching team data:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load team data',
-        variant: 'destructive'
-      });
-    } finally {
-      if (!silent) {
-      setLoading(false);
       }
     }
-  };
+
+    setAgents(processedAgents);
+    setLeaders(Array.from(leadersMap.values()));
+    
+  } catch (error) {
+    console.error('Error fetching team data:', error);
+    toast({
+      title: 'Error',
+      description: 'Failed to load team data',
+      variant: 'destructive'
+    });
+  } finally {
+    if (!silent) {
+      setLoading(false);
+    }
+  }
+};
 
   useEffect(() => {
     fetchData();

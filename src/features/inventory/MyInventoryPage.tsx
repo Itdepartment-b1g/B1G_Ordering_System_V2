@@ -27,6 +27,7 @@ export default function MyInventory() {
   const [remitting, setRemitting] = useState(false);
   const [leaderId, setLeaderId] = useState<string | null>(null);
   const [leaderName, setLeaderName] = useState<string | null>(null);
+  const [leaderRole, setLeaderRole] = useState<string | null>(null);
 
   // New state for orders and signature
   const [todayOrders, setTodayOrders] = useState<any[]>([]);
@@ -52,13 +53,14 @@ export default function MyInventory() {
   const filteredBrands = agentBrands.filter(brand =>
     brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     brand.flavors.some(f => f.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-    brand.batteries.some(b => b.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    brand.batteries.some(b => b.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    (brand.posms || []).some(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   const getTotalVariants = () => {
     let count = 0;
     agentBrands.forEach(brand => {
-      count += brand.flavors.length + brand.batteries.length;
+      count += brand.flavors.length + brand.batteries.length + (brand.posms || []).length;
     });
     return count;
   };
@@ -66,7 +68,8 @@ export default function MyInventory() {
   const getTotalStock = (brand: any) => {
     const flavorStock = brand.flavors.reduce((sum: number, f: any) => sum + f.stock, 0);
     const batteryStock = brand.batteries.reduce((sum: number, b: any) => sum + b.stock, 0);
-    return flavorStock + batteryStock;
+    const posmStock = (brand.posms || []).reduce((sum: number, p: any) => sum + p.stock, 0);
+    return flavorStock + batteryStock + posmStock;
   };
 
   const getLowStockCount = () => {
@@ -74,6 +77,7 @@ export default function MyInventory() {
     agentBrands.forEach(brand => {
       count += brand.flavors.filter(f => f.status === 'low').length;
       count += brand.batteries.filter(b => b.status === 'low').length;
+      count += (brand.posms || []).filter(p => p.status === 'low').length;
     });
     return count;
   };
@@ -84,9 +88,11 @@ export default function MyInventory() {
       variantId: string;
       variantName: string;
       brandName: string;
-      variantType: 'flavor' | 'battery';
+      variantType: 'flavor' | 'battery' | 'posm';
       quantity: number;
       price: number;
+      dspPrice?: number;
+      rspPrice?: number;
     }> = [];
 
     agentBrands.forEach(brand => {
@@ -100,7 +106,9 @@ export default function MyInventory() {
             brandName: brand.name,
             variantType: 'flavor',
             quantity: stock,
-            price: flavor.price
+            price: flavor.price,
+            dspPrice: flavor.dspPrice,
+            rspPrice: flavor.rspPrice
           });
         }
       });
@@ -114,7 +122,25 @@ export default function MyInventory() {
             brandName: brand.name,
             variantType: 'battery',
             quantity: stock,
-            price: battery.price
+            price: battery.price,
+            dspPrice: battery.dspPrice,
+            rspPrice: battery.rspPrice
+          });
+        }
+      });
+      (brand.posms || []).forEach(posm => {
+        // Ensure stock is a number and greater than 0
+        const stock = typeof posm.stock === 'number' ? posm.stock : Number(posm.stock) || 0;
+        if (stock > 0) {
+          items.push({
+            variantId: posm.id,
+            variantName: posm.name,
+            brandName: brand.name,
+            variantType: 'posm',
+            quantity: stock,
+            price: posm.price,
+            dspPrice: posm.dspPrice,
+            rspPrice: posm.rspPrice
           });
         }
       });
@@ -140,7 +166,8 @@ export default function MyInventory() {
             leader_id,
             profiles!leader_teams_leader_id_fkey(
               id,
-              full_name
+              full_name,
+              role
             )
           `)
           .eq('agent_id', user.id)
@@ -153,7 +180,9 @@ export default function MyInventory() {
 
         if (data) {
           setLeaderId(data.leader_id);
-          setLeaderName((data.profiles as any)?.full_name || null);
+          const leaderProfile = data.profiles as any;
+          setLeaderName(leaderProfile?.full_name || null);
+          setLeaderRole(leaderProfile?.role || null);
         }
       } catch (error) {
         console.error('Error fetching leader:', error);
@@ -179,16 +208,29 @@ export default function MyInventory() {
     return () => channels.forEach(unsubscribe);
   }, [user?.id]);
 
-  // Fetch today's orders when dialog opens and reset confirmations
+  // Fetch today's orders on mount to check if button should be enabled
+  useEffect(() => {
+    if (user?.id) {
+      fetchTodayOrders();
+    }
+  }, [user?.id]);
+
+  // Reset confirmations when dialog opens
   useEffect(() => {
     if (remitDialogOpen && user?.id) {
-      fetchTodayOrders();
       // Reset confirmations
       setUnsoldConfirmed(false);
       setSoldConfirmed(false);
       setSignatureConfirmed(false);
     }
   }, [remitDialogOpen, user?.id]);
+
+  // Auto-confirm sold orders if there are none (optional section)
+  useEffect(() => {
+    if (todayOrders.length === 0) {
+      setSoldConfirmed(true);
+    }
+  }, [todayOrders.length]);
 
   // Fetch today's orders (not yet remitted)
   const fetchTodayOrders = async () => {
@@ -199,6 +241,7 @@ export default function MyInventory() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      // Fetch today's orders that haven't been remitted
       const { data, error } = await supabase
         .from('client_orders')
         .select(`
@@ -333,10 +376,11 @@ export default function MyInventory() {
 
     const itemsToRemit = getItemsToRemit();
 
-    if (itemsToRemit.length === 0 && todayOrders.length === 0) {
+    // Only unsold inventory is required - sold orders are optional (for reporting)
+    if (itemsToRemit.length === 0) {
       toast({
         title: 'Nothing to remit',
-        description: 'You have no inventory or orders to remit',
+        description: 'You have no unsold inventory to remit',
         variant: 'destructive'
       });
       return;
@@ -374,7 +418,7 @@ export default function MyInventory() {
 
       toast({
         title: 'Success!',
-        description: data.message || 'Inventory and orders remitted successfully',
+        description: data.message || 'Unsold inventory remitted successfully',
       });
 
       setRemitDialogOpen(false);
@@ -398,6 +442,8 @@ export default function MyInventory() {
   const itemsToRemit = getItemsToRemit();
   const hasItemsToRemit = itemsToRemit.length > 0;
   const totalRemitQuantity = getTotalRemitQuantity();
+  // Only unsold inventory is required for remittance - sold orders are optional (for reporting)
+  const canRemit = leaderId && hasItemsToRemit;
 
   return (
     <div className="p-4 md:p-6 lg:p-8 space-y-4 md:space-y-6">
@@ -406,17 +452,22 @@ export default function MyInventory() {
           <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">My Inventory</h1>
           <p className="text-sm md:text-base text-muted-foreground">Products allocated to you by admin</p>
         </div>
-        {hasItemsToRemit && leaderId && (
-          <Button
-            onClick={() => setRemitDialogOpen(true)}
-            variant="outline"
-            className="gap-2 w-full sm:w-auto"
-            size="sm"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Remit Inventory
-          </Button>
-        )}
+        <Button
+          onClick={() => setRemitDialogOpen(true)}
+          variant="outline"
+          className="gap-2 w-full sm:w-auto"
+          size="sm"
+          disabled={!canRemit}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Remit Inventory
+          {!leaderId && (
+            <span className="ml-2 text-xs text-muted-foreground">(No leader assigned)</span>
+          )}
+          {leaderId && !hasItemsToRemit && (
+            <span className="ml-2 text-xs text-muted-foreground">(No unsold inventory)</span>
+          )}
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
@@ -485,13 +536,14 @@ export default function MyInventory() {
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {brand.flavors.length} {brand.flavors.length === 1 ? 'Flavor' : 'Flavors'}
                         {brand.batteries.length > 0 && ` • ${brand.batteries.length} ${brand.batteries.length === 1 ? 'Battery' : 'Batteries'}`}
+                        {(brand.posms || []).length > 0 && ` • ${(brand.posms || []).length} POSM${(brand.posms || []).length === 1 ? '' : 's'}`}
                     </div>
                     </div>
                     <div className="text-right ml-4">
                       <div className="text-xs text-muted-foreground mb-1">Total Stock</div>
                       <div className="text-xl font-bold">{getTotalStock(brand)}</div>
                       {(() => {
-                        const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low');
+                        const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low') || (brand.posms || []).some((p: any) => p.status === 'low');
                         const total = getTotalStock(brand);
                         const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700';
                         const label = total === 0 ? 'Out of stock' : hasLow ? 'Low stock' : 'In stock';
@@ -541,6 +593,29 @@ export default function MyInventory() {
                                   </div>
                                   <span className={`text-xs ${b.stock === 0 ? 'text-red-600' : (b as any).status === 'low' ? 'text-orange-600' : 'text-blue-700'}`}>
                                     {(b as any).status === 'low' ? 'low' : b.stock === 0 ? 'out' : 'in'}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {(brand.posms || []).length > 0 && (
+                        <div>
+                          <div className="text-xs font-semibold text-purple-600 mb-1">POSM</div>
+                          <div className="space-y-1">
+                            {(brand.posms || []).map((p: any) => (
+                              <div key={p.id} className="flex justify-between items-center text-sm bg-muted/30 rounded px-2 py-1">
+                                <span>{p.name}</span>
+                                <div className="text-right">
+                                  <div className="font-medium">{p.stock} • ₱{p.price.toFixed(2)}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {p.dspPrice && `DSP: ₱${p.dspPrice.toFixed(2)}`}
+                                    {p.dspPrice && p.rspPrice && ' • '}
+                                    {p.rspPrice && `RSP: ₱${p.rspPrice.toFixed(2)}`}
+                                  </div>
+                                  <span className={`text-xs ${p.stock === 0 ? 'text-red-600' : (p as any).status === 'low' ? 'text-orange-600' : 'text-purple-700'}`}>
+                                    {(p as any).status === 'low' ? 'low' : p.stock === 0 ? 'out' : 'in'}
                                   </span>
                                 </div>
                               </div>
@@ -598,6 +673,7 @@ export default function MyInventory() {
                         <span className="text-xs">
                           {brand.flavors.length} {brand.flavors.length === 1 ? 'Flavor' : 'Flavors'}
                           {brand.batteries.length > 0 && ` • ${brand.batteries.length} ${brand.batteries.length === 1 ? 'Battery' : 'Batteries'}`}
+                          {(brand.posms || []).length > 0 && ` • ${(brand.posms || []).length} POSM${(brand.posms || []).length === 1 ? '' : 's'}`}
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-semibold cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
@@ -609,7 +685,7 @@ export default function MyInventory() {
                       <TableCell className="text-right">
                         {(() => {
                           const total = getTotalStock(brand);
-                          const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low');
+                          const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low') || (brand.posms || []).some((p: any) => p.status === 'low');
                           const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700';
                           const label = total === 0 ? 'Out of Stock' : hasLow ? 'Low Stock' : 'In Stock';
                           return <span className={`px-2 py-1 rounded-full text-xs font-medium ${pillClass}`}>{label}</span>;
@@ -702,6 +778,49 @@ export default function MyInventory() {
                         </TableCell>
                       </TableRow>
                     ))}
+
+                    {/* POSMs */}
+                    {expandedBrands.includes(brand.id) && (brand.posms || []).length > 0 && (
+                      <TableRow className="bg-purple-50/50">
+                        <TableCell></TableCell>
+                        <TableCell colSpan={8} className="pl-8 py-2">
+                          <span className="text-xs font-semibold text-purple-600">POSM</span>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {expandedBrands.includes(brand.id) && (brand.posms || []).map((posm) => (
+                      <TableRow key={posm.id} className="bg-muted/10 hover:bg-muted/20">
+                        <TableCell></TableCell>
+                        <TableCell className="pl-12 text-sm font-medium">
+                          <span className="text-muted-foreground">↳</span> {posm.name}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className="bg-purple-100 text-purple-700">POSM</Badge>
+                        </TableCell>
+                        {/* Variants column (empty for child rows to keep alignment) */}
+                        <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
+                        <TableCell className="text-right font-semibold">{posm.stock}</TableCell>
+                        <TableCell className="text-right font-medium">₱{posm.price.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground text-sm">
+                          {posm.dspPrice ? `₱${posm.dspPrice.toFixed(2)}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground text-sm">
+                          {posm.rspPrice ? `₱${posm.rspPrice.toFixed(2)}` : '-'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge
+                            variant={
+                              posm.status === 'available' ? 'default' :
+                                posm.status === 'low' ? 'secondary' :
+                                  'destructive'
+                            }
+                            className="text-xs"
+                          >
+                            {posm.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
                   </React.Fragment>
                 ))}
               </TableBody>
@@ -714,12 +833,26 @@ export default function MyInventory() {
       <Dialog open={remitDialogOpen} onOpenChange={setRemitDialogOpen}>
         <DialogContent className="w-[95vw] max-w-4xl h-[90vh] md:h-auto md:max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-4 pt-6 pb-4 md:px-6">
-            <DialogTitle className="text-lg md:text-xl">Remit Inventory to Leader</DialogTitle>
+            <DialogTitle className="text-lg md:text-xl">Remit Inventory to Leader/Manager</DialogTitle>
             <DialogDescription className="text-sm">
               {leaderName
-                ? `Remit your unsold inventory and today's sold orders to ${leaderName}`
-                : 'Remit your unsold inventory and today\'s sold orders to your leader'}
+                ? `Return your unsold inventory to ${leaderName}${leaderRole === 'manager' ? ' (Manager)' : leaderRole === 'team_leader' ? ' (Team Leader)' : ''}. Sold orders are shown for reporting only.`
+                : 'Return your unsold inventory to your leader/manager. Sold orders are shown for reporting only.'}
             </DialogDescription>
+            {!leaderId && (
+              <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800">
+                  ⚠️ You are not assigned to a leader/manager. Please contact your administrator to be assigned to a team.
+                </p>
+              </div>
+            )}
+            {leaderId && !hasItemsToRemit && (
+              <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-800">
+                  ℹ️ You have no unsold inventory to remit at this time. Sold orders are shown for reporting purposes only.
+                </p>
+              </div>
+            )}
           </DialogHeader>
 
           <Tabs defaultValue="unsold" className="w-full flex-1 flex flex-col overflow-hidden">
@@ -751,7 +884,7 @@ export default function MyInventory() {
             <TabsContent value="unsold" className="flex-1 overflow-y-auto px-4 md:px-6 space-y-3 md:space-y-4 mt-2">
               <Card>
                 <CardContent className="p-3 md:p-4">
-                  <div className="grid grid-cols-3 gap-2 md:gap-4 text-center">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-4 text-center">
                     <div>
                       <div className="text-lg md:text-2xl font-bold text-primary">{itemsToRemit.length}</div>
                       <div className="text-[10px] md:text-xs text-muted-foreground">Items</div>
@@ -761,10 +894,22 @@ export default function MyInventory() {
                       <div className="text-[10px] md:text-xs text-muted-foreground">Total Units</div>
                     </div>
                     <div>
-                      <div className="text-lg md:text-2xl font-bold text-primary">
-                        ₱{itemsToRemit.reduce((sum, item) => sum + (item.quantity * item.price), 0).toLocaleString()}
+                      <div className="text-base md:text-xl font-bold text-primary">
+                        ₱{itemsToRemit.reduce((sum, item) => sum + (item.quantity * (item.price || 0)), 0).toLocaleString()}
                       </div>
-                      <div className="text-[10px] md:text-xs text-muted-foreground">Total Value</div>
+                      <div className="text-[10px] md:text-xs text-muted-foreground">Price Value</div>
+                    </div>
+                    <div>
+                      <div className="text-base md:text-xl font-bold text-blue-600">
+                        ₱{itemsToRemit.reduce((sum, item) => sum + (item.quantity * (item.dspPrice || 0)), 0).toLocaleString()}
+                      </div>
+                      <div className="text-[10px] md:text-xs text-muted-foreground">DSP Value</div>
+                    </div>
+                    <div>
+                      <div className="text-base md:text-xl font-bold text-green-600">
+                        ₱{itemsToRemit.reduce((sum, item) => sum + (item.quantity * (item.rspPrice || 0)), 0).toLocaleString()}
+                      </div>
+                      <div className="text-[10px] md:text-xs text-muted-foreground">RSP Value</div>
                     </div>
                   </div>
                 </CardContent>
@@ -782,18 +927,33 @@ export default function MyInventory() {
                               <div className="font-semibold text-sm">{item.brandName}</div>
                               <div className="text-sm text-muted-foreground">{item.variantName}</div>
                             </div>
-                            <Badge variant="secondary" className="ml-2 text-xs">{item.variantType}</Badge>
+                            <Badge 
+                              variant="secondary" 
+                              className={`ml-2 text-xs ${
+                                item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
+                                'bg-purple-100 text-purple-700'
+                              }`}
+                            >
+                              {item.variantType === 'posm' ? 'POSM' : item.variantType.charAt(0).toUpperCase() + item.variantType.slice(1)}
+                            </Badge>
                           </div>
-                          <div className="flex justify-between items-center pt-2 border-t">
-                            <div className="flex items-center gap-4">
-                              <div>
-                                <div className="text-xs text-muted-foreground">Quantity</div>
-                                <div className="font-semibold text-sm">{item.quantity}</div>
-                              </div>
-                              <div>
-                                <div className="text-xs text-muted-foreground">Value</div>
-                                <div className="font-semibold text-sm">₱{(item.quantity * item.price).toLocaleString()}</div>
-                              </div>
+                          <div className="pt-2 border-t space-y-2">
+                            <div className="flex justify-between items-center">
+                              <div className="text-xs text-muted-foreground">Quantity</div>
+                              <div className="font-semibold text-sm">{item.quantity}</div>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <div className="text-xs text-muted-foreground">Price Value</div>
+                              <div className="font-semibold text-sm">₱{(item.quantity * (item.price || 0)).toLocaleString()}</div>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <div className="text-xs text-muted-foreground">DSP Value</div>
+                              <div className="font-semibold text-sm text-blue-600">₱{(item.quantity * (item.dspPrice || 0)).toLocaleString()}</div>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <div className="text-xs text-muted-foreground">RSP Value</div>
+                              <div className="font-semibold text-sm text-green-600">₱{(item.quantity * (item.rspPrice || 0)).toLocaleString()}</div>
                             </div>
                           </div>
                         </CardContent>
@@ -811,7 +971,9 @@ export default function MyInventory() {
                             <TableHead>Variant</TableHead>
                             <TableHead>Type</TableHead>
                             <TableHead className="text-right">Quantity</TableHead>
-                            <TableHead className="text-right">Value</TableHead>
+                            <TableHead className="text-right">Price Value</TableHead>
+                            <TableHead className="text-right">DSP Value</TableHead>
+                            <TableHead className="text-right">RSP Value</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -820,10 +982,21 @@ export default function MyInventory() {
                               <TableCell className="font-medium">{item.brandName}</TableCell>
                               <TableCell>{item.variantName}</TableCell>
                               <TableCell>
-                                <Badge variant="secondary">{item.variantType}</Badge>
+                                <Badge 
+                                  variant="secondary"
+                                  className={
+                                    item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                    item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
+                                    'bg-purple-100 text-purple-700'
+                                  }
+                                >
+                                  {item.variantType === 'posm' ? 'POSM' : item.variantType.charAt(0).toUpperCase() + item.variantType.slice(1)}
+                                </Badge>
                               </TableCell>
                               <TableCell className="text-right font-semibold">{item.quantity}</TableCell>
-                              <TableCell className="text-right">₱{(item.quantity * item.price).toLocaleString()}</TableCell>
+                              <TableCell className="text-right">₱{(item.quantity * (item.price || 0)).toLocaleString()}</TableCell>
+                              <TableCell className="text-right text-blue-600">₱{(item.quantity * (item.dspPrice || 0)).toLocaleString()}</TableCell>
+                              <TableCell className="text-right text-green-600">₱{(item.quantity * (item.rspPrice || 0)).toLocaleString()}</TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -857,6 +1030,11 @@ export default function MyInventory() {
 
             {/* Sold Orders Tab */}
             <TabsContent value="sold" className="flex-1 overflow-y-auto px-4 md:px-6 space-y-3 md:space-y-4 mt-2">
+              <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-xs md:text-sm text-blue-800">
+                  ℹ️ <strong>For reporting only:</strong> These sold orders are shown for tracking purposes. Only unsold inventory will be returned to your leader/manager.
+                </p>
+              </div>
               {loadingOrders ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-8 w-8 animate-spin" />
@@ -978,21 +1156,23 @@ export default function MyInventory() {
                 </div>
               )}
 
-              {/* Confirmation Checkbox */}
-              <div className="flex items-start space-x-2 p-3 md:p-4 bg-muted/30 rounded-lg border">
-                <Checkbox
-                  id="sold-confirm"
-                  checked={soldConfirmed}
-                  onCheckedChange={(checked) => setSoldConfirmed(checked === true)}
-                  className="mt-0.5"
-                />
-                <label
-                  htmlFor="sold-confirm"
-                  className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                >
-                  I have reviewed today's sold orders ({todayOrders.length} orders)
-                </label>
-              </div>
+              {/* Confirmation Checkbox - Optional for sold orders */}
+              {todayOrders.length > 0 && (
+                <div className="flex items-start space-x-2 p-3 md:p-4 bg-muted/30 rounded-lg border">
+                  <Checkbox
+                    id="sold-confirm"
+                    checked={soldConfirmed}
+                    onCheckedChange={(checked) => setSoldConfirmed(checked === true)}
+                    className="mt-0.5"
+                  />
+                  <label
+                    htmlFor="sold-confirm"
+                    className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                  >
+                    I have reviewed today's sold orders ({todayOrders.length} orders) - <span className="text-muted-foreground">Optional</span>
+                  </label>
+                </div>
+              )}
             </TabsContent>
 
             {/* Signature Tab */}
@@ -1043,15 +1223,15 @@ export default function MyInventory() {
             {/* Summary Tab */}
             <TabsContent value="summary" className="flex-1 overflow-y-auto px-3 md:px-6 space-y-2.5 md:space-y-4 mt-2">
               {/* Validation Warning */}
-              {(!unsoldConfirmed || !soldConfirmed || !signatureConfirmed) && (
+              {(!unsoldConfirmed || !signatureConfirmed || (todayOrders.length > 0 && !soldConfirmed)) && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2.5 md:p-4">
                   <p className="text-[11px] md:text-sm text-yellow-800 font-semibold mb-1.5">
-                    ⚠️ Review all sections
+                    ⚠️ Review required sections
                   </p>
                   <ul className="text-[10px] md:text-sm text-yellow-700 space-y-0.5 ml-3">
-                    {!unsoldConfirmed && <li>• Confirm unsold inventory</li>}
-                    {!soldConfirmed && <li>• Confirm sold orders</li>}
-                    {!signatureConfirmed && <li>• Add signature</li>}
+                    {!unsoldConfirmed && <li>• Confirm unsold inventory (required)</li>}
+                    {todayOrders.length > 0 && !soldConfirmed && <li>• Review sold orders (optional, for reporting)</li>}
+                    {!signatureConfirmed && <li>• Add signature (required)</li>}
                   </ul>
                 </div>
               )}
@@ -1084,9 +1264,21 @@ export default function MyInventory() {
                         <span className="font-semibold">{totalRemitQuantity}</span>
                       </div>
                       <div className="flex justify-between gap-2 text-[10px] md:text-sm">
-                        <span className="text-muted-foreground">Value:</span>
+                        <span className="text-muted-foreground">Price Value:</span>
                         <span className="font-semibold truncate">
-                          ₱{itemsToRemit.reduce((sum, item) => sum + (item.quantity * item.price), 0).toLocaleString()}
+                          ₱{itemsToRemit.reduce((sum, item) => sum + (item.quantity * (item.price || 0)), 0).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-2 text-[10px] md:text-sm">
+                        <span className="text-muted-foreground">DSP Value:</span>
+                        <span className="font-semibold truncate text-blue-600">
+                          ₱{itemsToRemit.reduce((sum, item) => sum + (item.quantity * (item.dspPrice || 0)), 0).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-2 text-[10px] md:text-sm">
+                        <span className="text-muted-foreground">RSP Value:</span>
+                        <span className="font-semibold truncate text-green-600">
+                          ₱{itemsToRemit.reduce((sum, item) => sum + (item.quantity * (item.rspPrice || 0)), 0).toLocaleString()}
                         </span>
                       </div>
                     </div>
@@ -1165,8 +1357,12 @@ export default function MyInventory() {
                 <CardContent className="space-y-2 md:space-y-4 px-3 pb-3 md:px-6 md:pb-6">
                   <div className="grid grid-cols-2 gap-2 md:gap-4 text-[10px] md:text-sm">
                     <div className="min-w-0">
-                      <p className="text-muted-foreground text-[9px] md:text-xs">To:</p>
-                      <p className="font-semibold truncate">{leaderName || 'Unknown'}</p>
+                      <p className="text-muted-foreground text-[9px] md:text-xs">Remitting To:</p>
+                      <p className="font-semibold truncate">
+                        {leaderName || 'Unknown'}
+                        {leaderRole === 'manager' && ' (Manager)'}
+                        {leaderRole === 'team_leader' && ' (Team Leader)'}
+                      </p>
                     </div>
                     <div className="min-w-0">
                       <p className="text-muted-foreground text-[9px] md:text-xs">Date:</p>
@@ -1177,18 +1373,19 @@ export default function MyInventory() {
                   <div className="border-t pt-2 md:pt-4">
                     <h4 className="font-semibold mb-1.5 text-[10px] md:text-sm">What happens:</h4>
                     <ul className="text-[9px] md:text-sm space-y-0.5 text-muted-foreground leading-tight">
-                      <li>✓ Unsold inventory cleared</li>
-                      <li>✓ Orders marked remitted</li>
+                      <li>✓ Unsold inventory returned to leader/manager</li>
+                      <li>✓ Your agent inventory stock cleared (set to 0)</li>
+                      <li>✓ Sold orders recorded for reporting (not returned)</li>
                       <li>✓ Signature saved</li>
-                      <li>✓ Record created</li>
-                      <li>✓ Leader notified</li>
+                      <li>✓ Remittance record created</li>
+                      <li>✓ Leader/manager notified</li>
                     </ul>
                   </div>
                 </CardContent>
               </Card>
 
               {/* Final Confirmation */}
-              {unsoldConfirmed && soldConfirmed && signatureConfirmed ? (
+              {unsoldConfirmed && signatureConfirmed && (todayOrders.length === 0 || soldConfirmed) ? (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-2.5 md:p-4">
                   <div className="flex items-start gap-2">
                     <CheckCircle2 className="h-3.5 w-3.5 md:h-5 md:w-5 text-green-600 mt-0.5 flex-shrink-0" />
@@ -1197,7 +1394,7 @@ export default function MyInventory() {
                         Ready to submit
                       </p>
                       <p className="text-[9px] md:text-sm text-green-700 mt-0.5">
-                        Click "Confirm Remit" below.
+                        Click "Confirm Remit" below. Only unsold inventory will be returned.
                       </p>
                     </div>
                   </div>
@@ -1211,7 +1408,9 @@ export default function MyInventory() {
                         Cannot submit yet
                       </p>
                       <p className="text-[9px] md:text-sm text-red-700 mt-0.5">
-                        Review all sections first.
+                        {!unsoldConfirmed && 'Confirm unsold inventory. '}
+                        {!signatureConfirmed && 'Add signature. '}
+                        {todayOrders.length > 0 && !soldConfirmed && 'Review sold orders (optional).'}
                       </p>
                     </div>
                   </div>
@@ -1233,12 +1432,12 @@ export default function MyInventory() {
               onClick={handleRemitInventory}
               disabled={
                 remitting ||
-                (!hasItemsToRemit && todayOrders.length === 0) ||
+                !hasItemsToRemit ||
                 !leaderId ||
                 !signatureDataUrl ||
                 !unsoldConfirmed ||
-                !soldConfirmed ||
-                !signatureConfirmed
+                !signatureConfirmed ||
+                (todayOrders.length > 0 && !soldConfirmed)
               }
               variant="default"
               className="w-full sm:w-auto h-10 md:h-9 text-sm"

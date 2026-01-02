@@ -45,7 +45,7 @@ export default function LeaderInventoryPage() {
   const [sortBy, setSortBy] = useState<'name' | 'stock' | 'value'>('name');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
-  
+
   // Inventory pagination and filtering
   const [inventoryCurrentPage, setInventoryCurrentPage] = useState(1);
   const [inventorySortBy, setInventorySortBy] = useState<'name' | 'stock' | 'value' | 'available'>('name');
@@ -92,6 +92,8 @@ export default function LeaderInventoryPage() {
           id,
           stock,
           allocated_price,
+          dsp_price,
+          rsp_price,
           agent_id,
           variants!inner(
             id,
@@ -548,9 +550,9 @@ export default function LeaderInventoryPage() {
       const matchesSearch = item.brandName.toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
         item.variantName.toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
         item.variantType.toLowerCase().includes(inventorySearchQuery.toLowerCase());
-      
+
       const matchesType = inventoryTypeFilter === 'all' || item.variantType === inventoryTypeFilter;
-      
+
       return matchesSearch && matchesType;
     });
   }, [leaderInventory, inventorySearchQuery, inventoryTypeFilter]);
@@ -573,7 +575,7 @@ export default function LeaderInventoryPage() {
       const totalStock = items.reduce((sum, item) => sum + item.stock, 0);
       const totalValue = items.reduce((sum, item) => sum + item.totalValue, 0);
       const totalAvailable = items.reduce((sum, item) => sum + item.availableStock, 0);
-      
+
       return {
         brand,
         items,
@@ -606,7 +608,7 @@ export default function LeaderInventoryPage() {
     const startIndex = (inventoryCurrentPage - 1) * brandsPerPage;
     const endIndex = startIndex + brandsPerPage;
     const paginated = sortedBrandsWithStats.slice(startIndex, endIndex);
-    
+
     return {
       paginatedBrands: paginated,
       totalBrandPages: totalPages,
@@ -974,10 +976,10 @@ export default function LeaderInventoryPage() {
         <CardHeader>
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <CardTitle className="flex items-center gap-2">
-            <Crown className="h-5 w-5 text-yellow-600" />
-            Your Allocated Inventory
-          </CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Crown className="h-5 w-5 text-yellow-600" />
+                Your Allocated Inventory
+              </CardTitle>
               {user.role !== 'admin' && (
                 <Button
                   onClick={() => setAllocationOpen(true)}
@@ -989,7 +991,7 @@ export default function LeaderInventoryPage() {
                 </Button>
               )}
             </div>
-            
+
             {/* Filters and Controls */}
             <div className="flex flex-col sm:flex-row gap-3">
               {/* Search Bar */}
@@ -1002,7 +1004,7 @@ export default function LeaderInventoryPage() {
                   className="pl-10"
                 />
               </div>
-              
+
               {/* Type Filter */}
               <select
                 value={inventoryTypeFilter}
@@ -1014,7 +1016,7 @@ export default function LeaderInventoryPage() {
                 <option value="battery">Battery</option>
                 <option value="posm">POSM</option>
               </select>
-              
+
               {/* Sort Dropdown */}
               <select
                 value={inventorySortBy}
@@ -1026,7 +1028,7 @@ export default function LeaderInventoryPage() {
                 <option value="value">Sort: Total Value</option>
                 <option value="available">Sort: Available</option>
               </select>
-              
+
               {/* Expand/Collapse All */}
               <div className="flex gap-2">
                 <Button
@@ -1044,7 +1046,7 @@ export default function LeaderInventoryPage() {
                 </Button>
               </div>
             </div>
-            
+
             {/* Summary Stats */}
             {filteredInventory.length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2 border-t">
@@ -1086,149 +1088,156 @@ export default function LeaderInventoryPage() {
               <p>No inventory allocated to you yet</p>
               <p className="text-sm">Contact your administrator to request stock allocation</p>
             </div>
-              ) : filteredInventory.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  <p>No inventory items match your search</p>
-                  <p className="text-sm">Try adjusting your search criteria</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="max-h-[600px] overflow-y-auto pr-2">
-                    <Accordion 
-                      type="multiple" 
-                      className="w-full space-y-2"
-                      value={expandedBrands}
-                      onValueChange={setExpandedBrands}
-                    >
-                      {paginatedBrands.map((brandData) => {
-                        const { brand, items, totalStock, totalValue, totalAvailable, itemCount } = brandData;
-                        const totalAllocated = items.reduce((sum, item) => sum + item.allocatedStock, 0);
-                        const lowStockItems = items.filter(item => item.availableStock < 10).length;
-                        
-                        return (
-                          <AccordionItem key={brand} value={brand} className="border rounded-lg px-4 bg-card">
-                            <AccordionTrigger className="hover:no-underline py-3">
-                              <div className="flex items-center justify-between w-full pr-4">
-                                <div className="flex items-center gap-3 flex-1 min-w-0">
-                                  <Package className="h-5 w-5 text-blue-600 shrink-0" />
-                                  <div className="text-left min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <h3 className="text-base font-semibold truncate">{brand}</h3>
-                                      {lowStockItems > 0 && (
-                                        <Badge variant="destructive" className="text-xs">
-                                          {lowStockItems} low stock
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">
-                                      {itemCount} {itemCount === 1 ? 'variant' : 'variants'}
-                                    </p>
-                                  </div>
+          ) : filteredInventory.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>No inventory items match your search</p>
+              <p className="text-sm">Try adjusting your search criteria</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="max-h-[600px] overflow-y-auto pr-2">
+                <Accordion
+                  type="multiple"
+                  className="w-full space-y-2"
+                  value={expandedBrands}
+                  onValueChange={setExpandedBrands}
+                >
+                  {paginatedBrands.map((brandData) => {
+                    const { brand, items, totalStock, totalValue, totalAvailable, itemCount } = brandData;
+                    const totalAllocated = items.reduce((sum, item) => sum + item.allocatedStock, 0);
+                    const lowStockItems = items.filter(item => item.availableStock < 10).length;
+
+                    return (
+                      <AccordionItem key={brand} value={brand} className="border rounded-lg px-4 bg-card">
+                        <AccordionTrigger className="hover:no-underline py-3">
+                          <div className="flex items-center justify-between w-full pr-4">
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <Package className="h-5 w-5 text-blue-600 shrink-0" />
+                              <div className="text-left min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <h3 className="text-base font-semibold truncate">{brand}</h3>
+                                  {lowStockItems > 0 && (
+                                    <Badge variant="destructive" className="text-xs">
+                                      {lowStockItems} low stock
+                                    </Badge>
+                                  )}
                                 </div>
-                                <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm shrink-0">
-                                  <div className="text-right hidden sm:block">
-                                    <div className="text-muted-foreground text-xs">Stock</div>
-                                    <div className="font-semibold">{totalStock.toLocaleString()}</div>
-                                  </div>
-                                  <div className="text-right">
-                                    <div className="text-muted-foreground text-xs">Available</div>
-                                    <div className="font-semibold text-green-600">{totalAvailable.toLocaleString()}</div>
-                                  </div>
-                                  <div className="text-right hidden md:block">
-                                    <div className="text-muted-foreground text-xs">Value</div>
-                                    <div className="font-semibold">₱{(totalValue / 1000).toFixed(0)}k</div>
-                                  </div>
-                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  {itemCount} {itemCount === 1 ? 'variant' : 'variants'}
+                                </p>
                               </div>
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <div className="overflow-x-auto pt-2 pb-2">
-                                <Table className="table-fixed w-full">
-                                  <colgroup>
-                                    <col style={{ width: '200px' }} />
-                                    <col style={{ width: '100px' }} />
-                                    <col style={{ width: '120px' }} />
-                                    <col style={{ width: '120px' }} />
-                                    <col style={{ width: '120px' }} />
-                                    <col style={{ width: '120px' }} />
-                                    <col style={{ width: '120px' }} />
-                                  </colgroup>
-                                  <TableHeader>
-                                    <TableRow>
-                                      <TableHead className="text-left" style={{ paddingLeft: '0' }}>Variant</TableHead>
-                                      <TableHead className="text-left">Type</TableHead>
-                                      <TableHead className="text-right">Total Stock</TableHead>
-                                      <TableHead className="text-right">Allocated</TableHead>
-                                      <TableHead className="text-right">Available</TableHead>
-                                      <TableHead className="text-right">Price</TableHead>
-                                      <TableHead className="text-right">Value</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {items.map((item) => (
-                                      <TableRow 
-                                        key={item.id}
-                                        className={item.availableStock < 10 ? 'bg-orange-50 dark:bg-orange-950/20' : ''}
-                                      >
-                                        <TableCell className="font-medium text-left" style={{ paddingLeft: '0' }}>{item.variantName}</TableCell>
-                                        <TableCell className="text-left">
-                                          <Badge variant="outline" className="text-xs">
-                                            {item.variantType}
-                                          </Badge>
-                                        </TableCell>
-                                        <TableCell className="text-right">{item.stock.toLocaleString()}</TableCell>
-                                        <TableCell className="text-right text-orange-600">{item.allocatedStock.toLocaleString()}</TableCell>
-                                        <TableCell className={`text-right font-semibold ${item.availableStock < 10 ? 'text-red-600' : 'text-green-600'}`}>
-                                          {item.availableStock.toLocaleString()}
-                                        </TableCell>
-                                        <TableCell className="text-right">₱{item.allocatedPrice.toFixed(2)}</TableCell>
-                                        <TableCell className="text-right font-semibold">
-                                          ₱{item.totalValue.toFixed(2)}
-                                        </TableCell>
-                                      </TableRow>
-                                    ))}
-                                  </TableBody>
-                                </Table>
+                            </div>
+                            <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm shrink-0">
+                              <div className="text-right hidden sm:block">
+                                <div className="text-muted-foreground text-xs">Stock</div>
+                                <div className="font-semibold">{totalStock.toLocaleString()}</div>
                               </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        );
-                      })}
-                    </Accordion>
+                              <div className="text-right">
+                                <div className="text-muted-foreground text-xs">Available</div>
+                                <div className="font-semibold text-green-600">{totalAvailable.toLocaleString()}</div>
+                              </div>
+                              <div className="text-right hidden md:block">
+                                <div className="text-muted-foreground text-xs">Value</div>
+                                <div className="font-semibold">₱{(totalValue / 1000).toFixed(0)}k</div>
+                              </div>
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="overflow-x-auto pt-2 pb-2">
+                            <Table className="table-fixed w-full">
+                              <colgroup>
+                                <col style={{ width: '200px' }} />
+                                <col style={{ width: '100px' }} />
+                                <col style={{ width: '120px' }} />
+                                <col style={{ width: '120px' }} />
+                                <col style={{ width: '120px' }} />
+                                <col style={{ width: '120px' }} />
+                                <col style={{ width: '120px' }} />
+                                <col style={{ width: '100px' }} />
+                                <col style={{ width: '100px' }} />
+                                <col style={{ width: '120px' }} />
+                              </colgroup>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="text-left" style={{ paddingLeft: '0' }}>Variant</TableHead>
+                                  <TableHead className="text-left">Type</TableHead>
+                                  <TableHead className="text-right">Total Stock</TableHead>
+                                  <TableHead className="text-right">Allocated</TableHead>
+                                  <TableHead className="text-right">Available</TableHead>
+                                  <TableHead className="text-right">DSP</TableHead>
+                                  <TableHead className="text-right">RSP</TableHead>
+                                  <TableHead className="text-right">Price</TableHead>
+                                  <TableHead className="text-right">Value</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {items.map((item) => (
+                                  <TableRow
+                                    key={item.id}
+                                    className={item.availableStock < 10 ? 'bg-orange-50 dark:bg-orange-950/20' : ''}
+                                  >
+                                    <TableCell className="font-medium text-left" style={{ paddingLeft: '0' }}>{item.variantName}</TableCell>
+                                    <TableCell className="text-left">
+                                      <Badge variant="outline" className="text-xs">
+                                        {item.variantType}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right">{item.stock.toLocaleString()}</TableCell>
+                                    <TableCell className="text-right text-orange-600">{item.allocatedStock.toLocaleString()}</TableCell>
+                                    <TableCell className={`text-right font-semibold ${item.availableStock < 10 ? 'text-red-600' : 'text-green-600'}`}>
+                                      {item.availableStock.toLocaleString()}
+                                    </TableCell>
+                                    <TableCell className="text-right">{item.dspPrice ? `₱${item.dspPrice.toFixed(2)}` : '-'}</TableCell>
+                                    <TableCell className="text-right">{item.rspPrice ? `₱${item.rspPrice.toFixed(2)}` : '-'}</TableCell>
+                                    <TableCell className="text-right">₱{item.allocatedPrice.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right font-semibold">
+                                      ₱{item.totalValue.toFixed(2)}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    );
+                  })}
+                </Accordion>
+              </div>
+
+              {/* Pagination Controls */}
+              {totalBrandPages > 1 && (
+                <div className="flex items-center justify-between pt-4 border-t">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {brandStartIndex + 1} to {Math.min(brandEndIndex, sortedBrandsWithStats.length)} of {sortedBrandsWithStats.length} brands
                   </div>
-                  
-                  {/* Pagination Controls */}
-                  {totalBrandPages > 1 && (
-                    <div className="flex items-center justify-between pt-4 border-t">
-                      <div className="text-sm text-muted-foreground">
-                        Showing {brandStartIndex + 1} to {Math.min(brandEndIndex, sortedBrandsWithStats.length)} of {sortedBrandsWithStats.length} brands
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setInventoryCurrentPage(prev => Math.max(1, prev - 1))}
-                          disabled={inventoryCurrentPage === 1}
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                          Previous
-                        </Button>
-                        <div className="text-sm px-2">
-                          Page {inventoryCurrentPage} of {totalBrandPages}
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setInventoryCurrentPage(prev => Math.min(totalBrandPages, prev + 1))}
-                          disabled={inventoryCurrentPage === totalBrandPages}
-                        >
-                          Next
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setInventoryCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={inventoryCurrentPage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous
+                    </Button>
+                    <div className="text-sm px-2">
+                      Page {inventoryCurrentPage} of {totalBrandPages}
                     </div>
-                  )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setInventoryCurrentPage(prev => Math.min(totalBrandPages, prev + 1))}
+                      disabled={inventoryCurrentPage === totalBrandPages}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -1238,10 +1247,10 @@ export default function LeaderInventoryPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-blue-600" />
-            Team Members Inventory
-          </CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-blue-600" />
+              Team Members Inventory
+            </CardTitle>
             {user.role !== 'admin' && (
               <Button
                 onClick={() => setAllocationOpen(true)}
@@ -1321,51 +1330,51 @@ export default function LeaderInventoryPage() {
             </div>
           ) : viewMode === 'table' ? (
             <div className="space-y-4">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Member</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead className="text-right">Total Stock</TableHead>
-                    <TableHead className="text-right">Total Value</TableHead>
-                    <TableHead className="text-right">Items</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {paginatedTeamMembers.map((member) => (
-                    <TableRow key={member.id}>
-                      <TableCell className="font-medium">{member.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{member.email}</TableCell>
-                      <TableCell className="text-right font-semibold">
-                        {member.totalStock.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        ₱{member.totalValue.toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant="secondary">
-                          {member.items.length} items
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedMember(member);
-                            setShowMemberDetails(true);
-                          }}
-                        >
-                          <Eye className="h-4 w-4 mr-2" />
-                          View Details
-                        </Button>
-                      </TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Member</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead className="text-right">Total Stock</TableHead>
+                      <TableHead className="text-right">Total Value</TableHead>
+                      <TableHead className="text-right">Items</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedTeamMembers.map((member) => (
+                      <TableRow key={member.id}>
+                        <TableCell className="font-medium">{member.name}</TableCell>
+                        <TableCell className="text-muted-foreground">{member.email}</TableCell>
+                        <TableCell className="text-right font-semibold">
+                          {member.totalStock.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold">
+                          ₱{member.totalValue.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant="secondary">
+                            {member.items.length} items
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedMember(member);
+                              setShowMemberDetails(true);
+                            }}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            View Details
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
               {/* Pagination Controls */}
               {totalPages > 1 && (
@@ -1401,66 +1410,66 @@ export default function LeaderInventoryPage() {
             </div>
           ) : (
             <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {paginatedTeamMembers.map((member) => (
-                <Card key={member.id} className="hover:shadow-md transition-shadow">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle className="text-lg">{member.name}</CardTitle>
-                        <p className="text-sm text-muted-foreground">{member.email}</p>
-                      </div>
-                      <Badge variant="secondary">
-                        {member.items.length} items
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-blue-600">
-                          {member.totalStock.toLocaleString()}
+                  <Card key={member.id} className="hover:shadow-md transition-shadow">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="text-lg">{member.name}</CardTitle>
+                          <p className="text-sm text-muted-foreground">{member.email}</p>
                         </div>
-                        <div className="text-xs text-muted-foreground">Total Stock</div>
+                        <Badge variant="secondary">
+                          {member.items.length} items
+                        </Badge>
                       </div>
-                      <div className="text-center">
-                        <div className="text-2xl font-bold text-green-600">
-                          ₱{member.totalValue.toFixed(2)}
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-blue-600">
+                            {member.totalStock.toLocaleString()}
+                          </div>
+                          <div className="text-xs text-muted-foreground">Total Stock</div>
                         </div>
-                        <div className="text-xs text-muted-foreground">Total Value</div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-green-600">
+                            ₱{member.totalValue.toFixed(2)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">Total Value</div>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="space-y-2">
-                      <div className="text-sm font-medium">Top Items:</div>
-                      {member.items.slice(0, 3).map((item: any) => (
-                        <div key={item.id} className="flex justify-between text-sm">
-                          <span className="truncate">{item.brandName} - {item.variantName}</span>
-                          <span className="font-medium">{item.stock}</span>
-                        </div>
-                      ))}
-                      {member.items.length > 3 && (
-                        <div className="text-xs text-muted-foreground">
-                          +{member.items.length - 3} more items
-                        </div>
-                      )}
-                    </div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">Top Items:</div>
+                        {member.items.slice(0, 3).map((item: any) => (
+                          <div key={item.id} className="flex justify-between text-sm">
+                            <span className="truncate">{item.brandName} - {item.variantName}</span>
+                            <span className="font-medium">{item.stock}</span>
+                          </div>
+                        ))}
+                        {member.items.length > 3 && (
+                          <div className="text-xs text-muted-foreground">
+                            +{member.items.length - 3} more items
+                          </div>
+                        )}
+                      </div>
 
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => {
-                        setSelectedMember(member);
-                        setShowMemberDetails(true);
-                      }}
-                    >
-                      <Eye className="h-4 w-4 mr-2" />
-                      View All Items
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => {
+                          setSelectedMember(member);
+                          setShowMemberDetails(true);
+                        }}
+                      >
+                        <Eye className="h-4 w-4 mr-2" />
+                        View All Items
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
               {/* Pagination Controls */}
               {totalPages > 1 && (

@@ -1,39 +1,40 @@
 import { supabase } from './supabase';
 
 interface OrderEmailData {
-  orderNumber: string;
-  clientName: string;
-  clientEmail: string;
-  orderDate: string;
-  items: Array<{
-    brandName: string;
-    variantName: string;
-    variantType: string;
-    quantity: number;
-    unitPrice: number;
+    orderNumber: string;
+    clientName: string;
+    clientEmail: string;
+    orderDate: string;
+    items: Array<{
+        brandName: string;
+        variantName: string;
+        variantType: string;
+        quantity: number;
+        unitPrice: number;
+        total: number;
+    }>;
+    subtotal: number;
+    tax: number;
+    discount: number;
     total: number;
-  }>;
-  subtotal: number;
-  tax: number;
-  discount: number;
-  total: number;
-  notes?: string;
-  signatureUrl?: string;
-  // Optional: agent contact info for support
-  agentName?: string;
-  agentEmail?: string;
-  agentPhone?: string;
-  // Optional: leader info and payment info for IT receipt
-  leaderName?: string;
-  paymentMethod?: string;
-  paymentProofUrl?: string;
-  // Sales invoice request
-  requestSalesInvoice?: boolean;
+    notes?: string;
+    signatureUrl?: string;
+    // Optional: agent contact info for support
+    agentName?: string;
+    agentEmail?: string;
+    agentPhone?: string;
+    // Optional: leader info and payment info for IT receipt
+    leaderName?: string;
+    paymentMethod?: string;
+    paymentProofUrl?: string;
+    pricingStrategy?: string;
+    // Sales invoice request
+    requestSalesInvoice?: boolean;
 }
 
 // Generate HTML email from order data for client
 function generateEmailHTML(orderData: OrderEmailData): string {
-  const itemsHTML = orderData.items.map(item => `
+    const itemsHTML = orderData.items.map(item => `
     <tr style="border-bottom: 1px solid #e5e7eb;">
       <td style="padding: 12px; color: #374151;">${item.brandName} - ${item.variantName}</td>
       <td style="padding: 12px; color: #374151; text-align: center;">${item.variantType}</td>
@@ -43,7 +44,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
     </tr>
   `).join('');
 
-  return `
+    return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -66,6 +67,10 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                         <td style="padding: 30px 40px;">
                             <p style="margin: 0 0 16px; color: #6b7280; font-size: 14px; line-height: 1.6;">Dear ${orderData.clientName},</p>
                             <p style="margin: 0 0 16px; color: #374151; font-size: 15px; line-height: 1.6;">Thank you for your order with B1G Corporation. Your order has been received and is pending approval.</p>
+                            <div style="padding: 15px; background-color: #f3f4f6; border-radius: 5px; margin-top: 20px;">
+                                <p style="margin: 0; font-size: 14px; color: #4b5563;"><strong>Pricing Strategy:</strong> ${orderData.pricingStrategy === 'special' ? 'Special Pricing (Allocated)' : (orderData.pricingStrategy?.toUpperCase() || 'RSP') + ' Pricing'}</p>
+                                <p style="margin: 5px 0 0 0; font-size: 14px; color: #4b5563;"><strong>Payment Method:</strong> ${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}</p>
+                            </div>
                         </td>
                     </tr>
                     <tr>
@@ -203,7 +208,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
 
 // Generate HTML email for IT department (order receipt/confirmation)
 function generateITReceiptHTML(orderData: OrderEmailData): string {
-  const itemsHTML = orderData.items.map(item => `
+    const itemsHTML = orderData.items.map(item => `
     <tr style="border-bottom: 1px solid #e5e7eb;">
       <td style="padding: 12px; color: #374151;">${item.brandName} - ${item.variantName}</td>
       <td style="padding: 12px; color: #374151; text-align: center;">${item.variantType}</td>
@@ -213,7 +218,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
     </tr>
   `).join('');
 
-  return `
+    return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -351,12 +356,22 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                         </td>
                     </tr>
                     ` : ''}
-                    ${orderData.paymentMethod && orderData.paymentProofUrl ? `
+                    ${orderData.paymentMethod || orderData.pricingStrategy ? `
                     <tr>
                         <td style="padding: 0 40px 30px;">
                             <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-                                <p style="margin: 0 0 8px; color: #6b7280; font-size: 14px; font-weight: 600;">Payment Method:</p>
-                                <p style="margin: 0 0 16px; color: #374151; font-size: 16px; font-weight: 600;">${orderData.paymentMethod}</p>
+                                <h3 style="margin-top: 0; color: #111827; font-size: 16px;">Order Details</h3>
+                                <p style="margin: 4px 0; color: #4b5563;">Status: <span style="font-weight: 600; color: #2563eb;">Pending Approval</span></p>
+                                <p style="margin: 4px 0; color: #4b5563;">Pricing Strategy: <span style="font-weight: 600; color: #111827;">${orderData.pricingStrategy === 'special' ? 'SPECIAL (ALLOCATED)' : (orderData.pricingStrategy?.toUpperCase() || 'RSP') + ' PRICING'}</span></p>
+                                <p style="margin: 4px 0; color: #4b5563;">Payment Method: <span style="font-weight: 600; color: #111827;">${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}</span></p>
+                            </div>
+                        </td>
+                    </tr>
+                    ` : ''}
+                    ${orderData.paymentProofUrl ? `
+                    <tr>
+                        <td style="padding: 0 40px 30px;">
+                            <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
                                 <p style="margin: 0 0 16px; color: #6b7280; font-size: 14px; font-weight: 600;">Payment Proof:</p>
                                 <div style="background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 4px; padding: 16px; text-align: center;">
                                     <img src="${orderData.paymentProofUrl}" alt="Payment Proof" style="max-width: 100%; max-height: 400px; height: auto; border-radius: 4px; object-fit: contain;" />
@@ -394,70 +409,70 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
 }
 
 export async function sendOrderConfirmationEmail(data: OrderEmailData) {
-  try {
-    console.log('📧 Sending order confirmation email to:', data.clientEmail);
-
-    const htmlContent = generateEmailHTML(data);
-    const itReceiptContent = generateITReceiptHTML(data);
-
-    // Determine API URL - Vercel automatically serves API routes from the same domain
-    const apiUrl = `${window.location.origin}/api/send-email`;
-
-    console.log('🚀 Using email API URL:', apiUrl);
-
-    // Send email to client
-    const clientResponse = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        to: data.clientEmail,
-        subject: `Order Confirmation - ${data.orderNumber}`,
-        html: htmlContent,
-      }),
-    });
-
-    if (!clientResponse.ok) {
-      const errorData = await clientResponse.json().catch(() => ({ error: 'Unknown error' }));
-      console.error('❌ Email API error for client:', errorData);
-      throw new Error(errorData.error || `Failed to send email: ${clientResponse.status} ${clientResponse.statusText}`);
-    }
-
-    const clientResult = await clientResponse.json();
-    console.log('✅ Email sent successfully to client:', clientResult);
-
-    // Send receipt email to IT department
     try {
-      const itResponse = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: 'financedepartment.b1g@gmail.com',
-          subject: `Order Receipt - ${data.orderNumber} - ${data.clientName}`,
-          html: itReceiptContent,
-        }),
-      });
+        console.log('📧 Sending order confirmation email to:', data.clientEmail);
 
-      if (!itResponse.ok) {
-        const errorData = await itResponse.json().catch(() => ({ error: 'Unknown error' }));
-        console.error('⚠️ Failed to send receipt email to IT department:', errorData);
-        // Don't throw error - client email was sent successfully
-      } else {
-        const itResult = await itResponse.json();
-        console.log('✅ Receipt email sent successfully to IT department:', itResult);
-      }
-    } catch (itError) {
-      console.error('⚠️ Error sending receipt email to IT department (non-critical):', itError);
-      // Don't throw error - client email was sent successfully
+        const htmlContent = generateEmailHTML(data);
+        const itReceiptContent = generateITReceiptHTML(data);
+
+        // Determine API URL - Vercel automatically serves API routes from the same domain
+        const apiUrl = `${window.location.origin}/api/send-email`;
+
+        console.log('🚀 Using email API URL:', apiUrl);
+
+        // Send email to client
+        const clientResponse = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                to: data.clientEmail,
+                subject: `Order Confirmation - ${data.orderNumber}`,
+                html: htmlContent,
+            }),
+        });
+
+        if (!clientResponse.ok) {
+            const errorData = await clientResponse.json().catch(() => ({ error: 'Unknown error' }));
+            console.error('❌ Email API error for client:', errorData);
+            throw new Error(errorData.error || `Failed to send email: ${clientResponse.status} ${clientResponse.statusText}`);
+        }
+
+        const clientResult = await clientResponse.json();
+        console.log('✅ Email sent successfully to client:', clientResult);
+
+        // Send receipt email to IT department
+        try {
+            const itResponse = await fetch(apiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    to: 'itdepartment.b1g@gmail.com',
+                    subject: `Order Receipt - ${data.orderNumber} - ${data.clientName}`,
+                    html: itReceiptContent,
+                }),
+            });
+
+            if (!itResponse.ok) {
+                const errorData = await itResponse.json().catch(() => ({ error: 'Unknown error' }));
+                console.error('⚠️ Failed to send receipt email to IT department:', errorData);
+                // Don't throw error - client email was sent successfully
+            } else {
+                const itResult = await itResponse.json();
+                console.log('✅ Receipt email sent successfully to IT department:', itResult);
+            }
+        } catch (itError) {
+            console.error('⚠️ Error sending receipt email to IT department (non-critical):', itError);
+            // Don't throw error - client email was sent successfully
+        }
+
+        return clientResult;
+    } catch (error) {
+        console.error('Failed to send order confirmation email:', error);
+        throw error;
     }
-
-    return clientResult;
-  } catch (error) {
-    console.error('Failed to send order confirmation email:', error);
-    throw error;
-  }
 }
 

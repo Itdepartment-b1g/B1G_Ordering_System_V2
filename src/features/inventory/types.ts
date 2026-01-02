@@ -16,4 +16,5 @@ export interface AgentBrand {
     name: string;
     flavors: AgentVariant[];
     batteries: AgentVariant[];
+    posms: AgentVariant[];
 }

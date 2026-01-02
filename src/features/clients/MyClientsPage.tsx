@@ -4,12 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -219,10 +220,16 @@ export default function MyClientsPage() {
       if (error) throw error;
 
       // Fetch per-client stats from view for this agent
-      const { data: statsView } = await supabase
+      // Handle gracefully if view doesn't exist or has RLS issues
+      const { data: statsView, error: statsError } = await supabase
         .from('client_order_stats')
         .select('client_id, agent_id, total_orders, last_order_date')
         .eq('agent_id', user.id);
+      
+      // Log but don't throw - stats are optional
+      if (statsError) {
+        console.warn('Could not fetch client order stats:', statsError.message);
+      }
 
       const statsByClient = (statsView || []).reduce((acc: any, r: any) => {
         acc[r.client_id] = {
@@ -483,7 +490,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
       reader.onloadend = async () => {
         setNewClientPhoto(reader.result as string);
         
-        // Use pre-warmed location if available, otherwise get fresh
+        // Use pre-warmed location if available, otherwise get fresh with fallback
         try {
           let position: GeolocationPosition;
           
@@ -495,16 +502,87 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
               title: 'Getting location...',
               description: 'Capturing your current location.'
             });
-            position = await getCurrentLocation();
+            // Use fallback method that tries high accuracy first, then lower accuracy
+            position = await getLocationWithFallback();
           }
           
           await processLocationAndAddress(position);
-        } catch (error) {
-          console.error('Location error:', error);
+        } catch (error: any) {
+          // Handle different geolocation error types gracefully
+          const errorCode = error?.code;
+          let errorMessage = 'Could not get location. Please enter address manually.';
+          let actionButton: { label: string; onClick: () => void } | null = null;
+          
+          // Create a retry function that only retries location (not photo capture)
+          const retryLocationOnly = async () => {
+            toast({
+              title: 'Retrying location...',
+              description: 'Trying alternative methods to get your location.'
+            });
+            try {
+              const position = await getLocationWithFallback();
+              await processLocationAndAddress(position);
+              toast({
+                title: 'Success!',
+                description: 'Location captured and address auto-filled.',
+              });
+            } catch (retryError: any) {
+              const retryErrorCode = retryError?.code;
+              let retryErrorMessage = 'Location still unavailable. Please enter address manually.';
+              
+              if (retryErrorCode === 1) {
+                retryErrorMessage = 'Location permission still denied. Please enable location access in browser settings.';
+              } else if (retryErrorCode === 2) {
+                retryErrorMessage = 'Still unable to determine location. Try moving to an area with better GPS signal or enter address manually.';
+              } else if (retryErrorCode === 3) {
+                retryErrorMessage = 'Location request timed out again. Please enter address manually.';
+              }
+              
+              toast({
+                title: 'Still Unavailable',
+                description: retryErrorMessage,
+                variant: 'destructive'
+              });
+            }
+          };
+
+          if (errorCode === 1) {
+            errorMessage = 'Location permission denied. Please enable location access in your browser settings, then click retry.';
+            actionButton = {
+              label: 'Retry Location',
+              onClick: retryLocationOnly
+            };
+          } else if (errorCode === 2) {
+            errorMessage = 'Unable to determine location. This may be due to:\n• Weak GPS signal (try moving near a window or outdoors)\n• Network location services unavailable\n• Device location services disabled\n\nYou can retry or enter the address manually.';
+            actionButton = {
+              label: 'Retry Location',
+              onClick: retryLocationOnly
+            };
+          } else if (errorCode === 3) {
+            errorMessage = 'Location request timed out. This may take longer in areas with poor signal. You can retry or enter address manually.';
+            actionButton = {
+              label: 'Retry Location',
+              onClick: retryLocationOnly
+            };
+          }
+          
+          // Only log unexpected errors, suppress common ones
+          if (errorCode !== 1 && errorCode !== 2) {
+            console.warn('📸 Location error:', error?.message || error);
+          }
+          
           toast({
             title: 'Location Unavailable',
-            description: 'Could not get location. Please enter address manually.',
-            variant: 'destructive'
+            description: errorMessage,
+            variant: 'destructive',
+            action: actionButton ? (
+              <ToastAction
+                altText={actionButton.label}
+                onClick={actionButton.onClick}
+              >
+                {actionButton.label}
+              </ToastAction>
+            ) : undefined
           });
         }
       };
@@ -575,34 +653,114 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     }
   }, [isCameraOpen, stream]);
 
-  const getCurrentLocation = (): Promise<GeolocationPosition> => {
+  const getCurrentLocation = (options?: { useHighAccuracy?: boolean; timeout?: number }): Promise<GeolocationPosition> => {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
         reject(new Error('Geolocation is not supported by your browser'));
         return;
       }
 
+      const useHighAccuracy = options?.useHighAccuracy !== false;
+      const timeout = options?.timeout || 20000; // Default 20 seconds
+
       navigator.geolocation.getCurrentPosition(
         (position) => resolve(position),
-        (error) => reject(error),
+        (error) => {
+          // Create a more descriptive error with code
+          const geoError = error as GeolocationPositionError;
+          reject(geoError);
+        },
         {
-          enableHighAccuracy: true,
-          timeout: 30000, // Increased to 30 seconds
-          maximumAge: 0
+          enableHighAccuracy: useHighAccuracy,
+          timeout: timeout,
+          maximumAge: 120000 // Allow cached position up to 2 minutes old
         }
       );
     });
   };
 
+  // Get location with fallback - tries multiple strategies
+  const getLocationWithFallback = async (): Promise<GeolocationPosition> => {
+    const strategies = [
+      // Strategy 1: High accuracy with long timeout
+      { useHighAccuracy: true, timeout: 20000, maxAge: 0 },
+      // Strategy 2: Low accuracy with medium timeout
+      { useHighAccuracy: false, timeout: 15000, maxAge: 0 },
+      // Strategy 3: Low accuracy with cached position (up to 5 minutes old)
+      { useHighAccuracy: false, timeout: 10000, maxAge: 300000 },
+      // Strategy 4: Any cached position (up to 10 minutes old)
+      { useHighAccuracy: false, timeout: 5000, maxAge: 600000 }
+    ];
+
+    let lastError: any = null;
+
+    for (let i = 0; i < strategies.length; i++) {
+      const strategy = strategies[i];
+      try {
+        console.log(`📍 Trying location strategy ${i + 1}/${strategies.length}:`, strategy);
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          if (!navigator.geolocation) {
+            reject(new Error('Geolocation is not supported by your browser'));
+            return;
+          }
+
+          navigator.geolocation.getCurrentPosition(
+            (position) => resolve(position),
+            (error) => reject(error),
+            {
+              enableHighAccuracy: strategy.useHighAccuracy,
+              timeout: strategy.timeout,
+              maximumAge: strategy.maxAge
+            }
+          );
+        });
+
+        console.log(`✅ Location obtained with strategy ${i + 1}:`, {
+          accuracy: position.coords.accuracy,
+          timestamp: new Date(position.timestamp).toISOString()
+        });
+        return position;
+      } catch (error: any) {
+        console.log(`❌ Strategy ${i + 1} failed:`, error?.code, error?.message);
+        lastError = error;
+        
+        // If it's a permission error (code 1), don't try other strategies
+        if (error?.code === 1) {
+          throw error;
+        }
+        
+        // Continue to next strategy if this one failed
+        continue;
+      }
+    }
+
+    // All strategies failed
+    console.error('❌ All location strategies failed. Last error:', lastError);
+    throw lastError || new Error('Unable to determine location after multiple attempts');
+  };
+
   // Pre-warm GPS when dialog opens
   const startLocationPrewarm = async () => {
+    // Check if geolocation is available before attempting
+    if (!navigator.geolocation) {
+      return; // Silently fail if geolocation is not supported
+    }
+
     setIsPrewarmingLocation(true);
     try {
-      const position = await getCurrentLocation();
+      // Use fallback method that tries high accuracy first, then lower accuracy
+      const position = await getLocationWithFallback();
       setPrewarmPosition(position);
       console.log('Location pre-warmed:', position.coords.accuracy, 'meters accuracy');
-    } catch (error) {
-      console.error('Pre-warm location error:', error);
+    } catch (error: any) {
+      // Suppress console errors for common location issues
+      // Code 1 = PERMISSION_DENIED, Code 2 = POSITION_UNAVAILABLE
+      // These are expected in some scenarios and don't need console spam
+      if (error?.code !== 1 && error?.code !== 2) {
+        console.warn('Pre-warm location error:', error?.message || error);
+      }
+      // Clear any stale pre-warmed position on error
+      setPrewarmPosition(null);
     } finally {
       setIsPrewarmingLocation(false);
     }
@@ -639,49 +797,92 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
   const reverseGeocode = async (latitude: number, longitude: number): Promise<{ address: string; city: string }> => {
     try {
+      console.log('🌍 Starting reverse geocoding for:', { latitude, longitude });
+      
+      // Add a small delay to respect Nominatim rate limiting (1 request per second)
+      // Store last request time to ensure we don't exceed rate limit
+      const now = Date.now();
+      const lastRequestTime = (window as any).__lastNominatimRequest || 0;
+      const timeSinceLastRequest = now - lastRequestTime;
+      
+      if (timeSinceLastRequest < 1000) {
+        const waitTime = 1000 - timeSinceLastRequest;
+        console.log(`⏳ Rate limiting: waiting ${waitTime}ms before next request`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+      
       const response = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
         {
           headers: {
-            'Accept-Language': 'en'
+            'Accept-Language': 'en',
+            'User-Agent': 'MultiTenantB2B-ClientApp/1.0' // Required by Nominatim
           }
         }
       );
       
+      // Update last request time
+      (window as any).__lastNominatimRequest = Date.now();
+      
+      if (!response.ok) {
+        console.error('❌ Reverse geocoding API error:', response.status, response.statusText);
+        throw new Error(`Geocoding API returned ${response.status}: ${response.statusText}`);
+      }
+      
       const data = await response.json();
+      console.log('🌍 Reverse geocoding response:', data);
       
       if (data && data.address) {
         // Extract city from various possible fields
         const addr = data.address;
-        const city = addr.city || addr.town || addr.village || addr.municipality || '';
+        const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || '';
         
-        // Construct full address
-        const parts = [
+        // Construct full address with better formatting
+        const addressParts = [
           addr.house_number,
           addr.road,
           addr.suburb || addr.neighbourhood,
           addr.city || addr.town || addr.village,
-          addr.state,
+          addr.state || addr.region,
           addr.country
         ].filter(Boolean);
         
+        const fullAddress = addressParts.join(', ');
+        const extractedCity = city;
+        
+        console.log('✅ Extracted address:', { fullAddress, extractedCity });
+        
         return {
-          address: parts.join(', '),
-          city: city
+          address: fullAddress || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+          city: extractedCity
         };
       } else if (data && data.display_name) {
+        // Fallback to display_name if address object is not available
+        console.log('⚠️ Using display_name fallback:', data.display_name);
+        // Try to extract city from display_name
+        const displayParts = data.display_name.split(',');
+        const possibleCity = displayParts.length > 1 ? displayParts[displayParts.length - 2]?.trim() : '';
+        
         return {
           address: data.display_name,
-          city: ''
+          city: possibleCity
         };
       }
       
+      console.warn('⚠️ No address data found in response, using coordinates');
       return {
         address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
         city: ''
       };
-    } catch (error) {
-      console.error('Reverse geocoding error:', error);
+    } catch (error: any) {
+      console.error('❌ Reverse geocoding error:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name
+      });
+      
+      // Return coordinates as fallback
       return {
         address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
         city: ''
@@ -692,18 +893,55 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
   const processLocationAndAddress = async (position: GeolocationPosition) => {
     const { latitude, longitude, accuracy } = position.coords;
     
-    // Get address and city from coordinates
-    const { address, city } = await reverseGeocode(latitude, longitude);
+    console.log('📍 Processing location:', { latitude, longitude, accuracy });
     
-    // Auto-fill the address and city fields
-    setFormData(prev => ({ ...prev, address, city }));
-    setCapturedLocation({ latitude, longitude, address, accuracy });
-    
-    const badge = getAccuracyBadge(accuracy);
-    toast({
-      title: 'Location Captured',
-      description: `${badge.icon} ${badge.label} (±${Math.round(accuracy)}m)`,
-    });
+    try {
+      // Get address and city from coordinates
+      const { address, city } = await reverseGeocode(latitude, longitude);
+      
+      console.log('📍 Reverse geocoded result:', { address, city });
+      
+      // Validate that we got meaningful data
+      if (!address || address === `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`) {
+        console.warn('⚠️ Reverse geocoding returned coordinates only, address extraction may have failed');
+      }
+      
+      if (!city) {
+        console.warn('⚠️ City not found in reverse geocoding response');
+      }
+      
+      // Auto-fill the address and city fields
+      setFormData(prev => {
+        const updated = { 
+          ...prev, 
+          address: address || prev.address, // Keep existing if new is empty
+          city: city || prev.city // Keep existing if new is empty
+        };
+        console.log('📍 Updating form data with:', { 
+          address: updated.address, 
+          city: updated.city,
+          previousAddress: prev.address,
+          previousCity: prev.city
+        });
+        return updated;
+      });
+      
+      setCapturedLocation({ latitude, longitude, address: address || '', accuracy });
+      
+      const badge = getAccuracyBadge(accuracy);
+      const cityStatus = city ? `City: ${city}` : 'City: Not found';
+      toast({
+        title: 'Location Captured',
+        description: `${badge.icon} ${badge.label} (±${Math.round(accuracy)}m) - ${cityStatus}`,
+      });
+    } catch (error: any) {
+      console.error('❌ Error in processLocationAndAddress:', error);
+      toast({
+        title: 'Location Error',
+        description: 'Location captured but address lookup failed. Please enter address manually.',
+        variant: 'destructive'
+      });
+    }
   };
 
   const capturePhoto = async () => {
@@ -719,27 +957,48 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
         setNewClientPhoto(imageData);
         closeCamera();
 
-        // Use pre-warmed location if available, otherwise get fresh
+        // Use pre-warmed location if available, otherwise get fresh with fallback
+        // This MUST complete before the function returns to ensure form is updated
         try {
           let position: GeolocationPosition;
           
           if (prewarmPosition) {
-            console.log('Using pre-warmed location');
+            console.log('📸 Using pre-warmed location for photo');
             position = prewarmPosition;
           } else {
+            console.log('📸 Getting fresh location for photo');
             toast({
               title: 'Getting location...',
               description: 'Please wait while we capture your current location.'
             });
-            position = await getCurrentLocation();
+            // Use fallback method that tries high accuracy first, then lower accuracy
+            position = await getLocationWithFallback();
           }
           
+          console.log('📸 Location obtained, processing address...');
+          // Await this to ensure form is updated before function completes
           await processLocationAndAddress(position);
-        } catch (error) {
-          console.error('Location error:', error);
+          console.log('📸 Location processing complete');
+        } catch (error: any) {
+          // Handle different geolocation error types gracefully
+          const errorCode = error?.code;
+          let errorMessage = 'Could not get location. Please enter address manually.';
+          
+          if (errorCode === 1) {
+            errorMessage = 'Location permission denied. Please enable location access or enter address manually.';
+          } else if (errorCode === 2) {
+            errorMessage = 'Unable to determine location. This may be due to weak GPS signal or network issues. Please try moving to an area with better signal or enter address manually.';
+          } else if (errorCode === 3) {
+            errorMessage = 'Location request timed out. Please try again or enter address manually.';
+          }
+          
+          // Only log unexpected errors, suppress common ones
+          if (errorCode !== 1 && errorCode !== 2) {
+            console.warn('📸 Location error:', error?.message || error);
+          }
           toast({
             title: 'Location Unavailable',
-            description: 'Could not get location. Please enter address manually.',
+            description: errorMessage,
             variant: 'destructive'
           });
         }
@@ -760,13 +1019,29 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     });
 
     try {
-      const position = await getCurrentLocation();
+      // Use fallback method that tries high accuracy first, then lower accuracy
+      const position = await getLocationWithFallback();
       await processLocationAndAddress(position);
-    } catch (error) {
-      console.error('Retry location error:', error);
+    } catch (error: any) {
+      // Handle different geolocation error types gracefully
+      const errorCode = error?.code;
+      let errorMessage = 'Still unable to get location. Please enter address manually.';
+      
+      if (errorCode === 1) {
+        errorMessage = 'Location permission denied. Please enable location access in your browser settings.';
+      } else if (errorCode === 2) {
+        errorMessage = 'Unable to determine location. Try moving to an area with better GPS signal or check your network connection.';
+      } else if (errorCode === 3) {
+        errorMessage = 'Location request timed out. Please try again.';
+      }
+      
+      // Only log unexpected errors, suppress common ones
+      if (errorCode !== 1 && errorCode !== 2) {
+        console.warn('Retry location error:', error?.message || error);
+      }
       toast({
         title: 'Location Error',
-        description: 'Still unable to get location. Please enter address manually.',
+        description: errorMessage,
         variant: 'destructive'
       });
     }
@@ -1172,6 +1447,9 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
           <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Add New Client</DialogTitle>
+              <DialogDescription>
+                Add a new client to your list. Take a photo to automatically capture location, or enter details manually.
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               {/* Photo Section */}

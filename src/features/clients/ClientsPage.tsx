@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -14,6 +14,12 @@ import { useAuth } from '@/features/auth';
 import { exportClientsToExcel } from '@/lib/excel.helpers';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,7 +81,7 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [cityFilter, setCityFilter] = useState<string>('');
-  
+
   // Edit Dialog States
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -90,14 +96,14 @@ export default function ClientsPage() {
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
     has_forge: false
   });
-  
+
   // Delete Confirmation States
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
-  
+
   // Update Confirmation States
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
-  
+
   // Add Client Dialog States
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addForm, setAddForm] = useState({
@@ -112,7 +118,7 @@ export default function ClientsPage() {
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
   });
   const [adding, setAdding] = useState(false);
-  
+
   // Add Client Photo States
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -120,7 +126,7 @@ export default function ClientsPage() {
   const [isCameraLoading, setIsCameraLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  
+
   // Add Client Location States
   const [capturedLocation, setCapturedLocation] = useState<{
     latitude: number;
@@ -136,7 +142,7 @@ export default function ClientsPage() {
   const [importHeaders, setImportHeaders] = useState<string[]>([]);
   const [importRows, setImportRows] = useState<Partial<Client>[]>([]);
   const [importSummary, setImportSummary] = useState<{ total: number; valid: number; skipped: number }>({ total: 0, valid: 0, skipped: 0 });
-  
+
   const { toast } = useToast();
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -152,7 +158,7 @@ export default function ClientsPage() {
       if (error) throw error;
 
       // Update city tags for all agents
-      const updatePromises = (agents || []).map(agent => 
+      const updatePromises = (agents || []).map(agent =>
         updateAgentCities(agent.id)
       );
       await Promise.all(updatePromises);
@@ -163,14 +169,14 @@ export default function ClientsPage() {
     }
   };
 
-  // Fetch agents with client counts
+  // Fetch agents with client counts (only roles that can manage clients)
   const fetchAgents = async () => {
     try {
       setLoadingAgents(true);
       const { data: agentsData, error } = await supabase
         .from('profiles')
         .select('id, full_name, city, role')
-        .in('role', ['sales_agent', 'admin'])
+        .in('role', ['manager', 'team_leader', 'mobile_sales'])
         .eq('status', 'active');
 
       if (error) throw error;
@@ -222,7 +228,7 @@ export default function ClientsPage() {
   const [bulkTransferDialogOpen, setBulkTransferDialogOpen] = useState(false);
   const [bulkTransferring, setBulkTransferring] = useState(false);
   const [bulkTransferAssignments, setBulkTransferAssignments] = useState<Record<string, string>>({});
-  
+
   // City-based bulk transfer states
   const [cityBulkTransferOpen, setCityBulkTransferOpen] = useState(false);
   const [selectedCity, setSelectedCity] = useState('');
@@ -271,6 +277,9 @@ export default function ClientsPage() {
     // Cities will be merged automatically when clients are transferred
     // initializeAgentCities(); // Initialize city tags for all agents
 
+    // Pre-warm GPS on page load for seamless location capture when adding clients
+    startLocationPrewarm();
+
     const clientsChannel = subscribeToTable('clients', () => {
       fetchClients();
       fetchAllClientsRevenue(); // Update revenue when clients change
@@ -307,10 +316,10 @@ export default function ClientsPage() {
       if (error) throw error;
 
       // Parse comma-separated cities
-      const cities = data?.city 
+      const cities = data?.city
         ? data.city.split(',').map(c => c.trim()).filter(c => c.length > 0)
         : [];
-      
+
       setAgentCities(cities);
     } catch (error) {
       console.error('Error fetching agent cities:', error);
@@ -321,12 +330,12 @@ export default function ClientsPage() {
   // Helper function to convert photo URL to signed URL if needed
   const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<string | null> => {
     if (!photoUrl) return null;
-    
+
     // If it's already a signed URL, return as-is
     if (photoUrl.includes('?token=')) {
       return photoUrl;
     }
-    
+
     // If it's a public URL, extract the path and generate signed URL
     // Public URL format: https://[project].supabase.co/storage/v1/object/public/client-photos/[path]
     const publicUrlMatch = photoUrl.match(/\/storage\/v1\/object\/public\/client-photos\/(.+)$/);
@@ -335,12 +344,12 @@ export default function ClientsPage() {
       const { data, error } = await supabase.storage
         .from('client-photos')
         .createSignedUrl(filePath, 3600); // 1 hour expiry
-      
+
       if (!error && data?.signedUrl) {
         return data.signedUrl;
       }
     }
-    
+
     // Try to extract path from any URL format and generate signed URL
     try {
       const url = new URL(photoUrl);
@@ -350,7 +359,7 @@ export default function ClientsPage() {
         const { data, error } = await supabase.storage
           .from('client-photos')
           .createSignedUrl(filePath, 3600);
-        
+
         if (!error && data?.signedUrl) {
           return data.signedUrl;
         }
@@ -358,7 +367,7 @@ export default function ClientsPage() {
     } catch (e) {
       // URL parsing failed, return original
     }
-    
+
     // If all else fails, return original URL
     return photoUrl;
   };
@@ -736,7 +745,7 @@ export default function ClientsPage() {
   const fetchAllClientsRevenue = async () => {
     try {
       const isAgent = !isAdmin && !!user?.id;
-      
+
       // Reuse grouped aggregation for total revenue
       let totalAggQuery = supabase
         .from('client_orders')
@@ -775,9 +784,9 @@ export default function ClientsPage() {
       (client.email && client.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (client.company && client.company.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (client.agent_name && client.agent_name.toLowerCase().includes(searchQuery.toLowerCase()));
-    
+
     const matchesCity = !cityFilter || cityFilter === 'all' || client.city === cityFilter;
-    
+
     return matchesSearch && matchesCity;
   });
 
@@ -797,7 +806,7 @@ export default function ClientsPage() {
     // Strip +63 prefix from phone for editing
     const phoneNumber = client.phone || '';
     const phoneWithoutPrefix = phoneNumber.startsWith('+63 ') ? phoneNumber.slice(4) : phoneNumber;
-    
+
     setEditForm({
       name: client.name,
       company: client.company || '',
@@ -814,18 +823,18 @@ export default function ClientsPage() {
 
   const handleSaveEdit = () => {
     if (!editingClient) return;
-    
+
     if (!editForm.name.trim()) {
       toast({ title: 'Error', description: 'Client name is required', variant: 'destructive' });
       return;
     }
-    
+
     setUpdateConfirmOpen(true);
   };
 
   const handleConfirmUpdate = async () => {
     if (!editingClient) return;
-    
+
     try {
       // Update client - exclude address and city (read-only fields)
       const { error } = await supabase
@@ -845,15 +854,15 @@ export default function ClientsPage() {
 
       if (error) throw error;
 
-      toast({ 
-        title: 'Success', 
-        description: `${editForm.name} has been updated successfully` 
+      toast({
+        title: 'Success',
+        description: `${editForm.name} has been updated successfully`
       });
-      
+
       setUpdateConfirmOpen(false);
       setEditDialogOpen(false);
       setEditingClient(null);
-      
+
       // Real-time will handle updating the list
     } catch (error) {
       console.error('Error updating client:', error);
@@ -890,17 +899,17 @@ export default function ClientsPage() {
   const getCurrentCityHolder = (city: string) => {
     const cityClients = clients.filter(client => client.city === city);
     if (cityClients.length === 0) return null;
-    
+
     // Get the agent who has the most clients in this city
     const agentCounts = cityClients.reduce((acc, client) => {
       acc[client.agent_id] = (acc[client.agent_id] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
-    
-    const topAgent = Object.entries(agentCounts).reduce((a, b) => 
+
+    const topAgent = Object.entries(agentCounts).reduce((a, b) =>
       agentCounts[a[0]] > agentCounts[b[0]] ? a : b
     );
-    
+
     return agents.find(agent => agent.id === topAgent[0]);
   };
 
@@ -923,7 +932,7 @@ export default function ClientsPage() {
     // 2. agent_id points to an admin (legacy behavior)
     // 3. agent_id is the current admin user (legacy behavior)
     if (!client.agent_id) return true; // Super admin created unassigned client
-    
+
     const agent = agents.find(a => a.id === client.agent_id);
     return agent?.role === 'admin' || agent?.role === 'super_admin' || (isAdmin && client.agent_id === user?.id);
   };
@@ -964,7 +973,7 @@ export default function ClientsPage() {
 
       // MERGE: Combine existing cities with client cities, removing duplicates
       const allCities = [...new Set([...existingCities, ...clientCities])];
-      
+
       // Only update if there are cities to set (don't clear if empty)
       const cityValue = allCities.length > 0 ? allCities.join(',') : null;
 
@@ -997,7 +1006,7 @@ export default function ClientsPage() {
     setTransferring(true);
     try {
       const oldAgentId = transferringClient.agent_id;
-      
+
       // Transfer the client
       const { error } = await supabase
         .from('clients')
@@ -1020,7 +1029,7 @@ export default function ClientsPage() {
       setTransferDialogOpen(false);
       setTransferringClient(null);
       setSelectedAgentId('');
-      
+
       // Refresh clients list
       await fetchClients();
     } catch (error) {
@@ -1062,7 +1071,7 @@ export default function ClientsPage() {
     try {
       const currentHolder = getCurrentCityHolder(selectedCity);
       const affectedAgents = new Set<string>();
-      
+
       // Add current holder and new agent to affected agents
       if (currentHolder) {
         affectedAgents.add(currentHolder.id);
@@ -1078,7 +1087,7 @@ export default function ClientsPage() {
       if (error) throw error;
 
       // Merge cities for all affected agents (preserves existing cities, adds new ones)
-      const cityUpdatePromises = Array.from(affectedAgents).map(agentId => 
+      const cityUpdatePromises = Array.from(affectedAgents).map(agentId =>
         updateAgentCities(agentId)
       );
       await Promise.all(cityUpdatePromises);
@@ -1092,7 +1101,7 @@ export default function ClientsPage() {
       setSelectedCity('');
       setSelectedTransferAgent('');
       setCityClients([]);
-      
+
       // Refresh clients list
       await fetchClients();
     } catch (error) {
@@ -1112,7 +1121,7 @@ export default function ClientsPage() {
     try {
       // Get all affected agents (both old and new)
       const affectedAgents = new Set<string>();
-      
+
       // Collect all agent IDs that will be affected
       Object.entries(bulkTransferAssignments).forEach(([clientId, newAgentId]) => {
         const client = filteredClients.find(c => c.id === clientId);
@@ -1139,7 +1148,7 @@ export default function ClientsPage() {
       }
 
       // Merge cities for all affected agents (preserves existing cities, adds new ones)
-      const cityUpdatePromises = Array.from(affectedAgents).map(agentId => 
+      const cityUpdatePromises = Array.from(affectedAgents).map(agentId =>
         updateAgentCities(agentId)
       );
       await Promise.all(cityUpdatePromises);
@@ -1151,7 +1160,7 @@ export default function ClientsPage() {
 
       setBulkTransferDialogOpen(false);
       setBulkTransferAssignments({});
-      
+
       // Refresh clients list
       await fetchClients();
     } catch (error) {
@@ -1168,7 +1177,7 @@ export default function ClientsPage() {
 
   const handleConfirmDelete = async () => {
     if (!clientToDelete) return;
-    
+
     try {
       // Soft delete: Update client status to 'inactive' instead of deleting
       const { error } = await supabase
@@ -1180,12 +1189,12 @@ export default function ClientsPage() {
 
       // Update local state - remove from current view since it's now inactive
       setClients(clients.filter(c => c.id !== clientToDelete.id));
-      
-      toast({ 
-        title: 'Success', 
-        description: `${clientToDelete.name} has been voided successfully` 
+
+      toast({
+        title: 'Success',
+        description: `${clientToDelete.name} has been voided successfully`
       });
-      
+
       setDeleteDialogOpen(false);
       setClientToDelete(null);
     } catch (error) {
@@ -1203,17 +1212,17 @@ export default function ClientsPage() {
       toast({ title: 'Error', description: 'Client name is required', variant: 'destructive' });
       return;
     }
-    
+
     if (!addForm.email.trim()) {
       toast({ title: 'Error', description: 'Email is required', variant: 'destructive' });
       return;
     }
-    
+
     if (!newClientPhoto) {
       toast({ title: 'Error', description: 'Client photo is required for verification', variant: 'destructive' });
       return;
     }
-    
+
     setAdding(true);
     handleConfirmAdd();
   };
@@ -1222,7 +1231,7 @@ export default function ClientsPage() {
     try {
       // Handle photo upload if there's a photo
       let photoUrl = null;
-      
+
       if (newClientPhoto) {
         // Convert base64 to blob
         const base64Data = newClientPhoto.split(',')[1];
@@ -1242,13 +1251,13 @@ export default function ClientsPage() {
             .replace(/_+/g, '_')
             .replace(/^_|_$/g, '');
         };
-        
+
         const clientName = sanitizeName(addForm.name || 'client');
         const clientCompany = sanitizeName(addForm.company || 'company');
         const timestamp = Date.now();
-        
+
         const fileName = `${user?.id}/${clientName}_${clientCompany}_${timestamp}.jpg`;
-        
+
         // Upload to Supabase Storage
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('client-photos')
@@ -1266,11 +1275,11 @@ export default function ClientsPage() {
         const { data: urlData, error: urlError } = await supabase.storage
           .from('client-photos')
           .createSignedUrl(fileName, 31536000); // 1 year expiry
-        
+
         if (urlError || !urlData?.signedUrl) {
           throw new Error(`Failed to generate signed URL: ${urlError?.message || 'Unknown error'}`);
         }
-        
+
         photoUrl = urlData.signedUrl;
       }
 
@@ -1328,12 +1337,12 @@ export default function ClientsPage() {
       const approvalRequestedAt = (!isAdmin && !cityMatches) ? nowIso : null;
       const approvalNotes = (!isAdmin && !cityMatches) ? `City "${clientCityValue || 'N/A'}" outside assigned cities: ${agentCities.join(', ')}` : null;
       const approvedAt = approvalStatus === 'approved' ? nowIso : null;
-      
+
       // Validate company_id
       if (!user?.company_id) {
         throw new Error('User company_id not found');
       }
-      
+
       const { error } = await supabase
         .from('clients')
         .insert({
@@ -1366,24 +1375,24 @@ export default function ClientsPage() {
 
       if (error) throw error;
 
-      toast({ 
-        title: approvalStatus === 'approved' ? 'Client Added' : 'Client Pending Approval', 
+      toast({
+        title: approvalStatus === 'approved' ? 'Client Added' : 'Client Pending Approval',
         description: approvalStatus === 'approved'
-          ? (capturedLocation 
-              ? `${addForm.name} has been added successfully with photo and location verification${isSuperAdmin ? ' (unassigned - no agent)' : isAdmin ? ' (assigned to you)' : ''}` 
-              : `${addForm.name} has been added successfully with photo verification${isSuperAdmin ? ' (unassigned - no agent)' : isAdmin ? ' (assigned to you)' : ''}`)
+          ? (capturedLocation
+            ? `${addForm.name} has been added successfully with photo and location verification${isSuperAdmin ? ' (unassigned - no agent)' : isAdmin ? ' (assigned to you)' : ''}`
+            : `${addForm.name} has been added successfully with photo verification${isSuperAdmin ? ' (unassigned - no agent)' : isAdmin ? ' (assigned to you)' : ''}`)
           : `${addForm.name} has been added and sent for admin approval. Orders and other actions remain disabled until approval.`
       });
-      
+
       // Reset form and close dialog
       resetAddForm();
       setAddDialogOpen(false);
       setAdding(false);
-      
+
       // Real-time will handle updating the list
     } catch (error: any) {
       console.error('Error adding client:', error);
-      
+
       // Handle RLS policy violation specifically
       if (error.code === '42501') {
         toast({
@@ -1407,22 +1416,22 @@ export default function ClientsPage() {
     const file = event.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
-        toast({ 
-          title: 'Error', 
+        toast({
+          title: 'Error',
           description: 'Image size should be less than 5MB',
           variant: 'destructive'
         });
         return;
       }
-      
+
       const reader = new FileReader();
       reader.onloadend = async () => {
         setNewClientPhoto(reader.result as string);
-        
+
         // Use pre-warmed location if available, otherwise get fresh
         try {
           let position: GeolocationPosition;
-          
+
           if (prewarmPosition) {
             console.log('Using pre-warmed location for upload');
             position = prewarmPosition;
@@ -1433,11 +1442,11 @@ export default function ClientsPage() {
             });
             position = await getCurrentLocation();
           }
-          
+
           await processLocationAndAddress(position);
         } catch (error: any) {
           console.error('Location error:', error);
-          
+
           // Handle specific geolocation errors
           if (error.code === 1) {
             toast({
@@ -1474,25 +1483,25 @@ export default function ClientsPage() {
     setIsCameraLoading(true);
     try {
       let mediaStream: MediaStream | null = null;
-      
+
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
             facingMode: 'environment',
             width: { ideal: 1280 },
             height: { ideal: 720 }
-          } 
+          }
         });
       } catch (err) {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ 
-          video: true 
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true
         });
       }
-      
+
       if (mediaStream) {
         setStream(mediaStream);
         setIsCameraOpen(true);
-        
+
         setTimeout(() => {
           if (videoRef.current) {
             videoRef.current.srcObject = mediaStream;
@@ -1545,7 +1554,7 @@ export default function ClientsPage() {
       console.log('Location pre-warmed:', position.coords.accuracy, 'meters accuracy');
     } catch (error: any) {
       console.error('Pre-warm location error:', error);
-      
+
       // Handle specific geolocation errors
       if (error.code === 1) {
         // User denied geolocation permission
@@ -1583,26 +1592,26 @@ export default function ClientsPage() {
 
   const getAccuracyBadge = (accuracy: number) => {
     if (accuracy <= 50) {
-      return { 
-        label: 'Excellent', 
+      return {
+        label: 'Excellent',
         color: 'bg-green-50 text-green-700 border-green-200',
         icon: '🎯'
       };
     } else if (accuracy <= 100) {
-      return { 
-        label: 'Good', 
+      return {
+        label: 'Good',
         color: 'bg-blue-50 text-blue-700 border-blue-200',
         icon: '✓'
       };
     } else if (accuracy <= 500) {
-      return { 
-        label: 'Fair', 
+      return {
+        label: 'Fair',
         color: 'bg-yellow-50 text-yellow-700 border-yellow-200',
         icon: '⚠'
       };
     } else {
-      return { 
-        label: 'Poor', 
+      return {
+        label: 'Poor',
         color: 'bg-red-50 text-red-700 border-red-200',
         icon: '⚠️'
       };
@@ -1613,13 +1622,13 @@ export default function ClientsPage() {
   const formatPhilippinePhone = (value: string): string => {
     // Remove all non-digit characters
     const digits = value.replace(/\D/g, '');
-    
+
     // If starts with 63, remove it (we'll add +63 prefix separately)
     let phoneDigits = digits.startsWith('63') ? digits.slice(2) : digits;
-    
+
     // Limit to 10 digits (after country code)
     phoneDigits = phoneDigits.slice(0, 10);
-    
+
     // Format: 9XX-XXX-XXXX
     if (phoneDigits.length <= 3) {
       return phoneDigits;
@@ -1641,47 +1650,64 @@ export default function ClientsPage() {
 
   const reverseGeocode = async (latitude: number, longitude: number): Promise<{ address: string; city: string }> => {
     try {
+      console.log('🌍 Starting reverse geocoding for:', { latitude, longitude });
+
       const response = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
         {
           headers: {
-            'Accept-Language': 'en'
+            'Accept-Language': 'en',
+            'User-Agent': 'MultiTenantB2B-ClientApp/1.0'
           }
         }
       );
-      
+
+      if (!response.ok) {
+        console.error('❌ Reverse geocoding API error:', response.status, response.statusText);
+        throw new Error(`Geocoding API returned ${response.status}: ${response.statusText}`);
+      }
+
       const data = await response.json();
-      
+      console.log('🌍 Reverse geocoding response:', data);
+
       if (data && data.address) {
         const addr = data.address;
-        const city = addr.city || addr.town || addr.village || addr.municipality || '';
-        
-        const parts = [
+        const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || '';
+
+        const addressParts = [
           addr.house_number,
           addr.road,
           addr.suburb || addr.neighbourhood,
           addr.city || addr.town || addr.village,
-          addr.state,
+          addr.state || addr.region,
           addr.country
         ].filter(Boolean);
-        
+
+        const fullAddress = addressParts.join(', ');
+        console.log('✅ Extracted address:', { fullAddress, city });
+
         return {
-          address: parts.join(', '),
+          address: fullAddress || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
           city: city
         };
       } else if (data && data.display_name) {
+        console.log('⚠️ Using display_name fallback:', data.display_name);
+        const displayParts = data.display_name.split(',');
+        const possibleCity = displayParts.length > 1 ? displayParts[displayParts.length - 2]?.trim() : '';
+
         return {
           address: data.display_name,
-          city: ''
+          city: possibleCity
         };
       }
-      
+
+      console.warn('⚠️ No address data found in response, using coordinates');
       return {
         address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
         city: ''
       };
-    } catch (error) {
-      console.error('Reverse geocoding error:', error);
+    } catch (error: any) {
+      console.error('❌ Reverse geocoding error:', error);
       return {
         address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
         city: ''
@@ -1691,12 +1717,12 @@ export default function ClientsPage() {
 
   const processLocationAndAddress = async (position: GeolocationPosition) => {
     const { latitude, longitude, accuracy } = position.coords;
-    
+
     const { address, city } = await reverseGeocode(latitude, longitude);
-    
+
     setAddForm(prev => ({ ...prev, address, city }));
     setCapturedLocation({ latitude, longitude, address, accuracy });
-    
+
     const badge = getAccuracyBadge(accuracy);
     toast({
       title: 'Location Captured',
@@ -1710,7 +1736,7 @@ export default function ClientsPage() {
       canvas.width = videoRef.current.videoWidth;
       canvas.height = videoRef.current.videoHeight;
       const ctx = canvas.getContext('2d');
-      
+
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0);
         const imageData = canvas.toDataURL('image/jpeg', 0.8);
@@ -1719,7 +1745,7 @@ export default function ClientsPage() {
 
         try {
           let position: GeolocationPosition;
-          
+
           if (prewarmPosition) {
             console.log('Using pre-warmed location');
             position = prewarmPosition;
@@ -1730,11 +1756,11 @@ export default function ClientsPage() {
             });
             position = await getCurrentLocation();
           }
-          
+
           await processLocationAndAddress(position);
         } catch (error: any) {
           console.error('Location error:', error);
-          
+
           // Handle specific geolocation errors
           if (error.code === 1) {
             toast({
@@ -1783,7 +1809,7 @@ export default function ClientsPage() {
       await processLocationAndAddress(position);
     } catch (error: any) {
       console.error('Retry location error:', error);
-      
+
       // Handle specific geolocation errors
       if (error.code === 1) {
         toast({
@@ -1990,8 +2016,8 @@ export default function ClientsPage() {
         </div>
         <div className="flex gap-2">
           {isAdmin && (
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={handleExportToExcel}
               disabled={exporting || clients.length === 0}
             >
@@ -2046,332 +2072,332 @@ export default function ClientsPage() {
               resetAddForm();
             }
           }}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4" />
-              Add Client
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Add New Client</DialogTitle>
-              <DialogDescription>
-                Create a new client in the system. {isAdmin ? 'This client will have no agent assigned until transferred to an agent.' : 'This client will be assigned to you.'}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              {/* Photo Section */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold">Client Photo / Proof of Identity *</Label>
-                <p className="text-xs text-muted-foreground">Required for verification - Take a photo or upload an existing one</p>
-                
-                {!newClientPhoto && !isCameraOpen && (
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={openCamera}
-                      className="flex-1"
-                    >
-                      <Camera className="h-4 w-4 mr-2" />
-                      Open Camera
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex-1"
-                    >
-                      <Upload className="h-4 w-4 mr-2" />
-                      Upload Photo
-                    </Button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                    />
-                  </div>
-                )}
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4" />
+                Add Client
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Add New Client</DialogTitle>
+                <DialogDescription>
+                  Create a new client in the system. {isAdmin ? 'This client will have no agent assigned until transferred to an agent.' : 'This client will be assigned to you.'}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                {/* Photo Section */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Client Photo / Proof of Identity *</Label>
+                  <p className="text-xs text-muted-foreground">Required for verification - Take a photo or upload an existing one</p>
 
-                {isCameraOpen && (
-                  <div className="space-y-2">
-                    <div className="relative rounded-lg overflow-hidden bg-black">
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-64 object-cover"
-                        onLoadedMetadata={() => {
-                          // Ensure video plays once metadata is loaded
-                          if (videoRef.current) {
-                            videoRef.current.play().catch(err => {
-                              console.error('Error playing video:', err);
-                            });
-                            setIsCameraLoading(false);
-                          }
-                        }}
-                      />
-                      {isCameraLoading && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                          <div className="text-center text-white">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
-                            <p className="text-sm">Initializing camera...</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                  {!newClientPhoto && !isCameraOpen && (
                     <div className="flex gap-2">
                       <Button
                         type="button"
-                        onClick={capturePhoto}
+                        variant="outline"
+                        onClick={openCamera}
                         className="flex-1"
-                        disabled={isCameraLoading}
                       >
                         <Camera className="h-4 w-4 mr-2" />
-                        Capture Photo
+                        Open Camera
                       </Button>
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={closeCamera}
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex-1"
                       >
-                        Cancel
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload Photo
                       </Button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {newClientPhoto && !isCameraOpen && (
-                  <div className="relative">
-                    <img
-                      src={newClientPhoto}
-                      alt="Client preview"
-                      className="w-full h-64 object-cover rounded-lg border"
-                    />
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="icon"
-                      className="absolute top-2 right-2"
-                      onClick={removePhoto}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                    <div className="mt-2 text-xs text-green-600 font-medium">
-                      ✓ Photo captured: {new Date().toLocaleString()}
+                  {isCameraOpen && (
+                    <div className="space-y-2">
+                      <div className="relative rounded-lg overflow-hidden bg-black">
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-64 object-cover"
+                          onLoadedMetadata={() => {
+                            // Ensure video plays once metadata is loaded
+                            if (videoRef.current) {
+                              videoRef.current.play().catch(err => {
+                                console.error('Error playing video:', err);
+                              });
+                              setIsCameraLoading(false);
+                            }
+                          }}
+                        />
+                        {isCameraLoading && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                            <div className="text-center text-white">
+                              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
+                              <p className="text-sm">Initializing camera...</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          onClick={capturePhoto}
+                          className="flex-1"
+                          disabled={isCameraLoading}
+                        >
+                          <Camera className="h-4 w-4 mr-2" />
+                          Capture Photo
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={closeCamera}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
 
-              {/* Client Information Fields */}
-              <div className="space-y-2">
-                <Label>Client Name *</Label>
-                <Input 
-                  placeholder="Enter client name" 
-                  value={addForm.name}
-                  onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Company</Label>
-                <Input 
-                  placeholder="Company name" 
-                  value={addForm.company}
-                  onChange={(e) => setAddForm({ ...addForm, company: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Email *</Label>
-                <Input 
-                  type="email" 
-                  placeholder="client@company.com" 
-                  value={addForm.email}
-                  onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Phone Number</Label>
-                <div className="flex gap-2">
-                  <div className="w-16">
-                <Input 
-                      value="+63"
-                      disabled
-                      className="bg-muted text-center font-semibold"
-                    />
-                  </div>
-                  <Input 
-                    placeholder="9XX-XXX-XXXX" 
-                  value={addForm.phone}
-                    onChange={(e) => handlePhoneChange(e.target.value, 'add')}
-                    maxLength={12}
-                />
+                  {newClientPhoto && !isCameraOpen && (
+                    <div className="relative">
+                      <img
+                        src={newClientPhoto}
+                        alt="Client preview"
+                        className="w-full h-64 object-cover rounded-lg border"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 right-2"
+                        onClick={removePhoto}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                      <div className="mt-2 text-xs text-green-600 font-medium">
+                        ✓ Photo captured: {new Date().toLocaleString()}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
-              </div>
-              <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                  Address
-                  {isPrewarmingLocation && (
-                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                      <div className="animate-pulse">🌍 Pre-warming GPS...</div>
-                    </Badge>
-                  )}
-                  {capturedLocation && (
-                    <Badge 
-                      variant="outline" 
-                      className={`text-xs ${getAccuracyBadge(capturedLocation.accuracy).color}`}
-                    >
-                      <MapPin className="h-3 w-3 mr-1" />
-                      {getAccuracyBadge(capturedLocation.accuracy).icon} {getAccuracyBadge(capturedLocation.accuracy).label} (±{Math.round(capturedLocation.accuracy)}m)
-                    </Badge>
-                  )}
-                </Label>
-                <div className="flex gap-2">
-                  <Input 
-                    placeholder={capturedLocation ? "Auto-filled from location" : "Address will be auto-filled when location is captured"} 
-                    value={addForm.address}
-                    disabled
-                    readOnly
-                    className={`bg-muted cursor-not-allowed ${capturedLocation ? (
-                      capturedLocation.accuracy <= 100 ? "border-green-300" : 
-                      capturedLocation.accuracy <= 500 ? "border-yellow-300" : "border-red-300"
-                    ) : ""}`}
+
+                {/* Client Information Fields */}
+                <div className="space-y-2">
+                  <Label>Client Name *</Label>
+                  <Input
+                    placeholder="Enter client name"
+                    value={addForm.name}
+                    onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
                   />
-                  {capturedLocation && capturedLocation.accuracy > 100 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={retryLocation}
-                      title="Retry for better accuracy"
-                      className="shrink-0"
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                    </Button>
-                  )}
                 </div>
-                {capturedLocation && (
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <p>📍 Lat: {capturedLocation.latitude.toFixed(6)}, Lon: {capturedLocation.longitude.toFixed(6)}</p>
-                    {capturedLocation.accuracy > 100 && (
-                      <p className="text-yellow-600 font-medium">
-                        ⚠ Low accuracy detected. Click retry button for better location.
-                      </p>
+                <div className="space-y-2">
+                  <Label>Company</Label>
+                  <Input
+                    placeholder="Company name"
+                    value={addForm.company}
+                    onChange={(e) => setAddForm({ ...addForm, company: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Email *</Label>
+                  <Input
+                    type="email"
+                    placeholder="client@company.com"
+                    value={addForm.email}
+                    onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Phone Number</Label>
+                  <div className="flex gap-2">
+                    <div className="w-16">
+                      <Input
+                        value="+63"
+                        disabled
+                        className="bg-muted text-center font-semibold"
+                      />
+                    </div>
+                    <Input
+                      placeholder="9XX-XXX-XXXX"
+                      value={addForm.phone}
+                      onChange={(e) => handlePhoneChange(e.target.value, 'add')}
+                      maxLength={12}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    Address
+                    {isPrewarmingLocation && (
+                      <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                        <div className="animate-pulse">🌍 Pre-warming GPS...</div>
+                      </Badge>
+                    )}
+                    {capturedLocation && (
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${getAccuracyBadge(capturedLocation.accuracy).color}`}
+                      >
+                        <MapPin className="h-3 w-3 mr-1" />
+                        {getAccuracyBadge(capturedLocation.accuracy).icon} {getAccuracyBadge(capturedLocation.accuracy).label} (±{Math.round(capturedLocation.accuracy)}m)
+                      </Badge>
+                    )}
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder={capturedLocation ? "Auto-filled from location" : "Address will be auto-filled when location is captured"}
+                      value={addForm.address}
+                      disabled
+                      readOnly
+                      className={`bg-muted cursor-not-allowed ${capturedLocation ? (
+                        capturedLocation.accuracy <= 100 ? "border-green-300" :
+                          capturedLocation.accuracy <= 500 ? "border-yellow-300" : "border-red-300"
+                      ) : ""}`}
+                    />
+                    {capturedLocation && capturedLocation.accuracy > 100 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={retryLocation}
+                        title="Retry for better accuracy"
+                        className="shrink-0"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
                     )}
                   </div>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>
-                  City
-                  <span className="text-xs text-muted-foreground ml-2">(Auto-filled from location)</span>
-                  {!isAdmin && agentCities.length > 0 && (
-                    <span className="text-xs text-muted-foreground ml-2">
-                      (Must be: {agentCities.join(', ')})
-                    </span>
+                  {capturedLocation && (
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>📍 Lat: {capturedLocation.latitude.toFixed(6)}, Lon: {capturedLocation.longitude.toFixed(6)}</p>
+                      {capturedLocation.accuracy > 100 && (
+                        <p className="text-yellow-600 font-medium">
+                          ⚠ Low accuracy detected. Click retry button for better location.
+                        </p>
+                      )}
+                    </div>
                   )}
-                </Label>
-                <Input 
-                  placeholder="City will be auto-filled when location is captured" 
-                  value={addForm.city}
-                  disabled
-                  readOnly
-                  className="bg-muted cursor-not-allowed"
-                />
-                {!capturedLocation && (
-                  <p className="text-xs text-muted-foreground">
-                    📍 Capture location to auto-fill city
-                  </p>
-                )}
-                {capturedLocation && addForm.city && !isAdmin && agentCities.length > 0 && (() => {
-                  const clientCity = addForm.city.trim().toLowerCase();
-                  const normalizedAgentCities = agentCities.map(c => c.toLowerCase());
-                  const cityMatches = normalizedAgentCities.includes(clientCity);
-                  return cityMatches ? (
-                    <p className="text-xs text-green-600">✓ City matches your assigned cities</p>
-                  ) : (
-                    <p className="text-xs text-destructive">
-                      ⚠ City "{addForm.city}" does not match your assigned cities: {agentCities.join(', ')}
+                </div>
+                <div className="space-y-2">
+                  <Label>
+                    City
+                    <span className="text-xs text-muted-foreground ml-2">(Auto-filled from location)</span>
+                    {!isAdmin && agentCities.length > 0 && (
+                      <span className="text-xs text-muted-foreground ml-2">
+                        (Must be: {agentCities.join(', ')})
+                      </span>
+                    )}
+                  </Label>
+                  <Input
+                    placeholder="City will be auto-filled when location is captured"
+                    value={addForm.city}
+                    disabled
+                    readOnly
+                    className="bg-muted cursor-not-allowed"
+                  />
+                  {!capturedLocation && (
+                    <p className="text-xs text-muted-foreground">
+                      📍 Capture location to auto-fill city
                     </p>
-                  );
-                })()}
-              </div>
-              <div className="space-y-2">
-                <Label>Type Of Account</Label>
-                <Select
-                  value={addForm.account_type}
-                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') => 
-                    setAddForm({ ...addForm, account_type: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                    <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <Select
-                  value={addForm.category}
-                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') => 
-                    setAddForm({ ...addForm, category: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Open">Open</SelectItem>
-                    <SelectItem value="Renovating">Renovating</SelectItem>
-                    <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Has Forge Field */}
-              <div className="space-y-3">
-                <Label>Has Forge?</Label>
-                <RadioGroup
-                  value={addForm.has_forge ? 'yes' : 'no'}
-                  onValueChange={(value) => setAddForm({ ...addForm, has_forge: value === 'yes' })}
-                  className="flex gap-4"
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="yes" id="has-forge-yes" />
-                    <Label htmlFor="has-forge-yes" className="font-normal cursor-pointer">
-                      Yes
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="no" id="has-forge-no" />
-                    <Label htmlFor="has-forge-no" className="font-normal cursor-pointer">
-                      No
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </div>
+                  )}
+                  {capturedLocation && addForm.city && !isAdmin && agentCities.length > 0 && (() => {
+                    const clientCity = addForm.city.trim().toLowerCase();
+                    const normalizedAgentCities = agentCities.map(c => c.toLowerCase());
+                    const cityMatches = normalizedAgentCities.includes(clientCity);
+                    return cityMatches ? (
+                      <p className="text-xs text-green-600">✓ City matches your assigned cities</p>
+                    ) : (
+                      <p className="text-xs text-destructive">
+                        ⚠ City "{addForm.city}" does not match your assigned cities: {agentCities.join(', ')}
+                      </p>
+                    );
+                  })()}
+                </div>
+                <div className="space-y-2">
+                  <Label>Type Of Account</Label>
+                  <Select
+                    value={addForm.account_type}
+                    onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                      setAddForm({ ...addForm, account_type: value })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                      <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Category</Label>
+                  <Select
+                    value={addForm.category}
+                    onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
+                      setAddForm({ ...addForm, category: value })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Open">Open</SelectItem>
+                      <SelectItem value="Renovating">Renovating</SelectItem>
+                      <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              <Button className="w-full" onClick={handleAddClient} disabled={adding}>
-                {adding ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Adding...
-                  </>
-                ) : (
-                  'Add Client'
-                )}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+                {/* Has Forge Field */}
+                <div className="space-y-3">
+                  <Label>Has Forge?</Label>
+                  <RadioGroup
+                    value={addForm.has_forge ? 'yes' : 'no'}
+                    onValueChange={(value) => setAddForm({ ...addForm, has_forge: value === 'yes' })}
+                    className="flex gap-4"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="yes" id="has-forge-yes" />
+                      <Label htmlFor="has-forge-yes" className="font-normal cursor-pointer">
+                        Yes
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="no" id="has-forge-no" />
+                      <Label htmlFor="has-forge-no" className="font-normal cursor-pointer">
+                        No
+                      </Label>
+                    </div>
+                  </RadioGroup>
+                </div>
+
+                <Button className="w-full" onClick={handleAddClient} disabled={adding}>
+                  {adding ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    'Add Client'
+                  )}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -2414,13 +2440,13 @@ export default function ClientsPage() {
           <div className="space-y-4">
             <div className="flex items-center gap-4">
               <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search clients by name, email, company, or agent..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search clients by name, email, company, or agent..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
               </div>
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
@@ -2428,14 +2454,14 @@ export default function ClientsPage() {
                   <SelectTrigger className="w-[200px]">
                     <SelectValue placeholder="Filter by city" />
                   </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Cities</SelectItem>
-                  {getUniqueCities().map(city => (
-                    <SelectItem key={city} value={city}>
-                      {city}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
+                  <SelectContent>
+                    <SelectItem value="all">All Cities</SelectItem>
+                    {getUniqueCities().map(city => (
+                      <SelectItem key={city} value={city}>
+                        {city}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
               </div>
             </div>
@@ -2538,40 +2564,40 @@ export default function ClientsPage() {
 
           {/* Desktop: table */}
           <div className="hidden md:block">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="text-center">Photo</TableHead>
-                <TableHead className="text-center">Name</TableHead>
-                <TableHead className="text-center">Company</TableHead>
-                <TableHead className="text-center">Email</TableHead>
-                <TableHead className="text-center">Phone</TableHead>
-                <TableHead className="text-center">Agent</TableHead>
-                <TableHead className="text-center">City</TableHead>
-                <TableHead className="text-center">Account Type</TableHead>
-                <TableHead className="text-center">Category</TableHead>
-                <TableHead className="text-center">Forge</TableHead>
-                <TableHead className="text-center">Orders</TableHead>
-                <TableHead className="text-center">Total Spent</TableHead>
-                <TableHead className="text-center">Approval</TableHead>
-                <TableHead className="text-center">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredClients.map((client) => (
-                <TableRow key={client.id}>
-                  <TableCell className="text-center">
-                    {client.photo_url ? (
-                      <div className="relative group">
-                        <img 
-                          src={client.photo_url} 
-                          alt={client.name}
-                          className="w-10 h-10 rounded-full object-cover border-2 border-primary cursor-pointer"
-                          title="Click to view full size"
-                          onClick={() => {
-                            const newWindow = window.open();
-                            if (newWindow) {
-                              newWindow.document.write(`
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-center">Photo</TableHead>
+                  <TableHead className="text-center">Name</TableHead>
+                  <TableHead className="text-center">Company</TableHead>
+                  <TableHead className="text-center">Email</TableHead>
+                  <TableHead className="text-center">Phone</TableHead>
+                  <TableHead className="text-center">Agent</TableHead>
+                  <TableHead className="text-center">City</TableHead>
+                  <TableHead className="text-center">Account Type</TableHead>
+                  <TableHead className="text-center">Category</TableHead>
+                  <TableHead className="text-center">Forge</TableHead>
+                  <TableHead className="text-center">Orders</TableHead>
+                  <TableHead className="text-center">Total Spent</TableHead>
+                  <TableHead className="text-center">Approval</TableHead>
+                  <TableHead className="text-center">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredClients.map((client) => (
+                  <TableRow key={client.id}>
+                    <TableCell className="text-center">
+                      {client.photo_url ? (
+                        <div className="relative group">
+                          <img
+                            src={client.photo_url}
+                            alt={client.name}
+                            className="w-10 h-10 rounded-full object-cover border-2 border-primary cursor-pointer"
+                            title="Click to view full size"
+                            onClick={() => {
+                              const newWindow = window.open();
+                              if (newWindow) {
+                                newWindow.document.write(`
                                 <html>
                                   <head><title>${client.name} - Photo</title></head>
                                   <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#000;">
@@ -2579,96 +2605,106 @@ export default function ClientsPage() {
                                   </body>
                                 </html>
                               `);
-                            }
-                          }}
-                        />
-                        <Camera className="w-4 h-4 absolute bottom-0 right-0 bg-primary text-white rounded-full p-0.5" />
-                      </div>
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
-                        <Building className="w-5 h-5 text-muted-foreground" />
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="font-medium text-center">{client.name}</TableCell>
-                  <TableCell className="text-center">{client.company}</TableCell>
-                  <TableCell className="text-center">{client.email}</TableCell>
-                  <TableCell className="text-center">{client.phone}</TableCell>
-                  <TableCell className="text-center">
-                    {isClientUnassigned(client) ? (
-                      <Badge variant="secondary" className="text-xs">No Agent</Badge>
-                    ) : client.agent_name ? (
-                      <Badge variant="secondary" className="text-xs">{client.agent_name}</Badge>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">Unknown</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {client.city ? (
-                      <Badge variant="outline" className="text-xs">
-                        {client.city}
-                    </Badge>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">No city</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={client.account_type === 'Key Accounts' ? 'default' : 'secondary'} className="text-xs">
-                      {client.account_type}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge 
-                      variant="outline" 
-                      className={`text-xs ${
-                        client.category === 'Open' ? 'border-green-500 text-green-700' :
-                        client.category === 'Renovating' ? 'border-yellow-500 text-yellow-700' :
-                        'border-red-500 text-red-700'
-                      }`}
-                    >
-                      {client.category}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {client.has_forge ? (
-                      <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-xs">
-                        Yes
+                              }
+                            }}
+                          />
+                          <Camera className="w-4 h-4 absolute bottom-0 right-0 bg-primary text-white rounded-full p-0.5" />
+                        </div>
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                          <Building className="w-5 h-5 text-muted-foreground" />
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-medium text-center">{client.name}</TableCell>
+                    <TableCell className="text-center">{client.company}</TableCell>
+                    <TableCell className="text-center">{client.email}</TableCell>
+                    <TableCell className="text-center">{client.phone}</TableCell>
+                    <TableCell className="text-center">
+                      {isClientUnassigned(client) ? (
+                        <Badge variant="secondary" className="text-xs">No Agent</Badge>
+                      ) : client.agent_name ? (
+                        <Badge variant="secondary" className="text-xs">{client.agent_name}</Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Unknown</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {client.city ? (
+                        <Badge variant="outline" className="text-xs">
+                          {client.city}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">No city</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant={client.account_type === 'Key Accounts' ? 'default' : 'secondary'} className="text-xs">
+                        {client.account_type}
                       </Badge>
-                    ) : (
-                      <Badge variant="secondary" className="text-xs">
-                        No
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${client.category === 'Open' ? 'border-green-500 text-green-700' :
+                          client.category === 'Renovating' ? 'border-yellow-500 text-yellow-700' :
+                            'border-red-500 text-red-700'
+                          }`}
+                      >
+                        {client.category}
                       </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-center">{client.total_orders}</TableCell>
-                  <TableCell className="text-center font-semibold">
-                    ₱{client.total_spent.toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approval_status).className}`}>
-                      {getApprovalStatusBadge(client.approval_status).label}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <div className="flex justify-center gap-2">
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenView(client)} title="View details">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenTransfer(client)} title="Transfer client">
-                        <ArrowRightLeft className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenEdit(client)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenDelete(client)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {client.has_forge ? (
+                        <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-xs">
+                          Yes
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs">
+                          No
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">{client.total_orders}</TableCell>
+                    <TableCell className="text-center font-semibold">
+                      ₱{client.total_spent.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approval_status).className}`}>
+                        {getApprovalStatusBadge(client.approval_status).label}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleOpenView(client)}>
+                            <Eye className="h-4 w-4 mr-2" />
+                            View Details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleOpenTransfer(client)}>
+                            <ArrowRightLeft className="h-4 w-4 mr-2" />
+                            Transfer Client
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleOpenEdit(client)}>
+                            <Edit className="h-4 w-4 mr-2" />
+                            Edit Client
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleOpenDelete(client)} className="text-destructive focus:text-destructive">
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete Client
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         </CardContent>
       </Card>
@@ -2787,25 +2823,25 @@ export default function ClientsPage() {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Client Name *</Label>
-                <Input 
-                  placeholder="Enter client name" 
+                <Input
+                  placeholder="Enter client name"
                   value={editForm.name}
                   onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Company</Label>
-                <Input 
-                  placeholder="Company name" 
+                <Input
+                  placeholder="Company name"
                   value={editForm.company}
                   onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Email</Label>
-                <Input 
-                  type="email" 
-                  placeholder="client@company.com" 
+                <Input
+                  type="email"
+                  placeholder="client@company.com"
                   value={editForm.email}
                   onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                 />
@@ -2814,18 +2850,18 @@ export default function ClientsPage() {
                 <Label>Phone Number</Label>
                 <div className="flex gap-2">
                   <div className="w-16">
-                <Input 
+                    <Input
                       value="+63"
                       disabled
                       className="bg-muted text-center font-semibold"
                     />
                   </div>
-                  <Input 
-                    placeholder="9XX-XXX-XXXX" 
-                  value={editForm.phone}
+                  <Input
+                    placeholder="9XX-XXX-XXXX"
+                    value={editForm.phone}
                     onChange={(e) => handlePhoneChange(e.target.value, 'edit')}
                     maxLength={12}
-                />
+                  />
                 </div>
                 <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
               </div>
@@ -2834,8 +2870,8 @@ export default function ClientsPage() {
                   Address
                   <span className="text-xs text-muted-foreground ml-2">(Read-only)</span>
                 </Label>
-                <Input 
-                  placeholder="Business address" 
+                <Input
+                  placeholder="Business address"
                   value={editForm.address}
                   disabled
                   readOnly
@@ -2847,8 +2883,8 @@ export default function ClientsPage() {
                   City
                   <span className="text-xs text-muted-foreground ml-2">(Read-only)</span>
                 </Label>
-                <Input 
-                  placeholder="City" 
+                <Input
+                  placeholder="City"
                   value={editForm.city}
                   disabled
                   readOnly
@@ -2859,7 +2895,7 @@ export default function ClientsPage() {
                 <Label>Type Of Account</Label>
                 <Select
                   value={editForm.account_type}
-                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') => 
+                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
                     setEditForm({ ...editForm, account_type: value })
                   }
                 >
@@ -2876,7 +2912,7 @@ export default function ClientsPage() {
                 <Label>Category</Label>
                 <Select
                   value={editForm.category}
-                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') => 
+                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
                     setEditForm({ ...editForm, category: value })
                   }
                 >
@@ -2948,7 +2984,7 @@ export default function ClientsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Void Client</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to void <strong>{clientToDelete?.name}</strong>? 
+              Are you sure you want to void <strong>{clientToDelete?.name}</strong>?
               This will mark the client as voided and remove them from the active client list. The client data will be preserved but hidden from normal operations.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -3011,11 +3047,10 @@ export default function ClientsPage() {
                       .map((agent) => (
                         <div
                           key={agent.id}
-                          className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                            selectedAgentId === agent.id
-                              ? 'border-primary bg-primary/5'
-                              : 'border-border hover:bg-muted/50'
-                          }`}
+                          className={`p-3 border rounded-lg cursor-pointer transition-colors ${selectedAgentId === agent.id
+                            ? 'border-primary bg-primary/5'
+                            : 'border-border hover:bg-muted/50'
+                            }`}
                           onClick={() => setSelectedAgentId(agent.id)}
                         >
                           <div className="flex items-center justify-between">
@@ -3101,7 +3136,7 @@ export default function ClientsPage() {
                 <Button variant="outline" onClick={() => setTransferDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button 
+                <Button
                   onClick={handleTransferClient}
                   disabled={!selectedAgentId || transferring}
                 >
@@ -3159,7 +3194,7 @@ export default function ClientsPage() {
                           </div>
                           <Select
                             value={bulkTransferAssignments[client.id] || ''}
-                            onValueChange={(value) => 
+                            onValueChange={(value) =>
                               setBulkTransferAssignments(prev => ({
                                 ...prev,
                                 [client.id]: value
@@ -3171,15 +3206,15 @@ export default function ClientsPage() {
                             </SelectTrigger>
                             <SelectContent>
                               {agents.map((agent) => (
-                                  <SelectItem key={agent.id} value={agent.id}>
-                                    <div className="flex items-center justify-between w-full">
-                                      <span>{agent.name}</span>
-                                      <span className="text-muted-foreground ml-2">
-                                        ({agent.clientCount} clients)
-                                      </span>
-                                    </div>
-                                  </SelectItem>
-                                ))}
+                                <SelectItem key={agent.id} value={agent.id}>
+                                  <div className="flex items-center justify-between w-full">
+                                    <span>{agent.name}</span>
+                                    <span className="text-muted-foreground ml-2">
+                                      ({agent.clientCount} clients)
+                                    </span>
+                                  </div>
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>
@@ -3194,7 +3229,7 @@ export default function ClientsPage() {
               <Button variant="outline" onClick={() => setBulkTransferDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button 
+              <Button
                 onClick={handleBulkTransfer}
                 disabled={Object.keys(bulkTransferAssignments).length === 0 || bulkTransferring}
               >
@@ -3250,7 +3285,7 @@ export default function ClientsPage() {
                       <h4 className="font-medium">Current Holder</h4>
                       {getCurrentCityHolder(selectedCity) ? (
                         <p className="text-sm text-muted-foreground">
-                          {getCurrentCityHolder(selectedCity)?.name} 
+                          {getCurrentCityHolder(selectedCity)?.name}
                           ({cityClients.length} clients)
                         </p>
                       ) : (
@@ -3263,8 +3298,8 @@ export default function ClientsPage() {
                 {/* Transfer To */}
                 <div className="space-y-2">
                   <Label>Transfer to</Label>
-                  <Select 
-                    value={selectedTransferAgent} 
+                  <Select
+                    value={selectedTransferAgent}
                     onValueChange={setSelectedTransferAgent}
                   >
                     <SelectTrigger>

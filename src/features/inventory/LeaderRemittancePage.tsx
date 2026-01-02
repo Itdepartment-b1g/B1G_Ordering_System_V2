@@ -107,7 +107,6 @@ export default function LeaderRemittancePage() {
         agent_name: item.agent?.full_name || 'Unknown Agent'
       }));
 
-      // If there is no real data yet, populate with demo remittances
       if (!formattedData.length) {
         const now = new Date();
         const today = format(now, 'yyyy-MM-dd');

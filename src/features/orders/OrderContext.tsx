@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -38,6 +38,7 @@ export interface Order {
   signatureUrl?: string;
   paymentMethod?: 'GCASH' | 'BANK_TRANSFER' | 'CASH';
   paymentProofUrl?: string;
+  pricingStrategy?: 'rsp' | 'dsp' | 'special';
 }
 
 interface OrderContextType {
@@ -55,8 +56,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Use the user from AuthContext instead of listening to onAuthStateChange directly
+  // This ensures we only fetch orders AFTER the profile has been fully loaded and the user is "ready"
+  const { user } = useContext(AuthContext) || {};
+
   // Fetch orders from Supabase
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -80,6 +85,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           payment_method,
           payment_proof_url,
           stage,
+          pricing_strategy,
+          created_at,
           agent:profiles!client_orders_agent_id_fkey(full_name),
           client:clients(name, email),
           items:client_order_items(
@@ -215,6 +222,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           signatureUrl: order.signature_url || undefined,
           paymentMethod: order.payment_method || undefined,
           paymentProofUrl: order.payment_proof_url || undefined,
+          pricingStrategy: order.pricing_strategy || undefined,
         };
       });
 
@@ -224,11 +232,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Use the user from AuthContext instead of listening to onAuthStateChange directly
-  // This ensures we only fetch orders AFTER the profile has been fully loaded and the user is "ready"
-  const { user } = useContext(AuthContext) || {};
+  }, []); // Empty deps - fetchOrders doesn't depend on any props/state that change
 
   useEffect(() => {
     // Only fetch orders if we have a user (deferred until after auth)
@@ -250,9 +254,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           table: 'client_orders',
         },
         (payload) => {
-          console.log('📬 Order change detected:', payload.eventType);
+          console.log('📬 Order change detected:', payload.eventType, payload.new || payload.old);
           // Refetch orders when any change occurs
-          fetchOrders();
+          // Use a small delay to ensure all related data (items, etc.) is committed
+          setTimeout(() => {
+            fetchOrders();
+          }, 100);
         }
       )
       .on(
@@ -265,15 +272,26 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         (payload) => {
           console.log('📬 Order item change detected:', payload.eventType);
           // Refetch orders when items change too
-          fetchOrders();
+          setTimeout(() => {
+            fetchOrders();
+          }, 100);
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription to client_orders active');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error');
+        } else {
+          console.log('🔄 Real-time subscription status:', status);
+        }
+      });
 
     return () => {
+      console.log('🔌 Cleaning up real-time subscription');
       supabase.removeChannel(channel);
     };
-  }, [user]); // Depend on user from AuthContext
+  }, [user, fetchOrders]); // Depend on user and fetchOrders
 
   const addOrder = async (order: Order) => {
     try {
@@ -282,7 +300,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       // 1. Fetch client's account_type
       const { data: clientData, error: clientError } = await supabase
         .from('clients')
-        .select('account_type')
+        .select('account_type, company_id')
         .eq('id', order.clientId)
         .single();
 
@@ -292,7 +310,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       }
 
       const clientAccountType = clientData?.account_type || 'Standard Accounts';
-      console.log('👤 Client account type:', clientAccountType);
+      const companyId = clientData?.company_id;
+      console.log('👤 Client account type:', clientAccountType, 'Company ID:', companyId);
+
+      if (!companyId) {
+        throw new Error('Could not determine company_id for the order');
+      }
 
       // 2. Generate unique order number from database function
       const { data: orderNumberData, error: numberError } = await supabase
@@ -310,6 +333,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       const { data: newOrder, error: orderError } = await supabase
         .from('client_orders')
         .insert({
+          company_id: companyId,
           order_number: generatedOrderNumber, // Use database-generated number
           agent_id: order.agentId,
           client_id: order.clientId,
@@ -325,7 +349,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           payment_method: (order as any).paymentMethod || null, // Include payment method if provided
           payment_proof_url: (order as any).paymentProofUrl || null, // Include payment proof URL if provided
           status: 'pending',
-          stage: 'agent_pending' // Set stage explicitly for two-stage approval
+          stage: 'agent_pending', // Set stage explicitly for two-stage approval
+          pricing_strategy: (order as any).pricingStrategy || 'rsp'
         } as any)
         .select('id, order_number')
         .single();
@@ -353,13 +378,15 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             .maybeSingle();
 
           return {
+            company_id: companyId,
             client_order_id: newOrder.id,
             variant_id: item.id,
             quantity: item.quantity,
             unit_price: item.unitPrice,
             selling_price: item.sellingPrice ?? agentInv?.selling_price ?? null,
             dsp_price: item.dspPrice ?? agentInv?.dsp_price ?? null,
-            rsp_price: item.rspPrice ?? agentInv?.rsp_price ?? null
+            rsp_price: item.rspPrice ?? agentInv?.rsp_price ?? null,
+            total_price: item.total // Missing field in previous logic
           };
         })
       );
@@ -424,6 +451,40 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       }
 
       console.log('✅ All agent inventory updates complete');
+
+      // Optimistically add the order to local state immediately
+      // This ensures the order shows up right away without waiting for real-time subscription
+      const optimisticOrder: Order = {
+        id: newOrder.id,
+        orderNumber: generatedOrderNumber,
+        agentId: order.agentId,
+        agentName: order.agentName || 'You',
+        clientId: order.clientId,
+        clientName: order.clientName,
+        clientAccountType: clientAccountType,
+        date: order.date,
+        items: order.items,
+        subtotal: order.subtotal,
+        tax: order.tax,
+        discount: order.discount,
+        total: order.total,
+        notes: order.notes || '',
+        status: 'pending',
+        stage: 'agent_pending',
+        signatureUrl: (order as any).signatureUrl,
+        paymentMethod: (order as any).paymentMethod,
+        paymentProofUrl: (order as any).paymentProofUrl,
+        pricingStrategy: (order as any).pricingStrategy,
+      };
+
+      // Add to local state immediately
+      setOrders(prev => [optimisticOrder, ...prev]);
+
+      // Also trigger a refetch to ensure we have the complete order data with all relations
+      // This will replace the optimistic order with the full data from the database
+      setTimeout(() => {
+        fetchOrders();
+      }, 500);
 
       // Return the generated order number so the UI can show it
       return newOrder.order_number;
