@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,12 +9,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
-import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { useMyClients, useAgentCities, Client } from './hooks';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,38 +27,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-interface Client {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  company: string;
-  city?: string;
-  totalOrders: number;
-  lastOrder: string;
-  photo?: string; // Base64 image data
-  photoTimestamp?: string; // When the photo was taken
-  address?: string;
-  location?: {
-    latitude: number;
-    longitude: number;
-    accuracy: number;
-    capturedAt: string;
-  };
-  account_type?: 'Key Accounts' | 'Standard Accounts';
-  category?: 'Permanently Closed' | 'Renovating' | 'Open';
-  approvalStatus: 'pending' | 'approved' | 'rejected';
-  approvalRequestedAt?: string;
-  approvedAt?: string;
-  approvalNotes?: string;
-  approvedBy?: string | null;
-  status?: 'active' | 'inactive';
-}
+
 
 export default function MyClientsPage() {
   const { user } = useAuth();
-  const [clients, setClients] = useState<Client[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: clients = [], isLoading: loading } = useMyClients();
+  const { data: agentCities = [] } = useAgentCities();
   const [searchQuery, setSearchQuery] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
@@ -71,7 +48,7 @@ export default function MyClientsPage() {
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
     has_forge: false
   });
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -85,8 +62,7 @@ export default function MyClientsPage() {
   } | null>(null);
   const [isPrewarmingLocation, setIsPrewarmingLocation] = useState(false);
   const [prewarmPosition, setPrewarmPosition] = useState<GeolocationPosition | null>(null);
-  const [agentCities, setAgentCities] = useState<string[]>([]);
-  
+
   // Edit Dialog States
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -99,7 +75,7 @@ export default function MyClientsPage() {
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
   });
-  
+
   // Edit Photo States
   const [editPhoto, setEditPhoto] = useState<string | null>(null);
   const [isEditCameraOpen, setIsEditCameraOpen] = useState(false);
@@ -107,189 +83,20 @@ export default function MyClientsPage() {
   const [isEditCameraLoading, setIsEditCameraLoading] = useState(false);
   const editVideoRef = useRef<HTMLVideoElement>(null);
   const editFileInputRef = useRef<HTMLInputElement>(null);
-  
+
   // Delete Confirmation States
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
-  
+
   // Update Confirmation States
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
-  
+
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewingClient, setViewingClient] = useState<Client | null>(null);
-  
+
   const { toast } = useToast();
 
-  // Fetch clients from Supabase
-  useEffect(() => {
-    fetchClients();
-    fetchAgentCities();
-
-    // Real-time subscriptions: refresh when clients or orders change
-    const channels = [
-      subscribeToTable('clients', () => fetchClients()),
-      subscribeToTable('client_orders', () => fetchClients()),
-    ];
-
-    return () => channels.forEach(unsubscribe);
-  }, [user?.id]);
-
-  // Fetch agent's cities from profile
-  const fetchAgentCities = async () => {
-    if (!user?.id) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('city')
-        .eq('id', user.id)
-        .single();
-
-      if (error) throw error;
-
-      // Parse comma-separated cities
-      const cities = data?.city 
-        ? data.city.split(',').map(c => c.trim()).filter(c => c.length > 0)
-        : [];
-      
-      setAgentCities(cities);
-    } catch (error) {
-      console.error('Error fetching agent cities:', error);
-      // Don't show error toast as this is not critical for initial load
-    }
-  };
-
-  // Helper function to convert photo URL to signed URL if needed
-  const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<string | null> => {
-    if (!photoUrl) return null;
-    
-    // If it's already a signed URL, return as-is
-    if (photoUrl.includes('?token=')) {
-      return photoUrl;
-    }
-    
-    // If it's a public URL, extract the path and generate signed URL
-    // Public URL format: https://[project].supabase.co/storage/v1/object/public/client-photos/[path]
-    const publicUrlMatch = photoUrl.match(/\/storage\/v1\/object\/public\/client-photos\/(.+)$/);
-    if (publicUrlMatch) {
-      const filePath = publicUrlMatch[1];
-      const { data, error } = await supabase.storage
-        .from('client-photos')
-        .createSignedUrl(filePath, 3600); // 1 hour expiry
-      
-      if (!error && data?.signedUrl) {
-        return data.signedUrl;
-      }
-    }
-    
-    // Try to extract path from any URL format and generate signed URL
-    try {
-      const url = new URL(photoUrl);
-      const pathParts = url.pathname.split('/client-photos/');
-      if (pathParts.length > 1) {
-        const filePath = pathParts[1];
-        const { data, error } = await supabase.storage
-          .from('client-photos')
-          .createSignedUrl(filePath, 3600);
-        
-        if (!error && data?.signedUrl) {
-          return data.signedUrl;
-        }
-      }
-    } catch (e) {
-      // URL parsing failed, return original
-    }
-    
-    // If all else fails, return original URL
-    return photoUrl;
-  };
-
-  const fetchClients = async () => {
-    if (!user?.id) return;
-
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('agent_id', user.id)
-        .eq('status', 'active')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      // Fetch per-client stats from view for this agent
-      // Handle gracefully if view doesn't exist or has RLS issues
-      const { data: statsView, error: statsError } = await supabase
-        .from('client_order_stats')
-        .select('client_id, agent_id, total_orders, last_order_date')
-        .eq('agent_id', user.id);
-      
-      // Log but don't throw - stats are optional
-      if (statsError) {
-        console.warn('Could not fetch client order stats:', statsError.message);
-      }
-
-      const statsByClient = (statsView || []).reduce((acc: any, r: any) => {
-        acc[r.client_id] = {
-          totalOrders: Number(r.total_orders) || 0,
-          lastOrder: r.last_order_date || null,
-        };
-        return acc;
-      }, {} as Record<string, { totalOrders: number; lastOrder: string | null }>);
-
-      // Convert photo URLs to signed URLs
-      const clientsWithSignedPhotos = await Promise.all(
-        (data || []).map(async (c: any) => {
-          const signedPhotoUrl = await getSignedPhotoUrl(c.photo_url);
-          return {
-            ...c,
-            photo_url: signedPhotoUrl
-          };
-        })
-      );
-
-      const formattedClients: Client[] = clientsWithSignedPhotos.map((c: any) => ({
-        id: c.id,
-        name: c.name,
-        email: c.email || '',
-        phone: c.phone || '',
-        company: c.company || '',
-        city: c.city || '',
-        account_type: c.account_type || 'Standard Accounts',
-        category: c.category || 'Open',
-        address: c.address || '',
-        totalOrders: statsByClient[c.id]?.totalOrders ?? c.total_orders ?? 0,
-        lastOrder: statsByClient[c.id]?.lastOrder ?? c.last_order_date ?? new Date().toISOString().split('T')[0],
-        photo: c.photo_url,
-        photoTimestamp: c.photo_timestamp || c.created_at,
-        location: c.location_latitude && c.location_longitude ? {
-          latitude: c.location_latitude,
-          longitude: c.location_longitude,
-          accuracy: c.location_accuracy || 0,
-          capturedAt: c.location_captured_at || c.created_at
-        } : undefined,
-        approvalStatus: (c.approval_status || 'approved') as Client['approvalStatus'],
-        approvalRequestedAt: c.approval_requested_at || undefined,
-        approvedAt: c.approved_at || undefined,
-        approvalNotes: c.approval_notes || undefined,
-        approvedBy: c.approved_by || null,
-        status: c.status || undefined
-      }));
-
-      setClients(formattedClients);
-    } catch (error) {
-      console.error('Error fetching clients:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load clients',
-        variant: 'destructive'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const filteredClients = clients.filter(client =>
     client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -297,16 +104,16 @@ export default function MyClientsPage() {
     client.company.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
-  switch (status) {
-    case 'approved':
-      return { label: 'Approved', className: 'bg-green-50 text-green-700 border-green-200' };
-    case 'rejected':
-      return { label: 'Rejected', className: 'bg-red-50 text-red-700 border-red-200' };
-    default:
-      return { label: 'Pending Approval', className: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
-  }
-};
+  const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
+    switch (status) {
+      case 'approved':
+        return { label: 'Approved', className: 'bg-green-50 text-green-700 border-green-200' };
+      case 'rejected':
+        return { label: 'Rejected', className: 'bg-red-50 text-red-700 border-red-200' };
+      default:
+        return { label: 'Pending Approval', className: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
+    }
+  };
 
   const handleOpenView = (client: Client) => {
     setViewingClient(client);
@@ -318,7 +125,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     // Strip +63 prefix from phone for editing
     const phoneNumber = client.phone || '';
     const phoneWithoutPrefix = phoneNumber.startsWith('+63 ') ? phoneNumber.slice(4) : phoneNumber;
-    
+
     setEditForm({
       photo: client.photo || '',
       name: client.name,
@@ -334,22 +141,22 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
   const handleSaveEdit = () => {
     if (!editingClient) return;
-    
+
     if (!editForm.name.trim() || !editForm.company.trim() || !editForm.email.trim() || !editForm.phone.trim()) {
       toast({ title: 'Error', description: 'All fields except photo are required', variant: 'destructive' });
       return;
     }
-    
+
     setUpdateConfirmOpen(true);
   };
 
   const handleConfirmUpdate = async () => {
     if (!editingClient) return;
-    
+
     try {
       // Handle photo upload if there's a new photo
       let photoUrl = editForm.photo;
-      
+
       if (editPhoto && editPhoto !== editingClient.photo) {
         // Convert base64 to blob
         const base64Data = editPhoto.split(',')[1];
@@ -369,11 +176,11 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
             .replace(/_+/g, '_')
             .replace(/^_|_$/g, '');
         };
-        
+
         const clientName = sanitizeName(editForm.name || 'client');
         const timestamp = Date.now();
         const fileName = `${user?.id}/${clientName}_${timestamp}.jpg`;
-        
+
         // Upload to Supabase Storage
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('client-photos')
@@ -391,11 +198,11 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
         const { data: urlData, error: urlError } = await supabase.storage
           .from('client-photos')
           .createSignedUrl(fileName, 31536000); // 1 year expiry
-        
+
         if (urlError || !urlData?.signedUrl) {
           throw new Error(`Failed to generate signed URL: ${urlError?.message || 'Unknown error'}`);
         }
-        
+
         photoUrl = urlData.signedUrl;
       } else if (editPhoto === null) {
         // Photo was removed
@@ -418,17 +225,17 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
       if (error) throw error;
 
-      toast({ 
-        title: 'Success', 
-        description: `${editForm.name} has been updated successfully` 
+      toast({
+        title: 'Success',
+        description: `${editForm.name} has been updated successfully`
       });
-      
+
       setUpdateConfirmOpen(false);
       setEditDialogOpen(false);
       setEditingClient(null);
       setEditPhoto(null);
-      
-      // Real-time will handle updating the list
+
+      queryClient.invalidateQueries({ queryKey: ['my_clients', user?.id] });
     } catch (error) {
       console.error('Error updating client:', error);
       toast({
@@ -446,7 +253,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
   const handleConfirmDelete = async () => {
     if (!clientToDelete) return;
-    
+
     try {
       const { error } = await supabase
         .from('clients')
@@ -455,15 +262,15 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
       if (error) throw error;
 
-      toast({ 
-        title: 'Success', 
-        description: `${clientToDelete.name} has been removed from your client list` 
+      toast({
+        title: 'Success',
+        description: `${clientToDelete.name} has been removed from your client list`
       });
-      
+
       setDeleteDialogOpen(false);
       setClientToDelete(null);
-      
-      // Real-time will handle updating the list
+
+      queryClient.invalidateQueries({ queryKey: ['my_clients', user?.id] });
     } catch (error) {
       console.error('Error deleting client:', error);
       toast({
@@ -478,22 +285,22 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     const file = event.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
-        toast({ 
-          title: 'Error', 
+        toast({
+          title: 'Error',
           description: 'Image size should be less than 5MB',
           variant: 'destructive'
         });
         return;
       }
-      
+
       const reader = new FileReader();
       reader.onloadend = async () => {
         setNewClientPhoto(reader.result as string);
-        
+
         // Use pre-warmed location if available, otherwise get fresh with fallback
         try {
           let position: GeolocationPosition;
-          
+
           if (prewarmPosition) {
             console.log('Using pre-warmed location for upload');
             position = prewarmPosition;
@@ -505,14 +312,14 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
             // Use fallback method that tries high accuracy first, then lower accuracy
             position = await getLocationWithFallback();
           }
-          
+
           await processLocationAndAddress(position);
         } catch (error: any) {
           // Handle different geolocation error types gracefully
           const errorCode = error?.code;
           let errorMessage = 'Could not get location. Please enter address manually.';
           let actionButton: { label: string; onClick: () => void } | null = null;
-          
+
           // Create a retry function that only retries location (not photo capture)
           const retryLocationOnly = async () => {
             toast({
@@ -529,7 +336,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
             } catch (retryError: any) {
               const retryErrorCode = retryError?.code;
               let retryErrorMessage = 'Location still unavailable. Please enter address manually.';
-              
+
               if (retryErrorCode === 1) {
                 retryErrorMessage = 'Location permission still denied. Please enable location access in browser settings.';
               } else if (retryErrorCode === 2) {
@@ -537,7 +344,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
               } else if (retryErrorCode === 3) {
                 retryErrorMessage = 'Location request timed out again. Please enter address manually.';
               }
-              
+
               toast({
                 title: 'Still Unavailable',
                 description: retryErrorMessage,
@@ -565,12 +372,12 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
               onClick: retryLocationOnly
             };
           }
-          
+
           // Only log unexpected errors, suppress common ones
           if (errorCode !== 1 && errorCode !== 2) {
             console.warn('📸 Location error:', error?.message || error);
           }
-          
+
           toast({
             title: 'Location Unavailable',
             description: errorMessage,
@@ -595,26 +402,26 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     try {
       // Try with facingMode first, fallback to basic video if that fails
       let mediaStream: MediaStream | null = null;
-      
+
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
             facingMode: 'environment',
             width: { ideal: 1280 },
             height: { ideal: 720 }
-          } 
+          }
         });
       } catch (err) {
         // Fallback to any available camera
-        mediaStream = await navigator.mediaDevices.getUserMedia({ 
-          video: true 
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true
         });
       }
-      
+
       if (mediaStream) {
         setStream(mediaStream);
         setIsCameraOpen(true);
-        
+
         // Wait for next tick to ensure video element is rendered
         setTimeout(() => {
           if (videoRef.current) {
@@ -723,12 +530,12 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
       } catch (error: any) {
         console.log(`❌ Strategy ${i + 1} failed:`, error?.code, error?.message);
         lastError = error;
-        
+
         // If it's a permission error (code 1), don't try other strategies
         if (error?.code === 1) {
           throw error;
         }
-        
+
         // Continue to next strategy if this one failed
         continue;
       }
@@ -769,26 +576,26 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
   // Get accuracy badge info based on meters
   const getAccuracyBadge = (accuracy: number) => {
     if (accuracy <= 50) {
-      return { 
-        label: 'Excellent', 
+      return {
+        label: 'Excellent',
         color: 'bg-green-50 text-green-700 border-green-200',
         icon: '🎯'
       };
     } else if (accuracy <= 100) {
-      return { 
-        label: 'Good', 
+      return {
+        label: 'Good',
         color: 'bg-blue-50 text-blue-700 border-blue-200',
         icon: '✓'
       };
     } else if (accuracy <= 500) {
-      return { 
-        label: 'Fair', 
+      return {
+        label: 'Fair',
         color: 'bg-yellow-50 text-yellow-700 border-yellow-200',
         icon: '⚠'
       };
     } else {
-      return { 
-        label: 'Poor', 
+      return {
+        label: 'Poor',
         color: 'bg-red-50 text-red-700 border-red-200',
         icon: '⚠️'
       };
@@ -798,19 +605,19 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
   const reverseGeocode = async (latitude: number, longitude: number): Promise<{ address: string; city: string }> => {
     try {
       console.log('🌍 Starting reverse geocoding for:', { latitude, longitude });
-      
+
       // Add a small delay to respect Nominatim rate limiting (1 request per second)
       // Store last request time to ensure we don't exceed rate limit
       const now = Date.now();
       const lastRequestTime = (window as any).__lastNominatimRequest || 0;
       const timeSinceLastRequest = now - lastRequestTime;
-      
+
       if (timeSinceLastRequest < 1000) {
         const waitTime = 1000 - timeSinceLastRequest;
         console.log(`⏳ Rate limiting: waiting ${waitTime}ms before next request`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
-      
+
       const response = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
         {
@@ -820,23 +627,23 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
           }
         }
       );
-      
+
       // Update last request time
       (window as any).__lastNominatimRequest = Date.now();
-      
+
       if (!response.ok) {
         console.error('❌ Reverse geocoding API error:', response.status, response.statusText);
         throw new Error(`Geocoding API returned ${response.status}: ${response.statusText}`);
       }
-      
+
       const data = await response.json();
       console.log('🌍 Reverse geocoding response:', data);
-      
+
       if (data && data.address) {
         // Extract city from various possible fields
         const addr = data.address;
         const city = addr.city || addr.town || addr.village || addr.municipality || addr.county || '';
-        
+
         // Construct full address with better formatting
         const addressParts = [
           addr.house_number,
@@ -846,12 +653,12 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
           addr.state || addr.region,
           addr.country
         ].filter(Boolean);
-        
+
         const fullAddress = addressParts.join(', ');
         const extractedCity = city;
-        
+
         console.log('✅ Extracted address:', { fullAddress, extractedCity });
-        
+
         return {
           address: fullAddress || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
           city: extractedCity
@@ -862,13 +669,13 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
         // Try to extract city from display_name
         const displayParts = data.display_name.split(',');
         const possibleCity = displayParts.length > 1 ? displayParts[displayParts.length - 2]?.trim() : '';
-        
+
         return {
           address: data.display_name,
           city: possibleCity
         };
       }
-      
+
       console.warn('⚠️ No address data found in response, using coordinates');
       return {
         address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
@@ -881,7 +688,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
         stack: error?.stack,
         name: error?.name
       });
-      
+
       // Return coordinates as fallback
       return {
         address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
@@ -892,42 +699,42 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
   const processLocationAndAddress = async (position: GeolocationPosition) => {
     const { latitude, longitude, accuracy } = position.coords;
-    
+
     console.log('📍 Processing location:', { latitude, longitude, accuracy });
-    
+
     try {
       // Get address and city from coordinates
       const { address, city } = await reverseGeocode(latitude, longitude);
-      
+
       console.log('📍 Reverse geocoded result:', { address, city });
-      
+
       // Validate that we got meaningful data
       if (!address || address === `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`) {
         console.warn('⚠️ Reverse geocoding returned coordinates only, address extraction may have failed');
       }
-      
+
       if (!city) {
         console.warn('⚠️ City not found in reverse geocoding response');
       }
-      
+
       // Auto-fill the address and city fields
       setFormData(prev => {
-        const updated = { 
-          ...prev, 
+        const updated = {
+          ...prev,
           address: address || prev.address, // Keep existing if new is empty
           city: city || prev.city // Keep existing if new is empty
         };
-        console.log('📍 Updating form data with:', { 
-          address: updated.address, 
+        console.log('📍 Updating form data with:', {
+          address: updated.address,
           city: updated.city,
           previousAddress: prev.address,
           previousCity: prev.city
         });
         return updated;
       });
-      
+
       setCapturedLocation({ latitude, longitude, address: address || '', accuracy });
-      
+
       const badge = getAccuracyBadge(accuracy);
       const cityStatus = city ? `City: ${city}` : 'City: Not found';
       toast({
@@ -950,7 +757,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
       canvas.width = videoRef.current.videoWidth;
       canvas.height = videoRef.current.videoHeight;
       const ctx = canvas.getContext('2d');
-      
+
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0);
         const imageData = canvas.toDataURL('image/jpeg', 0.8);
@@ -961,7 +768,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
         // This MUST complete before the function returns to ensure form is updated
         try {
           let position: GeolocationPosition;
-          
+
           if (prewarmPosition) {
             console.log('📸 Using pre-warmed location for photo');
             position = prewarmPosition;
@@ -974,7 +781,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
             // Use fallback method that tries high accuracy first, then lower accuracy
             position = await getLocationWithFallback();
           }
-          
+
           console.log('📸 Location obtained, processing address...');
           // Await this to ensure form is updated before function completes
           await processLocationAndAddress(position);
@@ -983,7 +790,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
           // Handle different geolocation error types gracefully
           const errorCode = error?.code;
           let errorMessage = 'Could not get location. Please enter address manually.';
-          
+
           if (errorCode === 1) {
             errorMessage = 'Location permission denied. Please enable location access or enter address manually.';
           } else if (errorCode === 2) {
@@ -991,7 +798,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
           } else if (errorCode === 3) {
             errorMessage = 'Location request timed out. Please try again or enter address manually.';
           }
-          
+
           // Only log unexpected errors, suppress common ones
           if (errorCode !== 1 && errorCode !== 2) {
             console.warn('📸 Location error:', error?.message || error);
@@ -1026,7 +833,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
       // Handle different geolocation error types gracefully
       const errorCode = error?.code;
       let errorMessage = 'Still unable to get location. Please enter address manually.';
-      
+
       if (errorCode === 1) {
         errorMessage = 'Location permission denied. Please enable location access in your browser settings.';
       } else if (errorCode === 2) {
@@ -1034,7 +841,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
       } else if (errorCode === 3) {
         errorMessage = 'Location request timed out. Please try again.';
       }
-      
+
       // Only log unexpected errors, suppress common ones
       if (errorCode !== 1 && errorCode !== 2) {
         console.warn('Retry location error:', error?.message || error);
@@ -1068,25 +875,25 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     setIsEditCameraLoading(true);
     try {
       let mediaStream: MediaStream | null = null;
-      
+
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
             facingMode: 'environment',
             width: { ideal: 1280 },
             height: { ideal: 720 }
-          } 
+          }
         });
       } catch (err) {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ 
-          video: true 
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true
         });
       }
-      
+
       if (mediaStream) {
         setEditStream(mediaStream);
         setIsEditCameraOpen(true);
-        
+
         setTimeout(() => {
           if (editVideoRef.current) {
             editVideoRef.current.srcObject = mediaStream;
@@ -1118,7 +925,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
       canvas.width = editVideoRef.current.videoWidth;
       canvas.height = editVideoRef.current.videoHeight;
       const ctx = canvas.getContext('2d');
-      
+
       if (ctx) {
         ctx.drawImage(editVideoRef.current, 0, 0);
         const imageData = canvas.toDataURL('image/jpeg', 0.8);
@@ -1151,14 +958,14 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     const file = event.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
-        toast({ 
-          title: 'Error', 
+        toast({
+          title: 'Error',
           description: 'Image size should be less than 5MB',
           variant: 'destructive'
         });
         return;
       }
-      
+
       const reader = new FileReader();
       reader.onloadend = () => {
         setEditPhoto(reader.result as string);
@@ -1201,13 +1008,13 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
   const formatPhilippinePhone = (value: string): string => {
     // Remove all non-digit characters
     const digits = value.replace(/\D/g, '');
-    
+
     // If starts with 63, remove it (we'll add +63 prefix separately)
     let phoneDigits = digits.startsWith('63') ? digits.slice(2) : digits;
-    
+
     // Limit to 10 digits (after country code)
     phoneDigits = phoneDigits.slice(0, 10);
-    
+
     // Format: 9XX-XXX-XXXX
     if (phoneDigits.length <= 3) {
       return phoneDigits;
@@ -1293,7 +1100,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     try {
       // Upload photo to Supabase Storage
       let photoUrl = null;
-      
+
       if (newClientPhoto) {
         // Convert base64 to blob
         const base64Data = newClientPhoto.split(',')[1];
@@ -1314,13 +1121,13 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
             .replace(/_+/g, '_')          // Replace multiple underscores with single
             .replace(/^_|_$/g, '');       // Remove leading/trailing underscores
         };
-        
+
         const clientName = sanitizeName(formData.name || 'client');
         const clientCompany = sanitizeName(formData.company || 'company');
         const timestamp = Date.now();
-        
+
         const fileName = `${user.id}/${clientName}_${clientCompany}_${timestamp}.jpg`;
-        
+
         // Upload to Supabase Storage
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('client-photos')
@@ -1338,11 +1145,11 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
         const { data: urlData, error: urlError } = await supabase.storage
           .from('client-photos')
           .createSignedUrl(fileName, 31536000); // 1 year expiry
-        
+
         if (urlError || !urlData?.signedUrl) {
           throw new Error(`Failed to generate signed URL: ${urlError?.message || 'Unknown error'}`);
         }
-        
+
         photoUrl = urlData.signedUrl;
       }
 
@@ -1390,19 +1197,44 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
       if (error) throw error;
 
-      toast({ 
-        title: approvalStatus === 'approved' ? 'Client Added' : 'Client Pending Approval', 
+      toast({
+        title: approvalStatus === 'approved' ? 'Client Added' : 'Client Pending Approval',
         description: approvalStatus === 'approved'
-          ? (capturedLocation 
-              ? 'Client added successfully with photo and location verification.' 
-              : 'Client added successfully with photo verification.')
+          ? (capturedLocation
+            ? 'Client added successfully with photo and location verification.'
+            : 'Client added successfully with photo verification.')
           : 'Client added and sent for admin approval. You will not be able to create orders for this client until approval is granted.'
       });
-      
+
+      // Notify Leader if approval is required
+      if (approvalStatus === 'pending' && user?.id && user?.company_id) {
+        try {
+          const { data: leaderRow } = await supabase
+            .from('leader_teams')
+            .select('leader_id')
+            .eq('agent_id', user.id)
+            .maybeSingle();
+
+          if (leaderRow?.leader_id) {
+            await sendNotification({
+              userId: leaderRow.leader_id,
+              companyId: user.company_id,
+              type: 'new_client',
+              title: 'Client Pending Approval',
+              message: `${user.full_name} has added a new client "${formData.name}" that requires approval (outside assigned cities).`,
+              referenceType: 'client',
+              referenceId: data.id
+            });
+          }
+        } catch (err) {
+          console.error('Failed to notify leader of new client approval:', err);
+        }
+      }
+
       resetForm();
       setIsDialogOpen(false);
-      
-      // Real-time will handle updating the list
+
+      queryClient.invalidateQueries({ queryKey: ['my_clients', user?.id] });
     } catch (error: any) {
       console.error('Error adding client:', error);
       const errorMessage = error?.message || error?.error_description || 'Failed to add client';
@@ -1414,10 +1246,13 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     }
   };
 
-  if (loading) {
+  if (loading && clients.length === 0) {
     return (
       <div className="p-4 md:p-8 flex items-center justify-center min-h-[400px]">
-        <div className="text-muted-foreground">Loading clients...</div>
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <div className="text-muted-foreground">Loading clients...</div>
+        </div>
       </div>
     );
   }
@@ -1456,7 +1291,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
               <div className="space-y-2">
                 <Label className="text-sm font-semibold">Client Photo / Proof of Identity *</Label>
                 <p className="text-xs text-muted-foreground">Required for verification - Take a photo or upload an existing one</p>
-                
+
                 {!newClientPhoto && !isCameraOpen && (
                   <div className="flex gap-2">
                     <Button
@@ -1562,25 +1397,25 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
               {/* Client Information Fields */}
               <div className="space-y-2">
                 <Label>Client Name *</Label>
-                <Input 
-                  placeholder="Enter client name" 
+                <Input
+                  placeholder="Enter client name"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Company</Label>
-                <Input 
-                  placeholder="Company name" 
+                <Input
+                  placeholder="Company name"
                   value={formData.company}
                   onChange={(e) => setFormData({ ...formData, company: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Email *</Label>
-                <Input 
-                  type="email" 
-                  placeholder="client@company.com" 
+                <Input
+                  type="email"
+                  placeholder="client@company.com"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 />
@@ -1589,18 +1424,18 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                 <Label>Phone Number</Label>
                 <div className="flex gap-2">
                   <div className="w-16">
-                <Input 
+                    <Input
                       value="+63"
                       disabled
                       className="bg-muted text-center font-semibold"
                     />
                   </div>
-                  <Input 
-                    placeholder="9XX-XXX-XXXX" 
-                  value={formData.phone}
+                  <Input
+                    placeholder="9XX-XXX-XXXX"
+                    value={formData.phone}
                     onChange={(e) => handlePhoneChange(e.target.value, 'add')}
                     maxLength={12}
-                />
+                  />
                 </div>
                 <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
               </div>
@@ -1614,8 +1449,8 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                     </span>
                   )}
                 </Label>
-                <Input 
-                  placeholder="City will be auto-filled when location is captured" 
+                <Input
+                  placeholder="City will be auto-filled when location is captured"
                   value={formData.city}
                   disabled
                   readOnly
@@ -1648,8 +1483,8 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                     </Badge>
                   )}
                   {capturedLocation && (
-                    <Badge 
-                      variant="outline" 
+                    <Badge
+                      variant="outline"
                       className={`text-xs ${getAccuracyBadge(capturedLocation.accuracy).color}`}
                     >
                       <MapPin className="h-3 w-3 mr-1" />
@@ -1658,14 +1493,14 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                   )}
                 </Label>
                 <div className="flex gap-2">
-                  <Input 
-                    placeholder={capturedLocation ? "Auto-filled from location" : "Address will be auto-filled when location is captured"} 
+                  <Input
+                    placeholder={capturedLocation ? "Auto-filled from location" : "Address will be auto-filled when location is captured"}
                     value={formData.address}
                     disabled
                     readOnly
                     className={`bg-muted cursor-not-allowed ${capturedLocation ? (
-                      capturedLocation.accuracy <= 100 ? "border-green-300" : 
-                      capturedLocation.accuracy <= 500 ? "border-yellow-300" : "border-red-300"
+                      capturedLocation.accuracy <= 100 ? "border-green-300" :
+                        capturedLocation.accuracy <= 500 ? "border-yellow-300" : "border-red-300"
                     ) : ""}`}
                   />
                   {capturedLocation && capturedLocation.accuracy > 100 && (
@@ -1696,7 +1531,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                 <Label>Type Of Account</Label>
                 <Select
                   value={formData.account_type}
-                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') => 
+                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
                     setFormData({ ...formData, account_type: value })
                   }
                 >
@@ -1713,7 +1548,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                 <Label>Category</Label>
                 <Select
                   value={formData.category}
-                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') => 
+                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
                     setFormData({ ...formData, category: value })
                   }
                 >
@@ -1727,7 +1562,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                   </SelectContent>
                 </Select>
               </div>
-              
+
               {/* Has Forge Field */}
               <div className="space-y-3">
                 <Label>Has Forge?</Label>
@@ -1848,35 +1683,35 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
 
           {/* Desktop/Tablet: table */}
           <div className="hidden md:block w-full overflow-x-auto">
-          <Table className="min-w-[820px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="text-center">Photo</TableHead>
-                <TableHead className="text-center">Name</TableHead>
-                <TableHead className="text-center">Company</TableHead>
-                <TableHead className="text-center">Email</TableHead>
-                <TableHead className="text-center">Phone</TableHead>
-                <TableHead className="text-center">Total Orders</TableHead>
-                <TableHead className="text-center">Last Order</TableHead>
-                <TableHead className="text-center">Approval</TableHead>
-                <TableHead className="text-center">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredClients.map((client) => (
-                <TableRow key={client.id}>
-                  <TableCell className="text-center">
-                    {client.photo ? (
-                      <div className="relative group">
-                        <img 
-                          src={client.photo} 
-                          alt={client.name}
-                          className="w-10 h-10 rounded-full object-cover border-2 border-primary cursor-pointer"
-                          title="Click to view full size"
-                          onClick={() => {
-                            const newWindow = window.open();
-                            if (newWindow) {
-                              newWindow.document.write(`
+            <Table className="min-w-[820px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-center">Photo</TableHead>
+                  <TableHead className="text-center">Name</TableHead>
+                  <TableHead className="text-center">Company</TableHead>
+                  <TableHead className="text-center">Email</TableHead>
+                  <TableHead className="text-center">Phone</TableHead>
+                  <TableHead className="text-center">Total Orders</TableHead>
+                  <TableHead className="text-center">Last Order</TableHead>
+                  <TableHead className="text-center">Approval</TableHead>
+                  <TableHead className="text-center">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredClients.map((client) => (
+                  <TableRow key={client.id}>
+                    <TableCell className="text-center">
+                      {client.photo ? (
+                        <div className="relative group">
+                          <img
+                            src={client.photo}
+                            alt={client.name}
+                            className="w-10 h-10 rounded-full object-cover border-2 border-primary cursor-pointer"
+                            title="Click to view full size"
+                            onClick={() => {
+                              const newWindow = window.open();
+                              if (newWindow) {
+                                newWindow.document.write(`
                                 <html>
                                   <head><title>${client.name} - Photo</title></head>
                                   <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#000;">
@@ -1887,45 +1722,45 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                                   </body>
                                 </html>
                               `);
-                            }
-                          }}
-                        />
-                        <Camera className="w-4 h-4 absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-0.5" />
+                              }
+                            }}
+                          />
+                          <Camera className="w-4 h-4 absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-0.5" />
+                        </div>
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                          <Building className="w-5 h-5 text-muted-foreground" />
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-medium text-center">{client.name}</TableCell>
+                    <TableCell className="text-center">{client.company}</TableCell>
+                    <TableCell className="text-center">{client.email}</TableCell>
+                    <TableCell className="text-center">{client.phone}</TableCell>
+                    <TableCell className="text-center">{client.totalOrders}</TableCell>
+                    <TableCell className="text-center">{new Date(client.lastOrder).toLocaleDateString()}</TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approvalStatus).className}`}>
+                        {getApprovalStatusBadge(client.approvalStatus).label}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex justify-center gap-2">
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenView(client)} title="View Details">
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenEdit(client)} title="Edit">
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenDelete(client)} title="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
-                        <Building className="w-5 h-5 text-muted-foreground" />
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="font-medium text-center">{client.name}</TableCell>
-                  <TableCell className="text-center">{client.company}</TableCell>
-                  <TableCell className="text-center">{client.email}</TableCell>
-                  <TableCell className="text-center">{client.phone}</TableCell>
-                  <TableCell className="text-center">{client.totalOrders}</TableCell>
-                  <TableCell className="text-center">{new Date(client.lastOrder).toLocaleDateString()}</TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approvalStatus).className}`}>
-                      {getApprovalStatusBadge(client.approvalStatus).label}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <div className="flex justify-center gap-2">
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenView(client)} title="View Details">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenEdit(client)} title="Edit">
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenDelete(client)} title="Delete">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         </CardContent>
       </Card>
@@ -1942,8 +1777,8 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
               {viewingClient.photo && (
                 <div className="flex justify-center">
                   <div className="relative">
-                    <img 
-                      src={viewingClient.photo} 
+                    <img
+                      src={viewingClient.photo}
                       alt={viewingClient.name}
                       className="w-48 h-48 rounded-lg object-cover border-4 border-primary shadow-lg"
                     />
@@ -2034,8 +1869,8 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                     </div>
                     <div>
                       <span className="text-muted-foreground">Accuracy:</span>
-                      <Badge 
-                        variant="outline" 
+                      <Badge
+                        variant="outline"
                         className={`${getAccuracyBadge(viewingClient.location.accuracy).color}`}
                       >
                         {getAccuracyBadge(viewingClient.location.accuracy).icon} ±{Math.round(viewingClient.location.accuracy)}m ({getAccuracyBadge(viewingClient.location.accuracy).label})
@@ -2047,7 +1882,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                     </div>
                   </div>
                   <div className="pt-2">
-                    <a 
+                    <a
                       href={`https://www.google.com/maps?q=${viewingClient.location.latitude},${viewingClient.location.longitude}`}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -2096,7 +1931,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
               <div className="space-y-2">
                 <Label className="text-sm font-semibold">Client Photo</Label>
                 <p className="text-xs text-muted-foreground">Update, replace, or remove the client photo</p>
-                
+
                 {/* Current Photo Display */}
                 {editPhoto && !isEditCameraOpen && (
                   <div className="relative">
@@ -2230,25 +2065,25 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
               </div>
               <div className="space-y-2">
                 <Label>Client Name</Label>
-                <Input 
-                  placeholder="Enter client name" 
+                <Input
+                  placeholder="Enter client name"
                   value={editForm.name}
                   onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Company</Label>
-                <Input 
-                  placeholder="Company name" 
+                <Input
+                  placeholder="Company name"
                   value={editForm.company}
                   onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Email</Label>
-                <Input 
-                  type="email" 
-                  placeholder="client@company.com" 
+                <Input
+                  type="email"
+                  placeholder="client@company.com"
                   value={editForm.email}
                   onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                 />
@@ -2257,18 +2092,18 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                 <Label>Phone Number</Label>
                 <div className="flex gap-2">
                   <div className="w-16">
-                <Input 
+                    <Input
                       value="+63"
                       disabled
                       className="bg-muted text-center font-semibold"
                     />
                   </div>
-                  <Input 
-                    placeholder="9XX-XXX-XXXX" 
-                  value={editForm.phone}
+                  <Input
+                    placeholder="9XX-XXX-XXXX"
+                    value={editForm.phone}
                     onChange={(e) => handlePhoneChange(e.target.value, 'edit')}
                     maxLength={12}
-                />
+                  />
                 </div>
                 <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
               </div>
@@ -2276,7 +2111,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                 <Label>Type Of Account</Label>
                 <Select
                   value={editForm.account_type}
-                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') => 
+                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
                     setEditForm({ ...editForm, account_type: value })
                   }
                 >
@@ -2293,7 +2128,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
                 <Label>Category</Label>
                 <Select
                   value={editForm.category}
-                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') => 
+                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
                     setEditForm({ ...editForm, category: value })
                   }
                 >
@@ -2339,7 +2174,7 @@ const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove Client</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to remove <strong>{clientToDelete?.name}</strong> from your client list? 
+              Are you sure you want to remove <strong>{clientToDelete?.name}</strong> from your client list?
               This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

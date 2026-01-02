@@ -48,10 +48,9 @@ export default function OrdersPage() {
   const [rejectingForRole, setRejectingForRole] = useState<'leader' | 'admin' | null>(null);
 
   // Role flags and leader team state
-  const isAdmin = user?.role === 'admin';
-  const isLeader = user?.position === 'Leader';
-  const [teamAgentIds, setTeamAgentIds] = useState<string[]>([]);
-  const [teamAgents, setTeamAgents] = useState<{ id: string; name: string }[]>([]);
+  // Role flags
+  const isAdmin = user?.role === 'admin' || user?.role === 'finance' || user?.role === 'super_admin';
+  const isFinance = user?.role === 'finance';
 
   // Bulk approval states
   const [bulkApproveDialogOpen, setBulkApproveDialogOpen] = useState(false);
@@ -63,72 +62,25 @@ export default function OrdersPage() {
   const [loadingBulkClient, setLoadingBulkClient] = useState(false);
   const [processingBulkApproval, setProcessingBulkApproval] = useState(false);
 
-  // Load leader team agents when user is a leader
-  useEffect(() => {
-    const loadTeam = async () => {
-      try {
-        if (!isLeader || !user?.id) {
-          setTeamAgentIds([]);
-          return;
-        }
-        const { data, error } = await supabase
-          .from('leader_teams')
-          .select('agent_id')
-          .eq('leader_id', user.id);
-        if (error) throw error;
-        const ids = (data || []).map((r: any) => r.agent_id);
-        setTeamAgentIds(ids);
-        if (ids.length > 0) {
-          const { data: profiles } = await supabase
-            .from('profiles')
-            .select('id, full_name')
-            .in('id', ids);
-          setTeamAgents((profiles || []).map((p: any) => ({ id: p.id, name: p.full_name || 'Unknown Agent' })));
-        } else {
-          setTeamAgents([]);
-        }
-      } catch (e) {
-        console.error('Error loading leader team:', e);
-        setTeamAgentIds([]);
-      }
-    };
-    loadTeam();
-  }, [isLeader, user?.id]);
+  // Load team logic removed as orders now go directly to finance
 
   // Restrict visible orders based on role
   const visibleOrders = useMemo(() => {
     if (isAdmin) return orders;
-    if (isLeader) return orders.filter(o => teamAgentIds.includes(o.agentId));
     return [] as Order[];
-  }, [orders, isAdmin, isLeader, teamAgentIds]);
+  }, [orders, isAdmin]);
 
-  // Build team agent list (leaders only) from visible orders
-  const teamAgentsSummary = useMemo(() => {
-    if (!isLeader) return [] as { agentId: string; agentName: string; orders: number }[];
-    const countByAgent: Record<string, number> = {};
-    for (const o of visibleOrders) {
-      countByAgent[o.agentId] = (countByAgent[o.agentId] || 0) + 1;
-    }
-    const list = teamAgents.map(a => ({ agentId: a.id, agentName: a.name, orders: countByAgent[a.id] || 0 }));
-    return list.sort((a, b) => a.agentName.localeCompare(b.agentName));
-  }, [visibleOrders, isLeader, teamAgents]);
+  // Team summary logic removed
 
   // Pending orders count (role-based) - matches the filterOrders logic
   const pendingOrdersCount = useMemo(() => {
-    if (isAdmin) {
-      return visibleOrders.filter(o => o.stage === 'leader_approved').length;
-    } else if (isLeader) {
-      return visibleOrders.filter(o => (o.stage === 'agent_pending' || !o.stage)).length;
-    }
-    return visibleOrders.filter(o => o.status === 'pending').length;
-  }, [visibleOrders, isAdmin, isLeader]);
+    return visibleOrders.filter(o => o.stage === 'finance_pending' || o.status === 'pending').length;
+  }, [visibleOrders]);
 
   // Approved orders (role-based) without search filters
   const approvedOrdersAll = useMemo(() => {
-    if (isAdmin) return visibleOrders.filter(o => o.stage === 'admin_approved');
-    if (isLeader) return visibleOrders.filter(o => o.stage === 'leader_approved');
-    return visibleOrders.filter(o => o.status === 'approved');
-  }, [visibleOrders, isAdmin, isLeader]);
+    return visibleOrders.filter(o => o.status === 'approved' || o.stage === 'admin_approved');
+  }, [visibleOrders]);
 
   // Approved this month count based on system date
   const approvedThisMonthCount = useMemo(() => {
@@ -143,16 +95,10 @@ export default function OrdersPage() {
 
   // Map legacy status + stage to a clearer label for display
   const getStatusLabel = (order: Order) => {
-    // For admin view, ensure we always show "Pending (Admin Review)" for leader_approved orders
-    if (order.stage === 'leader_approved') return 'Pending (Admin Review)';
-    // Orders pending leader review should show "Pending (Leader Review)"
-    if (order.stage === 'agent_pending' || !order.stage) return 'Pending (Leader Review)';
-    if (order.stage === 'admin_approved') return 'Approved';
-    if (order.stage === 'leader_rejected') return 'Rejected (Leader)';
-    if (order.stage === 'admin_rejected') return 'Rejected (Admin)';
-    // Fallback: if status is pending but no stage, return Pending (Leader Review)
-    // This should only happen for orders that haven't been processed yet
-    return order.status === 'pending' ? 'Pending (Leader Review)' : order.status;
+    if (order.stage === 'finance_pending' || order.status === 'pending') return 'Pending Finance Review';
+    if (order.stage === 'admin_approved' || order.status === 'approved') return 'Approved';
+    if (order.stage === 'admin_rejected' || order.status === 'rejected') return 'Rejected';
+    return order.status;
   };
 
   const getStatusVariant = (order: Order) => {
@@ -196,20 +142,9 @@ export default function OrdersPage() {
     if (!orderToApprove) return;
 
     try {
-      if (isLeader) {
-        const { data, error } = await supabase.rpc('leader_approve_client_order', {
-          p_order_id: orderToApprove.id,
-          p_leader_id: user?.id
-        });
-        if (error || !data?.success) throw new Error(error?.message || data?.message || 'Leader approve failed');
-        toast({ title: 'Approved', description: 'Leader approval complete. Deducted from leader inventory.' });
-      } else if (isAdmin) {
-        const { data, error } = await supabase.rpc('admin_approve_client_order', {
-          p_order_id: orderToApprove.id,
-          p_admin_id: user?.id
-        });
-        if (error || !data?.success) throw new Error(error?.message || data?.message || 'Admin approve failed');
-        toast({ title: 'Approved', description: 'Admin approval complete. Deducted from main inventory.' });
+      if (isAdmin) {
+        await updateOrderStatus(orderToApprove.id, 'approved');
+        toast({ title: 'Approved', description: 'Order approval complete. Budget and inventory updated.' });
       } else {
         throw new Error('Not authorized to approve');
       }
@@ -229,29 +164,16 @@ export default function OrdersPage() {
   const handleOpenReject = (order: Order) => {
     setOrderToReject(order);
     setRejectionReason('');
-    setRejectingForRole(isAdmin ? 'admin' : (isLeader ? 'leader' : null));
+    setRejectingForRole('admin');
     setReasonDialogOpen(true);
   };
 
   const handleConfirmRejectWithReason = async () => {
     if (!orderToReject || !rejectingForRole) return;
     try {
-      if (rejectingForRole === 'leader' && isLeader) {
-        const { data, error } = await supabase.rpc('leader_reject_client_order', {
-          p_order_id: orderToReject.id,
-          p_leader_id: user?.id,
-          p_reason: rejectionReason || null
-        });
-        if (error || !data?.success) throw new Error(error?.message || data?.message || 'Leader reject failed');
-        toast({ title: 'Rejected', description: 'Order rejected by leader. Stock returned to agent.' });
-      } else if (rejectingForRole === 'admin' && isAdmin) {
-        const { data, error } = await supabase.rpc('admin_reject_client_order', {
-          p_order_id: orderToReject.id,
-          p_admin_id: user?.id,
-          p_reason: rejectionReason || ''
-        });
-        if (error || !data?.success) throw new Error(error?.message || data?.message || 'Admin reject failed');
-        toast({ title: 'Rejected', description: 'Order sent back to leader with reason.' });
+      if (isAdmin) {
+        await updateOrderStatus(orderToReject.id, 'rejected', rejectionReason);
+        toast({ title: 'Rejected', description: 'Order rejected. Sales agent will be notified.' });
       }
       setReasonDialogOpen(false);
       setOrderToReject(null);
@@ -265,48 +187,13 @@ export default function OrdersPage() {
   const filterOrders = (status?: Order['status']) => {
     let filtered = visibleOrders;
     if (status) {
-      if (isAdmin) {
-        // Admin view tabs - only show orders that need admin action
-        if (status === 'pending') {
-          // STRICTLY only show orders that are pending admin review (leader_approved stage)
-          // Exclude any orders with agent_pending, null stage, undefined stage, or other stages
-          // STRICTLY filter: only show orders with stage === 'leader_approved'
-          // This excludes agent_pending, null, undefined, and all other stages
-          filtered = filtered.filter(o => o.stage === 'leader_approved');
-        } else if (status === 'approved') {
-          // Only show orders that are admin approved
-          filtered = filtered.filter(o => o.stage === 'admin_approved');
-        } else if (status === 'rejected') {
-          // Only show orders that are admin rejected
-          filtered = filtered.filter(o => o.stage === 'admin_rejected');
-        }
-      } else if (isLeader) {
-        // Leader view tabs
-        if (status === 'pending') {
-          // Only show orders that are pending leader review
-          filtered = filtered.filter(o => (o.stage === 'agent_pending' || !o.stage));
-        } else if (status === 'approved') {
-          // Show orders that leader approved (now pending admin review)
-          filtered = filtered.filter(o => o.stage === 'leader_approved');
-        } else if (status === 'rejected') {
-          // Show orders that leader rejected
-          filtered = filtered.filter(o => o.stage === 'leader_rejected');
-        }
-      } else {
-        filtered = filtered.filter(o => o.status === status);
+      if (status === 'pending') {
+        filtered = filtered.filter(o => o.stage === 'finance_pending' || o.status === 'pending');
+      } else if (status === 'approved') {
+        filtered = filtered.filter(o => o.status === 'approved' || o.stage === 'admin_approved');
+      } else if (status === 'rejected') {
+        filtered = filtered.filter(o => o.status === 'rejected' || o.stage === 'admin_rejected');
       }
-    } else {
-      // "All Orders" tab - apply role-based filtering
-      if (isAdmin) {
-        // For admin: exclude orders pending leader review (agent_pending or no stage)
-        // Only show orders that are relevant to admin (pending admin review, approved, rejected, or admin_approved)
-        filtered = filtered.filter(o => {
-          // Exclude orders with stage === 'agent_pending' or !stage (these are pending leader review)
-          // Include all other orders (leader_approved, admin_approved, admin_rejected, leader_rejected)
-          return o.stage !== 'agent_pending' && o.stage !== null && o.stage !== undefined;
-        });
-      }
-      // For leaders and others, show all orders without filtering
     }
     if (searchQuery) {
       filtered = filtered.filter(o =>
@@ -327,10 +214,10 @@ export default function OrdersPage() {
 
   const handleSelectAgentForBulk = (agentId: string) => {
     setSelectedAgentForBulk(agentId);
-    // Filter orders for this agent that are pending admin approval
+    // Filter orders for this agent that are pending finance approval
     const filtered = orders.filter(
       (o) => o.agentId === agentId &&
-        (o.stage === 'leader_approved' || (o.stage === 'agent_pending' && isAdmin))
+        (o.stage === 'finance_pending' || (o.status === 'pending' && isAdmin))
     );
     setAgentOrders(filtered);
   };
@@ -581,6 +468,14 @@ export default function OrdersPage() {
       </>
     );
   };
+  if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'super_admin')) {
+    return (
+      <div className="p-8 text-center">
+        <h1 className="text-2xl font-bold text-red-600">Access Denied</h1>
+        <p className="text-muted-foreground">You do not have permission to view this page.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 space-y-6">
@@ -629,26 +524,7 @@ export default function OrdersPage() {
       </div>
 
       {/* Leader: Team Agents panel */}
-      {isLeader && teamAgentsSummary.length > 0 && (
-        <Card>
-          <CardHeader>
-            <div>
-              <h2 className="text-xl font-semibold">My Team Agents</h2>
-              <p className="text-sm text-muted-foreground">Agents under you with order counts</p>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {teamAgentsSummary.map(a => (
-                <div key={a.agentId} className="p-3 border rounded-lg">
-                  <div className="font-medium">{a.agentName}</div>
-                  <div className="text-sm mt-1">Orders: <span className="font-semibold">{a.orders}</span></div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Team Agents panel removed */}
 
       <Card>
         <CardHeader>
@@ -663,21 +539,17 @@ export default function OrdersPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="pending" className="w-full">
+          <Tabs defaultValue="all" className="w-full">
             <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto p-1 bg-muted">
               <TabsTrigger value="pending" className="data-[state=active]:bg-background">
                 <div className="flex flex-col items-center gap-1 py-1">
-                  <span className="font-semibold text-sm">
-                    {isAdmin ? 'Pending (Admin Review)' : isLeader ? 'Pending (Leader Review)' : 'Pending'}
-                  </span>
+                  <span className="font-semibold text-sm">Pending (Finance Review)</span>
                   <span className="text-xs text-muted-foreground">({filterOrders('pending').length})</span>
                 </div>
               </TabsTrigger>
               <TabsTrigger value="approved" className="data-[state=active]:bg-background">
                 <div className="flex flex-col items-center gap-1 py-1">
-                  <span className="font-semibold text-sm">
-                    {isLeader ? 'Pending (Admin Review)' : 'Approved'}
-                  </span>
+                  <span className="font-semibold text-sm">Approved</span>
                   <span className="text-xs text-muted-foreground">({filterOrders('approved').length})</span>
                 </div>
               </TabsTrigger>
@@ -842,8 +714,7 @@ export default function OrdersPage() {
                 </div>
               )}
 
-              {/* Role-based Actions using stage */}
-              {isLeader && (viewingOrder.stage === 'agent_pending' || !viewingOrder.stage) && (
+              {isAdmin && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (
                 <div className="flex gap-3 pt-4 border-t">
                   <Button
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white"
@@ -853,7 +724,7 @@ export default function OrdersPage() {
                     }}
                   >
                     <CheckCircle className="h-4 w-4 mr-2" />
-                    Leader Approve
+                    Finance Approve
                   </Button>
                   <Button
                     variant="destructive"
@@ -864,32 +735,7 @@ export default function OrdersPage() {
                     }}
                   >
                     <XCircle className="h-4 w-4 mr-2" />
-                    Leader Reject
-                  </Button>
-                </div>
-              )}
-              {isAdmin && viewingOrder.stage === 'leader_approved' && (
-                <div className="flex gap-3 pt-4 border-t">
-                  <Button
-                    className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                    onClick={() => {
-                      setViewDialogOpen(false);
-                      handleOpenApprove(viewingOrder);
-                    }}
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Admin Approve
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    className="flex-1 bg-red-600 hover:bg-red-700"
-                    onClick={() => {
-                      setViewDialogOpen(false);
-                      handleOpenReject(viewingOrder);
-                    }}
-                  >
-                    <XCircle className="h-4 w-4 mr-2" />
-                    Admin Reject
+                    Finance Deny
                   </Button>
                 </div>
               )}
@@ -912,7 +758,7 @@ export default function OrdersPage() {
               <br />
               ⚠️ This action will:
               <br />
-              • Deduct stock quantities from main inventory
+              • Deduct stock quantities from inventory
               <br />
               • Create inventory transaction records
               <br />
@@ -948,7 +794,7 @@ export default function OrdersPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmRejectWithReason} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Reject Order
+              Deny Order
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -974,7 +820,7 @@ export default function OrdersPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {Array.from(new Set(orders
-                    .filter(o => o.stage === 'leader_approved' || (o.stage === 'agent_pending' && isAdmin))
+                    .filter(o => o.stage === 'finance_pending' || (o.status === 'pending' && isAdmin))
                     .map(o => o.agentId)))
                     .map(agentId => {
                       const order = orders.find(o => o.agentId === agentId);

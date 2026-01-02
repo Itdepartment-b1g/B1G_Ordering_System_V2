@@ -25,7 +25,7 @@ interface SelectedItem {
   variantId: string;
   brandName: string;
   variantName: string;
-  variantType: 'flavor' | 'battery';
+  variantType: 'flavor' | 'battery' | 'posm';
   unitPrice: number;
   sellingPrice?: number;
   dspPrice?: number;
@@ -227,7 +227,7 @@ export default function MyOrdersPage() {
     quantity: number,
     brandName: string,
     variantName: string,
-    variantType: 'flavor' | 'battery',
+    variantType: 'flavor' | 'battery' | 'posm',
     baseUnitPrice: number, // current displayed/effective price
     availableStock: number,
     sellingPrice?: number,
@@ -1355,6 +1355,119 @@ export default function MyOrdersPage() {
                       </div>
                     </div>
                   )}
+
+                  {/* POSM */}
+                  {selectedBrand.posms && selectedBrand.posms.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-sm text-purple-700 flex items-center gap-2">
+                        <Badge variant="secondary" className="bg-purple-100 text-purple-700">POSM</Badge>
+                        Available: {selectedBrand.posms.length}
+                      </h4>
+                      <div className="space-y-2 pl-4">
+                        {selectedBrand.posms.map((posm) => {
+                          const selectedItem = selectedItems.find(item => item.variantId === posm.id);
+                          const currentQuantity = selectedItem?.quantity || 0;
+
+                          // Determine price to display based on selected pricing type
+                          let displayPrice = (posm as any).sellingPrice ?? posm.price;
+                          if (pricingType === 'dsp') {
+                            displayPrice = (posm as any).dspPrice ?? displayPrice;
+                          } else if (pricingType === 'rsp') {
+                            displayPrice = (posm as any).rspPrice ?? displayPrice;
+                          }
+
+                          return (
+                            <div key={posm.id} className="p-3 sm:p-4 bg-purple-50/50 rounded-lg border border-purple-100">
+                              {/* Mobile: Card Layout */}
+                              <div className="block sm:hidden space-y-2">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1">
+                                    <p className="font-medium text-sm">{posm.name}</p>
+                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                      <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                        {posm.stock} in stock
+                                      </Badge>
+                                      <span className="text-sm font-semibold text-purple-700">₱{displayPrice.toFixed(2)}</span>
+                                    </div>
+                                    {posm.stock === 0 && (
+                                      <p className="text-xs text-red-600 mt-1">No more stock available</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 pt-2 border-t border-purple-200">
+                                  <Label className="text-xs font-medium">Qty:</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    max={posm.stock}
+                                    value={currentQuantity === 0 ? '' : currentQuantity}
+                                    placeholder="0"
+                                    onChange={(e) => {
+                                      const value = e.target.value;
+                                      const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                      handleQuantityChange(
+                                        posm.id,
+                                        quantity,
+                                        selectedBrand.name,
+                                        posm.name,
+                                        'posm',
+                                        displayPrice,
+                                        posm.stock,
+                                        (posm as any).sellingPrice,
+                                        (posm as any).dspPrice,
+                                        (posm as any).rspPrice
+                                      );
+                                    }}
+                                    className="w-24 h-9"
+                                    disabled={posm.stock === 0}
+                                  />
+                                </div>
+                              </div>
+                              {/* Desktop: Row Layout */}
+                              <div className="hidden sm:flex items-center justify-between">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <span className="font-medium">{posm.name}</span>
+                                  <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                    {posm.stock} in stock
+                                  </Badge>
+                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
+                                </div>
+                                {posm.stock === 0 ? (
+                                  <span className="text-xs text-red-600">No more stock available</span>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <Label className="text-xs">Qty:</Label>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      max={posm.stock}
+                                      value={currentQuantity === 0 ? '' : currentQuantity}
+                                      placeholder="0"
+                                      onChange={(e) => {
+                                        const value = e.target.value;
+                                        const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                        handleQuantityChange(
+                                          posm.id,
+                                          quantity,
+                                          selectedBrand.name,
+                                          posm.name,
+                                          'posm',
+                                          displayPrice,
+                                          posm.stock
+                                        );
+                                      }}
+                                      className="w-20 h-8"
+                                      disabled={posm.stock === 0}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1372,7 +1485,7 @@ export default function MyOrdersPage() {
                               <p className="font-medium text-sm">{item.variantName}</p>
                               <Badge
                                 variant="secondary"
-                                className={`mt-1 ${item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}
+                                className={`mt-1 ${item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' : item.variantType === 'battery' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'}`}
                               >
                                 {item.variantType}
                               </Badge>
@@ -1425,7 +1538,7 @@ export default function MyOrdersPage() {
                               <p className="font-medium">{item.variantName}</p>
                               <Badge
                                 variant="secondary"
-                                className={item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}
+                                className={item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' : item.variantType === 'battery' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'}
                               >
                                 {item.variantType}
                               </Badge>
@@ -2369,7 +2482,7 @@ export default function MyOrdersPage() {
                             <div className="text-sm font-semibold truncate">{item.variantName}</div>
                             <div className="text-xs text-muted-foreground truncate">{item.brandName}</div>
                           </div>
-                          <Badge variant={item.variantType === 'flavor' ? 'default' : 'secondary'}>
+                          <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
                             {item.variantType}
                           </Badge>
                         </div>
@@ -2417,7 +2530,7 @@ export default function MyOrdersPage() {
                               <TableCell className="font-medium">{item.brandName}</TableCell>
                               <TableCell>{item.variantName}</TableCell>
                               <TableCell>
-                                <Badge variant={item.variantType === 'flavor' ? 'default' : 'secondary'}>
+                                <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
                                   {item.variantType}
                                 </Badge>
                               </TableCell>

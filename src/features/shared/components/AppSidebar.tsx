@@ -123,7 +123,6 @@ const hermanosMenuItems: MenuItem[] = [
 const leaderMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'My Team', url: '/my-team', icon: Users },
-  { title: 'Order Management', url: '/orders', icon: ShoppingCart },
   { title: 'Analytics', url: '/analytics', icon: Brain },
   {
     title: 'Inventory',
@@ -134,8 +133,8 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'My Inventory', url: '/my-inventory', icon: Package },
       { title: 'Teams Inventory', url: '/leader-inventory', icon: Crown },
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
-          { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
-          { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
+      { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
+      { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
     ]
   },
   {
@@ -280,6 +279,8 @@ export function AppSidebar() {
       baseMenuItems = adminMenuItems;
     } else if (user?.role === 'team_leader') {
       baseMenuItems = leaderMenuItems;
+    } else if (user?.role === 'finance') {
+      baseMenuItems = adminMenuItems; // Finance gets access to similar tools as admin but restricted by backend/permissions
     } else if (user?.role === 'mobile_sales') {
       baseMenuItems = agentMenuItems;
     } else {

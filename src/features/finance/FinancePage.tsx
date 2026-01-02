@@ -52,7 +52,7 @@ export default function FinancePage() {
       // but we keep existing expense/commission stream for other costs.
       const { data: approvedPOs } = await supabase
         .from('purchase_orders')
-        .select('total_amount, status')
+        .select('total_amount, status, order_date, approved_at, created_at')
         .eq('status', 'approved');
 
       const poExpenses = (approvedPOs || [])
@@ -100,16 +100,20 @@ export default function FinancePage() {
         .forEach((t: any) => {
           const key = monthKey(t.transaction_date);
           if (t.transaction_type === 'expense' && t.status === 'completed') {
-            monthlyStats[key].expenses += t.amount || 0;
+            if (monthlyStats[key]) {
+              monthlyStats[key].expenses += t.amount || 0;
+            }
           }
         });
 
       // Expenses from approved purchase orders
       (approvedPOs || []).forEach((po: any) => {
-        const date = po.approved_at || po.updated_at || po.created_at || new Date();
-        if (new Date(date) >= last6Months) {
+        const date = po.order_date || po.approved_at || po.created_at;
+        if (date && new Date(date) >= last6Months) {
           const key = monthKey(date);
-          monthlyStats[key].expenses += Number(po.total_amount) || 0;
+          if (monthlyStats[key]) {
+            monthlyStats[key].expenses += Number(po.total_amount) || 0;
+          }
         }
       });
 
@@ -146,7 +150,7 @@ export default function FinancePage() {
         .eq('stage', 'admin_approved')
         .order('order_date', { ascending: false })
         .limit(3);
-      
+
       if (clientOrdersError) {
         console.error('❌ Error fetching client orders:', clientOrdersError);
       } else {
@@ -335,12 +339,12 @@ export default function FinancePage() {
       )}
 
       <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Financial Activities</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="w-full overflow-x-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Financial Activities</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="w-full overflow-x-auto">
               <Table className="min-w-[720px]">
                 <TableHeader>
                   <TableRow>
@@ -377,10 +381,10 @@ export default function FinancePage() {
                         </TableCell>
                         <TableCell>{t.date}</TableCell>
                         <TableCell>
-                          <Badge 
+                          <Badge
                             variant={
-                              t.status === 'paid' || t.status === 'approved' 
-                                ? 'default' 
+                              t.status === 'paid' || t.status === 'approved'
+                                ? 'default'
                                 : 'secondary'
                             }
                           >
@@ -392,21 +396,21 @@ export default function FinancePage() {
                   )}
                 </TableBody>
               </Table>
-              </div>
-              {allActivities.length > pageSize && (
-                <div className="mt-4 flex items-center justify-between">
-                  <Button variant="secondary" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>Previous</Button>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <span>Page</span>
-                    <span className="font-medium text-black">{currentPage}</span>
-                    <span>of</span>
-                    <span className="font-medium text-black">{totalPages}</span>
-                  </div>
-                  <Button variant="secondary" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>Next</Button>
+            </div>
+            {allActivities.length > pageSize && (
+              <div className="mt-4 flex items-center justify-between">
+                <Button variant="secondary" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>Previous</Button>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span>Page</span>
+                  <span className="font-medium text-black">{currentPage}</span>
+                  <span>of</span>
+                  <span className="font-medium text-black">{totalPages}</span>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+                <Button variant="secondary" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>Next</Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

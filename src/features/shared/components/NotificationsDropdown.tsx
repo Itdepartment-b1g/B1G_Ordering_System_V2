@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/features/auth/hooks';
 import { supabase } from '@/lib/supabase';
 import { Notification } from '@/types/database.types';
+import { getNotifications, markNotificationAsRead, markAllNotificationsAsRead } from '@/lib/database.helpers';
 import { formatDistanceToNow } from 'date-fns';
 
 export function NotificationsDropdown() {
@@ -84,13 +85,8 @@ export function NotificationsDropdown() {
     if (!user?.id) return;
 
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('id', notificationId)
-        .eq('user_id', user.id);
+      await markNotificationAsRead(notificationId);
 
-      if (error) throw error;
       setNotifications(prev =>
         prev.map(n =>
           n.id === notificationId ? { ...n, is_read: true } : n
@@ -107,12 +103,8 @@ export function NotificationsDropdown() {
     if (!user?.id) return;
 
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('user_id', user.id);
+      await markAllNotificationsAsRead(user.id);
 
-      if (error) throw error;
       setNotifications(prev =>
         prev.map(n => ({ ...n, is_read: true }))
       );

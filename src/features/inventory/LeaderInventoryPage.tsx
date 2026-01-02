@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -787,6 +788,22 @@ export default function LeaderInventoryPage() {
         description: 'Stock allocated to team member successfully'
       });
 
+      // Send notification to agent
+      if (user?.company_id) {
+        const totalQty = itemsToAllocate.reduce((sum, item) => sum + item.quantity, 0);
+        const productSummary = itemsToAllocate.map(item => `${item.variant_name} (${item.quantity})`).join(', ');
+
+        await sendNotification({
+          userId: allocation.agentId,
+          companyId: user.company_id,
+          type: 'inventory_allocated',
+          title: 'Stock Allocated',
+          message: `Your leader ${user.full_name} has allocated ${totalQty} units to you: ${productSummary}`,
+          referenceType: 'allocation',
+          referenceId: results[0]?.id // Using first allocation ID as reference
+        });
+      }
+
       // Update leader inventory immediately (optimistic update)
       itemsToAllocate.forEach(item => {
         setLeaderInventory(prev => prev.map(invItem => {
@@ -1529,7 +1546,7 @@ export default function LeaderInventoryPage() {
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold">{selectedMember.items.length}</div>
-                  <div className="text-sm text-muted-foreground">Total Categorys</div>
+                  <div className="text-sm text-muted-foreground">Total Categories</div>
                 </div>
               </div>
 
@@ -1864,7 +1881,7 @@ export default function LeaderInventoryPage() {
                           {/* Total Summary */}
                           <div className="border-t pt-3">
                             <div className="flex justify-between items-center">
-                              <span className="font-semibold">Total Categorys: {itemsToAllocate.length}</span>
+                              <span className="font-semibold">Total Categories: {itemsToAllocate.length}</span>
                               <span className="font-semibold">
                                 Total Value: ₱{itemsToAllocate.reduce((sum, item) => sum + item.total_value, 0).toFixed(2)}
                               </span>

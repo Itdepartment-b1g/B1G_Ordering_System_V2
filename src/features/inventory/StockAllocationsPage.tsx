@@ -8,12 +8,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Search, 
-  Package, 
-  Users, 
-  TrendingUp, 
-  Eye, 
+import {
+  Search,
+  Package,
+  Users,
+  TrendingUp,
+  Eye,
   BarChart3,
   AlertTriangle,
   CheckCircle,
@@ -34,7 +34,7 @@ export default function StockAllocationsPage() {
   const [allocationSearchQuery, setAllocationSearchQuery] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<any>(null);
   const [showAgentDetails, setShowAgentDetails] = useState(false);
-  
+
   // Full details modal state
   const [showFullDetails, setShowFullDetails] = useState(false);
   const [leaderAgents, setLeaderAgents] = useState<any[]>([]);
@@ -43,7 +43,7 @@ export default function StockAllocationsPage() {
   const [sortBy, setSortBy] = useState<'name' | 'stock' | 'value'>('name');
   const [allocatedStock, setAllocatedStock] = useState<Record<string, number>>({});
   const [loadingAllocatedStock, setLoadingAllocatedStock] = useState(false);
-  
+
   // Stock allocation state
   const [allocationOpen, setAllocationOpen] = useState(false);
   const [agents, setAgents] = useState<any[]>([]);
@@ -53,8 +53,8 @@ export default function StockAllocationsPage() {
   });
   const [allocationItems, setAllocationItems] = useState<any[]>([]);
   const [variantQuantities, setVariantQuantities] = useState<Record<string, number>>({});
-const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
-  
+  const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
+
   const { toast } = useToast();
 
   // Fetch allocated stock data
@@ -63,20 +63,29 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
       if (showLoading) {
         setLoadingAllocatedStock(true);
       }
-      
+
+      // Step 1: Get all agents who are assigned to a leader (subordinates)
+      const { data: assignments, error: assignmentErr } = await supabase
+        .from('leader_teams')
+        .select('agent_id');
+
+      if (assignmentErr) throw assignmentErr;
+
+      const subordinateIds = (assignments || []).map(a => a.agent_id);
+
+      // Step 2: Get all agent_inventory records
       const { data: allocationData, error } = await supabase
         .from('agent_inventory')
-        .select(`
-          variant_id,
-          stock
-        `);
+        .select('variant_id, stock, agent_id');
 
       if (error) throw error;
 
-      // Group allocations by variant_id
+      // Step 3: Only sum stock for users who are NOT subordinates (Top-Level)
       const allocations: Record<string, number> = {};
       allocationData?.forEach(item => {
-        allocations[item.variant_id] = (allocations[item.variant_id] || 0) + item.stock;
+        if (!subordinateIds.includes(item.agent_id)) {
+          allocations[item.variant_id] = (allocations[item.variant_id] || 0) + (item.stock || 0);
+        }
       });
 
       setAllocatedStock(allocations);
@@ -115,7 +124,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
       if (showLoading) {
         setLoadingAllocations(true);
       }
-      
+
       // Fetch agent inventory for leaders only
       const { data, error } = await supabase
         .from('agent_inventory')
@@ -145,21 +154,21 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
         .eq('profiles.role', 'team_leader');
 
       if (error) throw error;
-      
+
       // Group by agent
       const agentsMap = new Map();
-      
+
       data?.forEach((item: any) => {
         // Skip items where agent data is null or not a leader
         if (!item.profiles || item.profiles.role !== 'team_leader') {
           console.warn('Skipping inventory item with null/non-leader agent data:', item);
           return;
         }
-        
+
         const agentId = item.profiles.id;
         const agentName = item.profiles.full_name;
         const agentEmail = item.profiles.email;
-        
+
         if (!agentsMap.has(agentId)) {
           agentsMap.set(agentId, {
             id: agentId,
@@ -172,7 +181,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             items: []
           });
         }
-        
+
         const agent = agentsMap.get(agentId);
         const unitPrice = item.allocated_price || 0;
         const dspPrice = item.dsp_price || 0;
@@ -197,10 +206,10 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
           totalValue: item.stock * unitPrice
         });
       });
-      
+
       const agentsArray = Array.from(agentsMap.values());
       setAgentsInventory(agentsArray);
-      
+
     } catch (error) {
       console.error('Error fetching agents inventory:', error);
       if (showLoading) {
@@ -397,7 +406,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
   const fetchLeaderAgents = async (leaderId: string) => {
     try {
       setLoadingLeaderAgents(true);
-      
+
       // Fetch team members under this leader
       const { data: teamData, error: teamError } = await supabase
         .from('leader_teams')
@@ -422,7 +431,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
       const agentsWithInventory = await Promise.all(
         (teamData || []).map(async (teamMember: any) => {
           const agent = teamMember.profiles;
-          
+
           // Get agent's inventory
           const { data: inventoryData, error: inventoryError } = await supabase
             .from('agent_inventory')
@@ -505,13 +514,13 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
   // Build allocation items from variant quantities
   const buildAllocationItems = () => {
     if (!allocation.brandId) return { items: [], warnings: [] };
-    
+
     const selectedBrand = brands.find(b => b.id === allocation.brandId);
     if (!selectedBrand) return { items: [], warnings: [] };
 
     const items: any[] = [];
     const warnings: string[] = [];
-    
+
     // Process flavors
     selectedBrand.flavors.forEach(flavor => {
       const quantity = variantQuantities[flavor.id] || 0;
@@ -739,7 +748,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -751,7 +760,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -763,7 +772,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -795,7 +804,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
             {/* Sort Dropdown */}
             <div className="flex gap-2">
               <Label className="text-sm font-medium text-muted-foreground self-center">Sort by:</Label>
-              <select 
+              <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as 'name' | 'stock' | 'value')}
                 className="flex h-11 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -953,7 +962,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                     <div className="text-xs text-muted-foreground">Total Value</div>
                   </div>
                 </div>
-                
+
                 <div className="space-y-2">
                   <div className="text-sm font-medium">Top Items:</div>
                   {agent.items.slice(0, 3).map((item: any) => (
@@ -968,7 +977,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                     </div>
                   )}
                 </div>
-                
+
                 <Button
                   variant="outline"
                   size="sm"
@@ -1010,12 +1019,12 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                     <div className="flex items-center gap-3">
                       <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
                         <Package className="h-6 w-6 text-blue-600" />
-                </div>
+                      </div>
                       <div>
                         <div className="text-3xl font-bold text-blue-900">{selectedAgent.totalStock.toLocaleString()}</div>
                         <div className="text-sm text-blue-700">Total Units</div>
-                </div>
-                </div>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
                 <Card className="border-green-200 bg-green-50/50">
@@ -1081,7 +1090,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                   <h3 className="text-lg font-semibold">Inventory Breakdown</h3>
                   <Badge variant="outline">{selectedAgent.items.length} items</Badge>
                 </div>
-                
+
                 <div className="border rounded-lg overflow-hidden">
                   <Table>
                     <TableHeader className="bg-muted/50">
@@ -1212,40 +1221,40 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
               <div className="grid grid-cols-4 gap-4">
                 <Card className="border-blue-200 bg-blue-50/50">
                   <CardContent className="pt-6">
-                <div className="text-center">
+                    <div className="text-center">
                       <div className="text-3xl font-bold text-blue-900">{leaderAgents.length}</div>
                       <div className="text-sm text-blue-700 mt-1">Team Members</div>
-                </div>
+                    </div>
                   </CardContent>
                 </Card>
                 <Card className="border-green-200 bg-green-50/50">
                   <CardContent className="pt-6">
-                <div className="text-center">
+                    <div className="text-center">
                       <div className="text-3xl font-bold text-green-900">
-                    {leaderAgents.reduce((sum, agent) => sum + agent.totalStock, 0).toLocaleString()}
-                  </div>
+                        {leaderAgents.reduce((sum, agent) => sum + agent.totalStock, 0).toLocaleString()}
+                      </div>
                       <div className="text-sm text-green-700 mt-1">Total Units</div>
-                </div>
+                    </div>
                   </CardContent>
                 </Card>
                 <Card className="border-purple-200 bg-purple-50/50">
                   <CardContent className="pt-6">
-                <div className="text-center">
+                    <div className="text-center">
                       <div className="text-3xl font-bold text-purple-900">
-                    ₱{leaderAgents.reduce((sum, agent) => sum + agent.totalValue, 0).toLocaleString()}
-                  </div>
+                        ₱{leaderAgents.reduce((sum, agent) => sum + agent.totalValue, 0).toLocaleString()}
+                      </div>
                       <div className="text-sm text-purple-700 mt-1">Total Value</div>
-                </div>
+                    </div>
                   </CardContent>
                 </Card>
                 <Card className="border-orange-200 bg-orange-50/50">
                   <CardContent className="pt-6">
-                <div className="text-center">
+                    <div className="text-center">
                       <div className="text-3xl font-bold text-orange-900">
-                    {leaderAgents.reduce((sum, agent) => sum + agent.items.length, 0)}
-                  </div>
+                        {leaderAgents.reduce((sum, agent) => sum + agent.items.length, 0)}
+                      </div>
                       <div className="text-sm text-orange-700 mt-1">Product Types</div>
-                </div>
+                    </div>
                   </CardContent>
                 </Card>
               </div>
@@ -1256,7 +1265,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                   <h3 className="text-lg font-semibold">Team Members</h3>
                   <Badge variant="outline" className="text-sm">{leaderAgents.length} agents</Badge>
                 </div>
-                
+
                 <div className="grid gap-4">
                   {leaderAgents.map((agent) => (
                     <Card key={agent.id} className="hover:shadow-lg transition-all border-2 hover:border-primary/50">
@@ -1266,11 +1275,11 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                             <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
                               <span className="text-lg font-bold text-primary">{agent.name.charAt(0)}</span>
                             </div>
-                          <div>
+                            <div>
                               <CardTitle className="text-xl">{agent.name}</CardTitle>
                               <p className="text-sm text-muted-foreground mt-1">{agent.email}</p>
                               <p className="text-xs text-muted-foreground mt-0.5">📍 {agent.region}</p>
-                          </div>
+                            </div>
                           </div>
                           <div className="text-right space-y-2">
                             <Badge variant={agent.role === 'team_leader' ? 'default' : 'secondary'} className="text-xs">
@@ -1309,7 +1318,7 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                                     <div className="flex-1 min-w-0">
                                       <div className="font-semibold text-sm truncate">{item.brandName}</div>
                                       <div className="text-xs text-muted-foreground truncate">{item.variantName}</div>
-                                  </div>
+                                    </div>
                                     <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'} className="text-xs shrink-0">
                                       {item.variantType}
                                     </Badge>
@@ -1364,16 +1373,16 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-              <Select 
-                value={allocation.agentId} 
-                onValueChange={(value) => setAllocation({...allocation, agentId: value})}
-              >
+                  <Select
+                    value={allocation.agentId}
+                    onValueChange={(value) => setAllocation({ ...allocation, agentId: value })}
+                  >
                     <SelectTrigger className="h-11">
-                  <SelectValue placeholder="Choose a leader" />
-                </SelectTrigger>
-                <SelectContent>
-                  {agents.filter(a => a.status === 'active').map(leader => (
-                    <SelectItem key={leader.id} value={leader.id}>
+                      <SelectValue placeholder="Choose a leader" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agents.filter(a => a.status === 'active').map(leader => (
+                        <SelectItem key={leader.id} value={leader.id}>
                           <div className="flex items-center gap-2">
                             <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold">
                               {leader.name.charAt(0)}
@@ -1383,10 +1392,10 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                               <div className="text-xs text-muted-foreground">📍 {leader.region}</div>
                             </div>
                           </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </CardContent>
               </Card>
 
@@ -1399,30 +1408,30 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-              <Select 
-                value={allocation.brandId} 
-                onValueChange={(value) => {
-                  setAllocation({...allocation, brandId: value});
-                  setAllocationItems([]);
-                  setVariantQuantities({});
-                  setAllocationWarnings([]);
-                }}
-                disabled={loadingBrands}
-              >
+                  <Select
+                    value={allocation.brandId}
+                    onValueChange={(value) => {
+                      setAllocation({ ...allocation, brandId: value });
+                      setAllocationItems([]);
+                      setVariantQuantities({});
+                      setAllocationWarnings([]);
+                    }}
+                    disabled={loadingBrands}
+                  >
                     <SelectTrigger className="h-11">
-                  <SelectValue placeholder={loadingBrands ? "Loading brands..." : "Choose a brand"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {brands.map(brand => (
-                    <SelectItem key={brand.id} value={brand.id}>
-                      <div className="flex items-center gap-2">
-                        <Package className="h-4 w-4" />
+                      <SelectValue placeholder={loadingBrands ? "Loading brands..." : "Choose a brand"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {brands.map(brand => (
+                        <SelectItem key={brand.id} value={brand.id}>
+                          <div className="flex items-center gap-2">
+                            <Package className="h-4 w-4" />
                             <span className="font-medium">{brand.name}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </CardContent>
               </Card>
             </div>
@@ -1438,223 +1447,220 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                  <Tabs defaultValue="flavor" className="w-full">
+                    <Tabs defaultValue="flavor" className="w-full">
                       <TabsList className="grid w-full grid-cols-3 h-12">
                         <TabsTrigger value="flavor" className="gap-2">
                           <div className="h-2 w-2 rounded-full bg-blue-500"></div>
-                        Flavors ({brands.find(b => b.id === allocation.brandId)?.flavors.filter(v => getVariantAvailableStock(v) > 0).length || 0})
-                      </TabsTrigger>
+                          Flavors ({brands.find(b => b.id === allocation.brandId)?.flavors.filter(v => getVariantAvailableStock(v) > 0).length || 0})
+                        </TabsTrigger>
                         <TabsTrigger value="battery" className="gap-2">
                           <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                        Batteries ({brands.find(b => b.id === allocation.brandId)?.batteries.filter(v => getVariantAvailableStock(v) > 0).length || 0})
-                      </TabsTrigger>
+                          Batteries ({brands.find(b => b.id === allocation.brandId)?.batteries.filter(v => getVariantAvailableStock(v) > 0).length || 0})
+                        </TabsTrigger>
                         <TabsTrigger value="posm" className="gap-2">
                           <div className="h-2 w-2 rounded-full bg-purple-500"></div>
-                        POSM ({((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).filter((v: any) => getVariantAvailableStock(v) > 0).length || 0})
-                      </TabsTrigger>
-                    </TabsList>
-                    
-                    {/* Flavor Tab */}
-                    <TabsContent value="flavor" className="space-y-3 mt-4">
-                      {brands.find(b => b.id === allocation.brandId)?.flavors.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-4">
-                          No flavors available for this brand
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {brands.find(b => b.id === allocation.brandId)?.flavors
-                            .filter(v => getVariantAvailableStock(v) > 0)
-                            .map(variant => {
-                              const sellingPriceRaw = (variant as any).sellingPrice;
-                              const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                              // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                              const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                              const availableStock = getVariantAvailableStock(variant);
-                              const quantity = variantQuantities[variant.id] || 0;
-                              
-                              return (
-                                <div 
-                                  key={variant.id} 
-                                  className={`flex items-center gap-3 p-3 rounded-lg border ${
-                                    hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                  }`}
-                                >
-                                  <div className="flex-1">
-                                    <div className="font-medium flex items-center gap-2">
-                                      {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                      <span>{variant.name}</span>
-                                    </div>
-                                    <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                      {hasInvalidPrice ? (
-                                        'Invalid Selling Price. Please Proceed To The Main Inventory Page To Set The Selling Price.'
-                                      ) : (
-                                        <>
-                                          Selling Price: ₱{sellingPrice.toFixed(2)}
-                                          {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
-                                          {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
-                                        </>
-                                      )} • Available: {availableStock} units
-                                    </div>
-                                  </div>
-                                  <div className="w-28">
-                                    <Input
-                                      type="number"
-                                      placeholder="0"
-                                      min="0"
-                                      max={availableStock}
-                                      value={quantity === 0 ? '' : quantity}
-                                      onChange={(e) => {
-                                        const inputValue = parseInt(e.target.value) || 0;
-                                        const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                        setVariantQuantities(prev => ({
-                                          ...prev,
-                                          [variant.id]: cappedValue
-                                        }));
-                                      }}
-                                      disabled={hasInvalidPrice}
-                                    />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      )}
-                    </TabsContent>
+                          POSM ({((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).filter((v: any) => getVariantAvailableStock(v) > 0).length || 0})
+                        </TabsTrigger>
+                      </TabsList>
 
-                    {/* Battery Tab */}
-                    <TabsContent value="battery" className="space-y-3 mt-4">
-                      {brands.find(b => b.id === allocation.brandId)?.batteries.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-4">
-                          No batteries available for this brand
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {brands.find(b => b.id === allocation.brandId)?.batteries
-                            .filter(v => getVariantAvailableStock(v) > 0)
-                            .map(variant => {
-                              const sellingPriceRaw = (variant as any).sellingPrice;
-                              const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                              // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                              const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                              const availableStock = getVariantAvailableStock(variant);
-                              const quantity = variantQuantities[variant.id] || 0;
-                              
-                              return (
-                                <div 
-                                  key={variant.id} 
-                                  className={`flex items-center gap-3 p-3 rounded-lg border ${
-                                    hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                  }`}
-                                >
-                                  <div className="flex-1">
-                                    <div className="font-medium flex items-center gap-2">
-                                      {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                      <span>{variant.name}</span>
-                                    </div>
-                                    <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                      {hasInvalidPrice ? (
-                                        'Invalid Selling Price'
-                                      ) : (
-                                        <>
-                                          Selling Price: ₱{sellingPrice.toFixed(2)}
-                                          {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
-                                          {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
-                                        </>
-                                      )} • Available: {availableStock} units
-                                    </div>
-                                  </div>
-                                  <div className="w-28">
-                                    <Input
-                                      type="number"
-                                      placeholder="0"
-                                      min="0"
-                                      max={availableStock}
-                                      value={quantity === 0 ? '' : quantity}
-                                      onChange={(e) => {
-                                        const inputValue = parseInt(e.target.value) || 0;
-                                        const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                        setVariantQuantities(prev => ({
-                                          ...prev,
-                                          [variant.id]: cappedValue
-                                        }));
-                                      }}
-                                      disabled={hasInvalidPrice}
-                                    />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      )}
-                    </TabsContent>
+                      {/* Flavor Tab */}
+                      <TabsContent value="flavor" className="space-y-3 mt-4">
+                        {brands.find(b => b.id === allocation.brandId)?.flavors.length === 0 ? (
+                          <p className="text-sm text-muted-foreground text-center py-4">
+                            No flavors available for this brand
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {brands.find(b => b.id === allocation.brandId)?.flavors
+                              .filter(v => getVariantAvailableStock(v) > 0)
+                              .map(variant => {
+                                const sellingPriceRaw = (variant as any).sellingPrice;
+                                const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+                                // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                                const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
+                                const availableStock = getVariantAvailableStock(variant);
+                                const quantity = variantQuantities[variant.id] || 0;
 
-                    {/* POSM Tab */}
-                    <TabsContent value="posm" className="space-y-3 mt-4">
-                      {((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-4">
-                          No POSM available for this brand
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {((brands.find(b => b.id === allocation.brandId) as any)?.posms || [])
-                            .filter((v: any) => getVariantAvailableStock(v) > 0)
-                            .map((variant: any) => {
-                              const sellingPriceRaw = variant.sellingPrice;
-                              const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                              // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                              const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                              const availableStock = getVariantAvailableStock(variant);
-                              const quantity = variantQuantities[variant.id] || 0;
-                              
-                              return (
-                                <div 
-                                  key={variant.id} 
-                                  className={`flex items-center gap-3 p-3 rounded-lg border ${
-                                    hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                  }`}
-                                >
-                                  <div className="flex-1">
-                                    <div className="font-medium flex items-center gap-2">
-                                      {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                      <span>{variant.name}</span>
+                                return (
+                                  <div
+                                    key={variant.id}
+                                    className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                      }`}
+                                  >
+                                    <div className="flex-1">
+                                      <div className="font-medium flex items-center gap-2">
+                                        {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                        <span>{variant.name}</span>
+                                      </div>
+                                      <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                        {hasInvalidPrice ? (
+                                          'Invalid Selling Price. Please Proceed To The Main Inventory Page To Set The Selling Price.'
+                                        ) : (
+                                          <>
+                                            Selling Price: ₱{sellingPrice.toFixed(2)}
+                                            {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
+                                            {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
+                                          </>
+                                        )} • Available: {availableStock} units
+                                      </div>
                                     </div>
-                                    <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                      {hasInvalidPrice ? (
-                                        'Invalid Selling Price'
-                                      ) : (
-                                        <>
-                                          Selling Price: ₱{sellingPrice.toFixed(2)}
-                                          {variant.dspPrice && ` • DSP: ₱${variant.dspPrice.toFixed(2)}`}
-                                          {variant.rspPrice && ` • RSP: ₱${variant.rspPrice.toFixed(2)}`}
-                                        </>
-                                      )} • Available: {availableStock} units
+                                    <div className="w-28">
+                                      <Input
+                                        type="number"
+                                        placeholder="0"
+                                        min="0"
+                                        max={availableStock}
+                                        value={quantity === 0 ? '' : quantity}
+                                        onChange={(e) => {
+                                          const inputValue = parseInt(e.target.value) || 0;
+                                          const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
+                                          setVariantQuantities(prev => ({
+                                            ...prev,
+                                            [variant.id]: cappedValue
+                                          }));
+                                        }}
+                                        disabled={hasInvalidPrice}
+                                      />
                                     </div>
                                   </div>
-                                  <div className="w-28">
-                                    <Input
-                                      type="number"
-                                      placeholder="0"
-                                      min="0"
-                                      max={availableStock}
-                                      value={quantity === 0 ? '' : quantity}
-                                      onChange={(e) => {
-                                        const inputValue = parseInt(e.target.value) || 0;
-                                        const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                        setVariantQuantities(prev => ({
-                                          ...prev,
-                                          [variant.id]: cappedValue
-                                        }));
-                                      }}
-                                      disabled={hasInvalidPrice}
-                                    />
+                                );
+                              })}
+                          </div>
+                        )}
+                      </TabsContent>
+
+                      {/* Battery Tab */}
+                      <TabsContent value="battery" className="space-y-3 mt-4">
+                        {brands.find(b => b.id === allocation.brandId)?.batteries.length === 0 ? (
+                          <p className="text-sm text-muted-foreground text-center py-4">
+                            No batteries available for this brand
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {brands.find(b => b.id === allocation.brandId)?.batteries
+                              .filter(v => getVariantAvailableStock(v) > 0)
+                              .map(variant => {
+                                const sellingPriceRaw = (variant as any).sellingPrice;
+                                const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+                                // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                                const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
+                                const availableStock = getVariantAvailableStock(variant);
+                                const quantity = variantQuantities[variant.id] || 0;
+
+                                return (
+                                  <div
+                                    key={variant.id}
+                                    className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                      }`}
+                                  >
+                                    <div className="flex-1">
+                                      <div className="font-medium flex items-center gap-2">
+                                        {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                        <span>{variant.name}</span>
+                                      </div>
+                                      <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                        {hasInvalidPrice ? (
+                                          'Invalid Selling Price'
+                                        ) : (
+                                          <>
+                                            Selling Price: ₱{sellingPrice.toFixed(2)}
+                                            {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
+                                            {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
+                                          </>
+                                        )} • Available: {availableStock} units
+                                      </div>
+                                    </div>
+                                    <div className="w-28">
+                                      <Input
+                                        type="number"
+                                        placeholder="0"
+                                        min="0"
+                                        max={availableStock}
+                                        value={quantity === 0 ? '' : quantity}
+                                        onChange={(e) => {
+                                          const inputValue = parseInt(e.target.value) || 0;
+                                          const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
+                                          setVariantQuantities(prev => ({
+                                            ...prev,
+                                            [variant.id]: cappedValue
+                                          }));
+                                        }}
+                                        disabled={hasInvalidPrice}
+                                      />
+                                    </div>
                                   </div>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      )}
-                    </TabsContent>
-                  </Tabs>
+                                );
+                              })}
+                          </div>
+                        )}
+                      </TabsContent>
+
+                      {/* POSM Tab */}
+                      <TabsContent value="posm" className="space-y-3 mt-4">
+                        {((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).length === 0 ? (
+                          <p className="text-sm text-muted-foreground text-center py-4">
+                            No POSM available for this brand
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {((brands.find(b => b.id === allocation.brandId) as any)?.posms || [])
+                              .filter((v: any) => getVariantAvailableStock(v) > 0)
+                              .map((variant: any) => {
+                                const sellingPriceRaw = variant.sellingPrice;
+                                const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+                                // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                                const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
+                                const availableStock = getVariantAvailableStock(variant);
+                                const quantity = variantQuantities[variant.id] || 0;
+
+                                return (
+                                  <div
+                                    key={variant.id}
+                                    className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                      }`}
+                                  >
+                                    <div className="flex-1">
+                                      <div className="font-medium flex items-center gap-2">
+                                        {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                        <span>{variant.name}</span>
+                                      </div>
+                                      <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                        {hasInvalidPrice ? (
+                                          'Invalid Selling Price'
+                                        ) : (
+                                          <>
+                                            Selling Price: ₱{sellingPrice.toFixed(2)}
+                                            {variant.dspPrice && ` • DSP: ₱${variant.dspPrice.toFixed(2)}`}
+                                            {variant.rspPrice && ` • RSP: ₱${variant.rspPrice.toFixed(2)}`}
+                                          </>
+                                        )} • Available: {availableStock} units
+                                      </div>
+                                    </div>
+                                    <div className="w-28">
+                                      <Input
+                                        type="number"
+                                        placeholder="0"
+                                        min="0"
+                                        max={availableStock}
+                                        value={quantity === 0 ? '' : quantity}
+                                        onChange={(e) => {
+                                          const inputValue = parseInt(e.target.value) || 0;
+                                          const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
+                                          setVariantQuantities(prev => ({
+                                            ...prev,
+                                            [variant.id]: cappedValue
+                                          }));
+                                        }}
+                                        disabled={hasInvalidPrice}
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        )}
+                      </TabsContent>
+                    </Tabs>
                   </CardContent>
                 </Card>
 
@@ -1668,15 +1674,15 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                           Selected Items ({allocationItems.length})
                         </CardTitle>
                         <Badge variant="default" className="bg-green-600">
-                          Total: ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                          Total: ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </Badge>
                       </div>
                     </CardHeader>
                     <CardContent>
-                    <div className="space-y-2">
-                      {allocationItems.map((item, index) => (
+                      <div className="space-y-2">
+                        {allocationItems.map((item, index) => (
                           <div key={index} className="flex items-center justify-between p-4 bg-background rounded-lg border-2 hover:border-primary/50 transition-colors">
-                          <div className="flex-1">
+                            <div className="flex-1">
                               <div className="font-semibold text-lg">{item.brand_name}</div>
                               <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1 flex-wrap">
                                 <span>{item.variant_name}</span>
@@ -1698,31 +1704,31 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                                     <span>RSP: ₱{item.rsp_price.toFixed(2)}</span>
                                   </>
                                 )}
+                              </div>
                             </div>
-                          </div>
                             <div className="flex items-center gap-3">
                               <div className="text-right">
                                 <div className="text-lg font-bold text-blue-600">
-                              {item.quantity} units
+                                  {item.quantity} units
                                 </div>
                                 <div className="text-sm text-muted-foreground">
-                                  ₱{item.total_value.toLocaleString(undefined, {minimumFractionDigits: 2})}
+                                  ₱{item.total_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                 </div>
                               </div>
-                            <Button
-                              variant="ghost"
+                              <Button
+                                variant="ghost"
                                 size="icon"
-                              onClick={() => handleRemoveVariant(item.variant_id)}
+                                onClick={() => handleRemoveVariant(item.variant_id)}
                                 className="hover:bg-red-100 hover:text-red-600"
-                            >
+                              >
                                 <Trash2 className="h-5 w-5" />
-                            </Button>
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                    
-                    {/* Total Summary */}
+                        ))}
+                      </div>
+
+                      {/* Total Summary */}
                       <div className="border-t-2 pt-4 mt-4">
                         <div className="flex justify-between items-center text-lg">
                           <div className="flex items-center gap-2">
@@ -1732,11 +1738,11 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                           <div className="flex items-center gap-2">
                             <TrendingUp className="h-5 w-5 text-green-600" />
                             <span className="font-bold text-green-600">
-                              ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
-                        </span>
+                              ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
                     </CardContent>
                   </Card>
                 )}
@@ -1751,15 +1757,15 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                         <div className="flex-1">
                           <p className="font-semibold text-yellow-900 mb-2">⚠️ Action Required: Set Prices First</p>
                           <ul className="space-y-1.5 text-sm text-yellow-800">
-                        {allocationWarnings.map((warning, index) => (
+                            {allocationWarnings.map((warning, index) => (
                               <li key={index} className="flex items-start gap-2">
                                 <span className="text-yellow-600 mt-0.5">•</span>
                                 <span>{warning}</span>
                               </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
                     </CardContent>
                   </Card>
                 )}
@@ -1777,24 +1783,24 @@ const [allocationWarnings, setAllocationWarnings] = useState<string[]>([]);
                     )}
                   </div>
                   <div className="flex gap-3">
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="lg"
                       onClick={() => setAllocationOpen(false)}
                       className="gap-2"
                     >
-                    Cancel
-                  </Button>
-                  <Button 
+                      Cancel
+                    </Button>
+                    <Button
                       size="lg"
-                    onClick={handleConfirmAllocation}
-                    disabled={!allocation.agentId || allocationItems.length === 0 || allocationWarnings.length > 0}
+                      onClick={handleConfirmAllocation}
+                      disabled={!allocation.agentId || allocationItems.length === 0 || allocationWarnings.length > 0}
                       className="gap-2"
-                  >
+                    >
                       <CheckCircle className="h-5 w-5" />
                       Allocate Stock Now
                       <ArrowRight className="h-4 w-4" />
-                  </Button>
+                    </Button>
                   </div>
                 </div>
               </>

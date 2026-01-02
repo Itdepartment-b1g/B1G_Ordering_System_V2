@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -550,6 +551,23 @@ export default function PendingRequestsPage() {
             title: 'Success',
             description: `Successfully approved ${requestsToProcess.length} product request(s)`,
           });
+
+          // Notify Agent
+          if (user?.company_id) {
+            const agentId = requestsToProcess[0]?.agent_id;
+            if (agentId) {
+              await sendNotification({
+                userId: agentId,
+                companyId: (user as any).company_id,
+                type: 'stock_request_approved',
+                title: 'Stock Request Approved',
+                message: `Your leader ${user.full_name} has approved your stock request.`,
+                referenceType: 'stock_request',
+                referenceId: requestsToProcess[0].id
+              });
+            }
+          }
+
           setReviewDialogOpen(false);
           fetchRequests();
         } else {
@@ -586,6 +604,23 @@ export default function PendingRequestsPage() {
             title: 'Success',
             description: `Successfully forwarded ${requestsToProcess.length} product request(s) to admin`,
           });
+
+          // Notify Agent
+          if (user?.company_id) {
+            const agentId = requestsToProcess[0]?.agent_id;
+            if (agentId) {
+              await sendNotification({
+                userId: agentId,
+                companyId: (user as any).company_id,
+                type: 'system_message',
+                title: 'Stock Request Escalated',
+                message: `Your leader ${user.full_name} has forwarded your stock request to Admin for approval.`,
+                referenceType: 'stock_request',
+                referenceId: requestsToProcess[0].id
+              });
+            }
+          }
+
           setReviewDialogOpen(false);
           fetchRequests();
         } else {
@@ -616,6 +651,23 @@ export default function PendingRequestsPage() {
             title: 'Success',
             description: `Successfully denied ${requestsToProcess.length} product request(s)`,
           });
+
+          // Notify Agent
+          if (user?.company_id) {
+            const agentId = requestsToProcess[0]?.agent_id;
+            if (agentId) {
+              await sendNotification({
+                userId: agentId,
+                companyId: (user as any).company_id,
+                type: 'stock_request_rejected',
+                title: 'Stock Request Denied',
+                message: `Your stock request was denied by ${user.full_name}. Reason: ${denialReason || 'No reason provided'}`,
+                referenceType: 'stock_request',
+                referenceId: requestsToProcess[0].id
+              });
+            }
+          }
+
           setReviewDialogOpen(false);
           fetchRequests();
         } else {
@@ -701,11 +753,11 @@ export default function PendingRequestsPage() {
     <div className="container mx-auto p-6 space-y-6">
       {/* Header + high-level stats */}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-      <div>
+        <div>
           <h1 className="text-3xl font-bold tracking-tight">Team Stock Requests</h1>
-        <p className="text-muted-foreground mt-1">
+          <p className="text-muted-foreground mt-1">
             Review and manage inventory requests from your mobile sales team.
-        </p>
+          </p>
         </div>
         <div className="grid grid-cols-3 gap-3 text-sm">
           <Card className="shadow-none border-dashed">

@@ -24,7 +24,12 @@ export function usePermissions() {
     }
 
     // For other roles, you can add specific route checks here
-    // For now, return true for all authenticated users (will be refined later)
+    // Restrict /orders to admin and finance roles
+    if (route === '/orders') {
+      return user?.role === 'admin' || user?.role === 'finance';
+    }
+
+    // For other roles, return true for all authenticated users (will be refined later)
     return true;
   };
 

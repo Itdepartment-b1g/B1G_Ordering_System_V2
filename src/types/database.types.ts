@@ -1,7 +1,7 @@
 // B1G Ordering System - Database Types
 // Auto-generated TypeScript types for Supabase tables
 
-export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales';
+export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent';
 export type UserStatus = 'active' | 'inactive';
 export type VariantType = 'flavor' | 'battery' | 'posm';
 export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
@@ -12,13 +12,13 @@ export type TransactionType = 'purchase_order_received' | 'allocated_to_agent' |
 export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
 export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
 export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';
-export type NotificationType = 
-  | 'order_created' 
-  | 'order_approved' 
+export type NotificationType =
+  | 'order_created'
+  | 'order_approved'
   | 'order_rejected'
-  | 'inventory_low' 
+  | 'inventory_low'
   | 'inventory_allocated'
-  | 'purchase_order_approved' 
+  | 'purchase_order_approved'
   | 'new_client'
   | 'system_message'
   | 'stock_request_created'

@@ -17,11 +17,11 @@ export default function MainInventoryPage() {
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
   const [allocatedStock, setAllocatedStock] = useState<Record<string, number>>({});
   const [loadingAllocations, setLoadingAllocations] = useState(false);
-  
+
   // Dialog states
   const [editVariantOpen, setEditVariantOpen] = useState(false);
   const [editBrandOpen, setEditBrandOpen] = useState(false);
-  
+
   // Edit variant states
   const [editingVariant, setEditingVariant] = useState<{
     brandId: string;
@@ -38,13 +38,13 @@ export default function MainInventoryPage() {
   const [sellingPriceInputValue, setSellingPriceInputValue] = useState<string>('');
   const [dspPriceInputValue, setDspPriceInputValue] = useState<string>('');
   const [rspPriceInputValue, setRspPriceInputValue] = useState<string>('');
-  
+
   // Edit brand states
   const [editingBrand, setEditingBrand] = useState<{
     id: string;
     name: string;
   } | null>(null);
-  
+
   // Bulk price update states
   const [bulkPriceDialogOpen, setBulkPriceDialogOpen] = useState(false);
   const [bulkPriceType, setBulkPriceType] = useState<'flavors' | 'batteries' | null>(null);
@@ -53,42 +53,37 @@ export default function MainInventoryPage() {
   const [bulkDspValue, setBulkDspValue] = useState<string>('');
   const [bulkRspValue, setBulkRspValue] = useState<string>('');
   const [updatingBulkPrice, setUpdatingBulkPrice] = useState(false);
-  
+
   const { toast } = useToast();
 
   // Fetch allocated stock data
   const fetchAllocatedStock = async () => {
     try {
       setLoadingAllocations(true);
-      
-      // Step 1: Get all leader IDs
-      const { data: leaderProfiles, error: leaderErr } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('role', 'team_leader');
 
-      if (leaderErr) throw leaderErr;
+      // Step 1: Get all agents who are assigned to a leader (subordinates)
+      const { data: assignments, error: assignmentErr } = await supabase
+        .from('leader_teams')
+        .select('agent_id');
 
-      const leaderIds = (leaderProfiles || []).map((p: any) => p.id);
+      if (assignmentErr) throw assignmentErr;
 
-      if (leaderIds.length === 0) {
-        setAllocatedStock({});
-        setLoadingAllocations(false);
-        return;
-      }
+      const subordinateIds = (assignments || []).map(a => a.agent_id);
 
-      // Step 2: Sum agent_inventory only for those leaders
-      const { data: allocationData, error } = await supabase
+      // Step 2: Get all agent_inventory records
+      const { data: allInventory, error: inventoryErr } = await supabase
         .from('agent_inventory')
-        .select('variant_id, stock, agent_id')
-        .in('agent_id', leaderIds);
+        .select('variant_id, stock, agent_id');
 
-      if (error) throw error;
+      if (inventoryErr) throw inventoryErr;
 
-      // Group allocations by variant_id
+      // Step 3: Only sum stock for users who are NOT subordinates (Top-Level)
+      // This prevents double-counting because leaders' stock already reflects their team's stock
       const allocations: Record<string, number> = {};
-      allocationData?.forEach(item => {
-        allocations[item.variant_id] = (allocations[item.variant_id] || 0) + item.stock;
+      allInventory?.forEach(item => {
+        if (!subordinateIds.includes(item.agent_id)) {
+          allocations[item.variant_id] = (allocations[item.variant_id] || 0) + (item.stock || 0);
+        }
       });
 
       setAllocatedStock(allocations);
@@ -116,17 +111,17 @@ export default function MainInventoryPage() {
   );
 
   const toggleBrandExpand = (brandId: string) => {
-    setExpandedBrands(prev => 
-      prev.includes(brandId) 
+    setExpandedBrands(prev =>
+      prev.includes(brandId)
         ? prev.filter(id => id !== brandId)
         : [...prev, brandId]
     );
   };
 
   const getTotalStock = (brand: Brand) => {
-    return brand.flavors.reduce((sum, f) => sum + f.stock, 0) + 
-           brand.batteries.reduce((sum, b) => sum + b.stock, 0) +
-           (brand.posms || []).reduce((sum, p) => sum + p.stock, 0);
+    return brand.flavors.reduce((sum, f) => sum + f.stock, 0) +
+      brand.batteries.reduce((sum, b) => sum + b.stock, 0) +
+      (brand.posms || []).reduce((sum, p) => sum + p.stock, 0);
   };
 
   const getAllocatedStock = (brand: Brand) => {
@@ -197,12 +192,12 @@ export default function MainInventoryPage() {
         dspPrice,
         rspPrice
       );
-      
+
       toast({
         title: "Success",
         description: `${editingVariant.variantType} updated successfully`,
       });
-      
+
       setEditVariantOpen(false);
       setEditingVariant(null);
       setPriceInputValue('');
@@ -223,12 +218,12 @@ export default function MainInventoryPage() {
 
     try {
       await updateBrandName(editingBrand.id, editingBrand.name);
-      
+
       toast({
         title: "Success",
         description: "Brand updated successfully",
       });
-      
+
       setEditBrandOpen(false);
       setEditingBrand(null);
     } catch (error) {
@@ -255,7 +250,7 @@ export default function MainInventoryPage() {
     const sellingPrice = bulkPriceValue === '' ? 0 : Number(bulkPriceValue);
     const dspPrice = bulkDspValue === '' ? 0 : Number(bulkDspValue);
     const rspPrice = bulkRspValue === '' ? 0 : Number(bulkRspValue);
-    
+
     if (isNaN(sellingPrice) || sellingPrice < 0 || isNaN(dspPrice) || dspPrice < 0 || isNaN(rspPrice) || rspPrice < 0) {
       toast({
         title: "Error",
@@ -273,9 +268,9 @@ export default function MainInventoryPage() {
       }
 
       const variants = bulkPriceType === 'flavors' ? brand.flavors : brand.batteries;
-      
+
       // Update all variants in parallel (skip individual refreshes for performance)
-      const updatePromises = variants.map(variant => 
+      const updatePromises = variants.map(variant =>
         updateVariant(
           variant.id,
           variant.name,
@@ -341,8 +336,8 @@ export default function MainInventoryPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button 
-            onClick={fetchAllocatedStock} 
+          <Button
+            onClick={fetchAllocatedStock}
             disabled={loadingAllocations}
             variant="outline"
           >
@@ -365,7 +360,7 @@ export default function MainInventoryPage() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -377,7 +372,7 @@ export default function MainInventoryPage() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -389,7 +384,7 @@ export default function MainInventoryPage() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -401,7 +396,7 @@ export default function MainInventoryPage() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -442,42 +437,40 @@ export default function MainInventoryPage() {
             {filteredBrands.map((brand) => (
               <div key={brand.id} className="border rounded-lg overflow-hidden">
                 {/* Brand Header Row */}
-                <div 
-                  className={`p-4 cursor-pointer hover:bg-muted/70 transition-colors ${
-                    (brand.flavors.some((f: any) => {
-                      const sp = (f as any).sellingPrice;
-                      return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                    }) || 
-                     brand.batteries.some((b: any) => {
-                      const sp = (b as any).sellingPrice;
-                      return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                    }))
-                      ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' 
+                <div
+                  className={`p-4 cursor-pointer hover:bg-muted/70 transition-colors ${(brand.flavors.some((f: any) => {
+                    const sp = (f as any).sellingPrice;
+                    return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                  }) ||
+                      brand.batteries.some((b: any) => {
+                        const sp = (b as any).sellingPrice;
+                        return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                      }))
+                      ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500'
                       : 'bg-muted/50'
-                  }`}
+                    }`}
                   onClick={() => toggleBrandExpand(brand.id)}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <ChevronRight 
-                        className={`h-4 w-4 transition-transform ${
-                          expandedBrands.includes(brand.id) ? 'rotate-90' : ''
-                        }`} 
+                      <ChevronRight
+                        className={`h-4 w-4 transition-transform ${expandedBrands.includes(brand.id) ? 'rotate-90' : ''
+                          }`}
                       />
                       {(brand.flavors.some((f: any) => {
                         const sp = (f as any).sellingPrice;
                         return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                      }) || 
+                      }) ||
                         brand.batteries.some((b: any) => {
                           const sp = (b as any).sellingPrice;
                           return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
                         })) && (
-                        <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
-                      )}
+                          <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
+                        )}
                       <div>
                         <h3 className="font-semibold text-lg">{brand.name}</h3>
                         <div className="text-sm text-muted-foreground">
-                          {brand.flavors.length} Flavors • {brand.batteries.length} Batteries • {(brand.posms || []).length} POSM • 
+                          {brand.flavors.length} Flavors • {brand.batteries.length} Batteries • {(brand.posms || []).length} POSM •
                           <span className={`ml-1 ${getTotalStock(brand) > 0 ? 'text-blue-700' : 'text-red-600'}`}>
                             Total Stock: {getTotalStock(brand)}
                           </span>
@@ -485,35 +478,35 @@ export default function MainInventoryPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                    <Badge 
-                      variant={
-                        getTotalStock(brand) === 0 ? 'destructive' : 
-                        (brand.flavors.some((f: any) => {
-                          const sp = (f as any).sellingPrice;
-                          return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                        }) || 
-                         brand.batteries.some((b: any) => {
-                          const sp = (b as any).sellingPrice;
-                          return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                        })) ? 'secondary' :
-                        (brand.flavors.some((f: any) => f.status === 'low-stock') || 
-                         brand.batteries.some((b: any) => b.status === 'low-stock') ||
-                         (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'secondary' : 'default'
-                      }
-                    >
-                      {getTotalStock(brand) === 0 ? 'Out of Stock' : 
-                       (brand.flavors.some((f: any) => {
-                         const sp = (f as any).sellingPrice;
-                         return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                       }) || 
-                        brand.batteries.some((b: any) => {
-                          const sp = (b as any).sellingPrice;
-                          return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                        })) ? 'Missing Prices' :
-                       (brand.flavors.some((f: any) => f.status === 'low-stock') || 
-                        brand.batteries.some((b: any) => b.status === 'low-stock') ||
-                        (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'Low Stock' : 'In Stock'}
-                    </Badge>
+                      <Badge
+                        variant={
+                          getTotalStock(brand) === 0 ? 'destructive' :
+                            (brand.flavors.some((f: any) => {
+                              const sp = (f as any).sellingPrice;
+                              return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                            }) ||
+                              brand.batteries.some((b: any) => {
+                                const sp = (b as any).sellingPrice;
+                                return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                              })) ? 'secondary' :
+                              (brand.flavors.some((f: any) => f.status === 'low-stock') ||
+                                brand.batteries.some((b: any) => b.status === 'low-stock') ||
+                                (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'secondary' : 'default'
+                        }
+                      >
+                        {getTotalStock(brand) === 0 ? 'Out of Stock' :
+                          (brand.flavors.some((f: any) => {
+                            const sp = (f as any).sellingPrice;
+                            return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                          }) ||
+                            brand.batteries.some((b: any) => {
+                              const sp = (b as any).sellingPrice;
+                              return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                            })) ? 'Missing Prices' :
+                            (brand.flavors.some((f: any) => f.status === 'low-stock') ||
+                              brand.batteries.some((b: any) => b.status === 'low-stock') ||
+                              (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'Low Stock' : 'In Stock'}
+                      </Badge>
                       <Button variant="ghost" size="sm" onClick={(e) => {
                         e.stopPropagation();
                         handleEditBrand(brand);
@@ -569,11 +562,10 @@ export default function MainInventoryPage() {
                               const sellingPriceRaw = (flavor as any).sellingPrice;
                               const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
                               return (
-                                <TableRow 
-                                  key={`flavor-${flavor.id}`} 
-                                  className={`hover:bg-blue-50/20 ${
-                                    hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-blue-50/10'
-                                  }`}
+                                <TableRow
+                                  key={`flavor-${flavor.id}`}
+                                  className={`hover:bg-blue-50/20 ${hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-blue-50/10'
+                                    }`}
                                 >
                                   <TableCell className="font-medium text-center">
                                     <div className="flex items-center justify-center gap-2">
@@ -594,16 +586,16 @@ export default function MainInventoryPage() {
                                     {typeof (flavor as any).rspPrice === 'number' ? `₱${(flavor as any).rspPrice.toFixed(2)}` : '-'}
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <Badge 
+                                    <Badge
                                       variant={
                                         flavor.stock === 0 ? 'destructive' :
-                                        hasNoPrice ? 'secondary' :
-                                        (flavor as any).status === 'low-stock' ? 'secondary' : 'default'
+                                          hasNoPrice ? 'secondary' :
+                                            (flavor as any).status === 'low-stock' ? 'secondary' : 'default'
                                       }
                                     >
-                                      {flavor.stock === 0 ? 'Out of Stock' : 
-                                       hasNoPrice ? 'No Price Set' :
-                                       (flavor as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
+                                      {flavor.stock === 0 ? 'Out of Stock' :
+                                        hasNoPrice ? 'No Price Set' :
+                                          (flavor as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
@@ -665,11 +657,10 @@ export default function MainInventoryPage() {
                               const sellingPriceRaw = (battery as any).sellingPrice;
                               const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
                               return (
-                                <TableRow 
-                                  key={`battery-${battery.id}`} 
-                                  className={`hover:bg-green-50/20 ${
-                                    hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-green-50/10'
-                                  }`}
+                                <TableRow
+                                  key={`battery-${battery.id}`}
+                                  className={`hover:bg-green-50/20 ${hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-green-50/10'
+                                    }`}
                                 >
                                   <TableCell className="font-medium text-center">
                                     <div className="flex items-center justify-center gap-2">
@@ -690,16 +681,16 @@ export default function MainInventoryPage() {
                                     {typeof (battery as any).rspPrice === 'number' ? `₱${(battery as any).rspPrice.toFixed(2)}` : '-'}
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <Badge 
+                                    <Badge
                                       variant={
                                         battery.stock === 0 ? 'destructive' :
-                                        hasNoPrice ? 'secondary' :
-                                        (battery as any).status === 'low-stock' ? 'secondary' : 'default'
+                                          hasNoPrice ? 'secondary' :
+                                            (battery as any).status === 'low-stock' ? 'secondary' : 'default'
                                       }
                                     >
-                                      {battery.stock === 0 ? 'Out of Stock' : 
-                                       hasNoPrice ? 'No Price Set' :
-                                       (battery as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
+                                      {battery.stock === 0 ? 'Out of Stock' :
+                                        hasNoPrice ? 'No Price Set' :
+                                          (battery as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
@@ -750,11 +741,10 @@ export default function MainInventoryPage() {
                               const sellingPriceRaw = (posm as any).sellingPrice;
                               const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
                               return (
-                                <TableRow 
-                                  key={`posm-${posm.id}`} 
-                                  className={`hover:bg-purple-50/20 ${
-                                    hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-purple-50/10'
-                                  }`}
+                                <TableRow
+                                  key={`posm-${posm.id}`}
+                                  className={`hover:bg-purple-50/20 ${hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-purple-50/10'
+                                    }`}
                                 >
                                   <TableCell className="font-medium text-center">
                                     <div className="flex items-center justify-center gap-2">
@@ -775,14 +765,14 @@ export default function MainInventoryPage() {
                                     {typeof (posm as any).rspPrice === 'number' ? `₱${(posm as any).rspPrice.toFixed(2)}` : '-'}
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    <Badge 
+                                    <Badge
                                       variant={
                                         posm.stock === 0 ? 'destructive' :
-                                        (posm as any).status === 'low-stock' ? 'secondary' : 'default'
+                                          (posm as any).status === 'low-stock' ? 'secondary' : 'default'
                                       }
                                     >
-                                      {posm.stock === 0 ? 'Out of Stock' : 
-                                       (posm as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
+                                      {posm.stock === 0 ? 'Out of Stock' :
+                                        (posm as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-center">
@@ -802,7 +792,7 @@ export default function MainInventoryPage() {
                         </Table>
                       </div>
                     )}
-                    
+
                     {/* Empty state if no variants */}
                     {brand.flavors.length === 0 && brand.batteries.length === 0 && brand.posms.length === 0 && (
                       <div className="text-center py-8 text-muted-foreground">
@@ -814,7 +804,7 @@ export default function MainInventoryPage() {
                 )}
               </div>
             ))}
-            
+
             {/* Empty state if no brands */}
             {filteredBrands.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
@@ -842,7 +832,7 @@ export default function MainInventoryPage() {
                 <Input
                   id="name"
                   value={editingVariant.name}
-                  onChange={(e) => setEditingVariant({...editingVariant, name: e.target.value})}
+                  onChange={(e) => setEditingVariant({ ...editingVariant, name: e.target.value })}
                 />
               </div>
               <div>
@@ -866,7 +856,7 @@ export default function MainInventoryPage() {
                     const inputValue = e.target.value;
                     setSellingPriceInputValue(inputValue);
                     const value = inputValue === '' ? 0 : Number(inputValue);
-                    setEditingVariant({...editingVariant, sellingPrice: value});
+                    setEditingVariant({ ...editingVariant, sellingPrice: value });
                   }}
                 />
               </div>
@@ -881,7 +871,7 @@ export default function MainInventoryPage() {
                     const inputValue = e.target.value;
                     setDspPriceInputValue(inputValue);
                     const value = inputValue === '' ? 0 : Number(inputValue);
-                    setEditingVariant({...editingVariant, dspPrice: value});
+                    setEditingVariant({ ...editingVariant, dspPrice: value });
                   }}
                 />
               </div>
@@ -896,7 +886,7 @@ export default function MainInventoryPage() {
                     const inputValue = e.target.value;
                     setRspPriceInputValue(inputValue);
                     const value = inputValue === '' ? 0 : Number(inputValue);
-                    setEditingVariant({...editingVariant, rspPrice: value});
+                    setEditingVariant({ ...editingVariant, rspPrice: value });
                   }}
                 />
               </div>
@@ -932,7 +922,7 @@ export default function MainInventoryPage() {
                 <Input
                   id="brandName"
                   value={editingBrand.name}
-                  onChange={(e) => setEditingBrand({...editingBrand, name: e.target.value})}
+                  onChange={(e) => setEditingBrand({ ...editingBrand, name: e.target.value })}
                 />
               </div>
               <div className="flex justify-end space-x-2">
@@ -1005,8 +995,8 @@ export default function MainInventoryPage() {
                 This will update Selling Price, DSP, and RSP for all {bulkPriceType === 'flavors' ? 'flavors' : 'batteries'} in this brand.
               </p>
               <div className="flex justify-end space-x-2">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={() => {
                     setBulkPriceDialogOpen(false);
                     setBulkPriceValue('');
@@ -1017,7 +1007,7 @@ export default function MainInventoryPage() {
                 >
                   Cancel
                 </Button>
-                <Button 
+                <Button
                   onClick={handleConfirmBulkPriceUpdate}
                   disabled={updatingBulkPrice}
                 >

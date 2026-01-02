@@ -2,7 +2,7 @@
 // SQL DATABASE REMOVED - All functions disabled
 // This file is kept for reference but all database operations have been removed
 
-// import { supabase } from './supabase'; // DISABLED - SQL database removed
+import { supabase } from './supabase';
 import type {
   Profile,
   Brand,
@@ -94,15 +94,39 @@ export async function getSuppliers() {
 }
 
 export async function getNotifications(userId: string, unreadOnly = false) {
-  throw new Error('SQL database removed - getNotifications disabled');
+  let query = supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (unreadOnly) {
+    query = query.eq('is_read', false);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as Notification[];
 }
 
 export async function markNotificationAsRead(notificationId: string) {
-  throw new Error('SQL database removed - markNotificationAsRead disabled');
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('id', notificationId);
+
+  if (error) throw error;
+  return { success: true };
 }
 
 export async function markAllNotificationsAsRead(userId: string) {
-  throw new Error('SQL database removed - markAllNotificationsAsRead disabled');
+  const { error } = await supabase
+    .from('notifications')
+    .update({ is_read: true })
+    .eq('user_id', userId);
+
+  if (error) throw error;
+  return { success: true };
 }
 
 export async function generateOrderNumber(): Promise<string> {
