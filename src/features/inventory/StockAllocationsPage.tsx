@@ -1729,17 +1729,36 @@ export default function StockAllocationsPage() {
                       </div>
 
                       {/* Total Summary */}
-                      <div className="border-t-2 pt-4 mt-4">
+                      <div className="border-t-2 pt-4 mt-4 space-y-3">
                         <div className="flex justify-between items-center text-lg">
                           <div className="flex items-center gap-2">
                             <Package className="h-5 w-5 text-blue-600" />
-                            <span className="font-bold">Total Items: {allocationItems.length}</span>
+                            <span className="font-bold text-blue-900">Total Items: {allocationItems.length}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <TrendingUp className="h-5 w-5 text-green-600" />
-                            <span className="font-bold text-green-600">
-                              ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </span>
+                            <CheckCircle className="h-5 w-5 text-green-600" />
+                            <span className="font-bold">Total Units: {allocationItems.reduce((sum, item) => sum + item.quantity, 0).toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                          <div className="bg-primary/5 p-3 rounded-lg border border-primary/10">
+                            <div className="text-xs text-muted-foreground uppercase font-semibold">Total Unit Price</div>
+                            <div className="text-xl font-bold text-primary">
+                              ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                          <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                            <div className="text-xs text-blue-700 uppercase font-semibold">Total DSP Price</div>
+                            <div className="text-xl font-bold text-blue-900">
+                              ₱{allocationItems.reduce((sum, item) => sum + ((item.dsp_price || 0) * item.quantity), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                          <div className="bg-purple-50 p-3 rounded-lg border border-purple-100">
+                            <div className="text-xs text-purple-700 uppercase font-semibold">Total RSP Price</div>
+                            <div className="text-xl font-bold text-purple-900">
+                              ₱{allocationItems.reduce((sum, item) => sum + ((item.rsp_price || 0) * item.quantity), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
                           </div>
                         </div>
                       </div>

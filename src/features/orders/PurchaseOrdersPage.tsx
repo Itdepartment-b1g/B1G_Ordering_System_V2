@@ -50,13 +50,15 @@ export default function PurchaseOrdersPage() {
   const [orderToView, setOrderToView] = useState<any>(null);
 
   const { toast } = useToast();
-  
+
   // Company information for buyer section
   const [companyInfo, setCompanyInfo] = useState<any>(null);
 
   // Available brands and variants for selection
   const [availableVariants, setAvailableVariants] = useState<BrandVariant[]>([]);
   const [loadingVariants, setLoadingVariants] = useState(false);
+  const [variantTypes, setVariantTypes] = useState<Array<{ id: string; name: string }>>([]);
+  const [loadingVariantTypes, setLoadingVariantTypes] = useState(false);
 
   // For New Item (create brand/variants) flow
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
@@ -64,11 +66,11 @@ export default function PurchaseOrdersPage() {
   const [newItemTab, setNewItemTab] = useState<'existing' | 'new'>('existing');
   const [newBrandName, setNewBrandName] = useState('');
   const [existingBrandId, setExistingBrandId] = useState('');
-  
+
   // For existing items selection (Add Existing tab)
   const [selectedBrandForExisting, setSelectedBrandForExisting] = useState('');
   const [filteredVariantsForBrand, setFilteredVariantsForBrand] = useState<BrandVariant[]>([]);
-  
+
   const [flavorInput, setFlavorInput] = useState({ name: '', quantity: 0, unit_price: 0 });
   const [batteryInput, setBatteryInput] = useState({ name: '', quantity: 0, unit_price: 0 });
   const [posmInput, setPosmInput] = useState({ name: '', quantity: 0, unit_price: 0 });
@@ -88,7 +90,7 @@ export default function PurchaseOrdersPage() {
   const [selectedVariantId, setSelectedVariantId] = useState('');
   const [itemQuantity, setItemQuantity] = useState(0);
   const [itemPrice, setItemPrice] = useState(0);
-  
+
   // Auto-set price to 0 for POSM variants
   useEffect(() => {
     if (selectedVariantId) {
@@ -122,21 +124,21 @@ export default function PurchaseOrdersPage() {
         console.warn('[PurchaseOrdersPage] No company_id found for user:', user);
         return;
       }
-      
+
       console.log('[PurchaseOrdersPage] Fetching company info for company_id:', user.company_id);
-      
+
       try {
         const { data, error } = await supabase
           .from('companies')
           .select('company_name, company_email')
           .eq('id', user.company_id)
           .single();
-        
+
         if (error) {
           console.error('[PurchaseOrdersPage] Error fetching company:', error);
           throw error;
         }
-        
+
         console.log('[PurchaseOrdersPage] Company info loaded successfully:', data);
         setCompanyInfo(data);
       } catch (error: any) {
@@ -220,7 +222,27 @@ export default function PurchaseOrdersPage() {
       }
     };
     fetchBrands();
-  }, []);
+
+    const fetchVariantTypes = async () => {
+      if (!user?.company_id) return;
+      try {
+        setLoadingVariantTypes(true);
+        const { data, error } = await supabase
+          .from('variant_types')
+          .select('id, name')
+          .eq('company_id', user.company_id);
+        if (error) throw error;
+        setVariantTypes(data || []);
+      } catch (err) {
+        console.error('Error fetching variant types:', err);
+      } finally {
+        setLoadingVariantTypes(false);
+      }
+    };
+    if (user?.company_id) {
+      fetchVariantTypes();
+    }
+  }, [user?.company_id]);
 
   // Filter variants when brand is selected in "Add Existing" tab
   useEffect(() => {
@@ -267,7 +289,7 @@ export default function PurchaseOrdersPage() {
       toast({ title: 'Error', description: 'Price must be greater than 0', variant: 'destructive' });
       return;
     }
-    
+
     // Ensure POSM price is always 0
     const finalPrice = selectedVariant.variant_type === 'posm' ? 0 : itemPrice;
 
@@ -295,7 +317,7 @@ export default function PurchaseOrdersPage() {
   const handleCreateOrder = async () => {
     // Always use B1G Corporation as the supplier
     let supplierId = selectedSupplierId;
-    
+
     // Try to find B1G Corporation supplier
     if (!supplierId) {
       const defaultSupplier = suppliers.find(s => s.company_name === 'B1G Corporation');
@@ -313,10 +335,10 @@ export default function PurchaseOrdersPage() {
           .select('id, company_name')
           .ilike('company_name', 'B1G Corporation')
           .maybeSingle();
-        
+
         if (!findErr && existing) {
           supplierId = existing.id;
-            setSelectedSupplierId(supplierId);
+          setSelectedSupplierId(supplierId);
         }
       } catch (e) {
         console.error('Error finding B1G Corporation supplier:', e);
@@ -324,10 +346,10 @@ export default function PurchaseOrdersPage() {
     }
 
     if (!supplierId) {
-      toast({ 
-        title: 'Error', 
-        description: 'B1G Corporation supplier not found. Please contact system administrator.', 
-        variant: 'destructive' 
+      toast({
+        title: 'Error',
+        description: 'B1G Corporation supplier not found. Please contact system administrator.',
+        variant: 'destructive'
       });
       return;
     }
@@ -360,7 +382,10 @@ export default function PurchaseOrdersPage() {
         if (newBrandName.trim()) {
           const { data: newBrand, error: brandErr } = await supabase
             .from('brands')
-            .insert({ name: newBrandName.trim() })
+            .insert({
+              name: newBrandName.trim(),
+              company_id: user.company_id
+            })
             .select()
             .single();
           if (brandErr) throw brandErr;
@@ -375,9 +400,22 @@ export default function PurchaseOrdersPage() {
         for (const draft of newItemsDraft) {
           // Convert 'posm' to 'POSM' for database constraint
           const dbVariantType = draft.type === 'posm' ? 'POSM' : draft.type;
+
+          // Find the corresponding variant_type_id
+          const vt = variantTypes.find(type => type.name.toLowerCase() === dbVariantType.toLowerCase());
+          if (!vt) {
+            throw new Error(`Variant type "${dbVariantType}" not found for your company. Please contact support.`);
+          }
+
           const { data: v, error: vErr } = await supabase
             .from('variants')
-            .insert({ name: draft.name, variant_type: dbVariantType, brand_id: brandId })
+            .insert({
+              name: draft.name,
+              variant_type: dbVariantType,
+              brand_id: brandId,
+              company_id: user.company_id,
+              variant_type_id: vt.id
+            })
             .select()
             .single();
           if (vErr) throw vErr;
@@ -639,17 +677,17 @@ export default function PurchaseOrdersPage() {
                     </div>
                     <div className="space-y-2">
                       <Label>Select Variant</Label>
-                      <Select 
-                        value={selectedVariantId} 
+                      <Select
+                        value={selectedVariantId}
                         onValueChange={setSelectedVariantId}
                         disabled={!selectedBrandForExisting || filteredVariantsForBrand.length === 0}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder={
-                            !selectedBrandForExisting 
-                              ? "Select a brand first" 
-                              : filteredVariantsForBrand.length === 0 
-                                ? "No variants available" 
+                            !selectedBrandForExisting
+                              ? "Select a brand first"
+                              : filteredVariantsForBrand.length === 0
+                                ? "No variants available"
                                 : "Choose a variant"
                           } />
                         </SelectTrigger>
@@ -870,9 +908,9 @@ export default function PurchaseOrdersPage() {
                               <div key={idx} className="flex items-center justify-between bg-background p-2 rounded">
                                 <div className="flex items-center gap-2 text-sm">
                                   <Badge variant="secondary" className={
-                                    d.type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
-                                    d.type === 'battery' ? 'bg-green-100 text-green-700' : 
-                                    'bg-purple-100 text-purple-700'
+                                    d.type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                      d.type === 'battery' ? 'bg-green-100 text-green-700' :
+                                        'bg-purple-100 text-purple-700'
                                   }>
                                     {d.type.toUpperCase()}
                                   </Badge>
@@ -917,9 +955,9 @@ export default function PurchaseOrdersPage() {
                               <Badge
                                 variant="secondary"
                                 className={
-                                  item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
-                                  item.variant_type === 'battery' ? 'bg-green-100 text-green-700' : 
-                                  'bg-purple-100 text-purple-700'
+                                  item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                    item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                      'bg-purple-100 text-purple-700'
                                 }
                               >
                                 {item.variant_type.toUpperCase()}
@@ -1241,9 +1279,9 @@ export default function PurchaseOrdersPage() {
                             <Badge
                               variant="secondary"
                               className={
-                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
-                                item.variant_type === 'battery' ? 'bg-green-100 text-green-700' : 
-                                'bg-purple-100 text-purple-700'
+                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                  item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                    'bg-purple-100 text-purple-700'
                               }
                             >
                               {item.variant_type.toUpperCase()}
@@ -1364,12 +1402,12 @@ export default function PurchaseOrdersPage() {
                     <div key={item.id} className="rounded-lg border bg-background p-3">
                       <div className="flex items-center justify-between">
                         <div className="font-medium">{item.brand_name} • {item.variant_name}</div>
-                        <Badge 
+                        <Badge
                           variant="secondary"
                           className={
-                            item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
-                            item.variant_type === 'battery' ? 'bg-green-100 text-green-700' : 
-                            'bg-purple-100 text-purple-700'
+                            item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                              item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                'bg-purple-100 text-purple-700'
                           }
                         >
                           {item.variant_type.toUpperCase()}
@@ -1411,12 +1449,12 @@ export default function PurchaseOrdersPage() {
                           <TableCell className="font-medium">{item.brand_name}</TableCell>
                           <TableCell>{item.variant_name}</TableCell>
                           <TableCell>
-                            <Badge 
+                            <Badge
                               variant="secondary"
                               className={
-                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' : 
-                                item.variant_type === 'battery' ? 'bg-green-100 text-green-700' : 
-                                'bg-purple-100 text-purple-700'
+                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                  item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                    'bg-purple-100 text-purple-700'
                               }
                             >
                               {item.variant_type.toUpperCase()}

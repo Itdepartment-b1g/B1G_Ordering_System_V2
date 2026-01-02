@@ -10,6 +10,7 @@ import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw,
 import { useToast } from '@/hooks/use-toast';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
+import { InventoryImportExport } from './components/InventoryImportExport';
 
 export default function MainInventoryPage() {
   const { brands, setBrands, updateBrandName, updateVariant, addOrUpdateInventory, refreshInventory } = useInventory();
@@ -336,6 +337,7 @@ export default function MainInventoryPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <InventoryImportExport brands={brands} />
           <Button
             onClick={fetchAllocatedStock}
             disabled={loadingAllocations}
@@ -442,12 +444,12 @@ export default function MainInventoryPage() {
                     const sp = (f as any).sellingPrice;
                     return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
                   }) ||
-                      brand.batteries.some((b: any) => {
-                        const sp = (b as any).sellingPrice;
-                        return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                      }))
-                      ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500'
-                      : 'bg-muted/50'
+                    brand.batteries.some((b: any) => {
+                      const sp = (b as any).sellingPrice;
+                      return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
+                    }))
+                    ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500'
+                    : 'bg-muted/50'
                     }`}
                   onClick={() => toggleBrandExpand(brand.id)}
                 >

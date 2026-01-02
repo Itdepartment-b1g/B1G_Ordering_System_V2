@@ -6,10 +6,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Users, 
-  UserPlus, 
-  Crown, 
+import {
+  Users,
+  UserPlus,
+  Crown,
   Loader2,
   UserMinus,
   MoreHorizontal,
@@ -75,127 +75,129 @@ export function TeamManagementTab() {
   const [assigning, setAssigning] = useState(false);
   const [unassigning, setUnassigning] = useState(false);
   const [unpromoting, setUnpromoting] = useState(false);
+  const [manageTeamDialogOpen, setManageTeamDialogOpen] = useState(false);
+  const [selectedTeamLeaderId, setSelectedTeamLeaderId] = useState<string | null>(null);
   const { toast } = useToast();
 
   // Unassigned agents: mobile_sales and team_leader (managers can have both)
-  const unassignedAgents = agents.filter(agent => 
-    !agent.leaderId && 
+  const unassignedAgents = agents.filter(agent =>
+    !agent.leaderId &&
     !['manager'].includes(agent.role) &&
     ['mobile_sales', 'team_leader'].includes(agent.role)
   );
   // Assigned agents: mobile_sales and team_leader who have a leader
-  const assignedAgents = agents.filter(agent => 
-    agent.leaderId && 
+  const assignedAgents = agents.filter(agent =>
+    agent.leaderId &&
     ['mobile_sales', 'team_leader'].includes(agent.role)
   );
   const totalAgents = agents.filter(agent => agent.role === 'mobile_sales').length;
-  
+
   // Top-level leaders: leaders who are not assigned to any manager
   const topLevelLeaders = leaders.filter(leader => {
     // Check if this leader is assigned to a manager (has a leaderId in agents)
-    const isAssignedToManager = agents.some(agent => 
+    const isAssignedToManager = agents.some(agent =>
       agent.id === leader.id && agent.leaderId !== undefined
     );
     return !isAssignedToManager;
   });
 
- // Fetch data from database (with optional silent mode for real-time updates)
- const fetchData = async (silent = false) => {
-  try {
-    if (!silent) {
-      setLoading(true);
-    }
-    
-    // Build base queries with company filter applied upfront
-    const companyFilter = user?.company_id ? { company_id: user.company_id } : {};
-    
-    // Execute all queries in parallel for maximum speed
-    const [agentsResult, teamResult] = await Promise.all([
-      // Fetch all relevant profiles
-      supabase
-        .from('profiles')
-        .select('*')
-        .in('role', ['mobile_sales', 'team_leader', 'manager'])
-        .match(companyFilter)
-        .order('created_at', { ascending: false })
-        .limit(200),
-      
-      // Fetch team assignments (trimmed and capped)
-      supabase
-        .from('leader_teams')
-        .select('agent_id, leader_id')
-        .match(companyFilter)
-        .limit(200)
-    ]);
+  // Fetch data from database (with optional silent mode for real-time updates)
+  const fetchData = async (silent = false) => {
+    try {
+      if (!silent) {
+        setLoading(true);
+      }
 
-    if (agentsResult.error) throw agentsResult.error;
-    if (teamResult.error) throw teamResult.error;
+      // Build base queries with company filter applied upfront
+      const companyFilter = user?.company_id ? { company_id: user.company_id } : {};
 
-    const agentsData = agentsResult.data || [];
-    const teamData = teamResult.data || [];
+      // Execute all queries in parallel for maximum speed
+      const [agentsResult, teamResult] = await Promise.all([
+        // Fetch all relevant profiles
+        supabase
+          .from('profiles')
+          .select('*')
+          .in('role', ['mobile_sales', 'team_leader', 'manager'])
+          .match(companyFilter)
+          .order('created_at', { ascending: false })
+          .limit(200),
 
-    // Create lookup maps for O(1) access
-    const teamMap = new Map(teamData.map(t => [t.agent_id, t.leader_id]));
-    const profileMap = new Map(agentsData.map(p => [p.id, p]));
+        // Fetch team assignments (trimmed and capped)
+        supabase
+          .from('leader_teams')
+          .select('agent_id, leader_id')
+          .match(companyFilter)
+          .limit(200)
+      ]);
 
-    // Process agents data in a single pass
-    const processedAgents: Agent[] = agentsData.map((agent: any) => {
-      const leaderId = teamMap.get(agent.id);
-      const leaderProfile = leaderId ? profileMap.get(leaderId) : undefined;
-      
-      return {
-        id: agent.id,
-        name: agent.full_name || '',
-        email: agent.email || '',
-        region: agent.region || '',
-        role: agent.role || 'mobile_sales',
-        status: agent.status || 'active',
-        leaderId: leaderId,
-        leaderName: leaderProfile?.full_name,
-      };
-    });
+      if (agentsResult.error) throw agentsResult.error;
+      if (teamResult.error) throw teamResult.error;
 
-    // Build leaders map efficiently
-    const leadersMap = new Map<string, Leader>();
-    const teamSizeMap = new Map<string, number>();
-    
-    // Count team sizes
-    for (const assignment of teamData) {
-      teamSizeMap.set(
-        assignment.leader_id, 
-        (teamSizeMap.get(assignment.leader_id) || 0) + 1
-      );
-    }
+      const agentsData = agentsResult.data || [];
+      const teamData = teamResult.data || [];
 
-    // Add all leaders and managers
-    for (const agent of processedAgents) {
-      if (['team_leader', 'manager'].includes(agent.role)) {
-        leadersMap.set(agent.id, {
+      // Create lookup maps for O(1) access
+      const teamMap = new Map(teamData.map(t => [t.agent_id, t.leader_id]));
+      const profileMap = new Map(agentsData.map(p => [p.id, p]));
+
+      // Process agents data in a single pass
+      const processedAgents: Agent[] = agentsData.map((agent: any) => {
+        const leaderId = teamMap.get(agent.id);
+        const leaderProfile = leaderId ? profileMap.get(leaderId) : undefined;
+
+        return {
           id: agent.id,
-          name: agent.name,
-          region: agent.region,
-          teamSize: teamSizeMap.get(agent.id) || 0,
-          role: agent.role as 'team_leader' | 'manager'
-        });
+          name: agent.full_name || '',
+          email: agent.email || '',
+          region: agent.region || '',
+          role: agent.role || 'mobile_sales',
+          status: agent.status || 'active',
+          leaderId: leaderId,
+          leaderName: leaderProfile?.full_name,
+        };
+      });
+
+      // Build leaders map efficiently
+      const leadersMap = new Map<string, Leader>();
+      const teamSizeMap = new Map<string, number>();
+
+      // Count team sizes
+      for (const assignment of teamData) {
+        teamSizeMap.set(
+          assignment.leader_id,
+          (teamSizeMap.get(assignment.leader_id) || 0) + 1
+        );
+      }
+
+      // Add all leaders and managers
+      for (const agent of processedAgents) {
+        if (['team_leader', 'manager'].includes(agent.role)) {
+          leadersMap.set(agent.id, {
+            id: agent.id,
+            name: agent.name,
+            region: agent.region,
+            teamSize: teamSizeMap.get(agent.id) || 0,
+            role: agent.role as 'team_leader' | 'manager'
+          });
+        }
+      }
+
+      setAgents(processedAgents);
+      setLeaders(Array.from(leadersMap.values()));
+
+    } catch (error) {
+      console.error('Error fetching team data:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load team data',
+        variant: 'destructive'
+      });
+    } finally {
+      if (!silent) {
+        setLoading(false);
       }
     }
-
-    setAgents(processedAgents);
-    setLeaders(Array.from(leadersMap.values()));
-    
-  } catch (error) {
-    console.error('Error fetching team data:', error);
-    toast({
-      title: 'Error',
-      description: 'Failed to load team data',
-      variant: 'destructive'
-    });
-  } finally {
-    if (!silent) {
-      setLoading(false);
-    }
-  }
-};
+  };
 
   useEffect(() => {
     fetchData();
@@ -212,7 +214,7 @@ export function TeamManagementTab() {
       // Only refresh if the change affects relevant roles
       const newData = payload.new as any;
       const oldData = payload.old as any;
-      
+
       if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
         const role = newData?.role;
         if (['mobile_sales', 'team_leader', 'manager'].includes(role)) {
@@ -265,7 +267,7 @@ export function TeamManagementTab() {
     }
 
     setAssigning(true);
-    
+
     try {
       // Get current user (admin) ID
       const { data: { user } } = await supabase.auth.getUser();
@@ -297,15 +299,15 @@ export function TeamManagementTab() {
         title: 'Success',
         description: 'Agent has been assigned to the team successfully'
       });
-      
+
       // Refresh data
       await fetchData();
-      
+
       setAssignDialogOpen(false);
       setConfirmDialogOpen(false);
       setSelectedAgent('');
       setSelectedLeader('');
-      
+
     } catch (error) {
       console.error('Error assigning agent:', error);
       toast({
@@ -341,7 +343,7 @@ export function TeamManagementTab() {
     }
 
     setUnassigning(true);
-    
+
     try {
       // Get current user (admin) ID
       const { data: { user } } = await supabase.auth.getUser();
@@ -369,18 +371,18 @@ export function TeamManagementTab() {
       }
 
       const agent = agents.find(a => a.id === agentToUnassign);
-      
+
       toast({
         title: 'Success',
         description: `${agent?.name} has been unassigned from the team`
       });
-      
+
       // Refresh data
       await fetchData();
-      
+
       setUnassignDialogOpen(false);
       setAgentToUnassign('');
-      
+
     } catch (error: any) {
       console.error('Error unassigning agent:', error);
       toast({
@@ -453,19 +455,19 @@ export function TeamManagementTab() {
         .eq('id', leaderToUnpromote);
       if (profileErr) throw profileErr;
 
-      toast({ 
-        title: 'Unpromoted Successfully', 
-        description: successMessage 
+      toast({
+        title: 'Unpromoted Successfully',
+        description: successMessage
       });
       setUnpromoteDialogOpen(false);
       setLeaderToUnpromote('');
       await fetchData();
     } catch (error: any) {
       console.error('Error unpromoting leader:', error);
-      toast({ 
-        title: 'Error', 
-        description: error?.message || 'Failed to unpromote leader', 
-        variant: 'destructive' 
+      toast({
+        title: 'Error',
+        description: error?.message || 'Failed to unpromote leader',
+        variant: 'destructive'
       });
     } finally {
       setUnpromoting(false);
@@ -473,81 +475,81 @@ export function TeamManagementTab() {
   };
 
   if (loading) {
-  return (
-        <div className="flex items-center justify-center py-12">
+    return (
+      <div className="flex items-center justify-center py-12">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <span className="text-muted-foreground">Loading team data...</span>
-          </div>
         </div>
+      </div>
     );
   }
 
   return (
     <div className="space-y-8">
       {/* Assign Agent Dialog - Hidden, accessible via other actions */}
-                    <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
+      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
         <DialogContent className="sm:max-w-[500px]">
-                        <DialogHeader>
-                          <DialogTitle>Assign Agent to Team</DialogTitle>
+          <DialogHeader>
+            <DialogTitle>Assign Agent to Team</DialogTitle>
             <DialogDescription>
               Select an unassigned agent to assign. Managers can have both team leaders and mobile sales agents. Team leaders can only have mobile sales agents.
             </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-4 py-4">
-                          <div className="space-y-2">
-                            <Label>Select Agent</Label>
-                            <Select value={selectedAgent} onValueChange={setSelectedAgent}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Choose an agent" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {unassignedAgents.map(agent => (
-                                  <SelectItem key={agent.id} value={agent.id}>
-                                    {agent.name} ({agent.region})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Select Agent</Label>
+              <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose an agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  {unassignedAgents.map(agent => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name} ({agent.region})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {unassignedAgents.length === 0 && (
                 <p className="text-sm text-muted-foreground">All agents are assigned</p>
               )}
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Select Leader or Manager</Label>
-                            <Select value={selectedLeader} onValueChange={setSelectedLeader}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Choose a leader or manager" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {leaders.map(leader => (
-                                  <SelectItem key={leader.id} value={leader.id}>
+            </div>
+            <div className="space-y-2">
+              <Label>Select Leader or Manager</Label>
+              <Select value={selectedLeader} onValueChange={setSelectedLeader}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a leader or manager" />
+                </SelectTrigger>
+                <SelectContent>
+                  {leaders.map(leader => (
+                    <SelectItem key={leader.id} value={leader.id}>
                       {leader.name} ({leader.region}) - {leader.teamSize} members
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <Button 
-                            className="w-full" 
-                            onClick={handleAssignClick}
-                            disabled={!selectedAgent || !selectedLeader || assigning}
-                          >
-                            {assigning ? (
-                              <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                Assigning...
-                              </>
-                            ) : (
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              className="w-full"
+              onClick={handleAssignClick}
+              disabled={!selectedAgent || !selectedLeader || assigning}
+            >
+              {assigning ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Assigning...
+                </>
+              ) : (
                 <>
                   <ArrowRight className="h-4 w-4 mr-2" />
                   Assign to Team
                 </>
-                            )}
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Stats Bar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -556,11 +558,11 @@ export function TeamManagementTab() {
             <div className="flex items-center gap-4">
               <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-100">
                 <Crown className="h-5 w-5 text-blue-600" />
-                  </div>
+              </div>
               <div>
                 <p className="text-2xl font-semibold tracking-tight">{leaders.length}</p>
                 <p className="text-xs font-medium text-muted-foreground mt-0.5">Leaders & Managers</p>
-                    </div>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -570,11 +572,11 @@ export function TeamManagementTab() {
               <div className="p-2.5 rounded-lg bg-green-50 border border-green-100">
                 <UserCheck className="h-5 w-5 text-green-600" />
               </div>
-                            <div>
+              <div>
                 <p className="text-2xl font-semibold tracking-tight">{assignedAgents.length}</p>
                 <p className="text-xs font-medium text-muted-foreground mt-0.5">Assigned</p>
-                            </div>
-                          </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
@@ -582,14 +584,14 @@ export function TeamManagementTab() {
             <div className="flex items-center gap-4">
               <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-100">
                 <UserX className="h-5 w-5 text-amber-600" />
-                      </div>
+              </div>
               <div>
                 <p className="text-2xl font-semibold tracking-tight">{unassignedAgents.length}</p>
                 <p className="text-xs font-medium text-muted-foreground mt-0.5">Unassigned</p>
-                    </div>
+              </div>
             </div>
-                </CardContent>
-              </Card>
+          </CardContent>
+        </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
@@ -611,7 +613,7 @@ export function TeamManagementTab() {
           <TabsTrigger value="teams" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">Teams</TabsTrigger>
           <TabsTrigger value="leaders" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">Leaders & Managers</TabsTrigger>
           <TabsTrigger value="unassigned" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
-            Unassigned 
+            Unassigned
             {unassignedAgents.length > 0 && (
               <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
                 {unassignedAgents.length}
@@ -686,7 +688,16 @@ export function TeamManagementTab() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-44">
-                            <DropdownMenuItem 
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedTeamLeaderId(leader.id);
+                                setManageTeamDialogOpen(true);
+                              }}
+                            >
+                              <Users className="h-4 w-4 mr-2" />
+                              Manage Team
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
                               onClick={() => handleUnpromoteClick(leader.id)}
                               className="text-orange-600 focus:text-orange-600"
                             >
@@ -725,8 +736,8 @@ export function TeamManagementTab() {
                         ) : (
                           <div className="pt-3 border-t border-border/50">
                             <p className="text-xs text-muted-foreground text-center py-2">No team members assigned</p>
-                            <Button 
-                              variant="outline" 
+                            <Button
+                              variant="outline"
                               size="sm"
                               className="w-full mt-2"
                               onClick={() => {
@@ -789,9 +800,9 @@ export function TeamManagementTab() {
                       <LeaderAssignmentSection />
                     </DialogContent>
                   </Dialog>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
+              </CardContent>
+            </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {leaders.map(leader => {
@@ -799,10 +810,10 @@ export function TeamManagementTab() {
                 // Check if this leader is assigned to a manager
                 const leaderAgent = agents.find(agent => agent.id === leader.id);
                 const isAssignedToManager = leaderAgent?.leaderId !== undefined;
-                const managerName = isAssignedToManager 
+                const managerName = isAssignedToManager
                   ? agents.find(agent => agent.id === leaderAgent?.leaderId)?.name || 'Manager'
                   : null;
-                
+
                 return (
                   <Card key={leader.id} className="hover:shadow-md transition-all duration-200 border-border/50">
                     <CardHeader className="pb-3">
@@ -838,7 +849,16 @@ export function TeamManagementTab() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-44">
-                            <DropdownMenuItem 
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedTeamLeaderId(leader.id);
+                                setManageTeamDialogOpen(true);
+                              }}
+                            >
+                              <Users className="h-4 w-4 mr-2" />
+                              Manage Team
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
                               onClick={() => handleUnpromoteClick(leader.id)}
                               className="text-orange-600 focus:text-orange-600"
                             >
@@ -893,7 +913,7 @@ export function TeamManagementTab() {
               })}
             </div>
           )}
-            </TabsContent>
+        </TabsContent>
 
         {/* Unassigned Tab */}
         <TabsContent value="unassigned" className="space-y-4 mt-6">
@@ -918,18 +938,18 @@ export function TeamManagementTab() {
                     {unassignedAgents.length} agent{unassignedAgents.length !== 1 ? 's' : ''} waiting for team assignment
                   </CardDescription>
                 </div>
-                </CardHeader>
-                <CardContent>
+              </CardHeader>
+              <CardContent>
                 <div className="space-y-2">
                   {unassignedAgents.map(agent => (
-                    <div 
-                      key={agent.id} 
+                    <div
+                      key={agent.id}
                       className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 hover:border-border transition-all duration-150 group"
                     >
                       <div className="flex items-center gap-4 flex-1 min-w-0">
                         <div className="h-11 w-11 rounded-full bg-gradient-to-br from-amber-400 to-amber-500 flex items-center justify-center flex-shrink-0 shadow-sm ring-1 ring-amber-100">
                           <Users className="h-5 w-5 text-white" />
-                            </div>
+                        </div>
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-sm text-foreground">{agent.name}</p>
                           <div className="flex items-center gap-4 mt-1.5">
@@ -940,7 +960,7 @@ export function TeamManagementTab() {
                             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                               <MapPin className="h-3 w-3" />
                               <span>{agent.region}</span>
-                          </div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -948,8 +968,8 @@ export function TeamManagementTab() {
                         <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 font-medium">
                           Unassigned
                         </Badge>
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           className="shadow-sm"
                           onClick={() => {
@@ -959,17 +979,17 @@ export function TeamManagementTab() {
                         >
                           <UserPlus className="h-3.5 w-3.5 mr-2" />
                           Assign
-                          </Button>
+                        </Button>
                       </div>
-                        </div>
-                      ))}
                     </div>
-                </CardContent>
-              </Card>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           )}
-            </TabsContent>
-          </Tabs>
-      
+        </TabsContent>
+      </Tabs>
+
       {/* Confirmation Dialogs */}
       <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
         <AlertDialogContent>
@@ -992,7 +1012,7 @@ export function TeamManagementTab() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={assigning}>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogAction
               onClick={handleAssignAgent}
               disabled={assigning}
               className="bg-green-600 hover:bg-green-700"
@@ -1012,7 +1032,7 @@ export function TeamManagementTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      
+
       <AlertDialog open={unassignDialogOpen} onOpenChange={setUnassignDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1032,7 +1052,7 @@ export function TeamManagementTab() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={unassigning}>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogAction
               onClick={handleUnassignAgent}
               disabled={unassigning}
               className="bg-red-600 hover:bg-red-700"
@@ -1070,7 +1090,7 @@ export function TeamManagementTab() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={unpromoting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogAction
               onClick={handleUnpromoteLeader}
               disabled={unpromoting}
               className="bg-orange-600 hover:bg-orange-700"
@@ -1087,6 +1107,79 @@ export function TeamManagementTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={manageTeamDialogOpen} onOpenChange={setManageTeamDialogOpen}>
+        <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>
+              Manage Team: {leaders.find(l => l.id === selectedTeamLeaderId)?.name}
+            </DialogTitle>
+            <DialogDescription>
+              View and manage all members assigned to this team.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto py-4">
+            <div className="space-y-3">
+              {(() => {
+                const teamMembers = agents.filter(a => a.leaderId === selectedTeamLeaderId);
+                if (teamMembers.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No members assigned to this team yet.
+                    </div>
+                  );
+                }
+
+                return teamMembers.map(member => (
+                  <div
+                    key={member.id}
+                    className="flex items-center justify-between p-3 border rounded-lg"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 rounded-full bg-blue-100 flex items-center justify-center">
+                        <Users className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">{member.name}</p>
+                        <p className="text-xs text-muted-foreground">{member.region} • {member.role}</p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => handleUnassignClick(member.id)}
+                    >
+                      <UserMinus className="h-4 w-4 mr-2" />
+                      Remove
+                    </Button>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+
+          <div className="pt-4 border-t flex justify-end gap-3">
+            <Button
+              variant="outline"
+              onClick={() => setManageTeamDialogOpen(false)}
+            >
+              Close
+            </Button>
+            <Button
+              onClick={() => {
+                setManageTeamDialogOpen(false);
+                setAssignDialogOpen(true);
+                setSelectedLeader(selectedTeamLeaderId || '');
+              }}
+            >
+              <UserPlus className="h-4 w-4 mr-2" />
+              Add Member
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
