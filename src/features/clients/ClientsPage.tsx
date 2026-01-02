@@ -177,6 +177,7 @@ export default function ClientsPage() {
         .from('profiles')
         .select('id, full_name, city, role')
         .in('role', ['manager', 'team_leader', 'mobile_sales'])
+        .eq('company_id', user?.company_id)
         .eq('status', 'active');
 
       if (error) throw error;
@@ -242,31 +243,18 @@ export default function ClientsPage() {
 
   // Resolve role first
   useEffect(() => {
-    const resolveRole = async () => {
-      try {
-        if (!user?.id) {
-          setIsAdmin(false);
-          setIsSuperAdmin(false);
-          setRoleResolved(true);
-          return;
-        }
-        const { data } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .single();
-        const userRole = data?.role || '';
-        setIsAdmin(userRole === 'admin' || userRole === 'super_admin');
-        setIsSuperAdmin(userRole === 'super_admin');
-      } catch {
-        setIsAdmin(false);
-        setIsSuperAdmin(false);
-      } finally {
-        setRoleResolved(true);
-      }
-    };
-    resolveRole();
-  }, [user?.id]);
+    if (!user) {
+      setIsAdmin(false);
+      setIsSuperAdmin(false);
+      setRoleResolved(true);
+      return;
+    }
+
+    const userRole = user.role;
+    setIsAdmin(userRole === 'admin' || userRole === 'super_admin' || userRole === 'system_administrator');
+    setIsSuperAdmin(userRole === 'super_admin' || userRole === 'system_administrator');
+    setRoleResolved(true);
+  }, [user?.role]);
 
   // Fetch clients and subscribe after role resolution
   useEffect(() => {
@@ -292,7 +280,7 @@ export default function ClientsPage() {
       unsubscribe(clientsChannel);
       unsubscribe(ordersChannel);
     };
-  }, [roleResolved, isAdmin, user?.id]);
+  }, [roleResolved, isAdmin, user?.id, user?.company_id]);
 
   // Fetch agent's cities from profile (only for non-admin users)
   useEffect(() => {
@@ -385,6 +373,7 @@ export default function ClientsPage() {
             email
           )
         `)
+        .eq('company_id', user?.company_id)
         .neq('status', 'inactive')
         .order('created_at', { ascending: false });
 
@@ -399,7 +388,8 @@ export default function ClientsPage() {
       // Prefer aggregated stats from view for accuracy and performance
       let statsQuery = supabase
         .from('client_order_stats')
-        .select('client_id, agent_id, total_orders, total_spent, last_order_date');
+        .select('client_id, agent_id, total_orders, total_spent, last_order_date')
+        .eq('company_id', user?.company_id);
       if (isAgent && user?.id) {
         statsQuery = statsQuery.eq('agent_id', user.id);
       }
@@ -420,6 +410,7 @@ export default function ClientsPage() {
         let aggQuery = supabase
           .from('client_orders')
           .select('client_id, count:id, sum:total_amount, max:order_date')
+          .eq('company_id', user?.company_id)
           .or('stage.eq.admin_approved,status.eq.approved');
         if (isAgent && user?.id) {
           aggQuery = aggQuery.eq('agent_id', user.id);

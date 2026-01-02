@@ -5,15 +5,19 @@ import { useEffect } from 'react';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 
 export function useAdminStats() {
+    const { user } = useAuth();
     const queryClient = useQueryClient();
 
     const query = useQuery({
-        queryKey: ['admin_stats'],
+        queryKey: ['admin_stats', user?.company_id],
+        enabled: !!user?.company_id,
         queryFn: async () => {
+            if (!user?.company_id) return null;
             // Get total revenue from admin-approved client orders
             const { data: approvedOrdersForRevenue } = await supabase
                 .from('client_orders')
                 .select('total_amount')
+                .eq('company_id', user.company_id)
                 .eq('stage', 'admin_approved');
 
             const revenue = (approvedOrdersForRevenue || []).reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
@@ -21,7 +25,8 @@ export function useAdminStats() {
             // Get orders stats
             const { data: orders } = await supabase
                 .from('client_orders')
-                .select('id, status');
+                .select('id, status')
+                .eq('company_id', user.company_id);
 
             const totalOrders = orders?.length || 0;
             const pendingOrders = orders?.filter(o => o.status === 'pending').length || 0;
@@ -30,6 +35,7 @@ export function useAdminStats() {
             const { data: agents } = await supabase
                 .from('profiles')
                 .select('id, status')
+                .eq('company_id', user.company_id)
                 .eq('role', 'sales_agent');
 
             const totalAgents = agents?.length || 0;
@@ -39,12 +45,13 @@ export function useAdminStats() {
             const { data: variants } = await supabase
                 .from('variants')
                 .select(`
-          id,
-          main_inventory (
-            stock,
-            reorder_level
-          )
-        `);
+                  id,
+                  main_inventory (
+                    stock,
+                    reorder_level
+                  )
+                `)
+                .eq('company_id', user.company_id);
 
             const totalProducts = variants?.length || 0;
             const lowStockProducts = variants?.filter(v => {
@@ -58,6 +65,7 @@ export function useAdminStats() {
             const { data: monthlyApproved } = await supabase
                 .from('client_orders')
                 .select('total_amount, order_date')
+                .eq('company_id', user.company_id)
                 .eq('stage', 'admin_approved')
                 .gte('order_date', sixMonthsAgoIso);
 
@@ -273,14 +281,18 @@ export function useAgentStats() {
 }
 
 export function useTopPerformers() {
+    const { user } = useAuth();
     const queryClient = useQueryClient();
 
     const query = useQuery({
-        queryKey: ['top_performers'],
+        queryKey: ['top_performers', user?.company_id],
+        enabled: !!user?.company_id,
         queryFn: async () => {
+            if (!user?.company_id) return { topAgents: [], topFlavors: [] };
             const { data: approvedOrders, error: ordersError } = await supabase
                 .from('client_orders')
                 .select('id, agent_id, total_amount')
+                .eq('company_id', user.company_id)
                 .eq('stage', 'admin_approved');
 
             if (ordersError) throw ordersError;
@@ -294,6 +306,7 @@ export function useTopPerformers() {
                 const { data: agentProfiles } = await supabase
                     .from('profiles')
                     .select('id, full_name')
+                    .eq('company_id', user.company_id)
                     .in('id', agentIds);
 
                 const agentNameMap = (agentProfiles || []).reduce((acc: any, profile: any) => {
@@ -324,6 +337,7 @@ export function useTopPerformers() {
                 const { data: variants } = await supabase
                     .from('variants')
                     .select('id, name, brands(name)')
+                    .eq('company_id', user.company_id)
                     .in('id', variantIds);
 
                 const variantNameMap = (variants || []).reduce((acc: any, variant: any) => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, ReactNode, useRef } from 'react';
+import { useState, useEffect, ReactNode, useRef, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -9,17 +9,27 @@ import type { User, LoginResult } from './types';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [impersonatedCompany, setImpersonatedCompany] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Handle global read-only mode for impersonation
+  useEffect(() => {
+    if (impersonatedCompany) {
+      document.body.classList.add('read-only-mode');
+    } else {
+      document.body.classList.remove('read-only-mode');
+    }
+  }, [impersonatedCompany]);
   const { toast } = useToast();
   const userRef = useRef<User | null>(null); // Keep ref in sync with state
 
   // Load user session on mount
   useEffect(() => {
     console.log('🚀 [AuthContext] Initializing auth...');
-    
+
     // Clean up deprecated localStorage items
     cleanupLocalStorage();
-    
+
     // Start security monitoring
     startTokenMonitoring(() => {
       logSecurityEvent('Token tampering detected');
@@ -30,8 +40,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       logout();
     });
-    
-    initializeAuth(); 
+
+    // Load impersonation from sessionStorage
+    const savedImpersonation = sessionStorage.getItem('impersonated_company');
+    if (savedImpersonation) {
+      try {
+        setImpersonatedCompany(JSON.parse(savedImpersonation));
+      } catch (e) {
+        console.error('Failed to parse saved impersonation', e);
+      }
+    }
+
+    initializeAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
@@ -44,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (session?.user) {
-   
+
         if (event === 'TOKEN_REFRESHED' && userRef.current?.id === session.user.id) {
           console.log('🔄 [AuthContext] Token refreshed, checking company status...');
           const currentUser = userRef.current;
@@ -54,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               .select('status')
               .eq('id', currentUser.company_id)
               .single();
-            
+
             if (company && company.status === 'inactive') {
               console.warn('❌ [AuthContext] Company became inactive, logging out');
               await supabase.auth.signOut();
@@ -70,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           return;
         }
-  
+
         await loadUserProfile(session);
       } else if (event === 'SIGNED_OUT') {
         console.log('👋 [AuthContext] User signed out, clearing user');
@@ -79,7 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           (window as any).companyStatusChannel = null;
         }
         setUser(null);
-        userRef.current = null; 
+        userRef.current = null;
         setIsLoading(false);
         // Set flag to prevent session restoration
         localStorage.setItem('just_logged_out', 'true');
@@ -94,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .select('status')
           .eq('id', currentUser.company_id)
           .single();
-        
+
         if (company && company.status === 'inactive') {
           console.warn('❌ [AuthContext] Company status check: Company is inactive, logging out');
           await supabase.auth.signOut();
@@ -107,7 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         }
       }
-    }, 60000); 
+    }, 60000);
 
     return () => {
       subscription.unsubscribe();
@@ -172,7 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 2. FALLBACK: Use session metadata or existing user
       const metadata = session.user.user_metadata;
       const currentUser = userRef.current;
-      
+
       if (currentUser?.id === userId && currentUser?.role && currentUser.role !== 'mobile_sales') {
         console.log('🛡️ [AuthContext] Preserving existing user from memory');
         setIsLoading(false);
@@ -180,10 +200,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const basicUser: User = {
           id: userId,
           email: session.user.email || '',
-          role: metadata?.role || 'mobile_sales', 
-          status: 'active', 
+          role: metadata?.role || 'mobile_sales',
+          status: 'active',
           full_name: metadata?.full_name || 'User',
-          company_id: metadata?.company_id || undefined, 
+          company_id: metadata?.company_id || undefined,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -230,22 +250,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           details: result.error.details,
           hint: result.error.hint
         });
-        
+
         // If there's an error, try to retry once after a short delay
         console.log('🔄 [AuthContext] Retrying profile fetch...');
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
+
         const retryResult = await supabase
           .from('profiles')
           .select('id, email, full_name, role, status, company_id, phone, region, city, address, country, avatar_url, created_at, updated_at')
           .eq('id', userId)
           .maybeSingle();
-        
+
         if (retryResult.error || !retryResult.data) {
           console.error('⚠️ [AuthContext] Retry also failed, using optimistic data');
           return;
         }
-        
+
         // Use retry result
         const profile = retryResult.data;
         if (profile.status === 'active') {
@@ -333,7 +353,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if ((window as any).companyStatusChannel) {
           unsubscribe((window as any).companyStatusChannel);
         }
-        
+
         // Subscribe to changes in the company table
         const companyChannel = subscribeToTable('companies', async (payload: any) => {
           // Check if the changed company is the user's company
@@ -348,10 +368,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 description: "Your company account has been deactivated. Please contact your system administrator.",
                 variant: "destructive",
               });
-      }
+            }
           }
         });
-        
+
         // Store channel reference for cleanup
         (window as any).companyStatusChannel = companyChannel;
       }
@@ -391,8 +411,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Check user status
           if (profile.status !== 'active') {
             await supabase.auth.signOut();
-          return { success: false, error: 'account_restricted' };
-        }
+            return { success: false, error: 'account_restricted' };
+          }
 
           // Check company status (skip for system_administrator)
           if (profile.company_id && profile.role !== 'system_administrator') {
@@ -428,27 +448,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       // Set flag FIRST to prevent any auth state changes from restoring session
       localStorage.setItem('just_logged_out', 'true');
-      
+
       // Clean up real-time subscriptions immediately
       if ((window as any).companyStatusChannel) {
         unsubscribe((window as any).companyStatusChannel);
         (window as any).companyStatusChannel = null;
       }
-      
+
       // Clear cached profile on logout
       clearProfileCache();
-      
+
       // Stop security monitoring
       stopTokenMonitoring();
-      
+
       // Clear state immediately (before signOut to prevent race conditions)
       setUser(null);
       userRef.current = null;
       setIsLoading(false);
-      
+
       // Perform signOut to clear Supabase session
       await supabase.auth.signOut();
-      
+
       // Clear Supabase auth storage explicitly
       try {
         // Clear all Supabase-related localStorage items
@@ -463,10 +483,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (e) {
         console.warn('Could not clear Supabase storage:', e);
       }
-      
+
       // Redirect to login
       window.location.href = '/login';
-      
+
       console.log('👋 [AuthContext] Logged out and cleared cache');
     } catch (error) {
       console.error('Logout error:', error);
@@ -478,6 +498,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.location.href = '/login';
     }
   };
+
+  const startImpersonation = (company: any) => {
+    setImpersonatedCompany(company);
+    sessionStorage.setItem('impersonated_company', JSON.stringify(company));
+    toast({
+      title: "Live View Active",
+      description: `Now viewing as ${company.company_name}`,
+    });
+  };
+
+  const stopImpersonation = () => {
+    setImpersonatedCompany(null);
+    sessionStorage.removeItem('impersonated_company');
+    toast({
+      title: "Live View Deactivated",
+      description: "Returned to system administrator view",
+    });
+  };
+
+  const effectiveUser = useMemo(() => {
+    if (impersonatedCompany && user) {
+      return {
+        ...user,
+        role: 'super_admin' as any,
+        company_id: impersonatedCompany.id
+      };
+    }
+    return user;
+  }, [user, impersonatedCompany]);
 
   const refreshProfile = async () => {
     try {
@@ -491,7 +540,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, refreshProfile, isAuthenticated: !!user, isLoading }}>
+    <AuthContext.Provider value={{
+      user: effectiveUser,
+      impersonatedCompany,
+      login,
+      logout,
+      refreshProfile,
+      startImpersonation,
+      stopImpersonation,
+      isAuthenticated: !!user,
+      isLoading
+    }}>
       {children}
     </AuthContext.Provider>
   );

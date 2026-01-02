@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,7 @@ import { supabase } from '@/lib/supabase';
 import { InventoryImportExport } from './components/InventoryImportExport';
 
 export default function MainInventoryPage() {
+  const { user } = useAuth();
   const { brands, setBrands, updateBrandName, updateVariant, addOrUpdateInventory, refreshInventory } = useInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
@@ -68,7 +70,8 @@ export default function MainInventoryPage() {
       // Step 1: Get all agents who are assigned to a leader (subordinates)
       const { data: assignments, error: assignmentErr } = await supabase
         .from('leader_teams')
-        .select('agent_id');
+        .select('agent_id')
+        .eq('company_id', user?.company_id);
 
       if (assignmentErr) throw assignmentErr;
 
@@ -77,7 +80,8 @@ export default function MainInventoryPage() {
       // Step 2: Get all agent_inventory records
       const { data: allInventory, error: inventoryErr } = await supabase
         .from('agent_inventory')
-        .select('variant_id, stock, agent_id');
+        .select('variant_id, stock, agent_id')
+        .eq('company_id', user?.company_id);
 
       if (inventoryErr) throw inventoryErr;
 

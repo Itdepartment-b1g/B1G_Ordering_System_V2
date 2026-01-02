@@ -1,4 +1,4 @@
-import type { Profile } from '@/types/database.types';
+import type { Profile, Company } from '@/types/database.types';
 
 // User interface matches Profile structure from database
 export interface User extends Profile {
@@ -12,9 +12,12 @@ export interface LoginResult {
 
 export interface AuthContextType {
     user: User | null;
+    impersonatedCompany: Company | null;
     login: (email: string, password: string) => Promise<LoginResult>;
     logout: () => Promise<void>;
     refreshProfile: () => Promise<void>;
+    startImpersonation: (company: Company) => void;
+    stopImpersonation: () => void;
     isAuthenticated: boolean;
     isLoading: boolean;
 }

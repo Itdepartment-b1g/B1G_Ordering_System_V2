@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -26,12 +27,20 @@ import { PortalClients, PortalInventory, PortalOrders, PortalFinance } from './p
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function ManagementPortal() {
-    const { user } = useAuth();
+    const { user, startImpersonation } = useAuth();
+    const navigate = useNavigate();
     const [companies, setCompanies] = useState<Company[]>([]);
     const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [activeTab, setActiveTab] = useState('clients');
+
+    const handleLiveView = () => {
+        if (selectedCompany) {
+            startImpersonation(selectedCompany);
+            navigate('/dashboard');
+        }
+    };
 
     useEffect(() => {
         fetchCompanies();
@@ -108,7 +117,11 @@ export default function ManagementPortal() {
                                 <ArrowLeft className="h-4 w-4 mr-2" />
                                 All Companies
                             </Button>
-                            <Button size="lg" className="rounded-xl px-6 shadow-lg shadow-primary/20" disabled>
+                            <Button
+                                size="lg"
+                                className="rounded-xl px-6 shadow-lg shadow-primary/20 bg-primary hover:bg-primary/90 text-primary-foreground transform transition-all active:scale-95"
+                                onClick={handleLiveView}
+                            >
                                 <ExternalLink className="h-4 w-4 mr-2" />
                                 Live View
                             </Button>

@@ -5,9 +5,15 @@ import { useAuth } from '@/features/auth';
  * Super Admin has full access to all routes
  */
 export function usePermissions() {
-  const { user } = useAuth();
+  const { user, impersonatedCompany } = useAuth();
 
   const checkPermission = (route: string): boolean => {
+    // If impersonating, allow full navigation access to the tenant environment.
+    // Read-only restrictions are enforced globally via CSS and checkFeature.
+    if (impersonatedCompany) {
+      return true;
+    }
+
     // Super Admin has full access to all routes
     if (user?.role === 'super_admin') {
       return true;
@@ -35,6 +41,11 @@ export function usePermissions() {
   };
 
   const checkFeature = (feature: string): boolean => {
+    // If impersonating, block all features (mutations/actions)
+    if (impersonatedCompany) {
+      return false;
+    }
+
     // Super Admin has access to all features
     if (user?.role === 'super_admin') {
       return true;

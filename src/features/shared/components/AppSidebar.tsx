@@ -24,7 +24,8 @@ import {
   Building2,
   Tag,
   Map,
-  LayoutGrid
+  LayoutGrid,
+  Activity
 } from 'lucide-react';
 import {
   Sidebar,
@@ -232,7 +233,7 @@ const superAdminMenuItems: MenuItem[] = [
 ];
 
 export function AppSidebar() {
-  const { user, logout } = useAuth();
+  const { user, logout, impersonatedCompany, stopImpersonation } = useAuth();
   const { state, setOpenMobile } = useSidebar();
   const { checkPermission } = usePermissions();
   const isCollapsed = state === 'collapsed';
@@ -273,7 +274,10 @@ export function AppSidebar() {
   const menuItems = useMemo(() => {
     let baseMenuItems: MenuItem[] = [];
 
-    if (user?.role === 'system_administrator') {
+    // If impersonating, show the Super Admin workspace for the tenant
+    if (impersonatedCompany) {
+      baseMenuItems = superAdminMenuItems;
+    } else if (user?.role === 'system_administrator') {
       baseMenuItems = systemAdminMenuItems;
     } else if (user?.role === 'super_admin') {
       baseMenuItems = superAdminMenuItems;
@@ -320,15 +324,27 @@ export function AppSidebar() {
           </div>
           {!isCollapsed && (
             <div className="flex flex-col">
-              <span className="font-semibold text-sm truncate max-w-[150px]" title="B2B System">
-                B2B System
+              <span className="font-semibold text-sm truncate max-w-[150px]" title={impersonatedCompany ? impersonatedCompany.company_name : "B2B System"}>
+                {impersonatedCompany ? impersonatedCompany.company_name : "B2B System"}
               </span>
-              <span className="text-xs text-muted-foreground capitalize">
-                {user?.role?.replace('_', ' ') || 'User'}
+              <span className={`text-[10px] font-bold uppercase tracking-wider ${impersonatedCompany ? 'text-primary' : 'text-muted-foreground'}`}>
+                {impersonatedCompany ? 'Live View Active' : (user?.role?.replace('_', ' ') || 'User')}
               </span>
             </div>
           )}
         </div>
+
+        {impersonatedCompany && !isCollapsed && (
+          <div className="mt-4 p-3 rounded-xl bg-primary/10 border border-primary/20 space-y-2">
+            <div className="flex items-center gap-2 text-[10px] font-black uppercase text-primary tracking-widest">
+              <Activity className="h-3 w-3 animate-pulse" />
+              Tenant Mode
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-tight">
+              Viewing as <span className="text-foreground font-bold">{impersonatedCompany.company_name}</span>
+            </p>
+          </div>
+        )}
       </SidebarHeader>
 
       <SidebarContent>
@@ -342,7 +358,7 @@ export function AppSidebar() {
                     <>
                       <SidebarMenuButton
                         onClick={() => toggleSubmenu(item.title)}
-                        className="cursor-pointer"
+                        className="cursor-pointer nav-allow"
                       >
                         <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
@@ -355,11 +371,11 @@ export function AppSidebar() {
                       {expandedMenus.includes(item.title) && !isCollapsed && (
                         <div className="ml-4 space-y-1">
                           {item.submenu?.map((subItem) => (
-                            <SidebarMenuButton key={subItem.title} asChild>
+                            <SidebarMenuButton key={subItem.title} asChild className="nav-allow">
                               <NavLink
                                 to={subItem.url}
                                 className={({ isActive }) =>
-                                  isActive ? 'bg-sidebar-accent font-medium' : ''
+                                  `nav-allow ${isActive ? 'bg-sidebar-accent font-medium' : ''}`
                                 }
                                 onClick={() => setOpenMobile(false)}
                               >
@@ -372,11 +388,11 @@ export function AppSidebar() {
                       )}
                     </>
                   ) : (
-                    <SidebarMenuButton asChild>
+                    <SidebarMenuButton asChild className="nav-allow">
                       <NavLink
                         to={item.url}
                         className={({ isActive }) =>
-                          isActive ? 'bg-sidebar-accent font-medium' : ''
+                          `nav-allow ${isActive ? 'bg-sidebar-accent font-medium' : ''}`
                         }
                         onClick={() => setOpenMobile(false)}
                       >
@@ -400,12 +416,23 @@ export function AppSidebar() {
             <p className="text-xs text-muted-foreground">{user?.email}</p>
           </div>
         )}
+        {impersonatedCompany && (
+          <Button
+            variant="default"
+            className="w-full justify-start bg-primary hover:bg-primary/90 text-primary-foreground mb-2 shadow-lg shadow-primary/20 nav-allow"
+            onClick={stopImpersonation}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2 nav-allow" />
+            {!isCollapsed && <span className="nav-allow">Exit Live View</span>}
+          </Button>
+        )}
+
         <Button
           variant="outline"
           className="w-full justify-start hover:bg-destructive/10 hover:text-destructive text-foreground"
           onClick={handleLogoutClick}
         >
-          <LogOut className="h-4 w-4" />
+          <LogOut className="h-4 w-4 mr-2" />
           {!isCollapsed && <span>Logout</span>}
         </Button>
 

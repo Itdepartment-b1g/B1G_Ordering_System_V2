@@ -46,7 +46,8 @@ const calculateStatus = (stock: number, reorderLevel: number = 50): 'in-stock' |
   return 'in-stock';
 };
 
-const fetchInventory = async (): Promise<Brand[]> => {
+const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
+  if (!companyId) return [];
   const { data: brandsData, error } = await supabase
     .from('brands')
     .select(`
@@ -67,6 +68,7 @@ const fetchInventory = async (): Promise<Brand[]> => {
         )
       )
     `)
+    .eq('company_id', companyId)
     .order('name');
 
   if (error) throw error;
@@ -137,9 +139,9 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const { user } = useContext(AuthContext) || {};
 
   const { data: brands = [], isLoading: loading } = useQuery({
-    queryKey: ['inventory'],
-    queryFn: fetchInventory,
-    enabled: !!user,
+    queryKey: ['inventory', user?.company_id],
+    queryFn: () => fetchInventory(user?.company_id),
+    enabled: !!user?.company_id,
   });
 
   // Real-time

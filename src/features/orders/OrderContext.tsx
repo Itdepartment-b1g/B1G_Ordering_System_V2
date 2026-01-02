@@ -53,7 +53,8 @@ interface OrderContextType {
 const OrderContext = createContext<OrderContextType | undefined>(undefined);
 
 // Fetcher function for orders
-const fetchOrders = async (): Promise<Order[]> => {
+const fetchOrders = async (companyId?: string): Promise<Order[]> => {
+  if (!companyId) return [];
   const { data: ordersData, error } = await supabase
     .from('client_orders')
     .select(`
@@ -96,6 +97,7 @@ const fetchOrders = async (): Promise<Order[]> => {
         )
       )
     `)
+    .eq('company_id', companyId)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
@@ -107,6 +109,7 @@ const fetchOrders = async (): Promise<Order[]> => {
     const { data: clientsLookup } = await supabase
       .from('clients')
       .select('id, name')
+      .eq('company_id', companyId)
       .in('id', clientIds);
     (clientsLookup || []).forEach((c: any) => { clientIdToName[c.id] = c.name; });
   }
@@ -207,9 +210,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const { user } = useContext(AuthContext) || {};
 
   const { data: orders = [], isLoading: loading } = useQuery({
-    queryKey: ['orders'],
-    queryFn: fetchOrders,
-    enabled: !!user,
+    queryKey: ['orders', user?.company_id],
+    queryFn: () => fetchOrders(user?.company_id),
+    enabled: !!user?.company_id,
   });
 
   // Real-time subscription

@@ -201,7 +201,7 @@ export function TeamManagementTab() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [user?.company_id]);
 
   // Real-time subscriptions for seamless updates
   useEffect(() => {
