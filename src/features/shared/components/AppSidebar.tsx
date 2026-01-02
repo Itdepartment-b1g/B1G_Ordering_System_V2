@@ -23,7 +23,8 @@ import {
   Brain,
   Building2,
   Tag,
-  Map
+  Map,
+  LayoutGrid
 } from 'lucide-react';
 import {
   Sidebar,
@@ -156,6 +157,7 @@ const leaderMenuItems: MenuItem[] = [
 
 const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', icon: LayoutDashboard },
+  { title: 'Management Portal', url: '/system-management', icon: LayoutGrid },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 

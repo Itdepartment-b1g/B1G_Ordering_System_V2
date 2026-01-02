@@ -22,6 +22,7 @@ import TeamManagementPage from "@/features/sales-agents/TeamManagementPage";
 import MyTeamPage from "@/features/sales-agents/MyTeamPage";
 import { FinancePage } from "@/features/finance";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
+import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
 import NotFound from "@/features/shared/NotFound";
 
@@ -80,6 +81,7 @@ const App = () => (
                     <Route path="/war-room" element={<ProtectedRoute><WarRoomPage /></ProtectedRoute>} />
                     <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
                     <Route path="/system-admin" element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
+                    <Route path="/system-management" element={<ProtectedRoute><ManagementPortal /></ProtectedRoute>} />
                     <Route path="/sys-admin-dashboard" element={<ProtectedRoute><SysAdDashboardPage /></ProtectedRoute>} />
                     <Route path="/super-admin-dashboard" element={<ProtectedRoute><SuperAdminDashboardPage /></ProtectedRoute>} />
                     {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

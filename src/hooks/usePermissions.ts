@@ -18,6 +18,7 @@ export function usePermissions() {
       const systemAdminRoutes = [
         '/sys-admin-dashboard',
         '/system-admin',
+        '/system-management',
         '/profile',
       ];
       return systemAdminRoutes.includes(route) || route.startsWith('/sys-admin');
