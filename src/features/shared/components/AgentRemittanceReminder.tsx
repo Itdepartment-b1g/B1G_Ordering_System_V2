@@ -25,7 +25,7 @@ export function AgentRemittanceReminder() {
 
   useEffect(() => {
     // Only run for logged-in agents (both sales_agent and mobile_sales roles)
-    if (!user || (user.role !== "sales_agent" && user.role !== "mobile_sales")) return;
+    if (!user || (user.role !== "mobile_sales")) return;
 
     const getTodayKey = () => new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     const getStorageKey = () => `${STORAGE_KEY_PREFIX}:${getTodayKey()}`;
@@ -94,7 +94,7 @@ export function AgentRemittanceReminder() {
   };
 
   // Don't render anything for non-agents
-  if (!user || (user.role !== "sales_agent" && user.role !== "mobile_sales")) return null;
+  if (!user || (user.role !== "mobile_sales")) return null;
 
   return (
     <AlertDialog open={showReminder} onOpenChange={(open) => {
