@@ -160,29 +160,42 @@ export default function MyInventory() {
       if (!user?.id) return;
 
       try {
-        const { data, error } = await supabase
+        // First, get the leader_id from leader_teams
+        const { data: teamData, error: teamError } = await supabase
           .from('leader_teams')
-          .select(`
-            leader_id,
-            profiles!leader_teams_leader_id_fkey(
-              id,
-              full_name,
-              role
-            )
-          `)
+          .select('leader_id')
           .eq('agent_id', user.id)
-          .single();
+          .maybeSingle();
 
-        if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
-          console.error('Error fetching leader:', error);
+        if (teamError && teamError.code !== 'PGRST116') { // PGRST116 is "not found"
+          console.error('Error fetching leader team:', teamError);
           return;
         }
 
-        if (data) {
-          setLeaderId(data.leader_id);
-          const leaderProfile = data.profiles as any;
-          setLeaderName(leaderProfile?.full_name || null);
-          setLeaderRole(leaderProfile?.role || null);
+        if (!teamData || !teamData.leader_id) {
+          // Agent is not assigned to any leader
+          setLeaderId(null);
+          setLeaderName(null);
+          setLeaderRole(null);
+          return;
+        }
+
+        // Then, fetch the leader's profile
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, full_name, role')
+          .eq('id', teamData.leader_id)
+          .single();
+
+        if (profileError) {
+          console.error('Error fetching leader profile:', profileError);
+          return;
+        }
+
+        if (profileData) {
+          setLeaderId(profileData.id);
+          setLeaderName(profileData.full_name || null);
+          setLeaderRole(profileData.role || null);
         }
       } catch (error) {
         console.error('Error fetching leader:', error);
@@ -191,22 +204,39 @@ export default function MyInventory() {
 
     fetchLeader();
 
-    // Real-time subscriptions for agent inventory and orders
-    const channels = [
-      subscribeToTable('agent_inventory', () => {
-        console.log('🔄 Real-time: Agent inventory updated');
-        // Inventory will auto-refresh via AgentInventoryContext
-      }),
-      subscribeToTable('client_orders', () => {
-        console.log('🔄 Real-time: Orders updated');
-        if (remitDialogOpen && user?.id) {
-          fetchTodayOrders(); // Refresh orders if dialog is open
-        }
-      })
-    ];
+    console.log('🎧 MyInventoryPage: Setting up real-time subscriptions');
 
-    return () => channels.forEach(unsubscribe);
-  }, [user?.id]);
+    // Debounce timer for real-time updates
+    let orderDebounceTimer: NodeJS.Timeout | null = null;
+
+    const debouncedOrderRefresh = () => {
+      if (orderDebounceTimer) clearTimeout(orderDebounceTimer);
+      orderDebounceTimer = setTimeout(() => {
+        console.log('🔄 Real-time: Refreshing orders...');
+        if (remitDialogOpen && user?.id) {
+          fetchTodayOrders();
+        }
+      }, 300);
+    };
+
+    // Real-time subscription for client_orders only
+    // (agent_inventory is already handled by AgentInventoryContext)
+    const ordersChannel = subscribeToTable(
+      'client_orders',
+      (payload) => {
+        console.log('🔔 Real-time: Order change detected:', payload.eventType, payload);
+        debouncedOrderRefresh();
+      },
+      '*',
+      { column: 'agent_id', value: user.id }
+    );
+
+    return () => {
+      if (orderDebounceTimer) clearTimeout(orderDebounceTimer);
+      unsubscribe(ordersChannel);
+      console.log('🔌 MyInventoryPage: Cleaned up subscriptions');
+    };
+  }, [user?.id, remitDialogOpen]);
 
   // Fetch today's orders on mount to check if button should be enabled
   useEffect(() => {
@@ -314,13 +344,44 @@ export default function MyInventory() {
     if (!signatureDataUrl || !user?.id || !leaderId) return null;
 
     try {
-      // Convert base64 to blob
-      const response = await fetch(signatureDataUrl);
-      const blob = await response.blob();
+      // Convert base64 data URI to blob without using fetch (to avoid CSP violation)
+      let blob: Blob;
+      
+      if (signatureDataUrl.startsWith('data:')) {
+        // Extract base64 data from data URI
+        const base64Data = signatureDataUrl.split(',')[1];
+        if (!base64Data) {
+          throw new Error('Invalid data URI format');
+        }
+        
+        // Convert base64 to binary string
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        // Create blob from bytes
+        blob = new Blob([bytes], { type: 'image/png' });
+      } else {
+        // Fallback: if it's already a URL, try to fetch (but this shouldn't happen)
+        const response = await fetch(signatureDataUrl);
+        blob = await response.blob();
+      }
 
-      // Create unique filename
+      // Create folder structure: date_folder/user_name_folder/signature.png
+      const today = new Date();
+      const dateFolder = format(today, 'yyyy-MM-dd'); // Format: 2025-01-15
+      
+      // Sanitize user name for folder name (replace spaces and special chars with hyphens)
+      const userName = user.full_name || 'unknown-user';
+      const sanitizedUserName = userName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
+        .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
+      
       const timestamp = new Date().getTime();
-      const filename = `${user.id}/${leaderId}/${timestamp}.png`;
+      const filename = `${dateFolder}/${sanitizedUserName}/${timestamp}.png`;
 
       // Upload to remittance-signatures bucket
       const { data, error } = await supabase.storage
@@ -376,11 +437,21 @@ export default function MyInventory() {
 
     const itemsToRemit = getItemsToRemit();
 
-    // Only unsold inventory is required - sold orders are optional (for reporting)
-    if (itemsToRemit.length === 0) {
+    // Allow remittance with just orders (no unsold inventory required)
+    // At minimum, agent must have confirmed unsold tab (even if empty) or have orders
+    if (itemsToRemit.length === 0 && todayOrders.length === 0) {
       toast({
         title: 'Nothing to remit',
-        description: 'You have no unsold inventory to remit',
+        description: 'You have no unsold inventory or sold orders to remit',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    if (!unsoldConfirmed) {
+      toast({
+        title: 'Please Confirm',
+        description: 'Please confirm the unsold inventory tab to proceed',
         variant: 'destructive'
       });
       return;
@@ -442,8 +513,9 @@ export default function MyInventory() {
   const itemsToRemit = getItemsToRemit();
   const hasItemsToRemit = itemsToRemit.length > 0;
   const totalRemitQuantity = getTotalRemitQuantity();
-  // Only unsold inventory is required for remittance - sold orders are optional (for reporting)
-  const canRemit = leaderId && hasItemsToRemit;
+  // Agent can remit with just orders (no unsold inventory required)
+  // They just need to be assigned to a leader
+  const canRemit = !!leaderId;
 
   return (
     <div className="p-4 md:p-6 lg:p-8 space-y-4 md:space-y-6">
@@ -463,9 +535,6 @@ export default function MyInventory() {
           Remit Inventory
           {!leaderId && (
             <span className="ml-2 text-xs text-muted-foreground">(No leader assigned)</span>
-          )}
-          {leaderId && !hasItemsToRemit && (
-            <span className="ml-2 text-xs text-muted-foreground">(No unsold inventory)</span>
           )}
         </Button>
       </div>
@@ -846,10 +915,17 @@ export default function MyInventory() {
                 </p>
               </div>
             )}
-            {leaderId && !hasItemsToRemit && (
+            {leaderId && !hasItemsToRemit && todayOrders.length === 0 && (
               <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm text-blue-800">
-                  ℹ️ You have no unsold inventory to remit at this time. Sold orders are shown for reporting purposes only.
+                  ℹ️ You have no unsold inventory or sold orders to remit at this time.
+                </p>
+              </div>
+            )}
+            {leaderId && !hasItemsToRemit && todayOrders.length > 0 && (
+              <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                <p className="text-sm text-green-800">
+                  ✅ You can remit with just sold orders (no unsold inventory to return). Proceed to the Sold tab to confirm your orders.
                 </p>
               </div>
             )}
@@ -1394,7 +1470,7 @@ export default function MyInventory() {
                         Ready to submit
                       </p>
                       <p className="text-[9px] md:text-sm text-green-700 mt-0.5">
-                        Click "Confirm Remit" below. Only unsold inventory will be returned.
+                        Click "Confirm Remit" below. {hasItemsToRemit ? 'Unsold inventory will be returned.' : 'Only sold orders will be recorded.'}
                       </p>
                     </div>
                   </div>
@@ -1432,12 +1508,12 @@ export default function MyInventory() {
               onClick={handleRemitInventory}
               disabled={
                 remitting ||
-                !hasItemsToRemit ||
                 !leaderId ||
                 !signatureDataUrl ||
                 !unsoldConfirmed ||
                 !signatureConfirmed ||
-                (todayOrders.length > 0 && !soldConfirmed)
+                (todayOrders.length > 0 && !soldConfirmed) ||
+                (itemsToRemit.length === 0 && todayOrders.length === 0)
               }
               variant="default"
               className="w-full sm:w-auto h-10 md:h-9 text-sm"

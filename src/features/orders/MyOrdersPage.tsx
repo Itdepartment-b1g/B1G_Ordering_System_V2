@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, Upload, RotateCcw } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -88,10 +88,19 @@ export default function MyOrdersPage() {
   // Payment method states
   const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | null>(null);
+  const [showBankSelectionModal, setShowBankSelectionModal] = useState(false);
+  const [selectedBank, setSelectedBank] = useState<{ name: string; accountNumber: string } | null>(null);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null);
   const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
+
+  // Bank accounts configuration
+  const bankAccounts = [
+    { name: 'Unionbank', accountNumber: '00-218-002553-7' },
+    { name: 'BPI', accountNumber: '1761-011118' },
+    { name: 'PBCOM', accountNumber: '238101006138' }
+  ];
 
   // Camera states
   const [showCamera, setShowCamera] = useState(false);
@@ -375,6 +384,7 @@ export default function MyOrdersPage() {
     setEmailSentSuccessfully(false);
     // Reset payment-related states
     setPaymentMethod(null);
+    setSelectedBank(null);
     setPaymentProofFile(null);
     setPaymentProofPreview(null);
     // Reset sales invoice request
@@ -419,23 +429,23 @@ export default function MyOrdersPage() {
   const handlePaymentMethodSelected = (method: 'GCASH' | 'BANK_TRANSFER' | 'CASH') => {
     setPaymentMethod(method);
     setShowPaymentMethodModal(false);
+    
+    // If bank transfer, show bank selection first
+    if (method === 'BANK_TRANSFER') {
+      setShowBankSelectionModal(true);
+    } else {
+      // For GCASH and CASH, go directly to payment proof
+      setShowPaymentProofModal(true);
+    }
+  };
+
+  // Handle bank selection
+  const handleBankSelected = (bank: { name: string; accountNumber: string }) => {
+    setSelectedBank(bank);
+    setShowBankSelectionModal(false);
     setShowPaymentProofModal(true);
   };
 
-  // Handle payment proof file selection
-  const handlePaymentProofFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setPaymentProofFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPaymentProofPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-      setShowCamera(false);
-      stopCamera();
-    }
-  };
 
   // Start camera
   const startCamera = async (mode?: 'user' | 'environment') => {
@@ -465,7 +475,7 @@ export default function MyOrdersPage() {
       console.error('Error accessing camera:', error);
       toast({
         title: 'Camera Access Error',
-        description: 'Unable to access camera. Please check permissions or use file upload instead.',
+        description: 'Unable to access camera. Please check permissions and try again.',
         variant: 'destructive'
       });
       setShowCamera(false);
@@ -513,9 +523,14 @@ export default function MyOrdersPage() {
   };
 
   // Upload payment proof to Supabase Storage
-  const uploadPaymentProofToStorage = async (): Promise<string> => {
+  const uploadPaymentProofToStorage = async (orderNumber?: string): Promise<string> => {
     if (!paymentProofFile || !user || !paymentMethod || !selectedClientId || !clientName) {
       throw new Error('Payment proof file, user, payment method, client ID, or client name not available');
+    }
+
+    // For bank transfer, require bank selection
+    if (paymentMethod === 'BANK_TRANSFER' && !selectedBank) {
+      throw new Error('Bank account must be selected for bank transfer payments');
     }
 
     try {
@@ -524,47 +539,76 @@ export default function MyOrdersPage() {
       // Use a single bucket with folders for different payment methods
       const bucketName = 'payment-proofs';
 
-      // Determine folder based on payment method (uppercase for folder names)
-      const paymentMethodFolder = paymentMethod === 'GCASH'
-        ? 'GCASH'
-        : paymentMethod === 'BANK_TRANSFER'
-          ? 'BANK TRANSFER'
-          : 'CASH';
+      // Determine folder and filename based on payment method
+      let fileName: string;
+      
+      if (paymentMethod === 'BANK_TRANSFER') {
+        // For bank transfer, use: bank-transfer/{bank_name}/{order_number}/filename
+        if (orderNumber && selectedBank) {
+          const sanitizedBankName = selectedBank.name.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, '-');
+          
+          // Format date: MM/DD/YYYY (e.g., "12/15/2025")
+          const now = new Date();
+          const dateStr = now.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }); // Format: MM/DD/YYYY
 
-      // Sanitize client name and company for folder name
-      // Format: "Client Name _ Company Name" (with underscore separator)
-      const sanitizeForPath = (str: string) => {
-        return str
-          .trim()
-          .replace(/[<>:"/\\|?*]/g, '') // Remove invalid path characters
-          .replace(/\s+/g, ' ') // Replace multiple spaces with single space
-          .trim();
-      };
+          // Format time: H:MMam/pm (e.g., "1:30pm")
+          const hours = now.getHours();
+          const minutes = now.getMinutes();
+          const ampm = hours >= 12 ? 'pm' : 'am';
+          const displayHours = hours % 12 || 12; // Convert to 12-hour format, 0 becomes 12
+          const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
 
-      const cleanClientName = sanitizeForPath(clientName);
-      const cleanCompanyName = sanitizeForPath(clientCompany || '');
-      const clientFolderName = cleanCompanyName
-        ? `${cleanClientName} _ ${cleanCompanyName}`
-        : cleanClientName;
+          // Generate filename: date_time.jpg (e.g., "12/15/2025_1:30pm.jpg")
+          const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
+          fileName = `bank-transfer/${sanitizedBankName}/${orderNumber}/${dateStr}_${timeStr}.${fileExt}`;
+        } else {
+          // Fallback if order number not available yet
+          const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
+          fileName = `BANK TRANSFER/payment-proof-${Date.now()}.${fileExt}`;
+        }
+      } else {
+        // For GCASH and CASH, use the original structure with client folder
+        const paymentMethodFolder = paymentMethod === 'GCASH' ? 'GCASH' : 'CASH';
+        
+        // Sanitize client name and company for folder name
+        // Format: "Client Name _ Company Name" (with underscore separator)
+        const sanitizeForPath = (str: string) => {
+          return str
+            .trim()
+            .replace(/[<>:"/\\|?*]/g, '') // Remove invalid path characters
+            .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+            .trim();
+        };
 
-      // Format date: MM/DD/YYYY (e.g., "12/15/2025")
-      const now = new Date();
-      const dateStr = now.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }); // Format: MM/DD/YYYY
+        const cleanClientName = sanitizeForPath(clientName);
+        const cleanCompanyName = sanitizeForPath(clientCompany || '');
+        const clientFolderName = cleanCompanyName
+          ? `${cleanClientName} _ ${cleanCompanyName}`
+          : cleanClientName;
 
-      // Format time: H:MMam/pm (e.g., "1:30pm")
-      const hours = now.getHours();
-      const minutes = now.getMinutes();
-      const ampm = hours >= 12 ? 'pm' : 'am';
-      const displayHours = hours % 12 || 12; // Convert to 12-hour format, 0 becomes 12
-      const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+        // Format date: MM/DD/YYYY (e.g., "12/15/2025")
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }); // Format: MM/DD/YYYY
 
-      // Generate filename: date_time.jpg (e.g., "12/15/2025_1:30pm.jpg")
-      const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
-      const fileName = `${paymentMethodFolder}/${clientFolderName}/${dateStr}_${timeStr}.${fileExt}`;
+        // Format time: H:MMam/pm (e.g., "1:30pm")
+        const hours = now.getHours();
+        const minutes = now.getMinutes();
+        const ampm = hours >= 12 ? 'pm' : 'am';
+        const displayHours = hours % 12 || 12; // Convert to 12-hour format, 0 becomes 12
+        const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+
+        // Generate filename: date_time.jpg (e.g., "12/15/2025_1:30pm.jpg")
+        const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
+        fileName = `${paymentMethodFolder}/${clientFolderName}/${dateStr}_${timeStr}.${fileExt}`;
+      }
 
       // Upload to Supabase Storage
       const { data: uploadData, error: uploadError } = await supabase.storage
@@ -682,14 +726,36 @@ export default function MyOrdersPage() {
       return;
     }
 
+    // For bank transfer, require bank selection
+    if (paymentMethod === 'BANK_TRANSFER' && !selectedBank) {
+      toast({
+        title: 'Error',
+        description: 'Please select a bank account for bank transfer payment',
+        variant: 'destructive'
+      });
+      return;
+    }
+
     setUploadingSignature(true);
 
     try {
+      // Generate order number first (needed for bank transfer path)
+      const { data: orderNumberData, error: numberError } = await supabase
+        .rpc('generate_order_number');
+
+      if (numberError) {
+        console.error('Error generating order number:', numberError);
+        throw numberError;
+      }
+
+      const generatedOrderNumber = orderNumberData as string;
+      console.log('🔢 Generated order number:', generatedOrderNumber);
+
       // Upload signature to Supabase Storage
       const signatureUrl = await uploadSignatureToStorage();
 
-      // Upload payment proof to Supabase Storage
-      const paymentProofUrl = await uploadPaymentProofToStorage();
+      // Upload payment proof to Supabase Storage (pass order number for bank transfer path)
+      const paymentProofUrl = await uploadPaymentProofToStorage(generatedOrderNumber);
 
       // Convert selectedItems to OrderItems with variant IDs
       const orderItems: OrderItem[] = selectedItems.map((item) => ({
@@ -707,7 +773,7 @@ export default function MyOrdersPage() {
 
       const newOrder = {
         id: Date.now().toString(),
-        orderNumber: '',
+        orderNumber: generatedOrderNumber, // Use pre-generated order number
         agentId: user.id,
         agentName: user.name,
         clientId: selectedClientId,
@@ -722,6 +788,7 @@ export default function MyOrdersPage() {
         status: 'pending' as const,
         signatureUrl, // Add signature URL to order
         paymentMethod, // Add payment method
+        bankType: paymentMethod === 'BANK_TRANSFER' && selectedBank ? selectedBank.name as 'Unionbank' | 'BPI' | 'PBCOM' : undefined, // Add bank type if bank transfer
         paymentProofUrl, // Add payment proof URL
         pricingStrategy: pricingType // Add pricing strategy selection
       };
@@ -729,7 +796,8 @@ export default function MyOrdersPage() {
       console.log('🛒 Creating order with signature:', newOrder);
 
       // Save order to database (this will also deduct from agent inventory)
-      const generatedOrderNumber = await addOrder(newOrder);
+      // Pass the pre-generated order number to addOrder
+      const finalOrderNumber = await addOrder(newOrder, generatedOrderNumber);
 
       // Fetch agent phone for email contact section
       let agentPhone: string | undefined = undefined;
@@ -2007,6 +2075,62 @@ export default function MyOrdersPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Bank Selection Modal */}
+      <Dialog open={showBankSelectionModal} onOpenChange={setShowBankSelectionModal}>
+        <DialogContent
+          className="max-w-[90vw] sm:max-w-md max-h-[85vh] sm:max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6"
+          onInteractOutside={(e) => {
+            // Prevent closing when clicking outside the dialog
+            e.preventDefault();
+          }}
+        >
+          <DialogHeader className="pb-1 sm:pb-4">
+            <DialogTitle className="flex items-center gap-2 text-sm sm:text-lg">
+              <CreditCard className="h-3 w-3 sm:h-5 sm:w-5" />
+              Select Bank Account
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-2 sm:space-y-4 py-1 sm:py-4">
+            <Alert className="py-2 sm:py-3">
+              <AlertDescription className="text-xs sm:text-sm">
+                Please select the bank account where the payment was transferred.
+              </AlertDescription>
+            </Alert>
+
+            <div className="grid grid-cols-1 gap-2 sm:gap-3">
+              {bankAccounts.map((bank) => (
+                <Button
+                  key={bank.name}
+                  variant={selectedBank?.name === bank.name ? 'default' : 'outline'}
+                  className="h-auto p-4 flex flex-col items-start justify-start gap-2 min-h-[80px]"
+                  onClick={() => handleBankSelected(bank)}
+                >
+                  <div className="flex items-center gap-2 w-full">
+                    <CreditCard className="h-5 w-5 flex-shrink-0" />
+                    <span className="font-semibold text-base">{bank.name}</span>
+                  </div>
+                  <span className="text-sm text-muted-foreground ml-7">{bank.accountNumber}</span>
+                </Button>
+              ))}
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-end gap-2 pt-3 sm:pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowBankSelectionModal(false);
+                  setShowPaymentMethodModal(true);
+                }}
+                className="w-full sm:w-auto min-h-[44px]"
+              >
+                Back
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Payment Proof Capture Modal */}
       <Dialog open={showPaymentProofModal} onOpenChange={setShowPaymentProofModal}>
         <DialogContent
@@ -2030,11 +2154,31 @@ export default function MyOrdersPage() {
               </AlertDescription>
             </Alert>
 
-            {/* Payment Method Display */}
-            {paymentMethod && (
+            {/* Bank Account Display (for Bank Transfer) */}
+            {paymentMethod === 'BANK_TRANSFER' && selectedBank && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 space-y-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <CreditCard className="h-4 w-4 sm:h-5 sm:w-5 text-blue-700" />
+                  <Label className="font-semibold text-blue-900 text-sm sm:text-base">Selected Bank Account</Label>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs sm:text-sm text-blue-700 font-medium">Bank:</span>
+                    <span className="text-xs sm:text-sm font-semibold text-blue-900">{selectedBank.name}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs sm:text-sm text-blue-700 font-medium">Account Number:</span>
+                    <span className="text-xs sm:text-sm font-mono font-semibold text-blue-900">{selectedBank.accountNumber}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Payment Method Display (for non-bank transfer) */}
+            {paymentMethod && paymentMethod !== 'BANK_TRANSFER' && (
               <div className="flex items-center justify-center">
                 <Badge className="text-base px-4 py-2">
-                  {paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}
+                  {paymentMethod === 'GCASH' ? 'GCash' : 'Cash'}
                 </Badge>
               </div>
             )}
@@ -2096,44 +2240,25 @@ export default function MyOrdersPage() {
             {!showCamera && (
               <div className="space-y-2">
                 <Label>Payment Proof</Label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                <div className="flex justify-center">
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => startCamera()}
-                    className="w-full min-h-[44px]"
+                    className="w-full sm:w-auto min-h-[44px]"
                   >
                     <Camera className="h-4 w-4 mr-2" />
                     Take Photo
                   </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      const input = document.getElementById('payment-proof-input') as HTMLInputElement;
-                      input?.click();
-                    }}
-                    className="w-full min-h-[44px]"
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload File
-                  </Button>
                 </div>
-                <Input
-                  id="payment-proof-input"
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePaymentProofFileChange}
-                  className="hidden"
-                />
                 {paymentProofFile && (
-                  <p className="text-sm text-muted-foreground">
-                    Selected: {paymentProofFile.name} ({(paymentProofFile.size / 1024).toFixed(2)} KB)
+                  <p className="text-sm text-muted-foreground text-center">
+                    Photo captured: {paymentProofFile.name} ({(paymentProofFile.size / 1024).toFixed(2)} KB)
                   </p>
                 )}
                 {!paymentProofFile && !showCamera && (
-                  <p className="text-sm text-muted-foreground">
-                    Take a photo using your camera or select an image file showing the payment receipt/proof
+                  <p className="text-sm text-muted-foreground text-center">
+                    Please take a photo using your camera showing the payment receipt/proof
                   </p>
                 )}
               </div>
@@ -2159,7 +2284,11 @@ export default function MyOrdersPage() {
                 variant="outline"
                 onClick={() => {
                   setShowPaymentProofModal(false);
-                  setShowPaymentMethodModal(true);
+                  if (paymentMethod === 'BANK_TRANSFER') {
+                    setShowBankSelectionModal(true);
+                  } else {
+                    setShowPaymentMethodModal(true);
+                  }
                 }}
                 className="w-full sm:w-auto min-h-[44px]"
               >
@@ -2261,9 +2390,23 @@ export default function MyOrdersPage() {
             {paymentMethod && (
               <div className="space-y-2 border rounded-lg p-4">
                 <Label className="font-semibold">Payment Method</Label>
-                <Badge className="text-base px-3 py-1">
-                  {paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}
-                </Badge>
+                <div className="space-y-2">
+                  <Badge className="text-base px-3 py-1">
+                    {paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}
+                  </Badge>
+                  {paymentMethod === 'BANK_TRANSFER' && selectedBank && (
+                    <div className="mt-2 space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Bank:</span>
+                        <span className="font-semibold">{selectedBank.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Account Number:</span>
+                        <span className="font-mono font-semibold">{selectedBank.accountNumber}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -2559,7 +2702,14 @@ export default function MyOrdersPage() {
                       <Label className="text-muted-foreground">Payment Method</Label>
                       <p className="font-medium">
                         {orderToView.paymentMethod === 'GCASH' ? 'GCash' :
-                          orderToView.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' :
+                          orderToView.paymentMethod === 'BANK_TRANSFER' ? (
+                            <>
+                              Bank Transfer
+                              {orderToView.bankType && (
+                                <span className="ml-2 text-sm text-muted-foreground">({orderToView.bankType})</span>
+                              )}
+                            </>
+                          ) :
                             'Cash'}
                       </p>
                     </div>

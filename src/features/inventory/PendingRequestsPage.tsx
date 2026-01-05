@@ -13,7 +13,6 @@ import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 
 interface AgentRequest {
   id: string;
@@ -100,27 +99,72 @@ export default function PendingRequestsPage() {
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user?.id) {
-      fetchRequests();
-    }
+    if (!user?.id) return;
 
-    // Real-time subscriptions for stock requests and agent inventory
-    const channels = [
-      subscribeToTable('stock_requests', (payload) => {
-        console.log('🔄 Real-time: Stock request updated', payload);
-        if (user?.id) {
-          fetchRequests();
-        }
-      }),
-      subscribeToTable('agent_inventory', () => {
-        console.log('🔄 Real-time: Leader inventory updated');
-        if (user?.id) {
-          fetchRequests(); // Re-fetch to update stock levels
-        }
-      })
-    ];
+    // Initial fetch
+    fetchRequests();
 
-    return () => channels.forEach(unsubscribe);
+    // Debounce timer for smooth real-time updates
+    let updateTimer: NodeJS.Timeout | null = null;
+    const debouncedRefresh = () => {
+      if (updateTimer) clearTimeout(updateTimer);
+      updateTimer = setTimeout(() => {
+        console.log('🔄 Real-time update: Refreshing stock requests...');
+        fetchRequests();
+      }, 300);
+    };
+
+    // Subscribe to stock_requests changes
+    const requestsChannel = supabase
+      .channel(`stock-requests-changes-${user.id}`)
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'stock_requests',
+        },
+        (payload) => {
+          console.log('🔔 Stock request change detected:', payload.eventType, payload);
+          debouncedRefresh();
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription active for stock_requests');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error for stock_requests');
+        }
+      });
+
+    // Subscribe to agent_inventory changes (affects available stock calculations)
+    const inventoryChannel = supabase
+      .channel(`stock-requests-inventory-changes-${user.id}`)
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'agent_inventory',
+        },
+        (payload) => {
+          console.log('🔔 Inventory change detected (affects stock requests):', payload.eventType, payload);
+          debouncedRefresh();
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription active for agent_inventory (stock requests view)');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error for agent_inventory');
+        }
+      });
+
+    return () => {
+      if (updateTimer) clearTimeout(updateTimer);
+      supabase.removeChannel(requestsChannel);
+      supabase.removeChannel(inventoryChannel);
+    };
   }, [user?.id]);
 
   const fetchRequests = async () => {

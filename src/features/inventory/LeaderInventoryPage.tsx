@@ -31,6 +31,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
+import { canLeadTeam } from '@/lib/roleUtils';
 
 export default function LeaderInventoryPage() {
   const { user } = useAuth();
@@ -68,10 +69,10 @@ export default function LeaderInventoryPage() {
 
   // Check if user is a leader or admin
   useEffect(() => {
-    if (user && user.role !== 'team_leader' && user.role !== 'admin') {
+    if (user && !canLeadTeam(user.role)) {
       toast({
         title: 'Access Denied',
-        description: 'Only leaders and admins can access this page',
+        description: 'Only team leaders and managers can access this page',
         variant: 'destructive'
       });
       // Redirect or show access denied message
@@ -805,13 +806,16 @@ export default function LeaderInventoryPage() {
       }
 
       // Update leader inventory immediately (optimistic update)
+      // IMPORTANT: Also update the actual stock field, not just availableStock
       itemsToAllocate.forEach(item => {
         setLeaderInventory(prev => prev.map(invItem => {
           if (invItem.variantId === item.variant_id) {
             return {
               ...invItem,
+              stock: invItem.stock - item.quantity, // Deduct from actual stock
               availableStock: invItem.availableStock - item.quantity,
-              allocatedStock: invItem.allocatedStock + item.quantity
+              allocatedStock: invItem.allocatedStock + item.quantity,
+              totalValue: (invItem.stock - item.quantity) * invItem.allocatedPrice // Update total value
             };
           }
           return invItem;
@@ -890,7 +894,7 @@ export default function LeaderInventoryPage() {
       return acc;
     }, {} as Record<string, any[]>);
 
-  if (!user || (user.role !== 'team_leader' && user.role !== 'admin')) {
+  if (!user || !canLeadTeam(user.role)) {
     return (
       <div className="p-8 space-y-6">
         <Card>
@@ -899,7 +903,7 @@ export default function LeaderInventoryPage() {
               <Crown className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
               <h3 className="text-lg font-semibold mb-2">Access Restricted</h3>
               <p className="text-muted-foreground">
-                Only leaders and admins can access this page. Please contact your administrator if you believe this is an error.
+                Only team leaders and managers can access this page. Please contact your administrator if you believe this is an error.
               </p>
             </div>
           </CardContent>
@@ -1688,6 +1692,7 @@ export default function LeaderInventoryPage() {
                                 .map((item: any) => {
                                   // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                                   const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
+                                  const currentQty = variantQuantities[item.variantId] || 0;
                                   return (
                                     <div
                                       key={item.variantId}
@@ -1700,8 +1705,21 @@ export default function LeaderInventoryPage() {
                                           <span>{item.variantName}</span>
                                         </div>
                                         <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : `₱${item.allocatedPrice.toFixed(2)} each`} • Available: {item.stock} units
+                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : (
+                                            <span className="inline-flex flex-wrap gap-x-2">
+                                              <span>Allocated: ₱{item.allocatedPrice.toFixed(2)}</span>
+                                              {item.dspPrice !== null && item.dspPrice !== undefined && <span>DSP: ₱{item.dspPrice.toFixed(2)}</span>}
+                                              {item.rspPrice !== null && item.rspPrice !== undefined && <span>RSP: ₱{item.rspPrice.toFixed(2)}</span>}
+                                            </span>
+                                          )} • Available: {item.stock} units
                                         </div>
+                                        {currentQty > 0 && !hasNoPrice && (
+                                          <div className="text-xs font-semibold text-green-600 mt-1">
+                                            Total: Allocated ₱{(item.allocatedPrice * currentQty).toFixed(2)}
+                                            {item.dspPrice !== null && item.dspPrice !== undefined && ` | DSP ₱${(item.dspPrice * currentQty).toFixed(2)}`}
+                                            {item.rspPrice !== null && item.rspPrice !== undefined && ` | RSP ₱${(item.rspPrice * currentQty).toFixed(2)}`}
+                                          </div>
+                                        )}
                                       </div>
                                       <div className="w-28">
                                         <Input
@@ -1741,6 +1759,7 @@ export default function LeaderInventoryPage() {
                                 .map((item: any) => {
                                   // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                                   const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
+                                  const currentQty = variantQuantities[item.variantId] || 0;
                                   return (
                                     <div
                                       key={item.variantId}
@@ -1753,8 +1772,21 @@ export default function LeaderInventoryPage() {
                                           <span>{item.variantName}</span>
                                         </div>
                                         <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : `₱${item.allocatedPrice.toFixed(2)} each`} • Available: {item.stock} units
+                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : (
+                                            <span className="inline-flex flex-wrap gap-x-2">
+                                              <span>Allocated: ₱{item.allocatedPrice.toFixed(2)}</span>
+                                              {item.dspPrice !== null && item.dspPrice !== undefined && <span>DSP: ₱{item.dspPrice.toFixed(2)}</span>}
+                                              {item.rspPrice !== null && item.rspPrice !== undefined && <span>RSP: ₱{item.rspPrice.toFixed(2)}</span>}
+                                            </span>
+                                          )} • Available: {item.stock} units
                                         </div>
+                                        {currentQty > 0 && !hasNoPrice && (
+                                          <div className="text-xs font-semibold text-green-600 mt-1">
+                                            Total: Allocated ₱{(item.allocatedPrice * currentQty).toFixed(2)}
+                                            {item.dspPrice !== null && item.dspPrice !== undefined && ` | DSP ₱${(item.dspPrice * currentQty).toFixed(2)}`}
+                                            {item.rspPrice !== null && item.rspPrice !== undefined && ` | RSP ₱${(item.rspPrice * currentQty).toFixed(2)}`}
+                                          </div>
+                                        )}
                                       </div>
                                       <div className="w-28">
                                         <Input
@@ -1794,6 +1826,7 @@ export default function LeaderInventoryPage() {
                                 .map((item: any) => {
                                   // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                                   const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
+                                  const currentQty = variantQuantities[item.variantId] || 0;
                                   return (
                                     <div
                                       key={item.variantId}
@@ -1806,8 +1839,21 @@ export default function LeaderInventoryPage() {
                                           <span>{item.variantName}</span>
                                         </div>
                                         <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : `₱${item.allocatedPrice.toFixed(2)} each`} • Available: {item.stock} units
+                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : (
+                                            <span className="inline-flex flex-wrap gap-x-2">
+                                              <span>Allocated: ₱{item.allocatedPrice.toFixed(2)}</span>
+                                              {item.dspPrice !== null && item.dspPrice !== undefined && <span>DSP: ₱{item.dspPrice.toFixed(2)}</span>}
+                                              {item.rspPrice !== null && item.rspPrice !== undefined && <span>RSP: ₱{item.rspPrice.toFixed(2)}</span>}
+                                            </span>
+                                          )} • Available: {item.stock} units
                                         </div>
+                                        {currentQty > 0 && !hasNoPrice && (
+                                          <div className="text-xs font-semibold text-green-600 mt-1">
+                                            Total: Allocated ₱{(item.allocatedPrice * currentQty).toFixed(2)}
+                                            {item.dspPrice !== null && item.dspPrice !== undefined && ` | DSP ₱${(item.dspPrice * currentQty).toFixed(2)}`}
+                                            {item.rspPrice !== null && item.rspPrice !== undefined && ` | RSP ₱${(item.rspPrice * currentQty).toFixed(2)}`}
+                                          </div>
+                                        )}
                                       </div>
                                       <div className="w-28">
                                         <Input
@@ -1845,46 +1891,96 @@ export default function LeaderInventoryPage() {
                         <div className="border rounded-lg p-4 space-y-3 bg-green-50 dark:bg-green-950/20">
                           <Label className="text-base font-semibold text-green-700 dark:text-green-400">Ready to Allocate</Label>
                           <div className="space-y-2">
-                            {itemsToAllocate.map((item, index) => (
-                              <div key={index} className="flex items-center justify-between p-3 bg-background rounded-lg border border-green-200 dark:border-green-900">
-                                <div className="flex-1">
-                                  <div className="font-medium">{item.brand_name} - {item.variant_name}</div>
-                                  <div className="text-sm text-muted-foreground">
-                                    {item.variant_type} • ₱{item.price.toFixed(2)} each
+                            {itemsToAllocate.map((item, index) => {
+                              // Find the full item data to get DSP and RSP prices
+                              const fullItem = groupedInventory[allocation.brandId]?.find(
+                                (inv: any) => inv.variantId === item.variant_id
+                              );
+                              
+                              return (
+                                <div key={index} className="flex items-center justify-between p-3 bg-background rounded-lg border border-green-200 dark:border-green-900">
+                                  <div className="flex-1">
+                                    <div className="font-medium">{item.brand_name} - {item.variant_name}</div>
+                                    <div className="text-sm text-muted-foreground space-y-1">
+                                      <div>{item.variant_type} • {item.quantity} units</div>
+                                      <div className="space-y-0.5">
+                                        <div className="font-semibold">Allocated: ₱{item.price.toFixed(2)} each × {item.quantity} = ₱{item.total_value.toFixed(2)}</div>
+                                        {fullItem?.dspPrice !== null && fullItem?.dspPrice !== undefined && (
+                                          <div className="text-blue-600">DSP: ₱{fullItem.dspPrice.toFixed(2)} each × {item.quantity} = ₱{(fullItem.dspPrice * item.quantity).toFixed(2)}</div>
+                                        )}
+                                        {fullItem?.rspPrice !== null && fullItem?.rspPrice !== undefined && (
+                                          <div className="text-purple-600">RSP: ₱{fullItem.rspPrice.toFixed(2)} each × {item.quantity} = ₱{(fullItem.rspPrice * item.quantity).toFixed(2)}</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => {
+                                        setVariantQuantities(prev => ({
+                                          ...prev,
+                                          [item.variant_id]: 0
+                                        }));
+                                      }}
+                                      className="h-8 w-8 p-0"
+                                    >
+                                      <Trash2 className="h-4 w-4 text-red-500" />
+                                    </Button>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="secondary">
-                                    {item.quantity} units
-                                  </Badge>
-                                  <Badge variant="outline">
-                                    ₱{item.total_value.toFixed(2)}
-                                  </Badge>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => {
-                                      setVariantQuantities(prev => ({
-                                        ...prev,
-                                        [item.variant_id]: 0
-                                      }));
-                                    }}
-                                    className="h-8 w-8 p-0"
-                                  >
-                                    <Trash2 className="h-4 w-4 text-red-500" />
-                                  </Button>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
 
                           {/* Total Summary */}
-                          <div className="border-t pt-3">
+                          <div className="border-t pt-3 space-y-2">
                             <div className="flex justify-between items-center">
                               <span className="font-semibold">Total Categories: {itemsToAllocate.length}</span>
-                              <span className="font-semibold">
-                                Total Value: ₱{itemsToAllocate.reduce((sum, item) => sum + item.total_value, 0).toFixed(2)}
-                              </span>
+                            </div>
+                            <div className="space-y-1 text-sm">
+                              <div className="flex justify-between items-center font-semibold">
+                                <span>Total Allocated Value:</span>
+                                <span>₱{itemsToAllocate.reduce((sum, item) => sum + item.total_value, 0).toFixed(2)}</span>
+                              </div>
+                              {(() => {
+                                let totalDsp = 0;
+                                let totalRsp = 0;
+                                let hasDsp = false;
+                                let hasRsp = false;
+                                
+                                itemsToAllocate.forEach(item => {
+                                  const fullItem = groupedInventory[allocation.brandId]?.find(
+                                    (inv: any) => inv.variantId === item.variant_id
+                                  );
+                                  if (fullItem?.dspPrice !== null && fullItem?.dspPrice !== undefined) {
+                                    totalDsp += fullItem.dspPrice * item.quantity;
+                                    hasDsp = true;
+                                  }
+                                  if (fullItem?.rspPrice !== null && fullItem?.rspPrice !== undefined) {
+                                    totalRsp += fullItem.rspPrice * item.quantity;
+                                    hasRsp = true;
+                                  }
+                                });
+                                
+                                return (
+                                  <>
+                                    {hasDsp && (
+                                      <div className="flex justify-between items-center text-blue-600">
+                                        <span>Total DSP Value:</span>
+                                        <span>₱{totalDsp.toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                    {hasRsp && (
+                                      <div className="flex justify-between items-center text-purple-600">
+                                        <span>Total RSP Value:</span>
+                                        <span>₱{totalRsp.toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </div>
                           </div>
 

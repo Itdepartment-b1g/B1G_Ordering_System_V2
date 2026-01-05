@@ -1,157 +1,207 @@
-import { useEffect, ReactNode, useCallback } from 'react';
+import { useState, useEffect, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { AgentBrand, AgentVariant } from './types';
 import { AgentInventoryContext } from './hooks';
+import { hasInventory } from '@/lib/roleUtils';
 
 export function AgentInventoryProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const qc = useQueryClient();
+  const [agentBrands, setAgentBrands] = useState<AgentBrand[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Fetcher function
-  const fetchAgentInventory = async (): Promise<AgentBrand[]> => {
-    if (!user || (user.role !== 'mobile_sales' && user.role !== 'team_leader')) {
-      return [];
+  // Fetch agent inventory from Supabase
+  const fetchAgentInventory = async () => {
+    // Support mobile_sales, team_leaders, and managers
+    if (!user || !hasInventory(user.role)) {
+      setLoading(false);
+      return;
     }
 
-    // 1. Fetch all brands
-    const { data: brandsData, error: brandsError } = await supabase
-      .from('brands')
-      .select('id, name')
-      .order('name');
+    try {
+      setLoading(true);
 
-    if (brandsError) throw brandsError;
+      // 1. Fetch all brands
+      const { data: brandsData, error: brandsError } = await supabase
+        .from('brands')
+        .select('id, name')
+        .order('name');
 
-    // 2. Fetch agent's inventory items
-    const { data: inventoryData, error: inventoryError } = await supabase
-      .from('agent_inventory')
-      .select(`
-        variant_id,
-        stock,
-        allocated_price,
-        dsp_price,
-        rsp_price,
-        status,
-        variants (
-          id,
-          name,
-          variant_type,
-          brand_id
-        )
-      `)
-      .eq('agent_id', user.id);
+      if (brandsError) throw brandsError;
 
-    if (inventoryError) throw inventoryError;
+      // 2. Fetch agent's inventory items
+      const { data: inventoryData, error: inventoryError } = await supabase
+        .from('agent_inventory')
+        .select(`
+          variant_id,
+          stock,
+          allocated_price,
+          dsp_price,
+          rsp_price,
+          status,
+          variants (
+            id,
+            name,
+            variant_type,
+            brand_id
+          )
+        `)
+        .eq('agent_id', user.id);
 
-    // 3. Fetch main inventory prices
-    const { data: mainInventoryData, error: mainInventoryError } = await supabase
-      .from('main_inventory')
-      .select('variant_id, unit_price, selling_price');
+      if (inventoryError) throw inventoryError;
 
-    if (mainInventoryError) throw mainInventoryError;
+      // 3. Fetch main inventory prices (unit_price) for reference
+      const { data: mainInventoryData, error: mainInventoryError } = await supabase
+        .from('main_inventory')
+        .select('variant_id, unit_price, selling_price');
 
-    const mainPrices = new Map();
-    mainInventoryData?.forEach((item: any) => {
-      mainPrices.set(item.variant_id, {
-        unit_price: item.unit_price,
-        selling_price: item.selling_price
+      if (mainInventoryError) throw mainInventoryError;
+
+      // Create a map of main inventory prices
+      const mainPrices = new Map();
+      mainInventoryData?.forEach((item: any) => {
+        mainPrices.set(item.variant_id, {
+          unit_price: item.unit_price,
+          selling_price: item.selling_price
+        });
       });
-    });
 
-    // 4. Structure the data
-    const brandsMap = new Map<string, AgentBrand>();
-    brandsData?.forEach((brand: any) => {
-      brandsMap.set(brand.id, {
-        id: brand.id,
-        name: brand.name,
-        flavors: [],
-        batteries: [],
-        posms: []
+      // 4. Structure the data
+      const brandsMap = new Map<string, AgentBrand>();
+
+      // Initialize brands
+      brandsData?.forEach((brand: any) => {
+        brandsMap.set(brand.id, {
+          id: brand.id,
+          name: brand.name,
+          flavors: [],
+          batteries: [],
+          posms: []
+        });
       });
-    });
 
-    inventoryData?.forEach((item: any) => {
-      const variant = item.variants;
-      if (!variant) return;
+      // Process inventory items
+      inventoryData?.forEach((item: any) => {
+        const variant = item.variants;
+        if (!variant) return;
 
-      const brand = brandsMap.get(variant.brand_id);
-      if (brand) {
-        const mainPriceInfo = mainPrices.get(variant.id) || { unit_price: 0, selling_price: 0 };
-        const agentVariant: AgentVariant = {
-          id: variant.id,
-          name: variant.name,
-          stock: item.stock,
-          price: item.allocated_price || mainPriceInfo.unit_price || 0,
-          allocatedPrice: item.allocated_price,
-          dspPrice: item.dsp_price,
-          rspPrice: item.rsp_price,
-          sellingPrice: mainPriceInfo.selling_price,
-          unitPrice: mainPriceInfo.unit_price,
-          status: item.status
-        };
+        const brand = brandsMap.get(variant.brand_id);
+        if (brand) {
+          const mainPriceInfo = mainPrices.get(variant.id) || { unit_price: 0, selling_price: 0 };
 
-        const vType = (variant.variant_type || '').toLowerCase();
-        if (vType === 'flavor') brand.flavors.push(agentVariant);
-        else if (vType === 'battery') brand.batteries.push(agentVariant);
-        else if (vType === 'posm') brand.posms.push(agentVariant);
-      }
-    });
+          // Determine effective price: selling_price (explicit) > allocated_price > unit_price
+          // For agents, we primarily care about allocated_price (what they owe) or selling_price (SRP)
+          // Let's use allocated_price as the primary "cost" to agent, and selling_price as SRP
 
-    return Array.from(brandsMap.values()).filter(b =>
-      b.flavors.length > 0 || b.batteries.length > 0 || b.posms.length > 0
-    );
+          const agentVariant: AgentVariant = {
+            id: variant.id,
+            name: variant.name,
+            stock: item.stock,
+            price: item.allocated_price || mainPriceInfo.unit_price || 0, // Default to allocated price
+            allocatedPrice: item.allocated_price,
+            dspPrice: item.dsp_price,
+            rspPrice: item.rsp_price,
+            sellingPrice: mainPriceInfo.selling_price,
+            unitPrice: mainPriceInfo.unit_price,
+            status: item.status
+          };
+
+          if (variant.variant_type === 'flavor' || variant.variant_type === 'Flavor') {
+            brand.flavors.push(agentVariant);
+          } else if (variant.variant_type === 'battery' || variant.variant_type === 'Battery') {
+            brand.batteries.push(agentVariant);
+          } else if (variant.variant_type === 'POSM' || variant.variant_type === 'posm') {
+            brand.posms.push(agentVariant);
+          }
+        }
+      });
+
+      // Convert map to array and sort
+      const formattedBrands = Array.from(brandsMap.values()).filter(b =>
+        b.flavors.length > 0 || b.batteries.length > 0 || b.posms.length > 0
+      );
+
+      setAgentBrands(formattedBrands);
+    } catch (error) {
+      console.error('Error fetching agent inventory:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const { data: agentBrands = [], isLoading: loading } = useQuery({
-    queryKey: ['agent_inventory', user?.id],
-    queryFn: fetchAgentInventory,
-    enabled: !!user && (user.role === 'mobile_sales' || user.role === 'team_leader'),
-  });
-
-  // Real-time
   useEffect(() => {
-    if (!user || (user.role !== 'mobile_sales' && user.role !== 'team_leader')) return;
+    if (!user?.id) {
+      console.log('⚠️ No user ID available, skipping inventory fetch and subscription');
+      return;
+    }
 
-    const channel = supabase
-      .channel(`agent_inventory_${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'agent_inventory',
-          filter: `agent_id=eq.${user.id}`
+    console.log(`📦 AgentInventoryContext: Fetching inventory for user ${user.id} (${user.role})`);
+    fetchAgentInventory();
+
+    let channel: RealtimeChannel | null = null;
+    let debounceTimer: NodeJS.Timeout | null = null;
+
+    // Debounced refresh to prevent multiple rapid updates
+    const debouncedRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        console.log('🔄 Real-time update: Refreshing agent inventory...');
+        fetchAgentInventory();
+      }, 300); // 300ms debounce
+    };
+
+    // Subscribe to agent_inventory changes for users with inventory (mobile_sales, team_leader, manager)
+    if (hasInventory(user.role)) {
+      console.log(`🎧 Setting up real-time subscription for agent_inventory (user: ${user.id}, role: ${user.role})`);
+      
+      // Subscribe to agent_inventory changes for this user
+      channel = subscribeToTable(
+        'agent_inventory',
+        (payload) => {
+          console.log('🔔 Agent inventory change detected:', payload.eventType, payload);
+          debouncedRefresh();
         },
-        () => {
-          qc.invalidateQueries({ queryKey: ['agent_inventory', user.id] });
-        }
-      )
-      .subscribe();
+        '*',
+        { column: 'agent_id', value: user.id }
+      );
+
+      console.log(`✅ Subscription initiated for agent_inventory (user: ${user.id})`);
+    } else {
+      console.log(`ℹ️ User role ${user.role} does not require agent_inventory subscription`);
+    }
 
     return () => {
-      supabase.removeChannel(channel);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (channel) {
+        console.log('🔌 Unsubscribing from agent_inventory');
+        unsubscribe(channel);
+      }
     };
-  }, [user, qc]);
+  }, [user]);
 
-  const getAgentInventoryByBrand = useCallback((brandName: string): AgentBrand | undefined => {
+  const getAgentInventoryByBrand = (brandName: string): AgentBrand | undefined => {
     return agentBrands.find(b => b.name.toLowerCase() === brandName.toLowerCase());
-  }, [agentBrands]);
+  };
 
-  const reduceStock = useCallback((
+  const reduceStock = (
     brandName: string,
     variantName: string,
     variantType: 'flavor' | 'battery' | 'posm',
     quantity: number
   ) => {
-    qc.setQueryData(['agent_inventory', user?.id], (old: AgentBrand[] | undefined) => {
-      if (!old) return old;
-      return old.map(brand => {
-        if (brand.name.toLowerCase() !== brandName.toLowerCase()) return brand;
+    // Optimistic update
+    setAgentBrands(prevBrands => {
+      return prevBrands.map(brand => {
+        if (brand.name.toLowerCase() !== brandName.toLowerCase()) {
+          return brand;
+        }
 
         const updateVariant = (v: AgentVariant) => {
           if (v.name === variantName) {
-            return { ...v, stock: Math.max(0, v.stock - quantity) };
+            const newStock = Math.max(0, v.stock - quantity);
+            return { ...v, stock: newStock };
           }
           return v;
         };
@@ -164,14 +214,14 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
         };
       });
     });
-  }, [qc, user?.id]);
+  };
 
   return (
     <AgentInventoryContext.Provider value={{
       agentBrands,
       loading,
-      refreshInventory: () => qc.invalidateQueries({ queryKey: ['agent_inventory', user?.id] }),
-      setAgentBrands: (brands: AgentBrand[]) => qc.setQueryData(['agent_inventory', user?.id], brands),
+      refreshInventory: fetchAgentInventory,
+      setAgentBrands,
       getAgentInventoryByBrand,
       reduceStock
     }}>

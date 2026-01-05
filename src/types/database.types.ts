@@ -1,7 +1,7 @@
 // B1G Ordering System - Database Types
 // Auto-generated TypeScript types for Supabase tables
 
-export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent';
+export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales';
 export type UserStatus = 'active' | 'inactive';
 export type VariantType = 'flavor' | 'battery' | 'posm';
 export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
@@ -12,13 +12,13 @@ export type TransactionType = 'purchase_order_received' | 'allocated_to_agent' |
 export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
 export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
 export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';
-export type NotificationType =
-  | 'order_created'
-  | 'order_approved'
+export type NotificationType = 
+  | 'order_created' 
+  | 'order_approved' 
   | 'order_rejected'
-  | 'inventory_low'
+  | 'inventory_low' 
   | 'inventory_allocated'
-  | 'purchase_order_approved'
+  | 'purchase_order_approved' 
   | 'new_client'
   | 'system_message'
   | 'stock_request_created'
@@ -209,6 +209,7 @@ export interface ClientOrder {
   notes?: string;
   signature_url?: string;
   payment_method?: 'GCASH' | 'BANK_TRANSFER' | 'CASH';
+  bank_type?: 'Unionbank' | 'BPI' | 'PBCOM';
   payment_proof_url?: string;
   stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected';
   remitted?: boolean;
@@ -294,23 +295,6 @@ export interface Notification {
   is_read: boolean;
   created_at: string;
 }
-
-export interface Event {
-  id: string;
-  company_id: string;
-  actor_id: string;
-  actor_role: 'system' | 'admin' | 'leader' | 'sales_agent' | 'finance' | 'manager';
-  performed_by: string;
-  actor_label?: string;
-  action: string;
-  target_type: string;
-  target_id: string;
-  target_label?: string;
-  details: Record<string, any>;
-  occurred_at: string;
-  created_at: string;
-}
-
 
 export interface LeaderTeam {
   id: string;
@@ -591,11 +575,6 @@ export interface Database {
         Row: Notification;
         Insert: Omit<Notification, 'id' | 'created_at'>;
         Update: Partial<Omit<Notification, 'id' | 'created_at'>>;
-      };
-      events: {
-        Row: Event;
-        Insert: Omit<Event, 'id' | 'created_at' | 'occurred_at'>;
-        Update: never; // Events are immutable once created
       };
     };
     Functions: {

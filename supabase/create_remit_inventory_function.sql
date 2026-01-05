@@ -32,6 +32,10 @@ DECLARE
   v_remittance_id UUID;
   v_item RECORD;
   v_leader_inventory_id UUID;
+  v_cash_orders UUID[];
+  v_cash_total DECIMAL(10,2) := 0;
+  v_deposit_id UUID;
+  v_reference_number TEXT;
 BEGIN
   -- 1. Validate Agent and Get Company
   SELECT company_id INTO v_company_id
@@ -106,6 +110,7 @@ BEGIN
 
   -- 4. PROCESS SOLD INVENTORY (Orders)
   -- Calculate revenue and mark as remitted
+  -- Also check for cash orders and create cash deposits
   IF p_order_ids IS NOT NULL AND array_length(p_order_ids, 1) > 0 THEN
     
     -- Calculate totals
@@ -119,7 +124,86 @@ BEGIN
     WHERE id = ANY(p_order_ids)
     AND company_id = v_company_id;
 
-    -- Mark orders as remitted
+    -- Check for cash orders and create cash deposit if any exist
+    -- Get cash orders that don't already have a deposit_id
+    SELECT 
+      ARRAY_AGG(id),
+      COALESCE(SUM(total_amount), 0)
+    INTO 
+      v_cash_orders,
+      v_cash_total
+    FROM client_orders
+    WHERE id = ANY(p_order_ids)
+    AND company_id = v_company_id
+    AND payment_method = 'CASH'
+    AND deposit_id IS NULL;
+
+    -- If there are cash orders, create a cash deposit
+    IF v_cash_orders IS NOT NULL AND array_length(v_cash_orders, 1) > 0 AND v_cash_total > 0 THEN
+      -- Generate reference number: REMIT-{date}-{agent_id first 8 chars}
+      v_reference_number := 'REMIT-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || SUBSTRING(p_agent_id::text, 1, 8);
+
+      -- Create cash deposit record
+      -- IMPORTANT: Status is set to 'pending_verification' because the leader
+      -- receives physical cash during remittance but hasn't deposited it yet.
+      -- The leader must verify the deposit after actually depositing the cash.
+      INSERT INTO cash_deposits (
+        company_id,
+        agent_id,
+        performed_by,
+        amount,
+        bank_account,
+        reference_number,
+        deposit_date,
+        status
+      ) VALUES (
+        v_company_id,
+        p_agent_id,
+        p_performed_by,
+        v_cash_total,
+        'Cash Remittance', -- Default bank account for remittance
+        v_reference_number,
+        CURRENT_DATE,
+        'pending_verification' -- MUST be pending - leader receives cash but hasn't deposited yet
+      ) RETURNING id INTO v_deposit_id;
+
+      -- Link cash orders to the deposit
+      UPDATE client_orders
+      SET 
+        deposit_id = v_deposit_id,
+        updated_at = NOW()
+      WHERE id = ANY(v_cash_orders)
+      AND company_id = v_company_id;
+
+      -- Create financial transaction for the cash deposit
+      INSERT INTO financial_transactions (
+        company_id,
+        transaction_date,
+        transaction_type,
+        category,
+        amount,
+        reference_type,
+        reference_id,
+        agent_id,
+        description,
+        status,
+        created_by
+      ) VALUES (
+        v_company_id,
+        CURRENT_DATE,
+        'revenue',
+        'cash_deposit',
+        v_cash_total,
+        'cash_deposit',
+        v_deposit_id,
+        p_agent_id,
+        format('Cash Deposit from Remittance: %s - %s orders', v_reference_number, array_length(v_cash_orders, 1)),
+        'pending', -- Pending until leader verifies
+        p_performed_by
+      );
+    END IF;
+
+    -- Mark all orders as remitted
     UPDATE client_orders
     SET remitted = TRUE, updated_at = NOW()
     WHERE id = ANY(p_order_ids)

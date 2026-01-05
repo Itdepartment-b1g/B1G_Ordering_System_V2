@@ -48,8 +48,12 @@ export function subscribeToTable<T = any>(
   event: ChangeEvent = '*',
   filter?: { column: string; value: string | number }
 ): RealtimeChannel {
+  const channelName = filter 
+    ? `${table}-${filter.column}-${filter.value}-changes`
+    : `${table}-changes`;
+    
   let channel = supabase
-    .channel(`${table}-changes`)
+    .channel(channelName)
     .on(
       'postgres_changes' as any,
       {
@@ -59,9 +63,20 @@ export function subscribeToTable<T = any>(
         ...(filter && { filter: `${filter.column}=eq.${filter.value}` }),
       },
       callback
-    );
-
-  channel.subscribe();
+    )
+    .subscribe((status) => {
+      console.log(`🔄 Real-time subscription status for ${table}:`, status);
+      
+      if (status === 'SUBSCRIBED') {
+        console.log(`✅ Successfully subscribed to ${table}${filter ? ` (${filter.column}=${filter.value})` : ''}`);
+      } else if (status === 'CHANNEL_ERROR') {
+        console.error(`❌ Failed to subscribe to ${table}. Make sure Realtime is enabled in Supabase.`);
+      } else if (status === 'TIMED_OUT') {
+        console.error(`⏱️ Subscription to ${table} timed out. Check your connection.`);
+      } else if (status === 'CLOSED') {
+        console.warn(`🔌 Subscription to ${table} was closed.`);
+      }
+    });
 
   return channel;
 }

@@ -12,7 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
-import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { canLeadTeam } from '@/lib/roleUtils';
 
 interface RemittanceLog {
   id: string;
@@ -40,31 +40,90 @@ export default function LeaderRemittancePage() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [remittanceOrders, setRemittanceOrders] = useState<any[]>([]);
+  const [unsoldItems, setUnsoldItems] = useState<any[]>([]);
+  const [loadingUnsoldItems, setLoadingUnsoldItems] = useState(false);
 
   useEffect(() => {
-    if (user?.role === 'team_leader') {
-      fetchTeamRemittances();
-    }
+    if (!user?.id || user?.role !== 'team_leader') return;
 
-    // Real-time subscriptions for remittances and orders
-    const channels = [
-      subscribeToTable('remittances_log', () => {
-        console.log('🔄 Real-time: Team remittance updated');
-        if (user?.role === 'team_leader') {
-          fetchTeamRemittances();
-        }
-      }),
-      subscribeToTable('client_orders', () => {
-        console.log('🔄 Real-time: Orders updated, refreshing remittance details');
-        // Refresh if viewing details
+    // Initial fetch
+    fetchTeamRemittances();
+
+    // Debounce timers for smooth real-time updates
+    let remittanceTimer: NodeJS.Timeout | null = null;
+    let ordersTimer: NodeJS.Timeout | null = null;
+
+    const debouncedRemittanceRefresh = () => {
+      if (remittanceTimer) clearTimeout(remittanceTimer);
+      remittanceTimer = setTimeout(() => {
+        console.log('🔄 Real-time update: Refreshing team remittances...');
+        fetchTeamRemittances();
+      }, 300);
+    };
+
+    const debouncedOrdersRefresh = () => {
+      if (ordersTimer) clearTimeout(ordersTimer);
+      ordersTimer = setTimeout(() => {
+        console.log('🔄 Real-time update: Refreshing remittance order details...');
         if (selectedRemittance && selectedRemittance.order_ids.length > 0) {
           fetchOrderDetails(selectedRemittance.order_ids);
         }
-      })
-    ];
+      }, 300);
+    };
 
-    return () => channels.forEach(unsubscribe);
-  }, [user, selectedDate]);
+    // Subscribe to remittances_log changes
+    const remittancesChannel = supabase
+      .channel(`remittances-changes-${user.id}`)
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'remittances_log',
+        },
+        (payload) => {
+          console.log('🔔 Remittance change detected:', payload.eventType, payload);
+          debouncedRemittanceRefresh();
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription active for remittances_log');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error for remittances_log');
+        }
+      });
+
+    // Subscribe to client_orders changes (for order details when viewing)
+    const ordersChannel = supabase
+      .channel(`remittance-orders-changes-${user.id}`)
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'client_orders',
+        },
+        (payload) => {
+          console.log('🔔 Order change detected (remittance view):', payload.eventType, payload);
+          debouncedOrdersRefresh();
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription active for client_orders (remittance view)');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error for client_orders');
+        }
+      });
+
+    return () => {
+      if (remittanceTimer) clearTimeout(remittanceTimer);
+      if (ordersTimer) clearTimeout(ordersTimer);
+      supabase.removeChannel(remittancesChannel);
+      supabase.removeChannel(ordersChannel);
+    };
+  }, [user?.id, user?.role, selectedDate, selectedRemittance]);
 
   const fetchTeamRemittances = async () => {
     if (!user?.id) return;
@@ -176,6 +235,78 @@ export default function LeaderRemittancePage() {
     }
   };
 
+  const fetchUnsoldItems = async (remittance: RemittanceLog) => {
+    if (!remittance.agent_id || !remittance.remitted_at) {
+      setUnsoldItems([]);
+      return;
+    }
+
+    setLoadingUnsoldItems(true);
+    try {
+      // Fetch inventory transactions for this remittance
+      // The remit function creates transactions with type 'return' and notes 'Remittance: Unsold inventory returned to leader'
+      const remittanceDate = new Date(remittance.remitted_at);
+      const startTime = new Date(remittanceDate);
+      startTime.setSeconds(0, 0); // Start of the minute
+      const endTime = new Date(remittanceDate);
+      endTime.setMinutes(endTime.getMinutes() + 1); // End of the minute
+
+      const { data: transactions, error: transactionsError } = await supabase
+        .from('inventory_transactions')
+        .select(`
+          id,
+          variant_id,
+          quantity,
+          created_at,
+          variant:variants(
+            id,
+            name,
+            variant_type,
+            brand:brands(name)
+          )
+        `)
+        .eq('transaction_type', 'return')
+        .eq('from_location', 'agent_inventory')
+        .eq('to_location', 'leader_inventory')
+        .gte('created_at', startTime.toISOString())
+        .lte('created_at', endTime.toISOString())
+        .order('created_at', { ascending: true });
+
+      if (transactionsError) throw transactionsError;
+
+      // Group by variant and sum quantities (in case there are multiple transactions)
+      const itemsMap = new Map<string, any>();
+      
+      (transactions || []).forEach((transaction: any) => {
+        const variantId = transaction.variant_id;
+        if (itemsMap.has(variantId)) {
+          itemsMap.get(variantId).quantity += transaction.quantity;
+        } else {
+          itemsMap.set(variantId, {
+            variantId: variantId,
+            variantName: transaction.variant?.name || 'Unknown',
+            brandName: transaction.variant?.brand?.name || 'Unknown',
+            variantType: transaction.variant?.variant_type || 'unknown',
+            quantity: transaction.quantity
+          });
+        }
+      });
+
+      const formattedItems = Array.from(itemsMap.values());
+      setUnsoldItems(formattedItems);
+    } catch (error: any) {
+      console.error('Error fetching unsold items:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load unsold items',
+        variant: 'destructive'
+      });
+      setUnsoldItems([]);
+    } finally {
+      setLoadingUnsoldItems(false);
+    }
+  };
+
   // Helper to check for missing orders
   useEffect(() => {
     if (!loadingDetails && remittanceOrders.length === 0 && selectedRemittance && selectedRemittance.orders_count > 0) {
@@ -186,6 +317,9 @@ export default function LeaderRemittancePage() {
   const handleViewDetails = async (remittance: RemittanceLog) => {
     setSelectedRemittance(remittance);
     setViewDialogOpen(true);
+
+    // Fetch unsold items (always fetch, even if 0 items)
+    await fetchUnsoldItems(remittance);
 
     // Fetch order details if there are any
     if (remittance.order_ids && remittance.order_ids.length > 0) {
@@ -201,14 +335,14 @@ export default function LeaderRemittancePage() {
   const totalRevenue = remittances.reduce((sum, r) => sum + r.total_revenue, 0);
   const totalOrders = remittances.reduce((sum, r) => sum + r.orders_count, 0);
 
-  if (user?.role !== 'team_leader') {
+  if (!canLeadTeam(user?.role)) {
     return (
       <div className="container mx-auto p-6">
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center gap-2 text-muted-foreground">
               <AlertCircle className="h-5 w-5" />
-              <p>This page is only available for leaders.</p>
+              <p>This page is only available for team leaders and managers.</p>
             </div>
           </CardContent>
         </Card>
@@ -421,9 +555,12 @@ export default function LeaderRemittancePage() {
 
               {/* Tabs for Details */}
               <Tabs defaultValue="summary" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="summary">
                     📊 Summary
+                  </TabsTrigger>
+                  <TabsTrigger value="unsold">
+                    📦 Unsold Items ({unsoldItems.length})
                   </TabsTrigger>
                   <TabsTrigger value="orders">
                     🛒 Sold Orders ({selectedRemittance.orders_count})
@@ -486,6 +623,83 @@ export default function LeaderRemittancePage() {
                       <li>✓ Agent inventory cleared</li>
                     </ul>
                   </div>
+                </TabsContent>
+
+                {/* Unsold Items Tab */}
+                <TabsContent value="unsold" className="space-y-4">
+                  {loadingUnsoldItems ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-8 w-8 animate-spin" />
+                    </div>
+                  ) : unsoldItems.length > 0 ? (
+                    <>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-sm">Unsold Items Returned</CardTitle>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            These items were returned to your inventory as unsold stock
+                          </p>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="border rounded-lg max-h-96 overflow-y-auto">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Brand</TableHead>
+                                  <TableHead>Product</TableHead>
+                                  <TableHead>Type</TableHead>
+                                  <TableHead className="text-right">Quantity</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {unsoldItems.map((item, index) => (
+                                  <TableRow key={`${item.variantId}-${index}`}>
+                                    <TableCell className="font-medium">{item.brandName}</TableCell>
+                                    <TableCell>{item.variantName}</TableCell>
+                                    <TableCell>
+                                      <Badge 
+                                        variant="secondary"
+                                        className={
+                                          item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                          item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
+                                          item.variantType === 'posm' ? 'bg-purple-100 text-purple-700' :
+                                          ''
+                                        }
+                                      >
+                                        {item.variantType || 'unknown'}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-right font-semibold">
+                                      {item.quantity} units
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="border rounded-lg p-4">
+                          <p className="text-sm text-muted-foreground">Total Items</p>
+                          <p className="text-2xl font-bold">{unsoldItems.length}</p>
+                        </div>
+                        <div className="border rounded-lg p-4">
+                          <p className="text-sm text-muted-foreground">Total Units</p>
+                          <p className="text-2xl font-bold">
+                            {unsoldItems.reduce((sum, item) => sum + item.quantity, 0)}
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                      <p>No unsold items were returned in this remittance</p>
+                      <p className="text-sm mt-2">All inventory was sold or this remittance only includes sold orders.</p>
+                    </div>
+                  )}
                 </TabsContent>
 
                 {/* Orders Tab */}

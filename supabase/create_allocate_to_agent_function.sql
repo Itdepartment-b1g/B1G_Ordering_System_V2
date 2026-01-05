@@ -4,14 +4,18 @@
 -- This function allocates stock from a leader's inventory to a mobile agent's
 -- agent_inventory record.
 --
--- IMPORTANT: It **does not** deduct from main_inventory or the leader's
--- agent_inventory.stock. Instead, "available" stock is derived in the UI as:
---   available = leader_total_stock - allocated_to_team - pending_orders
+-- UPDATED: Now DEDUCTS stock from the leader's agent_inventory when allocating
+-- to team members. For example:
+--   - Leader has 241 units
+--   - Allocates 200 units to agent
+--   - Leader now has 41 units remaining
 --
--- This keeps:
---   - main_inventory.stock as the company's total stock
---   - leader agent_inventory.stock as the leader's total held stock
--- and uses allocations + orders to determine what is still available.
+-- Flow:
+--   1. Gets the leader ID from p_performed_by (the leader doing the allocation)
+--   2. Validates leader has sufficient stock for this variant
+--   3. Deducts quantity from leader's agent_inventory
+--   4. Adds/updates agent's agent_inventory record
+--   5. Logs inventory transaction
 --
 -- Parameters:
 --   - p_agent_id:       UUID of the mobile agent receiving stock
@@ -49,6 +53,9 @@ DECLARE
   v_company_id         UUID;
   v_agent_inventory_id UUID;
   v_current_stock      INTEGER;
+  v_leader_inventory_id UUID;
+  v_leader_stock       INTEGER;
+  v_leader_role        TEXT;
 BEGIN
   -- Basic validation
   IF p_quantity IS NULL OR p_quantity <= 0 THEN
@@ -69,6 +76,45 @@ BEGIN
       'success', false,
       'error', 'Agent not found or has no company'
     );
+  END IF;
+
+  -- Get the leader's role (person performing the allocation)
+  SELECT role
+  INTO v_leader_role
+  FROM profiles
+  WHERE id = p_performed_by;
+
+  -- If the performer is a team_leader, deduct from their inventory
+  -- (Admins/Super_admins can allocate without deduction as they allocate from main_inventory)
+  IF v_leader_role = 'team_leader' OR v_leader_role = 'manager' THEN
+    -- Get leader's current stock for this variant
+    SELECT id, stock
+    INTO v_leader_inventory_id, v_leader_stock
+    FROM agent_inventory
+    WHERE agent_id = p_performed_by
+      AND variant_id = p_variant_id
+      AND company_id = v_company_id;
+
+    -- Validate leader has enough stock
+    IF v_leader_inventory_id IS NULL THEN
+      RETURN json_build_object(
+        'success', false,
+        'error', 'You do not have this product in your inventory'
+      );
+    END IF;
+
+    IF v_leader_stock < p_quantity THEN
+      RETURN json_build_object(
+        'success', false,
+        'error', CONCAT('Insufficient stock. You have ', v_leader_stock, ' units available, but tried to allocate ', p_quantity, ' units')
+      );
+    END IF;
+
+    -- Deduct from leader's inventory
+    UPDATE agent_inventory
+    SET stock = stock - p_quantity,
+        updated_at = NOW()
+    WHERE id = v_leader_inventory_id;
   END IF;
 
   -- Look for existing agent_inventory row for this agent + variant
@@ -137,11 +183,16 @@ BEGIN
   -- Return success payload
   RETURN json_build_object(
     'success', true,
-    'message', 'Stock allocated to agent successfully',
+    'message', CASE 
+      WHEN v_leader_role = 'team_leader' OR v_leader_role = 'manager' 
+      THEN CONCAT('Stock allocated successfully. ', p_quantity, ' units deducted from your inventory')
+      ELSE 'Stock allocated to agent successfully'
+    END,
     'data', json_build_object(
       'agent_id', p_agent_id,
       'variant_id', p_variant_id,
-      'quantity', p_quantity
+      'quantity', p_quantity,
+      'leader_stock_deducted', CASE WHEN v_leader_role IN ('team_leader', 'manager') THEN true ELSE false END
     )
   );
 
