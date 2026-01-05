@@ -25,6 +25,7 @@ import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
 import NotFound from "@/features/shared/NotFound";
+import { AgentRemittanceReminder } from "@/features/shared/components";
 
 const App = () => (
   <PersistQueryClientProvider
@@ -39,6 +40,7 @@ const App = () => (
               <TooltipProvider>
                 <Toaster />
                 <Sonner />
+                <AgentRemittanceReminder />
                 <BrowserRouter>
                   <Routes>
                     <Route path="/" element={<RoleBasedRedirect />} />
