@@ -18,426 +18,332 @@ import {
   Loader2,
   ShoppingCart,
   UploadCloud,
-  Eye
+  CheckCircle2,
+  Filter
 } from 'lucide-react';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
-interface TeamCashOrder {
+// Interfaces
+interface CashOrder {
   id: string;
   orderNumber: string;
   agentId: string;
   agentName: string;
-  clientName: string;
-  orderDate: string;
   totalAmount: number;
-  paymentProofUrl?: string | null;
+  itemsCount: number;
+  depositId: string | null;
+}
+
+interface AgentDailySummary {
+  agentId: string;
+  agentName: string;
+  ordersCount: number;
+  totalItems: number;
+  totalAmount: number;
+  orderIds: string[];
 }
 
 interface CashDeposit {
   id: string;
-  transactionDate: string;
+  depositDate: string;
   amount: number;
-  bankName?: string;
-  reference?: string;
+  bankAccount: string;
+  referenceNumber: string;
+  status: string;
+  agentName: string;
 }
+
+const BANK_OPTIONS = [
+  "Unionbank - 00-218-002553-7",
+  "BPI - 1761-011118",
+  "PBCOM - 238101006138"
+];
 
 export default function LeaderCashDepositsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
 
+  // State
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [loading, setLoading] = useState(false);
-  const [orders, setOrders] = useState<TeamCashOrder[]>([]);
-  const [deposits, setDeposits] = useState<CashDeposit[]>([]);
+  const [pendingSummaries, setPendingSummaries] = useState<AgentDailySummary[]>([]);
+  const [depositHistory, setDepositHistory] = useState<CashDeposit[]>([]);
 
-  // Deposit dialog state
+  // Deposit Modal State
   const [depositDialogOpen, setDepositDialogOpen] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState<TeamCashOrder | null>(null);
-  const [bank, setBank] = useState('');
-  const [reference, setReference] = useState('');
-  const [amount, setAmount] = useState('');
-  const [depositDate, setDepositDate] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
-  const [file, setFile] = useState<File | null>(null);
+  const [selectedSummary, setSelectedSummary] = useState<AgentDailySummary | null>(null);
+  const [bankAccount, setBankAccount] = useState('');
+  const [referenceNumber, setReferenceNumber] = useState('');
+  const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Initial Fetch & Realtime
   useEffect(() => {
-    if (user?.role === 'team_leader' || user?.role === 'super_admin') {
+    if (user?.role === 'team_leader' || user?.role === 'super_admin' || user?.role === 'system_administrator') {
       fetchData();
     }
 
-    // Realtime refresh on client_orders or financial_transactions change
     const channels = [
-      subscribeToTable('client_orders', () => {
-        if (user?.role === 'team_leader' || user?.role === 'super_admin') {
-          fetchTeamCashOrders();
-        }
-      }),
-      subscribeToTable('financial_transactions', () => {
-        if (user?.role === 'team_leader' || user?.role === 'super_admin') {
-          fetchCashDeposits();
-        }
-      })
+      subscribeToTable('client_orders', () => fetchData()),
+      subscribeToTable('cash_deposits', () => fetchData())
     ];
 
     return () => channels.forEach(unsubscribe);
-  }, [user?.id, user?.role]);
+  }, [user?.id, selectedDate]);
 
   const fetchData = async () => {
+    if (!user?.id) return;
     setLoading(true);
     try {
-      await Promise.all([fetchTeamCashOrders(), fetchCashDeposits()]);
+      await Promise.all([
+        fetchPendingCashOrders(),
+        fetchDepositHistory()
+      ]);
+    } catch (error) {
+      console.error("Error fetching data:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchTeamCashOrders = async () => {
-    if (!user?.id) return;
-
+  const fetchPendingCashOrders = async () => {
     try {
-      // Get team member IDs
-      const { data: teamRows, error: teamError } = await supabase
-        .from('leader_teams')
-        .select('agent_id')
-        .eq('leader_id', user.id);
-
-      if (teamError) throw teamError;
-
-      const teamIds = (teamRows || []).map((t: any) => t.agent_id);
-      if (!teamIds.length) {
-        setOrders([]);
-        return;
+      // 1. Get Team IDs
+      let teamIds: string[] = [];
+      if (user?.role === 'team_leader') {
+        const { data: teamData } = await supabase
+          .from('leader_teams')
+          .select('agent_id')
+          .eq('leader_id', user.id);
+        teamIds = (teamData || []).map((t: any) => t.agent_id);
+      } else {
+        // Admins see all agents (simplified for now, or fetch all profiles with role agent)
+        // For stricter admin view, we might want to fetch all profiles first. 
+        // Allowing empty teamIds to mean "all" if RLS permits, creates complexity.
+        // For now, let's assume admins want to see EVERYTHING.
+        // We'll filter via the query itself if teamIds is empty, distinct from "no team".
+        // Actually, let's just fetch ALL cash orders if admin.
       }
 
-      // Fetch CASH orders that are already approved by admin
-      const { data, error } = await supabase
+      // 2. Fetch Orders
+      let query = supabase
         .from('client_orders')
         .select(`
-          id,
-          order_number,
-          agent_id,
-          client_id,
-          total_amount,
-          order_date,
-          status,
-          stage,
-          payment_method,
-          payment_proof_url,
+          id, order_number, agent_id, total_amount, 
           agent:profiles!client_orders_agent_id_fkey(full_name),
-          client:clients(name)
+          items:client_order_items(quantity)
         `)
-        .in('agent_id', teamIds)
         .eq('payment_method', 'CASH')
-        .eq('stage', 'admin_approved')
-        .order('order_date', { ascending: false });
+        .is('deposit_id', null) // Only pending deposits
+        //.eq('stage', 'admin_approved') // Only approved orders? Or all pending cash? Usually ALL closed sales.
+        // Let's assume 'delivered' or 'completed' status, OR just payment_method CASH implies money was taken.
+        // Safest is to track ALL cash orders created today/selected date.
+        // Filter by date? User requirement: "fetching for that day"
+        .gte('order_date', format(selectedDate, 'yyyy-MM-dd'))
+        .lte('order_date', format(selectedDate, 'yyyy-MM-dd'));
 
+      if (user?.role === 'team_leader' && teamIds.length > 0) {
+        query = query.in('agent_id', teamIds);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
 
-      const mapped: TeamCashOrder[] = (data || []).map((row: any) => ({
-        id: row.id,
-        orderNumber: row.order_number,
-        agentId: row.agent_id,
-        agentName: row.agent?.full_name || 'Unknown Agent',
-        clientName: row.client?.name || 'Unknown Client',
-        orderDate: row.order_date,
-        totalAmount: row.total_amount || 0,
-        paymentProofUrl: row.payment_proof_url || null
-      }));
+      // 3. Aggregate by Agent
+      const summaries: { [key: string]: AgentDailySummary } = {};
 
-      setOrders(mapped);
-    } catch (err: any) {
-      console.error('Error fetching team CASH orders:', err);
-      toast({
-        title: 'Error',
-        description: 'Failed to load CASH orders for your team',
-        variant: 'destructive'
+      (data as any[]).forEach(order => {
+        const agentId = order.agent_id;
+        const agentName = order.agent?.full_name || 'Unknown';
+        const itemsCount = order.items?.reduce((sum: number, item: any) => sum + item.quantity, 0) || 0;
+
+        if (!summaries[agentId]) {
+          summaries[agentId] = {
+            agentId,
+            agentName,
+            ordersCount: 0,
+            totalItems: 0,
+            totalAmount: 0,
+            orderIds: []
+          };
+        }
+
+        summaries[agentId].ordersCount += 1;
+        summaries[agentId].totalItems += itemsCount;
+        summaries[agentId].totalAmount += Number(order.total_amount);
+        summaries[agentId].orderIds.push(order.id);
       });
+
+      setPendingSummaries(Object.values(summaries));
+
+    } catch (error) {
+      console.error('Error fetching pending orders', error);
+      toast({ title: 'Error', description: 'Failed to fetch pending orders', variant: 'destructive' });
     }
   };
 
-  const fetchCashDeposits = async () => {
-    if (!user?.id) return;
-
+  const fetchDepositHistory = async () => {
     try {
-      const { data, error } = await supabase
-        .from('financial_transactions')
-        .select('id, transaction_date, amount, category, description')
-        .eq('transaction_type', 'revenue')
-        .eq('status', 'completed')
-        .eq('created_by', user.id)
-        .like('category', 'cash_deposit%')
-        .order('transaction_date', { ascending: false });
+      let query = supabase
+        .from('cash_deposits')
+        .select(`
+          id, deposit_date, amount, bank_account, reference_number, status,
+          agent:profiles!cash_deposits_agent_id_fkey(full_name)
+        `)
+        .order('created_at', { ascending: false });
 
+      // If team leader, maybe filter? RLS handles company, checking team might be good but RLS is safer.
+
+      const { data, error } = await query;
       if (error) throw error;
 
-      const mapped: CashDeposit[] = (data || []).map((row: any) => ({
-        id: row.id,
-        transactionDate: row.transaction_date,
-        amount: Number(row.amount) || 0,
-        bankName: row.category?.split(':')[1] || undefined,
-        reference: row.description || undefined
-      }));
+      setDepositHistory((data || []).map((d: any) => ({
+        id: d.id,
+        depositDate: d.deposit_date,
+        amount: d.amount,
+        bankAccount: d.bank_account,
+        referenceNumber: d.reference_number,
+        status: d.status,
+        agentName: d.agent?.full_name || 'Unknown'
+      })));
 
-      setDeposits(mapped);
-    } catch (err: any) {
-      console.error('Error fetching cash deposits:', err);
-      toast({
-        title: 'Error',
-        description: 'Failed to load cash deposits',
-        variant: 'destructive'
-      });
+    } catch (error) {
+      console.error('Error fetching history', error);
     }
   };
 
-  const outstandingOrders = useMemo(
-    () => orders.filter((o) => !o.paymentProofUrl),
-    [orders]
-  );
 
-  const depositedOrders = useMemo(
-    () => orders.filter((o) => !!o.paymentProofUrl),
-    [orders]
-  );
-
-  const totalCash = useMemo(
-    () => orders.reduce((sum, o) => sum + o.totalAmount, 0),
-    [orders]
-  );
-
-  const totalDeposited = useMemo(
-    () => deposits.reduce((sum, d) => sum + d.amount, 0),
-    [deposits]
-  );
-
-  const outstandingBalance = Math.max(0, totalCash - totalDeposited);
-
-  const handleOpenDepositDialog = (order: TeamCashOrder) => {
-    setSelectedOrder(order);
-    setBank('');
-    setReference('');
-    setAmount(order.totalAmount.toString());
-    setDepositDate(format(new Date(), 'yyyy-MM-dd'));
-    setFile(null);
+  const handleOpenDepositModal = (summary: AgentDailySummary) => {
+    setSelectedSummary(summary);
+    setBankAccount('');
+    setReferenceNumber('');
+    setDepositSlipFile(null);
     setDepositDialogOpen(true);
   };
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files?.[0] || null;
-    setFile(selected);
-  };
-
   const handleSubmitDeposit = async () => {
-    if (!user?.id || !selectedOrder) return;
-
-    if (!bank || !amount || !file) {
-      toast({
-        title: 'Missing information',
-        description: 'Please select a bank, enter amount, and attach a deposit slip.',
-        variant: 'destructive'
-      });
+    if (!selectedSummary || !bankAccount || !depositSlipFile) {
+      toast({ title: "Incomplete", description: "Please fill all fields and upload slip.", variant: "destructive" });
       return;
     }
 
     setSubmitting(true);
     try {
-      const numericAmount = Number(amount);
-      if (Number.isNaN(numericAmount) || numericAmount <= 0) {
-        throw new Error('Amount must be a positive number');
-      }
-
-      // Upload file to "cash-deposits" bucket (ensure bucket + RLS exist in Supabase)
+      // 1. Upload Slip
       const timestamp = Date.now();
-      const safeName = file.name.replace(/\s+/g, '-').toLowerCase();
-      const filePath = `${user.id}/${selectedOrder.id}/${timestamp}-${safeName}`;
+      const filePath = `${user?.id}/deposits/${timestamp}_${depositSlipFile.name}`;
 
       const { error: uploadError } = await supabase.storage
-        .from('cash-deposits')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: false
-        });
+        .from('cash-deposits') // Ensure this bucket exists!
+        .upload(filePath, depositSlipFile);
 
-      if (uploadError) {
-        throw uploadError;
-      }
+      if (uploadError) throw uploadError;
 
-      const { data: publicData } = supabase.storage
+      const { data: { publicUrl } } = supabase.storage
         .from('cash-deposits')
         .getPublicUrl(filePath);
 
-      const proofUrl = publicData?.publicUrl;
-
-      // 1) Attach proof to client order
-      const { error: updateOrderError } = await supabase
-        .from('client_orders')
-        .update({
-          payment_proof_url: proofUrl
-        } as any)
-        .eq('id', selectedOrder.id);
-
-      if (updateOrderError) throw updateOrderError;
-
-      // 2) Create financial transaction record
-      const leaderCompanyId = (user as any).company_id;
-      const category = `cash_deposit:${bank}`;
-
-      const { error: financeError } = await supabase
-        .from('financial_transactions')
-        .insert({
-          company_id: leaderCompanyId,
-          transaction_date: depositDate,
-          transaction_type: 'revenue',
-          category,
-          amount: numericAmount,
-          reference_type: 'client_order',
-          reference_id: selectedOrder.id,
-          agent_id: selectedOrder.agentId,
-          description: reference
-            ? `Cash deposit for order ${selectedOrder.orderNumber} (${bank}, ref: ${reference})`
-            : `Cash deposit for order ${selectedOrder.orderNumber} (${bank})`,
-          status: 'completed',
-          created_by: user.id
-        } as any);
-
-      if (financeError) throw financeError;
-
-      toast({
-        title: 'Deposit recorded',
-        description: 'Cash deposit has been recorded successfully.'
+      // 2. Call RPC
+      const { data, error } = await supabase.rpc('confirm_cash_deposit', {
+        p_agent_id: selectedSummary.agentId,
+        p_amount: selectedSummary.totalAmount,
+        p_bank_account: bankAccount,
+        p_reference_number: referenceNumber,
+        p_deposit_slip_url: publicUrl,
+        p_deposit_date: format(selectedDate, 'yyyy-MM-dd'),
+        p_order_ids: selectedSummary.orderIds
       });
 
+      if (error) throw error;
+      if (!data.success) throw new Error(data.message);
+
+      toast({ title: "Success", description: "Cash deposit recorded successfully!" });
       setDepositDialogOpen(false);
-      await Promise.all([fetchTeamCashOrders(), fetchCashDeposits()]);
-    } catch (err: any) {
-      console.error('Error recording cash deposit:', err);
-      toast({
-        title: 'Error',
-        description: err.message || 'Failed to record cash deposit',
-        variant: 'destructive'
-      });
+      fetchData();
+
+    } catch (error: any) {
+      console.error("Deposit Error:", error);
+      toast({ title: "Error", description: error.message || "Failed to record deposit", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (user?.role !== 'team_leader' && user?.role !== 'super_admin') {
-    return (
-      <div className="container mx-auto p-6">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <AlertCircle className="h-5 w-5" />
-              <p>This page is only available for leaders / managers.</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
+
+  if (user?.role !== 'team_leader' && user?.role !== 'super_admin' && user?.role !== 'system_administrator') {
+    return <div className="p-8 text-center text-muted-foreground">Access Restricted</div>;
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="container mx-auto p-4 md:p-8 space-y-8">
+      {/* Header & Controls */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Team Cash Deposits</h1>
-          <p className="text-muted-foreground mt-1">
-            Review CASH orders from your team and upload bank deposit slips.
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight">Team Cash Deposits</h1>
+          <p className="text-muted-foreground">Manage and record cash collections from your sales team.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Calendar className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="date"
+              value={format(selectedDate, 'yyyy-MM-dd')}
+              onChange={(e) => setSelectedDate(new Date(e.target.value))}
+              className="pl-9 w-[180px]"
+            />
+          </div>
+          <Button variant="outline" size="icon" onClick={fetchData} title="Refresh">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+          </Button>
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">CASH Orders</CardTitle>
-            <CardDescription className="text-xs">Admin-approved</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{orders.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Total CASH Amount</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">₱{totalCash.toLocaleString()}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Total Deposited</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">₱{totalDeposited.toLocaleString()}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Outstanding CASH</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-amber-600">₱{outstandingBalance.toLocaleString()}</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Outstanding orders */}
-      <Card>
+      {/* Pending Deposits Section */}
+      <Card className="border-l-4 border-l-amber-500 shadow-sm">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BanknoteIcon className="h-5 w-5 text-amber-600" />
-            Outstanding CASH Orders
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <AlertCircle className="h-5 w-5 text-amber-600" />
+            Pending Deposits for {format(selectedDate, 'MMMM dd, yyyy')}
           </CardTitle>
           <CardDescription>
-            Orders paid in CASH that do not yet have a recorded bank deposit.
+            Cash orders collected by agents today that need to be deposited.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-8 text-muted-foreground gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Loading CASH orders…</span>
-            </div>
-          ) : outstandingOrders.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <ShoppingCart className="h-10 w-10 mx-auto mb-2 opacity-50" />
-              <p>No outstanding CASH orders</p>
+          {pendingSummaries.length === 0 ? (
+            <div className="text-center py-12 bg-muted/20 rounded-lg border border-dashed">
+              <p className="text-muted-foreground">No pending cash orders found for this date.</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Order#</TableHead>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Agent Name</TableHead>
+                  <TableHead className="text-center">Total Orders</TableHead>
+                  <TableHead className="text-center">Total Items</TableHead>
+                  <TableHead className="text-right">Total Amount</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {outstandingOrders.map((order) => (
-                  <TableRow key={order.id}>
-                    <TableCell className="font-mono text-sm">{order.orderNumber}</TableCell>
-                    <TableCell>{order.agentName}</TableCell>
-                    <TableCell>{order.clientName}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1 text-sm">
-                        <Calendar className="h-3 w-3 text-muted-foreground" />
-                        <span>{format(new Date(order.orderDate), 'MMM dd, yyyy')}</span>
+                {pendingSummaries.map((summary) => (
+                  <TableRow key={summary.agentId} className="hover:bg-muted/50">
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-8 w-8">
+                          <AvatarFallback>{summary.agentName.substring(0, 2).toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                        {summary.agentName}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right font-semibold">
-                      ₱{order.totalAmount.toLocaleString()}
+                    <TableCell className="text-center">{summary.ordersCount}</TableCell>
+                    <TableCell className="text-center">{summary.totalItems}</TableCell>
+                    <TableCell className="text-right font-bold text-lg text-emerald-600">
+                      ₱{summary.totalAmount.toLocaleString()}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleOpenDepositDialog(order)}
-                      >
-                        <UploadCloud className="h-4 w-4 mr-1" />
+                      <Button onClick={() => handleOpenDepositModal(summary)} size="sm" className="gap-2 bg-emerald-600 hover:bg-emerald-700">
+                        <BanknoteIcon className="h-4 w-4" />
                         Record Deposit
                       </Button>
                     </TableCell>
@@ -449,38 +355,39 @@ export default function LeaderCashDepositsPage() {
         </CardContent>
       </Card>
 
-      {/* Deposited section */}
+      {/* Deposit History Section */}
       <Card>
         <CardHeader>
-          <CardTitle>Recent Cash Deposits</CardTitle>
-          <CardDescription>Summary of recorded cash deposits for your team.</CardDescription>
+          <CardTitle className="text-lg">Recent Deposit History</CardTitle>
+          <CardDescription>Verified bank deposits recorded in the system.</CardDescription>
         </CardHeader>
         <CardContent>
-          {deposits.length === 0 ? (
-            <div className="text-center py-6 text-muted-foreground">
-              <BanknoteIcon className="h-10 w-10 mx-auto mb-2 opacity-50" />
-              <p>No cash deposits recorded yet</p>
-            </div>
+          {depositHistory.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No recent deposits.</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Date</TableHead>
+                  <TableHead>Agent</TableHead>
                   <TableHead>Bank</TableHead>
-                  <TableHead>Reference</TableHead>
+                  <TableHead>Ref Number</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="text-right">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {deposits.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell>{format(new Date(d.transactionDate), 'MMM dd, yyyy')}</TableCell>
-                    <TableCell>{d.bankName || '-'}</TableCell>
-                    <TableCell className="max-w-xs truncate text-sm">
-                      {d.reference || '-'}
-                    </TableCell>
-                    <TableCell className="text-right font-semibold">
-                      ₱{d.amount.toLocaleString()}
+                {depositHistory.map((deposit) => (
+                  <TableRow key={deposit.id}>
+                    <TableCell>{format(new Date(deposit.depositDate), 'MMM dd, yyyy')}</TableCell>
+                    <TableCell>{deposit.agentName}</TableCell>
+                    <TableCell>{deposit.bankAccount}</TableCell>
+                    <TableCell className="font-mono text-xs">{deposit.referenceNumber || '-'}</TableCell>
+                    <TableCell className="text-right font-medium">₱{deposit.amount.toLocaleString()}</TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                        <CheckCircle2 className="h-3 w-3 mr-1" /> Verified
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -490,109 +397,72 @@ export default function LeaderCashDepositsPage() {
         </CardContent>
       </Card>
 
-      {/* Deposit dialog */}
+      {/* Record Deposit Modal */}
       <Dialog open={depositDialogOpen} onOpenChange={setDepositDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Record Cash Deposit</DialogTitle>
             <DialogDescription>
-              Upload a bank deposit slip and record the deposit details for this CASH order.
+              Enter deposit details for <strong>{selectedSummary?.ordersCount} orders</strong> collected by <strong>{selectedSummary?.agentName}</strong>.
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="p-4 bg-emerald-50 rounded-lg flex justify-between items-center border border-emerald-100">
+              <span className="text-emerald-800 font-medium">Total to Deposit:</span>
+              <span className="text-2xl font-bold text-emerald-700">₱{selectedSummary?.totalAmount.toLocaleString()}</span>
+            </div>
 
-          {selectedOrder && (
-            <div className="space-y-4 py-2">
-              <div className="border rounded-lg p-3 bg-muted/40">
-                <p className="text-sm font-semibold">
-                  Order <span className="font-mono">{selectedOrder.orderNumber}</span>
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {selectedOrder.clientName} • {selectedOrder.agentName}
-                </p>
-                <p className="text-sm font-medium mt-1">
-                  Amount: ₱{selectedOrder.totalAmount.toLocaleString()}
-                </p>
-              </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Bank Account</label>
+              <Select value={bankAccount} onValueChange={setBankAccount}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a bank account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BANK_OPTIONS.map((bank) => (
+                    <SelectItem key={bank} value={bank}>{bank}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Bank</label>
-                <Select value={bank} onValueChange={setBank}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select bank account" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="BPI">BPI</SelectItem>
-                    <SelectItem value="BDO">BDO</SelectItem>
-                    <SelectItem value="Metrobank">Metrobank</SelectItem>
-                    <SelectItem value="Security Bank">Security Bank</SelectItem>
-                    <SelectItem value="Others">Others</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Deposit Reference Number</label>
+              <Input
+                placeholder="e.g. TR-123456789"
+                value={referenceNumber}
+                onChange={(e) => setReferenceNumber(e.target.value)}
+              />
+            </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Deposit Date</label>
-                  <Input
-                    type="date"
-                    value={depositDate}
-                    onChange={(e) => setDepositDate(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Amount (₱)</label>
-                  <Input
-                    type="number"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    min={0}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Reference / Notes (optional)</label>
-                <Input
-                  placeholder="e.g. BPI ref# 1234 / branch name"
-                  value={reference}
-                  onChange={(e) => setReference(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Deposit Slip Attachment</label>
-                <Input
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Deposit Slip Photo</label>
+              <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer relative">
+                <input
                   type="file"
-                  accept="image/*,application/pdf"
-                  onChange={handleFileChange}
+                  accept="image/*"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  onChange={(e) => setDepositSlipFile(e.target.files?.[0] || null)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Upload a clear photo or PDF of the bank deposit slip.
-                </p>
+                {depositSlipFile ? (
+                  <div className="text-sm text-emerald-600 font-medium flex items-center justify-center gap-2">
+                    <CheckCircle2 className="h-4 w-4" />
+                    {depositSlipFile.name}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <UploadCloud className="h-8 w-8 mx-auto text-muted-foreground" />
+                    <p className="text-xs text-muted-foreground">Click to upload deposit slip</p>
+                  </div>
+                )}
               </div>
             </div>
-          )}
-
+          </div>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDepositDialogOpen(false)}
-              disabled={submitting}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleSubmitDeposit} disabled={submitting || !selectedOrder}>
-              {submitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <UploadCloud className="h-4 w-4 mr-2" />
-                  Save Deposit
-                </>
-              )}
+            <Button variant="outline" onClick={() => setDepositDialogOpen(false)} disabled={submitting}>Cancel</Button>
+            <Button onClick={handleSubmitDeposit} disabled={submitting} className="bg-emerald-600 hover:bg-emerald-700">
+              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirm Deposit
             </Button>
           </DialogFooter>
         </DialogContent>

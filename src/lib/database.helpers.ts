@@ -14,6 +14,7 @@ import type {
   PurchaseOrder,
   Supplier,
   Notification,
+  Event,
   InventoryWithVariant,
   AgentInventoryWithVariant,
   ClientOrderWithDetails,
@@ -192,3 +193,94 @@ export async function uploadClientPhoto(
 export async function uploadAvatar(userId: string, file: File): Promise<string> {
   throw new Error('SQL database removed - uploadAvatar disabled');
 }
+
+// ============================================================================
+// EVENT LOGGING - ACTIVE FUNCTION
+// ============================================================================
+
+export interface LogEventInput {
+  actor_id: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  target_label?: string;
+  actor_label?: string;
+  details?: Record<string, any>;
+}
+
+/**
+ * Log an event to the centralized events table
+ * Automatically fetches company_id from the actor's profile
+ * 
+ * @param input - Event details
+ * @returns Success response or throws error
+ * 
+ * @example
+ * await logEvent({
+ *   actor_id: user.id,
+ *   action: 'reset_password',
+ *   target_type: 'profile',
+ *   target_id: agent.id,
+ *   target_label: agent.name,
+ *   details: {
+ *     message: `Password reset for ${agent.name}`,
+ *     reset_target_email: agent.email
+ *   }
+ * });
+ */
+export async function logEvent(input: LogEventInput): Promise<void> {
+  try {
+    // Fetch actor's profile to get company_id and role
+    const { data: actorProfile, error: profileError } = await supabase
+      .from('profiles')
+      .select('company_id, role, full_name, position')
+      .eq('id', input.actor_id)
+      .single();
+
+    if (profileError || !actorProfile) {
+      console.error('Failed to fetch actor profile for event logging:', profileError);
+      throw new Error('Cannot log event: actor profile not found');
+    }
+
+    // Determine actor_role based on role and position
+    let actor_role: Event['actor_role'] = 'sales_agent';
+    if (actorProfile.role === 'admin' || actorProfile.role === 'super_admin') {
+      actor_role = 'admin';
+    } else if (actorProfile.role === 'finance') {
+      actor_role = 'finance';
+    } else if (actorProfile.role === 'manager') {
+      actor_role = 'manager';
+    } else if (actorProfile.role === 'team_leader' ||
+      (actorProfile.role === 'sales_agent' && actorProfile.position === 'Leader')) {
+      actor_role = 'leader';
+    } else if (actorProfile.role === 'system_administrator') {
+      actor_role = 'system';
+    }
+
+    // Insert event into the events table
+    const { error: insertError } = await supabase
+      .from('events')
+      .insert({
+        company_id: actorProfile.company_id,
+        actor_id: input.actor_id,
+        actor_role: actor_role,
+        performed_by: actorProfile.full_name,
+        actor_label: input.actor_label || actorProfile.position || null,
+        action: input.action,
+        target_type: input.target_type,
+        target_id: input.target_id,
+        target_label: input.target_label || null,
+        details: input.details || {}
+      });
+
+    if (insertError) {
+      console.error('Failed to insert event:', insertError);
+      throw insertError;
+    }
+  } catch (error) {
+    console.error('Error logging event:', error);
+    // Don't throw - we don't want event logging failures to break the application
+    // Just log the error for debugging
+  }
+}
+

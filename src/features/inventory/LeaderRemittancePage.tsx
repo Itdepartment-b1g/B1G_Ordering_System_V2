@@ -108,42 +108,7 @@ export default function LeaderRemittancePage() {
       }));
 
       if (!formattedData.length) {
-        const now = new Date();
-        const today = format(now, 'yyyy-MM-dd');
-        const demoRemittances: RemittanceLog[] = [
-          {
-            id: 'demo-remit-1',
-            agent_id: 'demo-agent-1',
-            leader_id: user.id,
-            remittance_date: today,
-            remitted_at: now.toISOString(),
-            items_remitted: 3,
-            total_units: 42,
-            orders_count: 4,
-            total_revenue: 18500,
-            order_ids: [],
-            signature_url: null,
-            signature_path: null,
-            agent_name: 'Demo Mobile Sales 1'
-          },
-          {
-            id: 'demo-remit-2',
-            agent_id: 'demo-agent-2',
-            leader_id: user.id,
-            remittance_date: today,
-            remitted_at: new Date(now.getTime() - 1000 * 60 * 60).toISOString(),
-            items_remitted: 2,
-            total_units: 30,
-            orders_count: 2,
-            total_revenue: 9200,
-            order_ids: [],
-            signature_url: null,
-            signature_path: null,
-            agent_name: 'Demo Mobile Sales 2'
-          }
-        ];
-
-        setRemittances(demoRemittances);
+        setRemittances([]);
       } else {
         setRemittances(formattedData);
       }
@@ -210,6 +175,13 @@ export default function LeaderRemittancePage() {
       setLoadingDetails(false);
     }
   };
+
+  // Helper to check for missing orders
+  useEffect(() => {
+    if (!loadingDetails && remittanceOrders.length === 0 && selectedRemittance && selectedRemittance.orders_count > 0) {
+      console.warn(`Mismatch detected: Remittance has ${selectedRemittance.orders_count} orders but 0 were fetched. This is likely an RLS issue.`);
+    }
+  }, [loadingDetails, remittanceOrders, selectedRemittance]);
 
   const handleViewDetails = async (remittance: RemittanceLog) => {
     setSelectedRemittance(remittance);

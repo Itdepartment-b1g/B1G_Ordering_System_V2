@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { formatPhoneNumber } from '@/lib/utils';
+import { logEvent } from '@/lib/database.helpers';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -319,31 +320,19 @@ export function SalesAgentsTab() {
         // The auth context will handle the logout if needed
       }
 
-      // Log password reset event using cached values
-      const { error: logError } = await supabase
-        .from('events')
-        .insert({
-          actor_id: userId,
-          actor_role: 'admin',
-          performed_by: adminName,
-          action: 'reset_password',
-          target_type: 'profile',
-          target_id: agentToReset.id,
-          details: {
-            actor: adminName,
-            action_performed: 'reset_password',
-            target_name: agentToReset.name,
-            message: `Password reset for ${agentToReset.name} to tempPassword123!`,
-            reset_target: agentToReset.name,
-            reset_target_email: agentToReset.email
-          },
-          target_label: agentToReset.name,
-          actor_label: adminName
-        });
-
-      if (logError) {
-        console.error('Error logging password reset:', logError);
-      }
+      // Log password reset event using the new helper
+      await logEvent({
+        actor_id: userId,
+        action: 'reset_password',
+        target_type: 'profile',
+        target_id: agentToReset.id,
+        target_label: agentToReset.name,
+        details: {
+          message: `Password reset for ${agentToReset.name} to tempPassword123!`,
+          reset_target: agentToReset.name,
+          reset_target_email: agentToReset.email
+        }
+      });
 
       toast({
         title: 'Success',
@@ -573,19 +562,22 @@ export function SalesAgentsTab() {
         authUpdates.email = trimmedEmail;
         needsAuthUpdate = true;
       }
-      if (needsAuthUpdate) {
-        authUpdates.role = editingAgent.role || 'sales_agent';
-        const { data: authData, error: authError } = await supabase.functions.invoke('update-agent-auth', {
-          body: authUpdates
-        });
+      // Note: Email changes in profiles table only - not synced to auth.users
+      // To enable email sync, create the update-agent-auth Edge Function
+      // if (needsAuthUpdate) {
+      //   authUpdates.role = editingAgent.role || 'sales_agent';
+      //   const { data: authData, error: authError } = await supabase.functions.invoke('update-agent-auth', {
+      //     body: authUpdates
+      //   });
+      //
+      //   if (authError) {
+      //     throw new Error(authError.message || 'Failed to update authentication record');
+      //   }
+      //   if ((authData as any)?.error) {
+      //     throw new Error((authData as any).error);
+      //   }
+      // }
 
-        if (authError) {
-          throw new Error(authError.message || 'Failed to update authentication record');
-        }
-        if ((authData as any)?.error) {
-          throw new Error((authData as any).error);
-        }
-      }
 
       // Prepare city value - use null if empty array, otherwise join with comma
       const cityValue = editForm.cities.length > 0
@@ -607,6 +599,41 @@ export function SalesAgentsTab() {
       if (error) {
         console.error('Update error details:', error);
         throw error;
+      }
+
+      // Log the profile update event
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser) {
+        // Build change details
+        const changes = [];
+        if (trimmedName !== editingAgent.name) changes.push(`name: "${editingAgent.name}" → "${trimmedName}"`);
+        if (trimmedEmail !== editingAgent.email) changes.push(`email: "${editingAgent.email}" → "${trimmedEmail}"`);
+        if (editForm.phone !== editingAgent.phone) changes.push(`phone: "${editingAgent.phone || 'none'}" → "${editForm.phone || 'none'}"`);
+        if (editForm.region !== editingAgent.region) changes.push(`region: "${editingAgent.region || 'none'}" → "${editForm.region || 'none'}"`);
+        if (editForm.status !== editingAgent.status) changes.push(`status: "${editingAgent.status}" → "${editForm.status}"`);
+
+        const citiesChanged = JSON.stringify(editForm.cities.sort()) !== JSON.stringify(editingAgent.cities.sort());
+        if (citiesChanged) changes.push(`cities: [${editingAgent.cities.join(', ')}] → [${editForm.cities.join(', ')}]`);
+
+        await logEvent({
+          actor_id: currentUser.id,
+          action: 'update',
+          target_type: 'profile',
+          target_id: editingAgent.id,
+          target_label: trimmedName,
+          details: {
+            message: `Updated profile for ${trimmedName}${changes.length > 0 ? ': ' + changes.join(', ') : ''}`,
+            changes: changes,
+            updated_fields: {
+              full_name: trimmedName,
+              email: trimmedEmail,
+              phone: editForm.phone || null,
+              region: editForm.region || null,
+              cities: editForm.cities,
+              status: editForm.status
+            }
+          }
+        });
       }
 
       toast({

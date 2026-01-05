@@ -24,10 +24,12 @@ type TableName =
   | 'inventory_transactions'
   | 'financial_transactions'
   | 'notifications'
+  | 'events'
   | 'remittances_log'
   | 'inventory_requests'
   | 'stock_requests'
-  | 'leader_teams';
+  | 'leader_teams'
+  | 'cash_deposits';
 
 type ChangeEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 

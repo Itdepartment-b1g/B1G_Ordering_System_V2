@@ -295,6 +295,23 @@ export interface Notification {
   created_at: string;
 }
 
+export interface Event {
+  id: string;
+  company_id: string;
+  actor_id: string;
+  actor_role: 'system' | 'admin' | 'leader' | 'sales_agent' | 'finance' | 'manager';
+  performed_by: string;
+  actor_label?: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  target_label?: string;
+  details: Record<string, any>;
+  occurred_at: string;
+  created_at: string;
+}
+
+
 export interface LeaderTeam {
   id: string;
   company_id: string;
@@ -574,6 +591,11 @@ export interface Database {
         Row: Notification;
         Insert: Omit<Notification, 'id' | 'created_at'>;
         Update: Partial<Omit<Notification, 'id' | 'created_at'>>;
+      };
+      events: {
+        Row: Event;
+        Insert: Omit<Event, 'id' | 'created_at' | 'occurred_at'>;
+        Update: never; // Events are immutable once created
       };
     };
     Functions: {
