@@ -36,7 +36,7 @@ export function useWarRoomClients() {
       try {
         const { data, error: fetchError } = await supabase
           .from('clients')
-          .select('*')
+          .select('id, name, company, account_type, has_forge, location_latitude, location_longitude, address, email, phone, total_orders, total_spent')
           .eq('company_id', user.company_id)
           .eq('status', 'active')
           .eq('approval_status', 'approved')

@@ -41,12 +41,12 @@ export default function VariantTypesPage() {
   const [variantTypes, setVariantTypes] = useState<VariantType[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  
+
   // Form states
   const [formData, setFormData] = useState({
     name: '',
@@ -78,13 +78,13 @@ export default function VariantTypesPage() {
   const fetchVariantTypes = async () => {
     try {
       setLoading(true);
-      
+
       const { data, error } = await supabase
         .from('variant_types')
-        .select('*');
-      
+        .select('id, company_id, name, display_name, description, color_code, is_active, sort_order, created_at, updated_at');
+
       if (error) throw error;
-      
+
       // Sort: non-zero values first (ascending), then zero values (by display_name)
       const sorted = (data || []).sort((a, b) => {
         // If both are non-zero, sort by sort_order
@@ -100,7 +100,7 @@ export default function VariantTypesPage() {
         }
         return 0;
       });
-      
+
       setVariantTypes(sorted);
     } catch (error: any) {
       console.error('Error fetching variant types:', error);
@@ -134,19 +134,19 @@ export default function VariantTypesPage() {
   // Create Variant Type
   const handleCreate = async () => {
     if (!formData.name.trim() || !formData.display_name.trim()) {
-      toast({ 
-        title: 'Error', 
-        description: 'Name and Display Name are required', 
-        variant: 'destructive' 
+      toast({
+        title: 'Error',
+        description: 'Name and Display Name are required',
+        variant: 'destructive'
       });
       return;
     }
 
     if (!user?.company_id) {
-      toast({ 
-        title: 'Error', 
-        description: 'User company information not found', 
-        variant: 'destructive' 
+      toast({
+        title: 'Error',
+        description: 'User company information not found',
+        variant: 'destructive'
       });
       return;
     }
@@ -202,10 +202,10 @@ export default function VariantTypesPage() {
   // Edit Variant Type
   const handleEdit = async () => {
     if (!editingType || !formData.display_name.trim()) {
-      toast({ 
-        title: 'Error', 
-        description: 'Display Name is required', 
-        variant: 'destructive' 
+      toast({
+        title: 'Error',
+        description: 'Display Name is required',
+        variant: 'destructive'
       });
       return;
     }
@@ -375,8 +375,8 @@ export default function VariantTypesPage() {
               <Tag className="h-12 w-12 mb-2" />
               <p>{searchQuery ? 'No types found matching your search' : 'No variant types found'}</p>
               {!searchQuery && (
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="mt-4"
                   onClick={() => setCreateDialogOpen(true)}
                 >
@@ -514,9 +514,9 @@ export default function VariantTypesPage() {
                 value={formData.sort_order === 0 ? '' : formData.sort_order}
                 onChange={(e) => {
                   const value = e.target.value;
-                  setFormData({ 
-                    ...formData, 
-                    sort_order: value === '' ? 0 : Math.max(1, parseInt(value) || 0) 
+                  setFormData({
+                    ...formData,
+                    sort_order: value === '' ? 0 : Math.max(1, parseInt(value) || 0)
                   });
                 }}
               />
@@ -603,9 +603,9 @@ export default function VariantTypesPage() {
                 value={formData.sort_order === 0 ? '' : formData.sort_order}
                 onChange={(e) => {
                   const value = e.target.value;
-                  setFormData({ 
-                    ...formData, 
-                    sort_order: value === '' ? 0 : Math.max(1, parseInt(value) || 0) 
+                  setFormData({
+                    ...formData,
+                    sort_order: value === '' ? 0 : Math.max(1, parseInt(value) || 0)
                   });
                 }}
               />
@@ -642,7 +642,7 @@ export default function VariantTypesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Variant Type</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deletingType?.display_name}</strong>? 
+              Are you sure you want to delete <strong>{deletingType?.display_name}</strong>?
               This action cannot be undone. This type can only be deleted if no variants are using it.
             </AlertDialogDescription>
           </AlertDialogHeader>

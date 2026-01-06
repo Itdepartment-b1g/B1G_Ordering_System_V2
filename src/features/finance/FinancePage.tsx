@@ -37,7 +37,7 @@ export default function FinancePage() {
       // Get all financial transactions (for expenses only, revenue now comes from client_orders)
       const { data: transactions } = await supabase
         .from('financial_transactions')
-        .select('*')
+        .select('id, transaction_date, transaction_type, status, amount')
         .order('transaction_date', { ascending: false });
 
       // Calculate total revenue from admin-approved client orders (same as Dashboard)

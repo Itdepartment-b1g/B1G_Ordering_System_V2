@@ -296,6 +296,20 @@ export interface Notification {
   created_at: string;
 }
 
+export interface Event {
+  id: string;
+  occurred_at: string;
+  actor_id: string;
+  actor_role: string;
+  performed_by: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  details: any;
+  target_label?: string | null;
+  actor_label?: string | null;
+}
+
 export interface LeaderTeam {
   id: string;
   company_id: string;

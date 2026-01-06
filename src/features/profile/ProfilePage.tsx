@@ -4,15 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { 
-  AlertDialog, 
-  AlertDialogAction, 
-  AlertDialogCancel, 
-  AlertDialogContent, 
-  AlertDialogDescription, 
-  AlertDialogFooter, 
-  AlertDialogHeader, 
-  AlertDialogTitle 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
 } from '@/components/ui/alert-dialog';
 import { UserCircle, Mail, Phone, MapPin, Save, Eye, EyeOff, Building2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -56,7 +56,7 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (user?.id) {
-      fetchProfile(); 
+      fetchProfile();
     }
   }, [user?.id]);
 
@@ -71,7 +71,7 @@ export default function ProfilePage() {
       setLoading(true);
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('full_name, email, phone, address, city, country, region, position, role')
         .eq('id', user?.id)
         .single();
 
@@ -89,13 +89,13 @@ export default function ProfilePage() {
           position: data.position || '',
           role: data.role || '',
         });
-        
+
         // Parse assigned cities from comma-separated string
-        const cities = data.city 
+        const cities = data.city
           ? data.city.split(',').map(c => c.trim()).filter(c => c.length > 0)
           : [];
         setAssignedCities(cities);
-        
+
         // Check if user is agent or leader (not admin)
         const isAgentOrLeaderUser = data.role !== 'admin';
         setIsAgentOrLeader(isAgentOrLeaderUser);
@@ -118,17 +118,17 @@ export default function ProfilePage() {
         console.warn('No company_id found for user');
         return;
       }
-      
+
       console.log('Fetching company info for company_id:', user.company_id);
-      
+
       const { data, error } = await supabase
         .from('companies')
         .select('company_name, company_email')
         .eq('id', user.company_id)
         .single();
-      
+
       if (error) throw error;
-      
+
       console.log('Company info fetched:', data);
       setCompanyInfo(data);
     } catch (error) {
@@ -144,7 +144,7 @@ export default function ProfilePage() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      
+
       // Prepare update data - exclude city if user is agent or leader
       const updateData: any = {
         full_name: profile.full_name,
@@ -153,12 +153,12 @@ export default function ProfilePage() {
         country: profile.country,
         region: profile.region,
       };
-      
+
       // Only allow city update for admins
       if (!isAgentOrLeader) {
         updateData.city = profile.city;
       }
-      
+
       const { error } = await supabase
         .from('profiles')
         .update(updateData)
@@ -166,9 +166,9 @@ export default function ProfilePage() {
 
       if (error) throw error;
 
-      toast({ 
-        title: 'Success', 
-        description: 'Profile updated successfully' 
+      toast({
+        title: 'Success',
+        description: 'Profile updated successfully'
       });
     } catch (error) {
       console.error('Error updating profile:', error);
@@ -238,7 +238,7 @@ export default function ProfilePage() {
                 })()}
               </Badge>
             </div>
-            
+
             {/* Company Information */}
             {companyInfo && (
               <div className="pt-4 border-t space-y-3">
@@ -259,7 +259,7 @@ export default function ProfilePage() {
                 </div>
               </div>
             )}
-            
+
             <div className="space-y-3 pt-4 border-t">
               <div className="flex items-center gap-2 text-sm">
                 <Mail className="h-4 w-4 text-muted-foreground" />
@@ -411,8 +411,8 @@ export default function ProfilePage() {
               <div className="space-y-2">
                 <Label htmlFor="current-password">Current Password</Label>
                 <div className="relative">
-                  <Input 
-                    id="current-password" 
+                  <Input
+                    id="current-password"
                     type={showCurrent ? 'text' : 'password'}
                     value={passwords.current}
                     onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
@@ -431,8 +431,8 @@ export default function ProfilePage() {
               <div className="space-y-2">
                 <Label htmlFor="new-password">New Password</Label>
                 <div className="relative">
-                  <Input 
-                    id="new-password" 
+                  <Input
+                    id="new-password"
                     type={showNew ? 'text' : 'password'}
                     value={passwords.new}
                     onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
@@ -451,8 +451,8 @@ export default function ProfilePage() {
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="confirm-password">Confirm New Password</Label>
                 <div className="relative">
-                  <Input 
-                    id="confirm-password" 
+                  <Input
+                    id="confirm-password"
                     type={showConfirm ? 'text' : 'password'}
                     value={passwords.confirm}
                     onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
@@ -470,8 +470,8 @@ export default function ProfilePage() {
               </div>
             </div>
             <div className="flex justify-end">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="w-full sm:w-auto"
                 onClick={() => {
                   // Validate passwords
@@ -533,7 +533,7 @@ export default function ProfilePage() {
               onClick={async () => {
                 try {
                   setUpdatingPassword(true);
-                  
+
                   // First, verify current password by attempting to sign in
                   const { error: signInError } = await supabase.auth.signInWithPassword({
                     email: user?.email || '',

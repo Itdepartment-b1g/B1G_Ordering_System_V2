@@ -72,7 +72,7 @@ export function useMyClients() {
 
             const { data, error } = await supabase
                 .from('clients')
-                .select('*')
+                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status')
                 .eq('agent_id', user.id)
                 .eq('status', 'active')
                 .order('created_at', { ascending: false });

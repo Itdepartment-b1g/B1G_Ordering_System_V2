@@ -33,7 +33,7 @@ export default function SuperAdminDashboardPage() {
       // Fetch users in the company
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, full_name, email, role, status, created_at')
         .eq('company_id', user.company_id)
         .order('created_at', { ascending: false });
 
@@ -117,7 +117,7 @@ export default function SuperAdminDashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{stats.activeUsers}</div>
             <p className="text-xs text-muted-foreground">
-              {stats.totalUsers > 0 
+              {stats.totalUsers > 0
                 ? `${Math.round((stats.activeUsers / stats.totalUsers) * 100)}% of total`
                 : 'No users yet'}
             </p>

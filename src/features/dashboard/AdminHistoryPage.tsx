@@ -88,7 +88,7 @@ export default function AdminHistoryPage() {
         // RLS policy for admin allows viewing all events
         const { data, error } = await supabase
           .from('events')
-          .select('*')
+          .select('id, occurred_at, actor_id, actor_role, performed_by, action, target_type, target_id, details, target_label, actor_label')
           .order('occurred_at', { ascending: false })
           .limit(500);
         if (error) throw error;
@@ -282,7 +282,7 @@ export default function AdminHistoryPage() {
         {(['critical', 'high', 'medium', 'low'] as const).map((p) => (
           <Card key={p} className={`border-border/50 shadow-sm ${priorityFilter === p ? 'ring-1 ring-primary/30' : ''}`}>
             <CardContent className="p-4 flex items-center justify-between">
-      <div>
+              <div>
                 <p className="text-xs uppercase text-muted-foreground">{p} priority</p>
                 <p className="text-2xl font-semibold">{priorityCounts[p]}</p>
               </div>
@@ -296,51 +296,51 @@ export default function AdminHistoryPage() {
         <CardHeader>
           <div className="flex flex-col gap-3">
             <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
-            <div className="flex-1">
-              <Input
-                placeholder="Search by action, label, type, or actor..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
+              <div className="flex-1">
+                <Input
+                  placeholder="Search by action, label, type, or actor..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
               <div className="flex flex-wrap gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="gap-2">
-                  <Filter className="h-4 w-4" />
-                  Actions
-                  {selectedActions.length > 0 && (
-                    <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs">{selectedActions.length}</span>
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>Filter by actions</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuCheckboxItem
-                  checked={selectedActions.length === 0}
-                  onCheckedChange={() => setSelectedActions([])}
-                >
-                  All actions
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
-                {availableActions.map((a) => (
-                  <DropdownMenuCheckboxItem
-                    key={a}
-                    checked={selectedActions.length === 1 && selectedActions[0] === a}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setSelectedActions([a]);
-                      } else {
-                        setSelectedActions([]);
-                      }
-                    }}
-                  >
-                    {a.replace(/_/g, ' ')}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2">
+                      <Filter className="h-4 w-4" />
+                      Actions
+                      {selectedActions.length > 0 && (
+                        <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs">{selectedActions.length}</span>
+                      )}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuLabel>Filter by actions</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuCheckboxItem
+                      checked={selectedActions.length === 0}
+                      onCheckedChange={() => setSelectedActions([])}
+                    >
+                      All actions
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuSeparator />
+                    {availableActions.map((a) => (
+                      <DropdownMenuCheckboxItem
+                        key={a}
+                        checked={selectedActions.length === 1 && selectedActions[0] === a}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedActions([a]);
+                          } else {
+                            setSelectedActions([]);
+                          }
+                        }}
+                      >
+                        {a.replace(/_/g, ' ')}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

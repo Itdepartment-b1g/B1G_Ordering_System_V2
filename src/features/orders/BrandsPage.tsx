@@ -58,7 +58,7 @@ export default function BrandsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBrand, setSelectedBrand] = useState<string>('');
-  
+
   // Dialog states
   const [createBrandDialogOpen, setCreateBrandDialogOpen] = useState(false);
   const [editBrandDialogOpen, setEditBrandDialogOpen] = useState(false);
@@ -66,13 +66,13 @@ export default function BrandsPage() {
   const [createVariantDialogOpen, setCreateVariantDialogOpen] = useState(false);
   const [editVariantDialogOpen, setEditVariantDialogOpen] = useState(false);
   const [deleteVariantDialogOpen, setDeleteVariantDialogOpen] = useState(false);
-  
+
   // Form states
   const [brandForm, setBrandForm] = useState({ name: '', description: '' });
-  const [variantForm, setVariantForm] = useState({ 
-    name: '', 
-    variant_type: '', 
-    description: '', 
+  const [variantForm, setVariantForm] = useState({
+    name: '',
+    variant_type: '',
+    description: '',
     sku: '',
     brand_id: ''
   });
@@ -88,20 +88,20 @@ export default function BrandsPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      
+
       const { data: brandsData, error: brandsError } = await supabase
         .from('brands')
-        .select('*')
+        .select('id, name, description, created_at, updated_at')
         .order('name');
-      
+
       if (brandsError) throw brandsError;
       setBrands(brandsData || []);
 
       const { data: variantsData, error: variantsError } = await supabase
         .from('variants')
-        .select('*')
+        .select('id, brand_id, name, variant_type, description, sku, created_at')
         .order('name');
-      
+
       if (variantsError) throw variantsError;
       setVariants(variantsData || []);
 
@@ -110,7 +110,7 @@ export default function BrandsPage() {
         .from('variant_types')
         .select('id, name, display_name, description, color_code, sort_order')
         .eq('is_active', true);
-      
+
       // Sort: non-zero values first (ascending), then zero values (by display_name)
       let sortedTypes = typesData || [];
       if (typesData) {
@@ -129,7 +129,7 @@ export default function BrandsPage() {
           return 0;
         });
       }
-      
+
       if (typesError) {
         console.warn('Error fetching variant types (may not exist yet):', typesError);
         // If table doesn't exist, use fallback hardcoded types
@@ -167,7 +167,7 @@ export default function BrandsPage() {
   );
 
   // Get variants for selected brand
-  const brandVariants = selectedBrand 
+  const brandVariants = selectedBrand
     ? variants.filter(v => v.brand_id === selectedBrand)
     : [];
 
@@ -296,10 +296,10 @@ export default function BrandsPage() {
       // Find the variant type to get its ID and name
       const selectedType = variantTypes.find(t => t.name === variantForm.variant_type);
       if (!selectedType) {
-        toast({ 
-          title: 'Error', 
-          description: 'Selected variant type not found', 
-          variant: 'destructive' 
+        toast({
+          title: 'Error',
+          description: 'Selected variant type not found',
+          variant: 'destructive'
         });
         return;
       }
@@ -320,7 +320,7 @@ export default function BrandsPage() {
       } catch (e) {
         // Column might not exist yet, that's okay
       }
-      
+
       const { error } = await supabase
         .from('variants')
         .insert(insertData);
@@ -356,10 +356,10 @@ export default function BrandsPage() {
       // Find the variant type to get its ID and name
       const selectedType = variantTypes.find(t => t.name === variantForm.variant_type);
       if (!selectedType) {
-        toast({ 
-          title: 'Error', 
-          description: 'Selected variant type not found', 
-          variant: 'destructive' 
+        toast({
+          title: 'Error',
+          description: 'Selected variant type not found',
+          variant: 'destructive'
         });
         return;
       }
@@ -377,7 +377,7 @@ export default function BrandsPage() {
       } catch (e) {
         // Column might not exist yet, that's okay
       }
-      
+
       const { error } = await supabase
         .from('variants')
         .update(updateData)
@@ -553,11 +553,10 @@ export default function BrandsPage() {
               {filteredBrands.map(brand => (
                 <div
                   key={brand.id}
-                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                    selectedBrand === brand.id 
-                      ? 'bg-primary/10 border-primary' 
+                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${selectedBrand === brand.id
+                      ? 'bg-primary/10 border-primary'
                       : 'hover:bg-muted'
-                  }`}
+                    }`}
                   onClick={() => setSelectedBrand(brand.id)}
                 >
                   <div className="flex items-center justify-between">
@@ -608,7 +607,7 @@ export default function BrandsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle>
-                  {selectedBrand 
+                  {selectedBrand
                     ? `${brands.find(b => b.id === selectedBrand)?.name} - Variants`
                     : 'Select a Brand'}
                 </CardTitle>
@@ -619,7 +618,7 @@ export default function BrandsPage() {
                 )}
               </div>
               {selectedBrand && (
-                <Button 
+                <Button
                   onClick={() => {
                     setVariantForm({ ...variantForm, brand_id: selectedBrand });
                     setCreateVariantDialogOpen(true);
@@ -641,8 +640,8 @@ export default function BrandsPage() {
               <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
                 <Package className="h-12 w-12 mb-2" />
                 <p>No variants found for this brand</p>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="mt-4"
                   onClick={() => {
                     setVariantForm({ ...variantForm, brand_id: selectedBrand });
@@ -787,7 +786,7 @@ export default function BrandsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Brand</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deletingBrand?.name}</strong>? 
+              Are you sure you want to delete <strong>{deletingBrand?.name}</strong>?
               This action cannot be undone. All variants associated with this brand must be deleted or reassigned first.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -831,8 +830,8 @@ export default function BrandsPage() {
               {variantTypes.length > 0 ? (
                 variantTypes.length <= 4 ? (
                   // Use tabs for 4 or fewer types (cleaner visual)
-                  <Tabs 
-                    value={variantForm.variant_type} 
+                  <Tabs
+                    value={variantForm.variant_type}
                     onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
                   >
                     <TabsList className={`grid w-full ${variantTypes.length <= 2 ? 'grid-cols-2' : variantTypes.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
@@ -853,8 +852,8 @@ export default function BrandsPage() {
                       <SelectValue placeholder="Select a variant type">
                         {variantForm.variant_type ? (
                           <div className="flex items-center gap-2">
-                            <Badge 
-                              variant="secondary" 
+                            <Badge
+                              variant="secondary"
                               className={`${getVariantTypeBadge(variantForm.variant_type)} w-fit`}
                             >
                               {getVariantTypeDisplayName(variantForm.variant_type)}
@@ -869,8 +868,8 @@ export default function BrandsPage() {
                       {variantTypes.map(type => (
                         <SelectItem key={type.id} value={type.name}>
                           <div className="flex items-center gap-2">
-                            <Badge 
-                              variant="secondary" 
+                            <Badge
+                              variant="secondary"
                               className={`${getVariantTypeBadge(type.name)} w-fit`}
                             >
                               {type.display_name}
@@ -944,8 +943,8 @@ export default function BrandsPage() {
               {variantTypes.length > 0 ? (
                 variantTypes.length <= 4 ? (
                   // Use tabs for 4 or fewer types (cleaner visual)
-                  <Tabs 
-                    value={variantForm.variant_type} 
+                  <Tabs
+                    value={variantForm.variant_type}
                     onValueChange={(v) => setVariantForm({ ...variantForm, variant_type: v })}
                   >
                     <TabsList className={`grid w-full ${variantTypes.length <= 2 ? 'grid-cols-2' : variantTypes.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
@@ -966,8 +965,8 @@ export default function BrandsPage() {
                       <SelectValue placeholder="Select a variant type">
                         {variantForm.variant_type ? (
                           <div className="flex items-center gap-2">
-                            <Badge 
-                              variant="secondary" 
+                            <Badge
+                              variant="secondary"
                               className={`${getVariantTypeBadge(variantForm.variant_type)} w-fit`}
                             >
                               {getVariantTypeDisplayName(variantForm.variant_type)}
@@ -982,8 +981,8 @@ export default function BrandsPage() {
                       {variantTypes.map(type => (
                         <SelectItem key={type.id} value={type.name}>
                           <div className="flex items-center gap-2">
-                            <Badge 
-                              variant="secondary" 
+                            <Badge
+                              variant="secondary"
                               className={`${getVariantTypeBadge(type.name)} w-fit`}
                             >
                               {type.display_name}
@@ -1043,7 +1042,7 @@ export default function BrandsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Variant</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deletingVariant?.name}</strong>? 
+              Are you sure you want to delete <strong>{deletingVariant?.name}</strong>?
               This action cannot be undone and may affect inventory records.
             </AlertDialogDescription>
           </AlertDialogHeader>

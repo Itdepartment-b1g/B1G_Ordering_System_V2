@@ -51,7 +51,7 @@ interface OrderContextType {
   orders: Order[];
   loading: boolean;
   addOrder: (order: Order, orderNumber?: string) => Promise<string>; // Returns the generated order number, accepts optional pre-generated number
-  updateOrderStatus: (orderId: string, status: 'pending' | 'approved' | 'rejected') => void;
+  updateOrderStatus: (orderId: string, status: 'pending' | 'approved' | 'rejected', reason?: string) => void;
   getOrdersByAgent: (agentId: string) => Order[];
   getAllOrders: () => Order[];
 }
@@ -213,12 +213,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
         // Get cash deposit info if linked
         const cashDeposit = order.cash_deposit;
-        
+
         // Only consider deposit "recorded" if bank_account is NOT 'Cash Remittance' (placeholder)
         // 'Cash Remittance' means the deposit was created during remittance but leader hasn't recorded details yet
-        const hasBankDetails = cashDeposit?.bank_account && 
-                              cashDeposit.bank_account !== 'Cash Remittance' &&
-                              cashDeposit.bank_account.trim() !== '';
+        const hasBankDetails = cashDeposit?.bank_account &&
+          cashDeposit.bank_account !== 'Cash Remittance' &&
+          cashDeposit.bank_account.trim() !== '';
 
         return {
           id: order.id,
@@ -282,7 +282,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           // Refetch orders when any change occurs
           // Use a small delay to ensure all related data (items, etc.) is committed
           setTimeout(() => {
-          fetchOrders();
+            fetchOrders();
           }, 100);
         }
       )
@@ -313,7 +313,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           // When deposit is recorded/updated, refetch orders to update deposit info
           // This allows finance to see when a deposit becomes approvable
           setTimeout(() => {
-          fetchOrders();
+            fetchOrders();
           }, 100);
         }
       )
@@ -363,16 +363,16 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         generatedOrderNumber = preGeneratedOrderNumber;
         console.log('🔢 Using pre-generated order number:', generatedOrderNumber);
       } else {
-      const { data: orderNumberData, error: numberError } = await supabase
-        .rpc('generate_order_number');
+        const { data: orderNumberData, error: numberError } = await supabase
+          .rpc('generate_order_number');
 
-      if (numberError) {
-        console.error('Error generating order number:', numberError);
-        throw numberError;
-      }
+        if (numberError) {
+          console.error('Error generating order number:', numberError);
+          throw numberError;
+        }
 
         generatedOrderNumber = orderNumberData as string;
-      console.log('🔢 Generated order number:', generatedOrderNumber);
+        console.log('🔢 Generated order number:', generatedOrderNumber);
       }
 
       // 3. Insert into client_orders table
@@ -542,7 +542,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateOrderStatus = async (orderId: string, status: 'pending' | 'approved' | 'rejected') => {
+  const updateOrderStatus = async (orderId: string, status: 'pending' | 'approved' | 'rejected', reason?: string) => {
     try {
       console.log(`📋 Updating order ${orderId} to status: ${status}`);
 
@@ -569,7 +569,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         }
 
         console.log('✅ Order approved:', data);
-        
+
         // Log if deposit was verified
         if (data.deposit_verified) {
           console.log('💰 Cash deposit verified as part of order approval');
@@ -580,7 +580,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           .rpc('reject_client_order', {
             p_order_id: orderId,
             p_approver_id: user.id,
-            p_reason: null
+            p_reason: reason || null
           });
 
         if (error) {

@@ -185,15 +185,15 @@ export function useLeaderStats() {
             const { data: requests } = await supabase
                 .from('stock_requests')
                 .select(`
-          id,
-          request_number,
-          requested_quantity,
-          requested_at,
-          agent_id,
-          variant_id,
-          profiles!stock_requests_agent_id_fkey(full_name),
-          variants(name, variant_type, brands(name))
-        `)
+                id,
+                request_number,
+                requested_quantity,
+                requested_at,
+                agent_id,
+                variant_id,
+                profiles!stock_requests_agent_id_fkey(full_name),
+                variants(name, variant_type, brands(name))
+                `)
                 .in('agent_id', teamMemberIds)
                 .eq('status', 'pending')
                 .order('requested_at', { ascending: false });
@@ -386,7 +386,7 @@ export function useRecentActivity(page: number, itemsPerPage: number) {
             const [{ data: notifications, error }, { count }] = await Promise.all([
                 supabase
                     .from('notifications')
-                    .select('*')
+                    .select('id, notification_type, title, is_read, created_at')
                     .eq('user_id', user.id)
                     .order('created_at', { ascending: false })
                     .range(offset, offset + itemsPerPage - 1),

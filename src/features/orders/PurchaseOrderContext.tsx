@@ -21,7 +21,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       const { data: orders, error: ordersError } = await supabase
         .from('purchase_orders')
         .select(`
-          *,
+          id, created_at, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
           suppliers (
             id,
             company_name,
@@ -114,7 +114,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       const { data, error } = await supabase
         .from('suppliers')
-        .select('*')
+        .select('id, company_name, contact_person, email, phone, address, status')
         .eq('company_id', user.company_id)
         .eq('status', 'active')
         .order('company_name');

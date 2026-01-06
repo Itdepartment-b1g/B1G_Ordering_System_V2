@@ -38,7 +38,7 @@ export function NotificationsDropdown() {
         // Admin: see all notifications
         const { data: allNotifications, error } = await supabase
           .from('notifications')
-          .select('*')
+          .select('id, company_id, user_id, notification_type, title, message, reference_type, reference_id, is_read, created_at')
           .order('created_at', { ascending: false })
           .limit(100);
 
@@ -50,7 +50,7 @@ export function NotificationsDropdown() {
         if (allowedUserIds.length > 0) {
           const { data: teamNotifications, error } = await supabase
             .from('notifications')
-            .select('*')
+            .select('id, company_id, user_id, notification_type, title, message, reference_type, reference_id, is_read, created_at')
             .in('user_id', allowedUserIds)
             .order('created_at', { ascending: false })
             .limit(100);
@@ -62,7 +62,7 @@ export function NotificationsDropdown() {
         // Sales Agent: only their own notifications
         const { data: agentNotifications, error } = await supabase
           .from('notifications')
-          .select('*')
+          .select('id, company_id, user_id, notification_type, title, message, reference_type, reference_id, is_read, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .limit(100);

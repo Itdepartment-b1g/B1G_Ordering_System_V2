@@ -133,7 +133,7 @@ export default function AgentHistoryPage() {
             const allowedActorIds = [user.id, ...agentIds];
             let eventsQuery = supabase
               .from('events')
-              .select('*');
+              .select('id, occurred_at, actor_id, actor_role, performed_by, action, target_type, target_id, details, target_label, actor_label');
 
             const orFilters: string[] = [];
             if (allowedActorIds.length > 0) {
@@ -191,7 +191,7 @@ export default function AgentHistoryPage() {
           // For sales agents: only show their own history (where they are the actor)
           const { data, error } = await supabase
             .from('events')
-            .select('*')
+            .select('id, occurred_at, actor_id, actor_role, performed_by, action, target_type, target_id, details, target_label, actor_label')
             .or(`actor_id.eq.${user.id},details->>agent_id.eq.${user.id}`)
             .order('occurred_at', { ascending: false })
             .limit(200);

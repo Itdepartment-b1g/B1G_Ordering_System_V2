@@ -76,7 +76,7 @@ export default function SysAdDashboardPage() {
       // SQL Database removed - this will throw an error until database is set up
       const { data, error } = await supabase
         .from('companies')
-        .select('*')
+        .select('id, company_name, company_email, super_admin_name, super_admin_email, role, status, created_at, updated_at')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -611,7 +611,7 @@ export default function SysAdDashboardPage() {
                 <div>
                   <Label className="text-sm font-semibold">Updated At</Label>
                   <p className="text-sm mt-1">
-                    {selectedCompany.updated_at 
+                    {selectedCompany.updated_at
                       ? new Date(selectedCompany.updated_at).toLocaleString()
                       : 'N/A'}
                   </p>
@@ -637,7 +637,7 @@ export default function SysAdDashboardPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Inactivate Company</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to inactivate <strong>{selectedCompany?.company_name}</strong>? 
+              Are you sure you want to inactivate <strong>{selectedCompany?.company_name}</strong>?
               The company and its users will not be able to access the system until reactivated.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -661,7 +661,7 @@ export default function SysAdDashboardPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Company</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{selectedCompany?.company_name}</strong>? 
+              Are you sure you want to delete <strong>{selectedCompany?.company_name}</strong>?
               This action cannot be undone. All company data, users, and related records will be permanently deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>

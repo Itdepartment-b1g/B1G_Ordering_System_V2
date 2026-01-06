@@ -97,7 +97,7 @@ export async function getSuppliers() {
 export async function getNotifications(userId: string, unreadOnly = false) {
   let query = supabase
     .from('notifications')
-    .select('*')
+    .select('id, company_id, user_id, notification_type, title, message, reference_type, reference_id, is_read, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 

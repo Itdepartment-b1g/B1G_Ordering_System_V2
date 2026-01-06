@@ -274,7 +274,7 @@ export default function SalesAgentsPage() {
       setLoading(true);
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, full_name, email, phone, city, region, status, role, created_at')
         .eq('role', 'sales_agent')
         .order('created_at', { ascending: false });
 

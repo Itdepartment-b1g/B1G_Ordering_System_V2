@@ -40,11 +40,11 @@ export function LeaderAssignmentSection() {
   const fetchMobileSalesAgents = async () => {
     try {
       setLoading(true);
-      
+
       // Fetch mobile sales agents (role = mobile_sales)
       const { data: agentsData, error: agentsError } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, full_name, region')
         .eq('role', 'mobile_sales')
         .order('created_at', { ascending: false });
 
@@ -65,9 +65,9 @@ export function LeaderAssignmentSection() {
         const agentOrders = (ordersData || []).filter(
           (order: any) => order.agent_id === agent.id && order.status === 'approved'
         );
-        
+
         const totalSales = agentOrders.reduce((sum: number, order: any) => sum + (Number(order.total_amount) || 0), 0);
-        
+
         return {
           id: agent.id,
           name: agent.full_name || '',
@@ -77,7 +77,7 @@ export function LeaderAssignmentSection() {
       });
 
       setMobileSalesAgents(processedAgents);
-      
+
     } catch (error) {
       console.error('Error fetching mobile sales agents:', error);
       toast({
@@ -105,7 +105,7 @@ export function LeaderAssignmentSection() {
     }
 
     setPromoting(true);
-    
+
     try {
       // Update agent role to team_leader in database
       const { error } = await supabase
@@ -116,19 +116,19 @@ export function LeaderAssignmentSection() {
       if (error) throw error;
 
       const agent = mobileSalesAgents.find(a => a.id === selectedAgent);
-      
+
       toast({
         title: 'Success',
         description: `${agent?.name} has been promoted to Team Leader`
       });
-      
+
       // Refresh data
       await fetchMobileSalesAgents();
-      
+
       setPromoteDialogOpen(false);
       setConfirmDialogOpen(false);
       setSelectedAgent('');
-      
+
     } catch (error) {
       console.error('Error promoting agent:', error);
       toast({
@@ -193,9 +193,9 @@ export function LeaderAssignmentSection() {
                     </SelectContent>
                   </Select>
                 </div>
-                
-                <Button 
-                  className="w-full" 
+
+                <Button
+                  className="w-full"
                   onClick={handlePromoteClick}
                   disabled={!selectedAgent || promoting}
                 >
@@ -221,7 +221,7 @@ export function LeaderAssignmentSection() {
           <div className="text-sm text-muted-foreground">
             Select a mobile sales agent to promote to team leader position. Leaders can manage teams and approve stock requests.
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {mobileSalesAgents.map(agent => (
               <div key={agent.id} className="border rounded-lg p-3 bg-muted/30">
@@ -238,7 +238,7 @@ export function LeaderAssignmentSection() {
           </div>
         </div>
       </CardContent>
-      
+
       {/* Confirmation Dialog */}
       <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
         <AlertDialogContent>
@@ -259,7 +259,7 @@ export function LeaderAssignmentSection() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={promoting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogAction
               onClick={handlePromoteToLeader}
               disabled={promoting}
               className="bg-blue-600 hover:bg-blue-700"

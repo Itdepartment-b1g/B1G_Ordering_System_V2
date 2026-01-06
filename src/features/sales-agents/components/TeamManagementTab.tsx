@@ -112,7 +112,7 @@ export function TeamManagementTab() {
         // Fetch all relevant profiles
         supabase
           .from('profiles')
-          .select('*')
+          .select('id, full_name, email, region, role, status, company_id')
           .in('role', ['mobile_sales', 'team_leader', 'manager'])
           .match(companyFilter)
           .order('created_at', { ascending: false })

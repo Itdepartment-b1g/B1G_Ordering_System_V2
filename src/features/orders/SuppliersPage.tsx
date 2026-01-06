@@ -40,13 +40,13 @@ export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
-  
+
   // Form states
   const [supplierForm, setSupplierForm] = useState({
     company_name: '',
@@ -67,12 +67,12 @@ export default function SuppliersPage() {
   const fetchSuppliers = async () => {
     try {
       setLoading(true);
-      
+
       const { data, error } = await supabase
         .from('suppliers')
-        .select('*')
+        .select('id, company_name, contact_person, email, phone, address, status, created_at, updated_at')
         .order('company_name');
-      
+
       if (error) throw error;
       setSuppliers(data || []);
     } catch (error: any) {
@@ -104,18 +104,18 @@ export default function SuppliersPage() {
     if (!value.startsWith('+63 ')) {
       value = '+63 ' + value.replace('+63', '').trim();
     }
-    
+
     // Remove +63 prefix temporarily to work with the number
     const withoutPrefix = value.substring(4);
-    
+
     // Remove all non-digit characters
     const cleaned = withoutPrefix.replace(/\D/g, '');
-    
+
     // Format based on length: +63 9XX-XXX-XXXX (10 digits after +63)
     if (cleaned.length === 0) return '+63 ';
     if (cleaned.length <= 3) return `+63 ${cleaned}`;
     if (cleaned.length <= 6) return `+63 ${cleaned.slice(0, 3)}-${cleaned.slice(3)}`;
-    
+
     // Limit to 10 digits after +63 (Philippine mobile: 9XX-XXX-XXXX)
     return `+63 ${cleaned.slice(0, 3)}-${cleaned.slice(3, 6)}-${cleaned.slice(6, 10)}`;
   };
@@ -147,10 +147,10 @@ export default function SuppliersPage() {
       return false;
     }
     if (!validatePhilippinePhone(supplierForm.phone)) {
-      toast({ 
-        title: 'Error', 
-        description: 'Please enter a valid Philippine mobile number (e.g., +63 917-123-4567)', 
-        variant: 'destructive' 
+      toast({
+        title: 'Error',
+        description: 'Please enter a valid Philippine mobile number (e.g., +63 917-123-4567)',
+        variant: 'destructive'
       });
       return false;
     }
@@ -715,7 +715,7 @@ export default function SuppliersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Supplier</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deletingSupplier?.company_name}</strong>? 
+              Are you sure you want to delete <strong>{deletingSupplier?.company_name}</strong>?
               This action cannot be undone. All purchase orders associated with this supplier must be reassigned or deleted first.
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -10,13 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Check, ChevronsUpDown, Loader2 } from 'lucide-react';
-import { 
-  Calendar as CalendarIcon, 
-  ChevronLeft, 
-  ChevronRight, 
-  Plus, 
-  Clock, 
-  MapPin, 
+import {
+  Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Clock,
+  MapPin,
   Users,
   Filter,
   Grid3X3,
@@ -81,7 +81,7 @@ interface CalendarDay {
   events: CalendarEvent[];
 }
 
-  
+
 
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -101,7 +101,7 @@ export default function CalendarPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
-  
+
   // Daily task creation states
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
   const [dailyTaskPhoto, setDailyTaskPhoto] = useState<string | null>(null);
@@ -118,7 +118,7 @@ export default function CalendarPage() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [capturingPhoto, setCapturingPhoto] = useState(false);
-  
+
   // Client selection states
   const [clients, setClients] = useState<Array<{
     id: string;
@@ -145,7 +145,7 @@ export default function CalendarPage() {
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
   const [isPrewarmingLocation, setIsPrewarmingLocation] = useState(false);
   const [prewarmPosition, setPrewarmPosition] = useState<GeolocationPosition | null>(null);
-  
+
   // Location capture states for daily task
   const [taskLocation, setTaskLocation] = useState<{
     latitude: number;
@@ -155,7 +155,7 @@ export default function CalendarPage() {
     city?: string;
   } | null>(null);
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
-  
+
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -165,14 +165,14 @@ export default function CalendarPage() {
       // Use the separate time field if available, otherwise default to 09:00
       let startTime = '09:00';
       let endTime = '10:00';
-      
+
       if (task.time) {
         // Extract hours and minutes from time field (format: HH:MM:SS)
         const timeParts = task.time.split(':');
         const hours = timeParts[0].padStart(2, '0');
         const minutes = timeParts[1].padStart(2, '0');
         startTime = `${hours}:${minutes}`;
-        
+
         // Set end time to 1 hour after start time
         const startHour = parseInt(hours);
         const startMinute = parseInt(minutes);
@@ -235,7 +235,7 @@ export default function CalendarPage() {
     if (user?.id) {
       fetchTasks();
     }
-    
+
     // Cleanup subscriptions on unmount
     return () => {
       if (realtimeEnabled) {
@@ -261,7 +261,7 @@ export default function CalendarPage() {
         },
         (payload) => {
           console.log('Real-time task update:', payload);
-          
+
           // Handle different event types
           switch (payload.eventType) {
             case 'INSERT':
@@ -273,7 +273,7 @@ export default function CalendarPage() {
               });
               fetchTasks(); // Refresh tasks
               break;
-              
+
             case 'UPDATE':
               // Task updated
               const updatedTask = payload.new as any;
@@ -292,7 +292,7 @@ export default function CalendarPage() {
               }
               fetchTasks(); // Refresh tasks
               break;
-              
+
             case 'DELETE':
               // Task deleted
               toast({
@@ -337,16 +337,16 @@ export default function CalendarPage() {
       if (!realtimeEnabled) {
         setLoadingTasks(true);
       }
-      
+
       const { data, error } = await supabase
         .from('task_details')
-        .select('*')
+        .select('id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, urgency_status, attachment_url')
         .eq('agent_id', user?.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setTasks(data || []);
-      
+
       // Enable real-time subscriptions after initial load
       if (!realtimeEnabled) {
         setupRealtimeSubscriptions();
@@ -367,9 +367,9 @@ export default function CalendarPage() {
   const handleStartTask = async (taskId: string) => {
     try {
       // Optimistic update - update UI immediately
-      setTasks(prevTasks => 
-        prevTasks.map(task => 
-          task.id === taskId 
+      setTasks(prevTasks =>
+        prevTasks.map(task =>
+          task.id === taskId
             ? { ...task, status: 'in_progress', updated_at: new Date().toISOString() }
             : task
         )
@@ -385,9 +385,9 @@ export default function CalendarPage() {
 
       if (error) {
         // Revert optimistic update on error
-        setTasks(prevTasks => 
-          prevTasks.map(task => 
-            task.id === taskId 
+        setTasks(prevTasks =>
+          prevTasks.map(task =>
+            task.id === taskId
               ? { ...task, status: 'pending' }
               : task
           )
@@ -412,17 +412,17 @@ export default function CalendarPage() {
   const handleCompleteTask = async (taskId: string) => {
     try {
       const completionTime = new Date().toISOString();
-      
+
       // Optimistic update - update UI immediately
-      setTasks(prevTasks => 
-        prevTasks.map(task => 
-          task.id === taskId 
-            ? { 
-                ...task, 
-                status: 'completed', 
-                completed_at: completionTime,
-                updated_at: completionTime 
-              }
+      setTasks(prevTasks =>
+        prevTasks.map(task =>
+          task.id === taskId
+            ? {
+              ...task,
+              status: 'completed',
+              completed_at: completionTime,
+              updated_at: completionTime
+            }
             : task
         )
       );
@@ -438,9 +438,9 @@ export default function CalendarPage() {
 
       if (error) {
         // Revert optimistic update on error
-        setTasks(prevTasks => 
-          prevTasks.map(task => 
-            task.id === taskId 
+        setTasks(prevTasks =>
+          prevTasks.map(task =>
+            task.id === taskId
               ? { ...task, status: 'in_progress', completed_at: null }
               : task
           )
@@ -513,10 +513,10 @@ export default function CalendarPage() {
           .replace(/[^a-z0-9]/g, '_')
           .replace(/_+/g, '_')
           .replace(/^_|_$/g, '');
-        
+
         const timestamp = Date.now();
         const fileName = `${user.id}/${sanitizeTitle}_${timestamp}.jpg`;
-        
+
         // Upload to Supabase Storage
         const { error: uploadError } = await supabase.storage
           .from('daily-attachments')
@@ -534,7 +534,7 @@ export default function CalendarPage() {
         const { data: urlData } = supabase.storage
           .from('daily-attachments')
           .getPublicUrl(fileName);
-        
+
         attachmentUrl = urlData.publicUrl;
       }
 
@@ -649,7 +649,7 @@ export default function CalendarPage() {
       });
       setStream(mediaStream);
       setShowCamera(true);
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
@@ -702,10 +702,10 @@ export default function CalendarPage() {
     const Δφ = (lat2 - lat1) * Math.PI / 180;
     const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) *
+      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     return R * c; // Distance in meters
   };
@@ -782,9 +782,9 @@ export default function CalendarPage() {
           }
         }
       );
-      
+
       const data = await response.json();
-      
+
       if (data && data.address) {
         const addr = data.address;
         const city = addr.city || addr.town || addr.village || addr.municipality || '';
@@ -800,7 +800,7 @@ export default function CalendarPage() {
       } else if (data && data.display_name) {
         return { address: data.display_name, city: '' };
       }
-      
+
       return { address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, city: '' };
     } catch (error) {
       console.error('Reverse geocoding error:', error);
@@ -827,12 +827,12 @@ export default function CalendarPage() {
   const switchCamera = async () => {
     const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newFacingMode);
-    
+
     // Stop current stream
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
     }
-    
+
     // Start new stream
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -840,7 +840,7 @@ export default function CalendarPage() {
         audio: false
       });
       setStream(mediaStream);
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
@@ -857,23 +857,23 @@ export default function CalendarPage() {
   // Capture photo from camera
   const capturePhoto = async () => {
     if (!videoRef.current) return;
-    
+
     setCapturingPhoto(true);
     const video = videoRef.current;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
-    
+
     if (ctx) {
       ctx.drawImage(video, 0, 0);
       const dataUrl = canvas.toDataURL('image/jpeg');
       setDailyTaskPhoto(dataUrl);
     }
-    
+
     stopCamera();
     setCapturingPhoto(false);
-    
+
     // Capture location when photo is taken, mirroring add-client logic
     try {
       setIsCapturingLocation(true);
@@ -982,22 +982,22 @@ export default function CalendarPage() {
   const getFilteredEvents = (events: CalendarEvent[]) => {
     return events.filter(event => {
       // Status filter
-      const statusMatch = filterType === 'all' || 
+      const statusMatch = filterType === 'all' ||
         (event.taskData && event.taskData.status === filterType);
-      
+
       // Search filter
-      const searchMatch = !searchQuery || 
+      const searchMatch = !searchQuery ||
         event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (event.taskData && (
           event.taskData.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
           event.taskData.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
           event.taskData.agent_name?.toLowerCase().includes(searchQuery.toLowerCase())
         ));
-      
+
       // Priority filter
-      const priorityMatch = priorityFilter === 'all' || 
+      const priorityMatch = priorityFilter === 'all' ||
         (event.taskData && event.taskData.priority === priorityFilter);
-      
+
       // Mobile tab filter
       let mobileMatch = true;
       if (isMobile && mobileTab !== 'all') {
@@ -1009,7 +1009,7 @@ export default function CalendarPage() {
             break;
         }
       }
-      
+
       return statusMatch && searchMatch && priorityMatch && mobileMatch;
     });
   };
@@ -1018,24 +1018,24 @@ export default function CalendarPage() {
   const generateCalendarDays = (): CalendarDay[] => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    
+
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
     const startDate = new Date(firstDay);
     startDate.setDate(startDate.getDate() - firstDay.getDay());
-    
+
     const days: CalendarDay[] = [];
     const today = new Date();
-    
+
     for (let i = 0; i < 42; i++) {
       const date = new Date(startDate);
       date.setDate(startDate.getDate() + i);
-      
+
       const dayEvents = getFilteredEvents(allEvents).filter(event => {
         const eventDate = new Date(event.date);
         return eventDate.toDateString() === date.toDateString();
       });
-      
+
       days.push({
         date,
         isCurrentMonth: date.getMonth() === month,
@@ -1043,7 +1043,7 @@ export default function CalendarPage() {
         events: dayEvents
       });
     }
-    
+
     return days;
   };
 
@@ -1053,19 +1053,19 @@ export default function CalendarPage() {
     const day = startOfWeek.getDay();
     const diff = startOfWeek.getDate() - day;
     startOfWeek.setDate(diff);
-    
+
     const weekDays: CalendarDay[] = [];
     const today = new Date();
-    
+
     for (let i = 0; i < 7; i++) {
       const date = new Date(startOfWeek);
       date.setDate(startOfWeek.getDate() + i);
-      
+
       const dayEvents = getFilteredEvents(allEvents).filter(event => {
         const eventDate = new Date(event.date);
         return eventDate.toDateString() === date.toDateString();
       });
-      
+
       weekDays.push({
         date,
         isCurrentMonth: true,
@@ -1073,7 +1073,7 @@ export default function CalendarPage() {
         events: dayEvents
       });
     }
-    
+
     return weekDays;
   };
 
@@ -1144,7 +1144,7 @@ export default function CalendarPage() {
             </div>
           </div>
         </div>
-        
+
         <div className="flex items-center gap-2">
           {/* Add Daily Task Button - Full width on mobile */}
           <Dialog open={showAddTaskDialog} onOpenChange={(open) => {
@@ -1184,7 +1184,7 @@ export default function CalendarPage() {
                 <span className="text-sm sm:text-base">Add Daily Task</span>
               </Button>
             </DialogTrigger>
-            <DialogContent 
+            <DialogContent
               className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto"
               onInteractOutside={(e) => e.preventDefault()}
             >
@@ -1196,7 +1196,7 @@ export default function CalendarPage() {
                 {showCamera && (
                   <div className="space-y-2">
                     <Label className="text-sm font-semibold">Camera</Label>
-                    
+
                     <div className="relative bg-black rounded-lg overflow-hidden aspect-[4/3]">
                       {!stream && (
                         <div className="flex items-center justify-center h-full text-white">
@@ -1206,7 +1206,7 @@ export default function CalendarPage() {
                           </div>
                         </div>
                       )}
-                      
+
                       <video
                         ref={videoRef}
                         autoPlay
@@ -1214,7 +1214,7 @@ export default function CalendarPage() {
                         className="w-full h-full object-cover"
                         style={{ display: stream ? 'block' : 'none' }}
                       />
-                      
+
                       <div className="absolute top-2 right-2 flex flex-col gap-2">
                         <Button
                           variant="outline"
@@ -1226,7 +1226,7 @@ export default function CalendarPage() {
                           <Camera className="h-4 w-4" />
                         </Button>
                       </div>
-                      
+
                       <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-3">
                         <Button
                           variant="destructive"
@@ -1247,7 +1247,7 @@ export default function CalendarPage() {
                         <div className="w-12"></div>
                       </div>
                     </div>
-                    
+
                     <p className="text-xs text-muted-foreground text-center">
                       {facingMode === 'user' ? 'Front Camera' : 'Back Camera'}
                     </p>
@@ -1307,9 +1307,8 @@ export default function CalendarPage() {
                                 className="cursor-pointer"
                               >
                                 <Check
-                                  className={`mr-2 h-4 w-4 ${
-                                    selectedClient?.id === client.id ? 'opacity-100' : 'opacity-0'
-                                  }`}
+                                  className={`mr-2 h-4 w-4 ${selectedClient?.id === client.id ? 'opacity-100' : 'opacity-0'
+                                    }`}
                                 />
                                 <div className="flex-1 min-w-0">
                                   <p className="font-medium truncate">{client.name}</p>
@@ -1327,7 +1326,7 @@ export default function CalendarPage() {
                       </Command>
                     </PopoverContent>
                   </Popover>
-                  
+
                   {/* Selected Client Info */}
                   {selectedClient && (
                     <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
@@ -1359,7 +1358,7 @@ export default function CalendarPage() {
                       Take a photo for this task (required)
                       {selectedClient && ' - Location will be captured and validated against client location'}
                     </p>
-                    
+
                     {!dailyTaskPhoto && (
                       <Button
                         type="button"
@@ -1372,14 +1371,14 @@ export default function CalendarPage() {
                         {isCapturingLocation ? 'Capturing Location...' : 'Take Photo'}
                       </Button>
                     )}
-                    
+
                     {isPrewarmingLocation && !dailyTaskPhoto && (
                       <p className="text-xs text-muted-foreground flex items-center gap-2">
                         <Loader2 className="h-3 w-3 animate-spin" />
                         Preparing GPS for accurate location...
                       </p>
                     )}
-                    
+
                     {dailyTaskPhoto && (
                       <div className="relative">
                         <img
@@ -1409,7 +1408,7 @@ export default function CalendarPage() {
                           <Camera className="h-4 w-4 mr-2" />
                           Retake Photo
                         </Button>
-                        
+
                         {/* Location Info */}
                         {taskLocation && (
                           <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs">
@@ -1429,7 +1428,7 @@ export default function CalendarPage() {
                                 );
                                 return (
                                   <p className={`font-medium mt-1 ${distance <= 100 ? 'text-green-700' : 'text-orange-600'}`}>
-                                    {distance <= 100 
+                                    {distance <= 100
                                       ? `✓ Verified: ${Math.round(distance)}m from client location`
                                       : `⚠ Warning: ${Math.round(distance)}m from client location`
                                     }
@@ -1447,8 +1446,8 @@ export default function CalendarPage() {
                 {/* Task Title */}
                 <div className="space-y-2">
                   <Label>Task Title *</Label>
-                  <Input 
-                    placeholder="Enter task title" 
+                  <Input
+                    placeholder="Enter task title"
                     value={dailyTaskForm.title}
                     onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, title: e.target.value })}
                   />
@@ -1457,8 +1456,8 @@ export default function CalendarPage() {
                 {/* Description */}
                 <div className="space-y-2">
                   <Label>Description</Label>
-                  <Textarea 
-                    placeholder="Task description (optional)" 
+                  <Textarea
+                    placeholder="Task description (optional)"
                     value={dailyTaskForm.description}
                     onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, description: e.target.value })}
                   />
@@ -1471,7 +1470,7 @@ export default function CalendarPage() {
                       Date
                       <Badge variant="secondary" className="text-xs">Today Only</Badge>
                     </Label>
-                    <Input 
+                    <Input
                       type="date"
                       value={dailyTaskForm.date}
                       readOnly
@@ -1484,7 +1483,7 @@ export default function CalendarPage() {
                       Time
                       <Badge variant="secondary" className="text-xs">Auto</Badge>
                     </Label>
-                    <Input 
+                    <Input
                       type="time"
                       value={dailyTaskForm.time}
                       readOnly
@@ -1497,16 +1496,16 @@ export default function CalendarPage() {
                 {/* Notes */}
                 <div className="space-y-2">
                   <Label>Notes</Label>
-                  <Textarea 
-                    placeholder="Additional notes (optional)" 
+                  <Textarea
+                    placeholder="Additional notes (optional)"
                     value={dailyTaskForm.notes}
                     onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, notes: e.target.value })}
                   />
                 </div>
 
-                <Button 
-                  className="w-full" 
-                  onClick={handleCreateDailyTask} 
+                <Button
+                  className="w-full"
+                  onClick={handleCreateDailyTask}
                   disabled={isUploading || !dailyTaskForm.title.trim() || !dailyTaskPhoto || !selectedClient}
                 >
                   {isUploading ? (
@@ -1608,7 +1607,7 @@ export default function CalendarPage() {
               </div>
             </>
           )}
-          
+
           {/* Filter */}
           <Select value={filterType} onValueChange={setFilterType}>
             <SelectTrigger className="w-32">
@@ -1622,7 +1621,7 @@ export default function CalendarPage() {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
-          
+
         </div>
       </div>
 
@@ -1631,9 +1630,9 @@ export default function CalendarPage() {
         <CardHeader className="p-3 sm:p-6">
           <div className="flex items-center justify-between gap-2 w-full overflow-x-hidden">
             <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0 overflow-x-hidden">
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   if (isMobile) navigateWeek('prev');
                   else if (viewMode === 'month') navigateMonth('prev');
@@ -1644,7 +1643,7 @@ export default function CalendarPage() {
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              
+
               <h2 className="text-base sm:text-lg md:text-xl font-semibold truncate text-center flex-1">
                 {isMobile
                   ? currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -1654,10 +1653,10 @@ export default function CalendarPage() {
                     (viewMode === 'day' && currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }))
                   )}
               </h2>
-              
-              <Button 
-                variant="outline" 
-                size="sm" 
+
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   if (isMobile) navigateWeek('next');
                   else if (viewMode === 'month') navigateMonth('next');
@@ -1669,10 +1668,10 @@ export default function CalendarPage() {
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            
-            <Button 
-              variant="outline" 
-              size="sm" 
+
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setCurrentDate(new Date())}
               className="min-h-[44px] px-3 sm:px-4 text-xs sm:text-sm shrink-0"
             >
@@ -1680,7 +1679,7 @@ export default function CalendarPage() {
             </Button>
           </div>
         </CardHeader>
-        
+
         <CardContent className="p-3 sm:p-6 overflow-x-hidden w-full">
           {/* Mobile: fixed week strip with selected day's list below */}
           {isMobile && (
@@ -1704,9 +1703,8 @@ export default function CalendarPage() {
                     return (
                       <button
                         key={index}
-                        className={`py-2.5 sm:py-3 text-sm sm:text-base border-r last:border-r-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-colors min-h-[44px] sm:min-h-[48px] active:scale-95 ${
-                          isSelected ? 'bg-primary text-primary-foreground font-semibold' : isToday ? 'bg-muted font-semibold' : 'hover:bg-muted/50'
-                        }`}
+                        className={`py-2.5 sm:py-3 text-sm sm:text-base border-r last:border-r-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-colors min-h-[44px] sm:min-h-[48px] active:scale-95 ${isSelected ? 'bg-primary text-primary-foreground font-semibold' : isToday ? 'bg-muted font-semibold' : 'hover:bg-muted/50'
+                          }`}
                         onClick={() => handleDayClick(day.date)}
                         aria-label={`Select ${day.date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`}
                       >
@@ -1726,16 +1724,16 @@ export default function CalendarPage() {
                       const hourEvents = dayEvents.filter(event => parseInt(event.startTime.split(':')[0]) === hour);
                       // Skip early morning hours (0-5) if they have no events
                       if (hourEvents.length === 0 && hour < 6) return null;
-                      
+
                       // Check if current time is in this hour for sticky positioning
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
-                        <div 
-                          key={hour} 
+                        <div
+                          key={hour}
                           className="flex items-start gap-2 sm:gap-3 p-2.5 sm:p-3 min-h-[48px] sm:min-h-[56px] relative"
                           data-hour={hour}
                         >
@@ -1796,22 +1794,22 @@ export default function CalendarPage() {
                               </div>
                             )}
                           </div>
-                          
+
                           {/* Current time indicator - Sticky within this hour row */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute left-2 sm:left-3 -top-1.5 w-3 h-3 sm:w-4 sm:h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute right-2 sm:right-3 -top-2.5 sm:-top-3 text-[10px] sm:text-xs md:text-sm text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -1881,23 +1879,22 @@ export default function CalendarPage() {
                     const priorityOrder = { urgent: 4, high: 3, medium: 2, low: 1 };
                     const aPriority = priorityOrder[a.taskData?.priority as keyof typeof priorityOrder] || 0;
                     const bPriority = priorityOrder[b.taskData?.priority as keyof typeof priorityOrder] || 0;
-                    
+
                     if (aPriority !== bPriority) {
                       return bPriority - aPriority;
                     }
-                    
+
                     return a.startTime.localeCompare(b.startTime);
                   })
                   .map(event => (
                     <Card
                       key={event.id}
-                      className={`cursor-pointer transition-all hover:shadow-sm active:scale-[0.98] border-l-4 ${
-                        event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
-                        event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                        event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                        event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                        'border-l-gray-500 bg-gray-50'
-                      } ${event.taskData?.status === 'completed' ? 'opacity-75' : ''}`}
+                      className={`cursor-pointer transition-all hover:shadow-sm active:scale-[0.98] border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                          event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
+                            event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                              event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                                'border-l-gray-500 bg-gray-50'
+                        } ${event.taskData?.status === 'completed' ? 'opacity-75' : ''}`}
                       onClick={() => handleEventClick(event)}
                     >
                       <CardContent className="p-3">
@@ -1906,15 +1903,14 @@ export default function CalendarPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <h4 className={`font-medium text-sm leading-tight truncate ${
-                                  event.taskData?.status === 'completed' ? 'line-through text-muted-foreground' : ''
-                                }`}>
+                                <h4 className={`font-medium text-sm leading-tight truncate ${event.taskData?.status === 'completed' ? 'line-through text-muted-foreground' : ''
+                                  }`}>
                                   {event.title}
                                 </h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-[10px] px-1.5 py-0 h-5 shrink-0">
                                   {event.taskData?.priority}
                                 </Badge>
@@ -2011,7 +2007,7 @@ export default function CalendarPage() {
                                 </div>
                               )}
                             </div>
-                            
+
                             <span className="text-[10px] text-gray-500">
                               {new Date(event.taskData?.created_at || '').toLocaleDateString('en-US', {
                                 month: 'short',
@@ -2047,26 +2043,22 @@ export default function CalendarPage() {
                   {day}
                 </div>
               ))}
-              
+
               {/* Calendar Days */}
               {calendarDays.map((day, index) => {
                 const isClicked = clickedDay && clickedDay.toDateString() === day.date.toDateString();
                 return (
                   <div
                     key={index}
-                    className={`min-h-[120px] p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${
-                      day.isCurrentMonth ? 'bg-background' : 'bg-muted/50'
-                    } ${day.isToday ? 'ring-2 ring-primary' : ''} ${
-                      isClicked ? 'bg-primary/10 border-primary ring-2 ring-primary/20' : ''
-                    }`}
+                    className={`min-h-[120px] p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${day.isCurrentMonth ? 'bg-background' : 'bg-muted/50'
+                      } ${day.isToday ? 'ring-2 ring-primary' : ''} ${isClicked ? 'bg-primary/10 border-primary ring-2 ring-primary/20' : ''
+                      }`}
                     onClick={() => handleDayClick(day.date)}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <div className={`text-sm font-medium ${
-                        day.isCurrentMonth ? 'text-foreground' : 'text-muted-foreground'
-                      } ${day.isToday ? 'text-primary font-bold' : ''} ${
-                        isClicked ? 'text-primary font-bold' : ''
-                      }`}>
+                      <div className={`text-sm font-medium ${day.isCurrentMonth ? 'text-foreground' : 'text-muted-foreground'
+                        } ${day.isToday ? 'text-primary font-bold' : ''} ${isClicked ? 'text-primary font-bold' : ''
+                        }`}>
                         {day.date.getDate()}
                       </div>
                       {day.events.length > 0 && (
@@ -2075,7 +2067,7 @@ export default function CalendarPage() {
                         </Badge>
                       )}
                     </div>
-                    
+
                     <div className="space-y-1">
                       {day.events.slice(0, 3).map(event => (
                         <div
@@ -2140,10 +2132,9 @@ export default function CalendarPage() {
                 const isClicked = clickedDay && clickedDay.toDateString() === day.date.toDateString();
                 return (
                   <div key={index} className="space-y-2">
-                    <div 
-                      className={`text-center p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${
-                        day.isToday ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                      } ${isClicked ? 'bg-primary/20 border-primary ring-2 ring-primary/20' : ''}`}
+                    <div
+                      className={`text-center p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${day.isToday ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                        } ${isClicked ? 'bg-primary/20 border-primary ring-2 ring-primary/20' : ''}`}
                       onClick={() => handleDayClick(day.date)}
                     >
                       <div className="text-sm font-medium">
@@ -2154,7 +2145,7 @@ export default function CalendarPage() {
                       </div>
                       {/* plus indicator removed for mobile spec */}
                     </div>
-                    
+
                     <div className="space-y-1">
                       {day.events.map(event => (
                         <div
@@ -2220,16 +2211,16 @@ export default function CalendarPage() {
                         const eventHour = parseInt(event.startTime.split(':')[0]);
                         return eventHour === hour;
                       });
-                      
+
                       // Skip early morning hours (0-5) if they have no events
                       if (hourEvents.length === 0 && hour < 6) return null;
-                      
+
                       // Check if current time is in this hour
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
                         <div key={hour} className="relative min-h-[44px] sm:min-h-[52px] border-b last:border-b-0">
                           <div className="flex gap-2 sm:gap-3 p-2 sm:p-3">
@@ -2237,7 +2228,7 @@ export default function CalendarPage() {
                             <div className="w-12 sm:w-16 text-[10px] sm:text-xs text-muted-foreground font-medium shrink-0 pt-0.5">
                               {hour.toString().padStart(2, '0')}:00
                             </div>
-                            
+
                             {/* Events for this hour */}
                             <div className="flex-1 space-y-1.5 sm:space-y-2 min-w-0">
                               {hourEvents.length === 0 ? (
@@ -2287,22 +2278,22 @@ export default function CalendarPage() {
                               )}
                             </div>
                           </div>
-                          
+
                           {/* Current time indicator - Sticky within this hour row */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute left-2 sm:left-3 -top-1.5 w-3 h-3 sm:w-4 sm:h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute right-2 sm:right-3 -top-2.5 sm:-top-3 text-[10px] sm:text-xs md:text-sm text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -2318,20 +2309,20 @@ export default function CalendarPage() {
                         const eventHour = parseInt(event.startTime.split(':')[0]);
                         return eventHour === hour;
                       });
-                      
+
                       // Check if current time is in this hour
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
                         <div key={hour} className="relative min-h-[60px] border-r border-gray-200 p-2">
                           {/* Time label */}
                           <div className="text-xs text-muted-foreground font-medium mb-2">
                             {hour.toString().padStart(2, '0')}:00
                           </div>
-                          
+
                           {/* Events for this hour */}
                           <div className="space-y-1">
                             {hourEvents.map(event => (
@@ -2371,22 +2362,22 @@ export default function CalendarPage() {
                               </div>
                             ))}
                           </div>
-                          
+
                           {/* Current time indicator - Within this hour column */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute -left-2 -top-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute -right-16 -top-1 text-xs text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -2397,7 +2388,7 @@ export default function CalendarPage() {
                   </div>
                 )}
               </div>
-              
+
               {/* Empty state when no events */}
               {dayEvents.length === 0 && (
                 <div className="text-center py-8 sm:py-12 text-muted-foreground border-2 border-dashed border-gray-200 rounded-lg">
@@ -2446,13 +2437,12 @@ export default function CalendarPage() {
                       .map(event => (
                         <Card
                           key={event.id}
-                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${
-                            event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
-                            event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                            event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                            event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                            'border-l-gray-500 bg-gray-50'
-                          }`}
+                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                              event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
+                                event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                                  event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                                    'border-l-gray-500 bg-gray-50'
+                            }`}
                           onClick={() => handleEventClick(event)}
                         >
                           <CardContent className="p-4">
@@ -2461,8 +2451,8 @@ export default function CalendarPage() {
                                 <h4 className="font-medium text-sm leading-tight">{event.title}</h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-xs">
                                   {event.taskData?.priority}
                                 </Badge>
@@ -2548,13 +2538,12 @@ export default function CalendarPage() {
                       .map(event => (
                         <Card
                           key={event.id}
-                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${
-                            event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
-                            event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                            event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                            event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                            'border-l-gray-500 bg-gray-50'
-                          }`}
+                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                              event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
+                                event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                                  event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                                    'border-l-gray-500 bg-gray-50'
+                            }`}
                           onClick={() => handleEventClick(event)}
                         >
                           <CardContent className="p-4">
@@ -2563,8 +2552,8 @@ export default function CalendarPage() {
                                 <h4 className="font-medium text-sm leading-tight">{event.title}</h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-xs">
                                   {event.taskData?.priority}
                                 </Badge>
@@ -2743,13 +2732,13 @@ export default function CalendarPage() {
       {/* Event Details Dialog */}
       <Dialog open={showEventDetails} onOpenChange={setShowEventDetails}>
         <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
+          <DialogHeader>
             <DialogTitle className="text-lg sm:text-xl flex items-center gap-2">
               <CalendarIcon className="h-5 w-5" />
               Event Details
             </DialogTitle>
           </DialogHeader>
-          
+
           {selectedEvent && (
             <div className="space-y-6 py-4">
               {/* Event Header */}
@@ -2765,9 +2754,9 @@ export default function CalendarPage() {
                     {selectedEvent.status}
                   </Badge>
                 </div>
-                
+
                 <h2 className="text-xl sm:text-2xl font-bold">{selectedEvent.title}</h2>
-                
+
                 {selectedEvent.description && (
                   <p className="text-muted-foreground text-sm sm:text-lg">{selectedEvent.description}</p>
                 )}
@@ -2784,11 +2773,11 @@ export default function CalendarPage() {
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">Date:</span>
-                      <span>{new Date(selectedEvent.date).toLocaleDateString('en-US', { 
-                        weekday: 'long', 
-                        year: 'numeric', 
-                        month: 'long', 
-                        day: 'numeric' 
+                      <span>{new Date(selectedEvent.date).toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
                       })}</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -2823,9 +2812,9 @@ export default function CalendarPage() {
                         <span className="font-medium">Status:</span>
                         <Badge variant="outline" className={
                           selectedEvent.taskData.status === 'completed' ? 'bg-green-100 text-green-600' :
-                          selectedEvent.taskData.status === 'in_progress' ? 'bg-blue-100 text-blue-600' :
-                          selectedEvent.taskData.status === 'pending' ? 'bg-yellow-100 text-yellow-600' :
-                          'bg-gray-100 text-gray-600'
+                            selectedEvent.taskData.status === 'in_progress' ? 'bg-blue-100 text-blue-600' :
+                              selectedEvent.taskData.status === 'pending' ? 'bg-yellow-100 text-yellow-600' :
+                                'bg-gray-100 text-gray-600'
                         }>
                           {selectedEvent.taskData.status.replace('_', ' ')}
                         </Badge>
@@ -2894,7 +2883,7 @@ export default function CalendarPage() {
                       <p className="text-muted-foreground">{selectedEvent.location}</p>
                     </div>
                   )}
-                  
+
                   {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
                     <div>
                       <h3 className="font-semibold text-lg flex items-center gap-2">
@@ -2919,13 +2908,13 @@ export default function CalendarPage() {
                 <Button variant="outline" onClick={() => setShowEventDetails(false)}>
                   Close
                 </Button>
-                
+
                 {/* Task-specific actions */}
                 {selectedEvent.type === 'task' && selectedEvent.taskData && (
                   <>
                     {selectedEvent.taskData.status === 'pending' && (
-                      <Button 
-                        variant="default" 
+                      <Button
+                        variant="default"
                         onClick={() => handleStartTask(selectedEvent.taskData!.id)}
                         className="flex items-center gap-2"
                       >
@@ -2934,8 +2923,8 @@ export default function CalendarPage() {
                       </Button>
                     )}
                     {selectedEvent.taskData.status === 'in_progress' && (
-                      <Button 
-                        variant="default" 
+                      <Button
+                        variant="default"
                         onClick={handleCompleteTaskWithConfirmation}
                         className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
                       >
@@ -2951,7 +2940,7 @@ export default function CalendarPage() {
                     )}
                   </>
                 )}
-                
+
                 {/* General event actions (for non-task events) */}
                 {selectedEvent.type !== 'task' && (
                   <>
@@ -2978,12 +2967,12 @@ export default function CalendarPage() {
               Complete Task
             </DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-4 py-4">
             <p className="text-muted-foreground">
               Are you sure you want to mark this task as completed? This action cannot be undone.
             </p>
-            
+
             {selectedEvent?.taskData && (
               <div className="bg-gray-50 p-3 rounded-lg">
                 <h4 className="font-medium text-sm text-gray-700 mb-1">Task Details:</h4>
@@ -2993,16 +2982,16 @@ export default function CalendarPage() {
                 )}
               </div>
             )}
-            
+
             <div className="flex flex-col sm:flex-row justify-end gap-3">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => setShowCompletionConfirm(false)}
                 className="w-full sm:w-auto"
               >
                 Cancel
               </Button>
-              <Button 
+              <Button
                 variant="default"
                 onClick={() => selectedEvent?.taskData && handleCompleteTask(selectedEvent.taskData.id)}
                 className="bg-green-600 hover:bg-green-700 w-full sm:w-auto"
