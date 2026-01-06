@@ -1001,7 +1001,7 @@ export default function LeaderInventoryPage() {
                 <Crown className="h-5 w-5 text-yellow-600" />
                 Your Allocated Inventory
               </CardTitle>
-              {user.role !== 'admin' && (
+              {user.role !== 'admin' && user.role !== 'manager' && (
                 <Button
                   onClick={() => setAllocationOpen(true)}
                   disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
@@ -1272,7 +1272,7 @@ export default function LeaderInventoryPage() {
               <Users className="h-5 w-5 text-blue-600" />
               Team Members Inventory
             </CardTitle>
-            {user.role !== 'admin' && (
+            {user.role !== 'admin' && user.role !== 'manager' && (
               <Button
                 onClick={() => setAllocationOpen(true)}
                 disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
@@ -1896,7 +1896,7 @@ export default function LeaderInventoryPage() {
                               const fullItem = groupedInventory[allocation.brandId]?.find(
                                 (inv: any) => inv.variantId === item.variant_id
                               );
-                              
+
                               return (
                                 <div key={index} className="flex items-center justify-between p-3 bg-background rounded-lg border border-green-200 dark:border-green-900">
                                   <div className="flex-1">
@@ -1949,7 +1949,7 @@ export default function LeaderInventoryPage() {
                                 let totalRsp = 0;
                                 let hasDsp = false;
                                 let hasRsp = false;
-                                
+
                                 itemsToAllocate.forEach(item => {
                                   const fullItem = groupedInventory[allocation.brandId]?.find(
                                     (inv: any) => inv.variantId === item.variant_id
@@ -1963,7 +1963,7 @@ export default function LeaderInventoryPage() {
                                     hasRsp = true;
                                   }
                                 });
-                                
+
                                 return (
                                   <>
                                     {hasDsp && (

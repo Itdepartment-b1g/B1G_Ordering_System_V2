@@ -365,7 +365,7 @@ export default function MyInventory() {
         blob = new Blob([bytes], { type: 'image/png' });
       } else {
         // Fallback: if it's already a URL, try to fetch (but this shouldn't happen)
-        const response = await fetch(signatureDataUrl);
+      const response = await fetch(signatureDataUrl);
         blob = await response.blob();
       }
 
@@ -524,18 +524,18 @@ export default function MyInventory() {
           <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">My Inventory</h1>
           <p className="text-sm md:text-base text-muted-foreground">Products allocated to you by admin</p>
         </div>
-        <Button
-          onClick={() => setRemitDialogOpen(true)}
-          variant="outline"
-          className="gap-2 w-full sm:w-auto"
-          size="sm"
+          <Button
+            onClick={() => setRemitDialogOpen(true)}
+            variant="outline"
+            className="gap-2 w-full sm:w-auto"
+            size="sm"
           disabled={!canRemit}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Remit Inventory
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Remit Inventory
           {!leaderId && (
             <span className="ml-2 text-xs text-muted-foreground">(No leader assigned)</span>
-          )}
+        )}
         </Button>
       </div>
 
@@ -1016,13 +1016,13 @@ export default function MyInventory() {
                           </div>
                           <div className="pt-2 border-t space-y-2">
                             <div className="flex justify-between items-center">
-                              <div className="text-xs text-muted-foreground">Quantity</div>
-                              <div className="font-semibold text-sm">{item.quantity}</div>
-                            </div>
+                                <div className="text-xs text-muted-foreground">Quantity</div>
+                                <div className="font-semibold text-sm">{item.quantity}</div>
+                              </div>
                             <div className="flex justify-between items-center">
                               <div className="text-xs text-muted-foreground">Price Value</div>
                               <div className="font-semibold text-sm">₱{(item.quantity * (item.price || 0)).toLocaleString()}</div>
-                            </div>
+                              </div>
                             <div className="flex justify-between items-center">
                               <div className="text-xs text-muted-foreground">DSP Value</div>
                               <div className="font-semibold text-sm text-blue-600">₱{(item.quantity * (item.dspPrice || 0)).toLocaleString()}</div>
@@ -1234,20 +1234,20 @@ export default function MyInventory() {
 
               {/* Confirmation Checkbox - Optional for sold orders */}
               {todayOrders.length > 0 && (
-                <div className="flex items-start space-x-2 p-3 md:p-4 bg-muted/30 rounded-lg border">
-                  <Checkbox
-                    id="sold-confirm"
-                    checked={soldConfirmed}
-                    onCheckedChange={(checked) => setSoldConfirmed(checked === true)}
-                    className="mt-0.5"
-                  />
-                  <label
-                    htmlFor="sold-confirm"
-                    className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                  >
+              <div className="flex items-start space-x-2 p-3 md:p-4 bg-muted/30 rounded-lg border">
+                <Checkbox
+                  id="sold-confirm"
+                  checked={soldConfirmed}
+                  onCheckedChange={(checked) => setSoldConfirmed(checked === true)}
+                  className="mt-0.5"
+                />
+                <label
+                  htmlFor="sold-confirm"
+                  className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                >
                     I have reviewed today's sold orders ({todayOrders.length} orders) - <span className="text-muted-foreground">Optional</span>
-                  </label>
-                </div>
+                </label>
+              </div>
               )}
             </TabsContent>
 

@@ -3,13 +3,13 @@
 // ============================================================================
 // Centralized role checking functions for consistent access control
 
-export type UserRole = 
-  | 'mobile_sales' 
-  | 'team_leader' 
-  | 'manager' 
-  | 'admin' 
-  | 'super_admin' 
-  | 'finance' 
+export type UserRole =
+  | 'mobile_sales'
+  | 'team_leader'
+  | 'manager'
+  | 'admin'
+  | 'super_admin'
+  | 'finance'
   | 'system_administrator';
 
 /**
@@ -70,7 +70,7 @@ export function canManageCompanies(role?: UserRole | string): boolean {
  * Team Leaders, Managers, Admins, Super Admins can view deposits
  */
 export function canViewCashDeposits(role?: UserRole | string): boolean {
-  return canLeadTeam(role) || isAdmin(role);
+  return canLeadTeam(role) || isAdmin(role) || role === 'finance';
 }
 
 /**

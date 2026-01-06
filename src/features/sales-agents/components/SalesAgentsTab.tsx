@@ -111,17 +111,16 @@ export function SalesAgentsTab() {
     phone: '',
     region: '',
     cities: [] as string[],
-    status: 'active' as 'active' | 'inactive'
+    status: 'active' as 'active' | 'inactive',
+    role: '' as UserRole | ''
   });
-
-
 
   // City input state for adding cities
   const [currentCityInput, setCurrentCityInput] = useState('');
   const [editCityInput, setEditCityInput] = useState('');
   const isRoleSelected = Boolean(newAgent.role);
   const addDialogRequiresTerritory = roleRequiresTerritory(newAgent.role);
-  const editDialogRequiresTerritory = editingAgent ? roleRequiresTerritory(editingAgent.role) : false;
+  const editDialogRequiresTerritory = roleRequiresTerritory(editForm.role || (editingAgent?.role));
 
   const { toast } = useToast();
 
@@ -137,6 +136,9 @@ export function SalesAgentsTab() {
   });
 
   const fetchAgents = async () => {
+    // Wait for user to be loaded
+    if (!user?.id) return;
+
     try {
       setLoading(true);
 
@@ -153,7 +155,7 @@ export function SalesAgentsTab() {
           status,
           role
         `)
-        .neq('id', user?.id || '')
+        .neq('id', user.id)
         .order('created_at', { ascending: false });
 
       if (agentsError) throw agentsError;
@@ -207,8 +209,10 @@ export function SalesAgentsTab() {
   };
 
   useEffect(() => {
-    fetchAgents();
-  }, []);
+    if (user?.id) {
+      fetchAgents();
+    }
+  }, [user?.id]);
 
   const handleStatusToggle = (agent: SalesAgent, newStatus: boolean) => {
     setAgentToChangeStatus(agent);
@@ -257,7 +261,8 @@ export function SalesAgentsTab() {
       phone: agent.phone || '',
       region: agent.region || '',
       cities: agent.cities || [],
-      status: agent.status || 'active'
+      status: agent.status || 'active',
+      role: agent.role || 'mobile_sales'
     });
     setEditDialogOpen(true);
   };
@@ -551,32 +556,25 @@ export function SalesAgentsTab() {
         return;
       }
 
-      const authUpdates: Record<string, any> = { user_id: editingAgent.id };
-      let needsAuthUpdate = false;
+      console.log('🔍 [SalesAgentsTab] Update initiated for:', {
+        editingAgentId: editingAgent.id,
+        currentUserId: user?.id,
+        isSelf: user?.id === editingAgent.id
+      });
 
-      if (trimmedName !== editingAgent.name) {
-        authUpdates.full_name = trimmedName;
-        needsAuthUpdate = true;
+      // Prevent editing self
+      if (user?.id === editingAgent.id) {
+        console.warn('🚫 [SalesAgentsTab] Self-edit blocked');
+        toast({
+          title: "Action Denied",
+          description: "You cannot edit your own account from this view.",
+          variant: "destructive"
+        });
+        return;
       }
-      if (trimmedEmail !== editingAgent.email) {
-        authUpdates.email = trimmedEmail;
-        needsAuthUpdate = true;
-      }
-      // Note: Email changes in profiles table only - not synced to auth.users
-      // To enable email sync, create the update-agent-auth Edge Function
-      // if (needsAuthUpdate) {
-      //   authUpdates.role = editingAgent.role || 'sales_agent';
-      //   const { data: authData, error: authError } = await supabase.functions.invoke('update-agent-auth', {
-      //     body: authUpdates
-      //   });
-      //
-      //   if (authError) {
-      //     throw new Error(authError.message || 'Failed to update authentication record');
-      //   }
-      //   if ((authData as any)?.error) {
-      //     throw new Error((authData as any).error);
-      //   }
-      // }
+
+      // NOTE: We are now updating the role directly in the profiles table below.
+      // The auth metadata will be synced on next login/refresh via AuthContext.
 
 
       // Prepare city value - use null if empty array, otherwise join with comma
@@ -592,7 +590,8 @@ export function SalesAgentsTab() {
           phone: editForm.phone || null,
           region: editForm.region || null,
           city: cityValue,
-          status: editForm.status
+          status: editForm.status,
+          role: editForm.role
         })
         .eq('id', editingAgent.id);
 
@@ -958,6 +957,26 @@ export function SalesAgentsTab() {
                 />
               </div>
             </div>
+
+            <div>
+              <Label htmlFor="role">Role</Label>
+              <Select
+                value={editForm.role}
+                onValueChange={(value) => setEditForm({ ...editForm, role: value as UserRole })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="finance">Finance</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                  <SelectItem value="team_leader">Team Leader</SelectItem>
+                  <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className={`grid gap-4 ${editDialogRequiresTerritory ? 'md:grid-cols-2' : 'grid-cols-1 md:grid-cols-1'}`}>
               <div>
                 <Label htmlFor="phone">Phone</Label>
@@ -1357,6 +1376,6 @@ export function SalesAgentsTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </div >
   );
 }

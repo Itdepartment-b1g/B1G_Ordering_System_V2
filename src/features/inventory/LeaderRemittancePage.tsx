@@ -47,7 +47,7 @@ export default function LeaderRemittancePage() {
     if (!user?.id || user?.role !== 'team_leader') return;
 
     // Initial fetch
-    fetchTeamRemittances();
+      fetchTeamRemittances();
 
     // Debounce timers for smooth real-time updates
     let remittanceTimer: NodeJS.Timeout | null = null;
@@ -57,7 +57,7 @@ export default function LeaderRemittancePage() {
       if (remittanceTimer) clearTimeout(remittanceTimer);
       remittanceTimer = setTimeout(() => {
         console.log('🔄 Real-time update: Refreshing team remittances...');
-        fetchTeamRemittances();
+          fetchTeamRemittances();
       }, 300);
     };
 

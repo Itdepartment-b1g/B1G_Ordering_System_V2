@@ -366,9 +366,9 @@ export default function OrdersPage() {
                       <div className="font-mono font-semibold">{order.orderNumber}</div>
                     </div>
                     <div className="flex flex-col gap-1 items-end">
-                      <Badge variant={getStatusVariant(order) as any}>
-                        {getStatusLabel(order)}
-                      </Badge>
+                    <Badge variant={getStatusVariant(order) as any}>
+                      {getStatusLabel(order)}
+                    </Badge>
                       {order.paymentMethod === 'CASH' && (order.stage === 'finance_pending' || order.status === 'pending') && (
                         order.depositId && order.depositBankAccount ? (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
@@ -445,7 +445,7 @@ export default function OrdersPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1">
-                          <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
+                        <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
                           {order.paymentMethod === 'CASH' && (order.stage === 'finance_pending' || order.status === 'pending') && (
                             order.depositId && order.depositBankAccount ? (
                               <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
@@ -869,32 +869,32 @@ export default function OrdersPage() {
                     </div>
                   )}
 
-                  <div className="flex gap-3 pt-4 border-t">
-                    <Button
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                      onClick={() => {
-                        setViewDialogOpen(false);
-                        handleOpenApprove(viewingOrder);
-                      }}
+                <div className="flex gap-3 pt-4 border-t">
+                  <Button
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                    onClick={() => {
+                      setViewDialogOpen(false);
+                      handleOpenApprove(viewingOrder);
+                    }}
                       disabled={viewingOrder.paymentMethod === 'CASH' && (!viewingOrder.depositId || !viewingOrder.depositBankAccount)}
-                    >
-                      <CheckCircle className="h-4 w-4 mr-2" />
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2" />
                       {viewingOrder.paymentMethod === 'CASH' && viewingOrder.depositId && viewingOrder.depositBankAccount
                         ? 'Approve Order & Verify Deposit'
                         : 'Finance Approve'}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      className="flex-1 bg-red-600 hover:bg-red-700"
-                      onClick={() => {
-                        setViewDialogOpen(false);
-                        handleOpenReject(viewingOrder);
-                      }}
-                    >
-                      <XCircle className="h-4 w-4 mr-2" />
-                      Finance Deny
-                    </Button>
-                  </div>
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="flex-1 bg-red-600 hover:bg-red-700"
+                    onClick={() => {
+                      setViewDialogOpen(false);
+                      handleOpenReject(viewingOrder);
+                    }}
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    Finance Deny
+                  </Button>
+                </div>
                 </>
               )}
             </div>

@@ -102,7 +102,7 @@ export default function PendingRequestsPage() {
     if (!user?.id) return;
 
     // Initial fetch
-    fetchRequests();
+      fetchRequests();
 
     // Debounce timer for smooth real-time updates
     let updateTimer: NodeJS.Timeout | null = null;
@@ -110,7 +110,7 @@ export default function PendingRequestsPage() {
       if (updateTimer) clearTimeout(updateTimer);
       updateTimer = setTimeout(() => {
         console.log('🔄 Real-time update: Refreshing stock requests...');
-        fetchRequests();
+          fetchRequests();
       }, 300);
     };
 

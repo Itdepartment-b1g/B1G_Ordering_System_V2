@@ -435,7 +435,7 @@ export default function MyOrdersPage() {
       setShowBankSelectionModal(true);
     } else {
       // For GCASH and CASH, go directly to payment proof
-      setShowPaymentProofModal(true);
+    setShowPaymentProofModal(true);
     }
   };
 
@@ -573,40 +573,40 @@ export default function MyOrdersPage() {
       } else {
         // For GCASH and CASH, use the original structure with client folder
         const paymentMethodFolder = paymentMethod === 'GCASH' ? 'GCASH' : 'CASH';
-        
-        // Sanitize client name and company for folder name
-        // Format: "Client Name _ Company Name" (with underscore separator)
-        const sanitizeForPath = (str: string) => {
-          return str
-            .trim()
-            .replace(/[<>:"/\\|?*]/g, '') // Remove invalid path characters
-            .replace(/\s+/g, ' ') // Replace multiple spaces with single space
-            .trim();
-        };
 
-        const cleanClientName = sanitizeForPath(clientName);
-        const cleanCompanyName = sanitizeForPath(clientCompany || '');
-        const clientFolderName = cleanCompanyName
-          ? `${cleanClientName} _ ${cleanCompanyName}`
-          : cleanClientName;
+      // Sanitize client name and company for folder name
+      // Format: "Client Name _ Company Name" (with underscore separator)
+      const sanitizeForPath = (str: string) => {
+        return str
+          .trim()
+          .replace(/[<>:"/\\|?*]/g, '') // Remove invalid path characters
+          .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+          .trim();
+      };
 
-        // Format date: MM/DD/YYYY (e.g., "12/15/2025")
-        const now = new Date();
-        const dateStr = now.toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }); // Format: MM/DD/YYYY
+      const cleanClientName = sanitizeForPath(clientName);
+      const cleanCompanyName = sanitizeForPath(clientCompany || '');
+      const clientFolderName = cleanCompanyName
+        ? `${cleanClientName} _ ${cleanCompanyName}`
+        : cleanClientName;
 
-        // Format time: H:MMam/pm (e.g., "1:30pm")
-        const hours = now.getHours();
-        const minutes = now.getMinutes();
-        const ampm = hours >= 12 ? 'pm' : 'am';
-        const displayHours = hours % 12 || 12; // Convert to 12-hour format, 0 becomes 12
-        const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+      // Format date: MM/DD/YYYY (e.g., "12/15/2025")
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }); // Format: MM/DD/YYYY
 
-        // Generate filename: date_time.jpg (e.g., "12/15/2025_1:30pm.jpg")
-        const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
+      // Format time: H:MMam/pm (e.g., "1:30pm")
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const ampm = hours >= 12 ? 'pm' : 'am';
+      const displayHours = hours % 12 || 12; // Convert to 12-hour format, 0 becomes 12
+      const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+
+      // Generate filename: date_time.jpg (e.g., "12/15/2025_1:30pm.jpg")
+      const fileExt = paymentProofFile.name.split('.').pop() || 'jpg';
         fileName = `${paymentMethodFolder}/${clientFolderName}/${dateStr}_${timeStr}.${fileExt}`;
       }
 
@@ -2287,7 +2287,7 @@ export default function MyOrdersPage() {
                   if (paymentMethod === 'BANK_TRANSFER') {
                     setShowBankSelectionModal(true);
                   } else {
-                    setShowPaymentMethodModal(true);
+                  setShowPaymentMethodModal(true);
                   }
                 }}
                 className="w-full sm:w-auto min-h-[44px]"
@@ -2391,9 +2391,9 @@ export default function MyOrdersPage() {
               <div className="space-y-2 border rounded-lg p-4">
                 <Label className="font-semibold">Payment Method</Label>
                 <div className="space-y-2">
-                  <Badge className="text-base px-3 py-1">
-                    {paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}
-                  </Badge>
+                <Badge className="text-base px-3 py-1">
+                  {paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}
+                </Badge>
                   {paymentMethod === 'BANK_TRANSFER' && selectedBank && (
                     <div className="mt-2 space-y-1 text-sm">
                       <div className="flex justify-between">

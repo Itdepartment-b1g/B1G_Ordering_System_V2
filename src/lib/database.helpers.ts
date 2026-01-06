@@ -233,7 +233,7 @@ export async function logEvent(input: LogEventInput): Promise<void> {
     // Fetch actor's profile to get company_id and role
     const { data: actorProfile, error: profileError } = await supabase
       .from('profiles')
-      .select('company_id, role, full_name, position')
+      .select('company_id, role, full_name')
       .eq('id', input.actor_id)
       .single();
 
@@ -242,7 +242,7 @@ export async function logEvent(input: LogEventInput): Promise<void> {
       throw new Error('Cannot log event: actor profile not found');
     }
 
-    // Determine actor_role based on role and position
+    // Determine actor_role based on role
     let actor_role: Event['actor_role'] = 'sales_agent';
     if (actorProfile.role === 'admin' || actorProfile.role === 'super_admin') {
       actor_role = 'admin';
@@ -250,8 +250,7 @@ export async function logEvent(input: LogEventInput): Promise<void> {
       actor_role = 'finance';
     } else if (actorProfile.role === 'manager') {
       actor_role = 'manager';
-    } else if (actorProfile.role === 'team_leader' ||
-      (actorProfile.role === 'sales_agent' && actorProfile.position === 'Leader')) {
+    } else if (actorProfile.role === 'team_leader') {
       actor_role = 'leader';
     } else if (actorProfile.role === 'system_administrator') {
       actor_role = 'system';
@@ -265,7 +264,7 @@ export async function logEvent(input: LogEventInput): Promise<void> {
         actor_id: input.actor_id,
         actor_role: actor_role,
         performed_by: actorProfile.full_name,
-        actor_label: input.actor_label || actorProfile.position || null,
+        actor_label: input.actor_label || null,
         action: input.action,
         target_type: input.target_type,
         target_id: input.target_id,

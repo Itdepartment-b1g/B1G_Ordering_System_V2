@@ -415,3 +415,66 @@ export function useRecentActivity(page: number, itemsPerPage: number) {
 
     return query;
 }
+
+export function useFinanceStats() {
+    const { user } = useAuth();
+    const queryClient = useQueryClient();
+
+    const query = useQuery({
+        queryKey: ['finance_stats', user?.company_id],
+        enabled: !!user?.company_id && user?.role === 'finance',
+        queryFn: async () => {
+            if (!user?.company_id) return null;
+
+            // Get pending orders (Incoming Orders)
+            const { data: pendingOrdersData } = await supabase
+                .from('client_orders')
+                .select('id, order_number, total_amount, created_at, profiles!client_orders_agent_id_fkey(full_name)')
+                .eq('company_id', user.company_id)
+                .or('status.eq.pending,stage.eq.leader_approved') // Finance likely sees leader approved or pending
+                .order('created_at', { ascending: false })
+                .limit(10);
+
+            const pendingOrders = pendingOrdersData || [];
+
+            // Get recent cash deposits
+            const { data: depositsData } = await supabase
+                .from('cash_deposits')
+                .select('id, amount, deposit_date, status, deposit_slip_url, profiles!cash_deposits_agent_id_fkey(full_name)')
+                .eq('company_id', user.company_id)
+                .order('deposit_date', { ascending: false })
+                .limit(10);
+
+            const recentDeposits = depositsData || [];
+
+            // Simple stats
+            const totalPendingRevenue = pendingOrders.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
+            const totalDepositsToday = (recentDeposits || [])
+                .filter((d: any) => new Date(d.deposit_date).toDateString() === new Date().toDateString())
+                .reduce((sum: number, d: any) => sum + (d.amount || 0), 0);
+
+            return {
+                pendingOrders,
+                recentDeposits,
+                totalPendingRevenue,
+                totalDepositsToday,
+                pendingOrdersCount: pendingOrders.length
+            };
+        },
+        staleTime: 1000 * 60 * 2, // 2 minutes
+    });
+
+    useEffect(() => {
+        if (!user?.company_id || user.role !== 'finance') return;
+
+        const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['finance_stats'] }));
+        const channel2 = subscribeToTable('cash_deposits', () => queryClient.invalidateQueries({ queryKey: ['finance_stats'] }));
+
+        return () => {
+            unsubscribe(channel1);
+            unsubscribe(channel2);
+        };
+    }, [user?.company_id, user?.role, queryClient]);
+
+    return query;
+}

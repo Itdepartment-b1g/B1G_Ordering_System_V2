@@ -445,6 +445,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
+    console.group('🚪 [AuthContext] Logout initiated');
+    console.trace('Logout caller trace');
+    console.groupEnd();
     try {
       // Set flag FIRST to prevent any auth state changes from restoring session
       localStorage.setItem('just_logged_out', 'true');

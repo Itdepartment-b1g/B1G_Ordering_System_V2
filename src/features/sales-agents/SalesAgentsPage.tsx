@@ -94,7 +94,8 @@ export default function SalesAgentsPage() {
     region: '',
     cities: [] as string[],
     status: 'active' as 'active' | 'inactive',
-    position: '' as 'Leader' | 'Mobile Sales' | 'Hermanos Sales Agent' | ''
+    position: '' as 'Leader' | 'Mobile Sales' | 'Hermanos Sales Agent' | '',
+    role: 'sales_agent' as 'sales_agent' | 'team_leader' | 'manager' | 'admin' | 'finance'
   });
 
   // Delete Confirmation States
@@ -131,7 +132,8 @@ export default function SalesAgentsPage() {
     phone: '',
     region: '',
     cities: [] as string[],
-    position: '' as 'Leader' | 'Mobile Sales' | 'Hermanos Sales Agent' | ''
+    position: '' as 'Leader' | 'Mobile Sales' | 'Hermanos Sales Agent' | '',
+    role: 'sales_agent' as 'sales_agent' | 'team_leader' | 'manager' | 'admin' | 'finance'
   });
 
   // City input state for adding cities
@@ -345,7 +347,8 @@ export default function SalesAgentsPage() {
       region: agent.region,
       cities: agent.cities,
       status: agent.status,
-      position: agent.position || ''
+      position: agent.position || '',
+      role: agent.role || 'sales_agent'
     });
     setEditDialogOpen(true);
   };
@@ -419,9 +422,14 @@ export default function SalesAgentsPage() {
         authUpdates.email = trimmedEmail;
         needsAuthUpdate = true;
       }
+      if (editForm.role !== editingAgent.role) {
+        authUpdates.role = editForm.role;
+        needsAuthUpdate = true;
+      }
 
       if (needsAuthUpdate) {
-        authUpdates.role = editingAgent.role || 'sales_agent';
+        // Ensure role is explicitly set for the update payload
+        authUpdates.role = editForm.role || 'sales_agent';
         const { data: authData, error: authError } = await supabase.functions.invoke('update-agent-auth', {
           body: authUpdates
         });
@@ -449,6 +457,7 @@ export default function SalesAgentsPage() {
           region: editForm.region || null,
           city: cityValue,
           status: editForm.status,
+          role: editForm.role,
           position: editForm.position || null,
         } as any)
         .eq('id', editingAgent.id);
@@ -901,7 +910,8 @@ export default function SalesAgentsPage() {
                         phone: newAgent.phone || null,
                         region: newAgent.region || null,
                         city: cityValue,
-                        role: 'sales_agent',
+
+                        role: newAgent.role || 'sales_agent',
                         status: 'active',
                         position: newAgent.position || null,
                       } as any);
@@ -909,7 +919,7 @@ export default function SalesAgentsPage() {
 
                     toast({ title: 'Agent Created', description: 'Login password set to Agent@123' });
                     setAddDialogOpen(false);
-                    setNewAgent({ name: '', email: '', phone: '', region: '', cities: [], position: '' });
+                    setNewAgent({ name: '', email: '', phone: '', region: '', cities: [], position: '', role: 'sales_agent' });
                     fetchAgents();
                   } catch (e: any) {
                     console.error('Create agent error:', e);
@@ -1058,7 +1068,8 @@ export default function SalesAgentsPage() {
                             region: agent.region || '',
                             cities: agent.cities || [],
                             status: (agent as any).status || 'active',
-                            position: agent.position || ''
+                            position: agent.position || '',
+                            role: agent.role || 'sales_agent'
                           });
                           setEditDialogOpen(true);
                         }}>Edit</Button>
@@ -1714,6 +1725,24 @@ export default function SalesAgentsPage() {
                       <SelectItem value="Mobile Sales">Mobile Sales</SelectItem>
                       <SelectItem value="Leader">Leader</SelectItem>
                       <SelectItem value="Hermanos Sales Agent">Hermanos Sales Agent</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Role</Label>
+                  <Select
+                    value={editForm.role}
+                    onValueChange={(value) => setEditForm({ ...editForm, role: value as any })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="sales_agent">Sales Agent</SelectItem>
+                      <SelectItem value="team_leader">Team Leader</SelectItem>
+                      <SelectItem value="manager">Manager</SelectItem>
+                      <SelectItem value="finance">Finance</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

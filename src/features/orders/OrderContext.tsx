@@ -219,7 +219,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         const hasBankDetails = cashDeposit?.bank_account && 
                               cashDeposit.bank_account !== 'Cash Remittance' &&
                               cashDeposit.bank_account.trim() !== '';
-        
+
         return {
           id: order.id,
           orderNumber: order.order_number,
@@ -282,7 +282,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           // Refetch orders when any change occurs
           // Use a small delay to ensure all related data (items, etc.) is committed
           setTimeout(() => {
-            fetchOrders();
+          fetchOrders();
           }, 100);
         }
       )
@@ -313,7 +313,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           // When deposit is recorded/updated, refetch orders to update deposit info
           // This allows finance to see when a deposit becomes approvable
           setTimeout(() => {
-            fetchOrders();
+          fetchOrders();
           }, 100);
         }
       )
@@ -363,16 +363,16 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         generatedOrderNumber = preGeneratedOrderNumber;
         console.log('🔢 Using pre-generated order number:', generatedOrderNumber);
       } else {
-        const { data: orderNumberData, error: numberError } = await supabase
-          .rpc('generate_order_number');
+      const { data: orderNumberData, error: numberError } = await supabase
+        .rpc('generate_order_number');
 
-        if (numberError) {
-          console.error('Error generating order number:', numberError);
-          throw numberError;
-        }
+      if (numberError) {
+        console.error('Error generating order number:', numberError);
+        throw numberError;
+      }
 
         generatedOrderNumber = orderNumberData as string;
-        console.log('🔢 Generated order number:', generatedOrderNumber);
+      console.log('🔢 Generated order number:', generatedOrderNumber);
       }
 
       // 3. Insert into client_orders table

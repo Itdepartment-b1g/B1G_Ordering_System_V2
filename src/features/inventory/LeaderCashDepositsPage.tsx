@@ -31,6 +31,7 @@ interface CashDeposit {
   referenceNumber: string;
   status: string;
   agentName: string;
+  depositSlipUrl?: string;
 }
 
 const BANK_OPTIONS = [
@@ -56,6 +57,10 @@ export default function LeaderCashDepositsPage() {
   const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // View Details Modal State
+  const [viewDepositDialogOpen, setViewDepositDialogOpen] = useState(false);
+  const [selectedDepositToView, setSelectedDepositToView] = useState<CashDeposit | null>(null);
+
   // Camera State
   const [showCamera, setShowCamera] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -63,7 +68,7 @@ export default function LeaderCashDepositsPage() {
 
   // Initial Fetch & Realtime
   useEffect(() => {
-    if (!user?.id || !['team_leader', 'super_admin', 'system_administrator'].includes(user.role)) return;
+    if (!user?.id || !['team_leader', 'super_admin', 'system_administrator', 'finance'].includes(user.role)) return;
 
     // Initial fetch
     fetchData();
@@ -125,7 +130,7 @@ export default function LeaderCashDepositsPage() {
       let query = supabase
         .from('cash_deposits')
         .select(`
-          id, deposit_date, amount, bank_account, reference_number, status,
+          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url,
           agent:profiles!cash_deposits_agent_id_fkey(full_name)
         `)
         .order('created_at', { ascending: false });
@@ -140,7 +145,8 @@ export default function LeaderCashDepositsPage() {
         bankAccount: d.bank_account,
         referenceNumber: d.reference_number,
         status: d.status,
-        agentName: d.agent?.full_name || 'Unknown'
+        agentName: d.agent?.full_name || 'Unknown',
+        depositSlipUrl: d.deposit_slip_url
       }));
 
       // Separate pending and verified deposits
@@ -164,17 +170,17 @@ export default function LeaderCashDepositsPage() {
 
   const startCamera = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
       });
       setStream(mediaStream);
       setShowCamera(true);
     } catch (error) {
       console.error('Error accessing camera:', error);
-      toast({ 
-        title: 'Camera Error', 
-        description: 'Unable to access camera', 
-        variant: 'destructive' 
+      toast({
+        title: 'Camera Error',
+        description: 'Unable to access camera',
+        variant: 'destructive'
       });
     }
   };
@@ -291,7 +297,7 @@ export default function LeaderCashDepositsPage() {
           <h1 className="text-3xl font-bold tracking-tight">Team Cash Deposits</h1>
           <p className="text-muted-foreground">Record cash deposits from agent remittances.</p>
         </div>
-        <Button variant="outline" size="icon" onClick={fetchData} title="Refresh">
+        <Button variant="outline" size="icon" onClick={() => fetchData(true)} title="Refresh">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
         </Button>
       </div>
@@ -333,9 +339,13 @@ export default function LeaderCashDepositsPage() {
                     <TableCell className="font-mono text-xs">{deposit.referenceNumber || '-'}</TableCell>
                     <TableCell className="text-right font-bold text-lg">₱{deposit.amount.toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      {!deposit.referenceNumber || deposit.referenceNumber.startsWith('REMIT-') ? (
-                        <Button 
-                          size="sm" 
+                      {['finance', 'manager'].includes(user?.role || '') ? (
+                        <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-200">
+                          View Only
+                        </Badge>
+                      ) : !deposit.referenceNumber || deposit.referenceNumber.startsWith('REMIT-') ? (
+                        <Button
+                          size="sm"
                           onClick={() => handleOpenDepositModal(deposit)}
                           className="bg-emerald-600 hover:bg-emerald-700"
                         >
@@ -376,6 +386,7 @@ export default function LeaderCashDepositsPage() {
                   <TableHead>Ref Number</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead className="text-right">Status</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -390,6 +401,18 @@ export default function LeaderCashDepositsPage() {
                       <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
                         <CheckCircle2 className="h-3 w-3 mr-1" /> Verified
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedDepositToView(deposit);
+                          setViewDepositDialogOpen(true);
+                        }}
+                      >
+                        View Details
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -462,7 +485,7 @@ export default function LeaderCashDepositsPage() {
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Deposit Slip Photo</label>
-              
+
               {/* Show camera feed or photo options */}
               {showCamera ? (
                 <div className="space-y-3">
@@ -546,23 +569,107 @@ export default function LeaderCashDepositsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={() => {
                 setDepositDialogOpen(false);
                 stopCamera();
-              }} 
+              }}
               disabled={submitting}
             >
               Cancel
             </Button>
-            <Button 
-              onClick={handleSubmitDeposit} 
-              disabled={submitting || !bankAccount || !depositSlipFile} 
+            <Button
+              onClick={handleSubmitDeposit}
+              disabled={submitting || !bankAccount || !depositSlipFile}
               className="bg-emerald-600 hover:bg-emerald-700"
             >
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Confirm Deposit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Deposit Details Modal */}
+      <Dialog open={viewDepositDialogOpen} onOpenChange={setViewDepositDialogOpen}>
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Deposit Details</DialogTitle>
+            <DialogDescription>
+              Verified deposit information.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedDepositToView && (
+            <div className="space-y-4 py-4">
+              <div className="p-4 bg-gray-50 rounded-lg flex justify-between items-center border border-gray-100">
+                <span className="text-gray-600 font-medium">Amount:</span>
+                <span className="text-2xl font-bold text-gray-900">
+                  ₱{selectedDepositToView.amount.toLocaleString()}
+                </span>
+              </div>
+
+              <div className="space-y-3 text-sm">
+                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                  <span className="text-muted-foreground">Status</span>
+                  <span className="col-span-2 flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    <span className="font-medium text-emerald-700">Verified</span>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                  <span className="text-muted-foreground">Date</span>
+                  <span className="col-span-2 font-medium">
+                    {format(new Date(selectedDepositToView.depositDate), 'MMMM dd, yyyy')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                  <span className="text-muted-foreground">Agent</span>
+                  <span className="col-span-2 font-medium">{selectedDepositToView.agentName}</span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                  <span className="text-muted-foreground">Bank</span>
+                  <span className="col-span-2 font-medium">{selectedDepositToView.bankAccount}</span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                  <span className="text-muted-foreground">Ref Number</span>
+                  <span className="col-span-2 font-mono">{selectedDepositToView.referenceNumber}</span>
+                </div>
+              </div>
+
+              {selectedDepositToView.depositSlipUrl && (
+                <div className="mt-4">
+                  <h4 className="text-sm font-medium mb-2">Deposit Slip</h4>
+                  <div className="border rounded-lg overflow-hidden bg-gray-50">
+                    <img
+                      src={selectedDepositToView.depositSlipUrl}
+                      alt="Deposit Slip"
+                      className="w-full h-auto object-contain max-h-[300px]"
+                    />
+                  </div>
+                  <div className="mt-2 text-center">
+                    <a
+                      href={selectedDepositToView.depositSlipUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      View Full Image
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewDepositDialogOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

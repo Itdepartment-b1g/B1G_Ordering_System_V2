@@ -8,6 +8,7 @@ import {
   ShoppingCart,
   DollarSign,
   UserCircle,
+  BanknoteIcon,
   ShoppingBag,
   LogOut,
   ChevronRight,
@@ -87,7 +88,16 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Voided Clients', url: '/voided-clients', icon: Archive },
     ]
   },
-  { title: 'Order List', url: '/orders', icon: ShoppingCart },
+  {
+    title: 'Finance',
+    url: '/finance-section',
+    icon: DollarSign,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Finance Page', url: '/finance', icon: DollarSign },
+    ]
+  },
   {
     title: 'Procurement',
     url: '/purchase-order-management',
@@ -100,7 +110,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Suppliers', url: '/suppliers', icon: Building2 },
     ]
   },
-  { title: 'Finance', url: '/finance', icon: DollarSign },
+
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'System History', url: '/system-history', icon: History },
@@ -162,6 +172,42 @@ const systemAdminMenuItems: MenuItem[] = [
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
+const managerMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
+  { title: 'Team Management', url: '/team-management', icon: Crown },
+  {
+    title: 'Inventory',
+    url: '/inventory',
+    icon: Package,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'My Inventory', url: '/my-inventory', icon: Package },
+      { title: 'Teams Inventory', url: '/leader-inventory', icon: Crown },
+      { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
+      { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
+    ]
+  },
+  { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
+const financeMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
+  {
+    title: 'Finance',
+    url: '/finance-section',
+    icon: DollarSign,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Finance Page', url: '/finance', icon: DollarSign },
+      { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+    ]
+  },
+  { title: 'System History', url: '/system-history', icon: History },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
 // Super Admin menu - has access to ALL pages
 const superAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/super-admin-dashboard', icon: LayoutDashboard },
@@ -201,7 +247,16 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Voided Clients', url: '/voided-clients', icon: Archive },
     ]
   },
-  { title: 'Order List', url: '/orders', icon: ShoppingCart },
+  {
+    title: 'Finance',
+    url: '/finance-section',
+    icon: DollarSign,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Finance Page', url: '/finance', icon: DollarSign },
+    ]
+  },
   {
     title: 'Procurement',
     url: '/purchase-order-management',
@@ -214,7 +269,6 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Suppliers', url: '/suppliers', icon: Building2 },
     ]
   },
-  { title: 'Finance', url: '/finance', icon: DollarSign },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   {
@@ -283,10 +337,12 @@ export function AppSidebar() {
       baseMenuItems = superAdminMenuItems;
     } else if (user?.role === 'admin') {
       baseMenuItems = adminMenuItems;
+    } else if (user?.role === 'manager') {
+      baseMenuItems = managerMenuItems;
     } else if (user?.role === 'team_leader') {
       baseMenuItems = leaderMenuItems;
     } else if (user?.role === 'finance') {
-      baseMenuItems = adminMenuItems; // Finance gets access to similar tools as admin but restricted by backend/permissions
+      baseMenuItems = financeMenuItems;
     } else if (user?.role === 'mobile_sales') {
       baseMenuItems = agentMenuItems;
     } else {

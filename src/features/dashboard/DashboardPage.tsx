@@ -23,6 +23,7 @@ import {
   useTopPerformers,
   useRecentActivity
 } from './dashboardHooks';
+import { FinanceDashboard } from './FinanceDashboard';
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -30,6 +31,7 @@ export default function DashboardPage() {
   const isAdmin = user?.role === 'admin';
   const isLeader = user?.role === 'team_leader';
   const isAgent = user?.role === 'sales_agent';
+  const isFinance = user?.role === 'finance';
 
   // Redirect logic
   useEffect(() => {
@@ -168,7 +170,7 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">Welcome back, {user?.full_name || user?.email || 'User'}!</h1>
         <p className="text-sm md:text-base text-muted-foreground mt-1">
-          {isAdmin ? 'Overview of your sales operations' : isLeader ? 'Your team performance overview' : 'Your sales performance overview'}
+          {isAdmin ? 'Overview of your sales operations' : isLeader ? 'Your team performance overview' : isFinance ? 'Financial overview and pending approvals' : 'Your sales performance overview'}
         </p>
       </div>
 
@@ -540,6 +542,8 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         </>
+      ) : isFinance ? (
+        <FinanceDashboard />
       ) : (
         <>
           {/* Agent Stats */}
@@ -688,6 +692,7 @@ export default function DashboardPage() {
           </Card>
         </>
       )}
+
     </div>
   );
 }
