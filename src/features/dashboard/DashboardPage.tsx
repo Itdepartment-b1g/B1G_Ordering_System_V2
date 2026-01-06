@@ -87,7 +87,7 @@ export default function DashboardPage() {
   } = agentStats || {};
 
   const {
-    topPerformingAgents = [],
+    topAgents: topPerformingAgents = [],
     topFlavors = []
   } = performersData || {};
 
