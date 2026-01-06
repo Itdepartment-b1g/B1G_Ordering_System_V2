@@ -211,18 +211,19 @@ PAGE: MyInventoryPage (Agent)
 FUNCTIONS:
 ----------
 
-1. REMIT INVENTORY TO LEADER
+1. REMIT CASH SALES TO LEADER
    Function: remit_inventory_to_leader RPC
    Notification Type: inventory_remitted
    Recipients:
-     - The team leader receiving remittance
+     - The team leader receiving cash remittance
      - The agent (confirmation)
      - super_admin (if exists)
      - admin (if exists)
    Message Format:
-     - To leader: "{agent_name} has remitted {quantity} units of {brand_name} - {variant_name} to you"
-     - To agent: "You have successfully remitted {quantity} units of {brand_name} - {variant_name} to {leader_name}"
-     - To super_admin/admin: "{agent_name} has remitted {quantity} units of {brand_name} - {variant_name} to {leader_name}"
+     - To leader: "{agent_name} has remitted cash proceeds from today's sales (₱{total_amount})"
+     - To agent: "You have successfully remitted cash proceeds (₱{total_amount}) to {leader_name}. Your unsold inventory stays with you."
+     - To super_admin/admin: "{agent_name} has remitted cash proceeds (₱{total_amount}) to {leader_name}"
+   Note: Unsold inventory is NO LONGER transferred during remittance
 
 
 PAGE: RemittedStocksPage

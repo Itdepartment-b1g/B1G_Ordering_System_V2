@@ -775,7 +775,7 @@ export default function MyOrdersPage() {
         id: Date.now().toString(),
         orderNumber: generatedOrderNumber, // Use pre-generated order number
         agentId: user.id,
-        agentName: user.name,
+        agentName: user.full_name || user.email || 'Unknown',
         clientId: selectedClientId,
         clientName: clientName,
         date: orderDate,
@@ -874,7 +874,7 @@ export default function MyOrdersPage() {
           total: calculateTotal(),
           notes: notes || undefined,
           signatureUrl: signatureUrl || undefined,
-          agentName: user.name,
+          agentName: user.full_name || user.email || 'Unknown',
           agentEmail: user.email,
           agentPhone: agentPhone,
           leaderName: leaderName,
@@ -999,7 +999,7 @@ export default function MyOrdersPage() {
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
-                        placeholder="Search clients by name, company, or email..."
+                        placeholder="Search clients by name, shop name, or email..."
                         value={clientSearchQuery}
                         onChange={(e) => setClientSearchQuery(e.target.value)}
                         className="pl-10 pr-10"
@@ -1122,7 +1122,7 @@ export default function MyOrdersPage() {
                 )}
 
                 <p className="text-xs text-muted-foreground">
-                  Search by name, company, or email to quickly find your client
+                  Search by name, shop name, or email to quickly find your client
                 </p>
               </div>
 
@@ -2361,7 +2361,7 @@ export default function MyOrdersPage() {
                 </div>
                 {clientCompany && (
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Company:</span>
+                    <span className="text-muted-foreground">Shop Name:</span>
                     <span className="font-medium">{clientCompany}</span>
                   </div>
                 )}

@@ -55,58 +55,12 @@ BEGIN
     RETURN json_build_object('success', false, 'message', 'Invalid leader or company mismatch');
   END IF;
 
-  -- 3. PROCESS UNSOLD INVENTORY (Transfer Agent -> Leader)
-  -- Loop through all items currently in agent's inventory with stock > 0
-  FOR v_item IN 
-    SELECT * FROM agent_inventory 
-    WHERE agent_id = p_agent_id 
-    AND company_id = v_company_id 
-    AND stock > 0
-  LOOP
-    -- A. Update Leader's Inventory (Add Stock)
-    SELECT id INTO v_leader_inventory_id
-    FROM agent_inventory
-    WHERE agent_id = p_leader_id
-    AND variant_id = v_item.variant_id
-    AND company_id = v_company_id;
-
-    IF v_leader_inventory_id IS NOT NULL THEN
-      -- Update existing leader inventory
-      UPDATE agent_inventory
-      SET stock = stock + v_item.stock,
-          updated_at = NOW()
-      WHERE id = v_leader_inventory_id;
-    ELSE
-      -- Insert new leader inventory record (copying pricing from agent's record or defaults)
-      INSERT INTO agent_inventory (
-        company_id, agent_id, variant_id, stock, 
-        allocated_price, dsp_price, rsp_price, status
-      ) VALUES (
-        v_company_id, p_leader_id, v_item.variant_id, v_item.stock,
-        v_item.allocated_price, v_item.dsp_price, v_item.rsp_price, 'available'
-      );
-    END IF;
-
-    -- B. Log the Transaction
-    INSERT INTO inventory_transactions (
-      company_id, variant_id, transaction_type, quantity,
-      from_location, to_location, performed_by, notes
-    ) VALUES (
-      v_company_id, v_item.variant_id, 'return', v_item.stock,
-      'agent_inventory', 'leader_inventory', p_performed_by,
-      'Remittance: Unsold inventory returned to leader'
-    );
-
-    -- C. Clear Agent's Inventory
-    UPDATE agent_inventory
-    SET stock = 0, updated_at = NOW()
-    WHERE id = v_item.id;
-
-    -- D. Track Stats
-    v_items_remitted := v_items_remitted + 1; -- Count of distinct variants
-    v_total_units_remitted := v_total_units_remitted + v_item.stock; -- Count of total units
-
-  END LOOP;
+  -- 3. UNSOLD INVENTORY - NO LONGER TRANSFERRED
+  -- NEW BEHAVIOR: Agents keep their unsold inventory for the next day
+  -- Only CASH order proceeds are remitted to the leader
+  -- This section is intentionally left empty as inventory stays with agent
+  v_items_remitted := 0;
+  v_total_units_remitted := 0;
 
   -- 4. PROCESS SOLD INVENTORY (Orders)
   -- Calculate revenue and mark as remitted
@@ -224,10 +178,12 @@ BEGIN
 
   RETURN json_build_object(
     'success', true, 
-    'message', 'Remittance processed successfully',
+    'message', 'Cash remittance processed successfully. Your unsold inventory carries over to tomorrow.',
     'remittance_id', v_remittance_id,
-    'units_returned', v_total_units_remitted,
-    'revenue_recorded', v_total_revenue
+    'cash_orders_count', COALESCE(array_length(v_cash_orders, 1), 0),
+    'cash_amount', v_cash_total,
+    'total_orders_count', v_orders_count,
+    'total_revenue', v_total_revenue
   );
 
 EXCEPTION

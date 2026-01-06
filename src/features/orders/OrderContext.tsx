@@ -8,7 +8,7 @@ export interface OrderItem {
   id: string;
   brandName: string;
   variantName: string;
-  variantType: 'flavor' | 'battery';
+  variantType: 'flavor' | 'battery' | 'posm';
   quantity: number;
   unitPrice: number;
   sellingPrice?: number;

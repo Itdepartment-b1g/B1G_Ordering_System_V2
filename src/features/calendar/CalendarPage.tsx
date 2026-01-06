@@ -1292,7 +1292,7 @@ export default function CalendarPage() {
                     </PopoverTrigger>
                     <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
                       <Command>
-                        <CommandInput placeholder="Search clients by name, company, or email..." />
+                        <CommandInput placeholder="Search clients by name, shop name, or email..." />
                         <CommandList>
                           <CommandEmpty>No clients found.</CommandEmpty>
                           <CommandGroup>
@@ -1333,7 +1333,7 @@ export default function CalendarPage() {
                     <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
                       <p className="font-semibold text-sm">{selectedClient.name}</p>
                       {selectedClient.company && (
-                        <p className="text-xs text-muted-foreground">Company: {selectedClient.company}</p>
+                        <p className="text-xs text-muted-foreground">Shop Name: {selectedClient.company}</p>
                       )}
                       {selectedClient.city && (
                         <p className="text-xs text-muted-foreground">📍 City: <span className="font-medium">{selectedClient.city}</span></p>

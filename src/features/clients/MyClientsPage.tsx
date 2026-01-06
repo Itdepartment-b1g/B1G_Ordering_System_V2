@@ -97,6 +97,57 @@ export default function MyClientsPage() {
 
   const { toast } = useToast();
 
+  // Real-time subscription for clients table
+  useEffect(() => {
+    if (!user?.id) return;
+
+    console.log('📡 Setting up real-time subscription for clients table');
+
+    const channel = supabase
+      .channel('clients-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
+          schema: 'public',
+          table: 'clients',
+          filter: `agent_id=eq.${user.id}` // Only listen to changes for this agent's clients
+        },
+        (payload) => {
+          console.log('📡 Real-time client change detected:', payload);
+          
+          // Invalidate and refetch clients data
+          queryClient.invalidateQueries({ queryKey: ['my_clients', user.id] });
+          
+          // Show toast notification based on event type
+          if (payload.eventType === 'INSERT') {
+            toast({
+              title: 'New Client Added',
+              description: 'A new client has been added to your list.',
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            toast({
+              title: 'Client Updated',
+              description: 'Client information has been updated.',
+            });
+          } else if (payload.eventType === 'DELETE') {
+            toast({
+              title: 'Client Removed',
+              description: 'A client has been removed from your list.',
+            });
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('📡 Clients subscription status:', status);
+      });
+
+    // Cleanup subscription on unmount
+    return () => {
+      console.log('📡 Cleaning up real-time subscription for clients table');
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, queryClient, toast]);
 
   const filteredClients = clients.filter(client =>
     client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1404,9 +1455,9 @@ export default function MyClientsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Company</Label>
+                <Label>Shop Name</Label>
                 <Input
-                  placeholder="Company name"
+                  placeholder="Shop name"
                   value={formData.company}
                   onChange={(e) => setFormData({ ...formData, company: e.target.value })}
                 />
@@ -1688,7 +1739,7 @@ export default function MyClientsPage() {
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
                   <TableHead className="text-center">Name</TableHead>
-                  <TableHead className="text-center">Company</TableHead>
+                  <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
                   <TableHead className="text-center">Total Orders</TableHead>
@@ -1822,7 +1873,7 @@ export default function MyClientsPage() {
                   <p className="font-semibold text-lg">{viewingClient.name}</p>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">Company</Label>
+                  <Label className="text-muted-foreground">Shop Name</Label>
                   <p className="font-semibold text-lg">{viewingClient.company || 'N/A'}</p>
                 </div>
                 <div className="space-y-2">
@@ -2072,9 +2123,9 @@ export default function MyClientsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Company</Label>
+                <Label>Shop Name</Label>
                 <Input
-                  placeholder="Company name"
+                  placeholder="Shop name"
                   value={editForm.company}
                   onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
                 />

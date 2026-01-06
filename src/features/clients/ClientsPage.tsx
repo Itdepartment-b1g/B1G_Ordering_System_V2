@@ -2194,9 +2194,9 @@ export default function ClientsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Company</Label>
+                  <Label>Shop Name</Label>
                   <Input
-                    placeholder="Company name"
+                    placeholder="Shop Name"
                     value={addForm.company}
                     onChange={(e) => setAddForm({ ...addForm, company: e.target.value })}
                   />
@@ -2433,7 +2433,7 @@ export default function ClientsPage() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search clients by name, email, company, or agent..."
+                  placeholder="Search clients by name, email, shop name, or agent..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
@@ -2560,7 +2560,7 @@ export default function ClientsPage() {
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
                   <TableHead className="text-center">Name</TableHead>
-                  <TableHead className="text-center">Company</TableHead>
+                  <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
                   <TableHead className="text-center">Agent</TableHead>
@@ -2821,9 +2821,9 @@ export default function ClientsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Company</Label>
+                <Label>Shop Name</Label>
                 <Input
-                  placeholder="Company name"
+                  placeholder="Shop name"
                   value={editForm.company}
                   onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
                 />
