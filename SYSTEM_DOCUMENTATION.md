@@ -139,7 +139,7 @@ The system is designed around a strict hierarchy to model real-world sales opera
 - **My Inventory**: You start your day with stock allocated by your Leader. You are responsible for these units.
 - **Sales Visits**: You visit **Clients**. If a client is new, you register them (capturing GPS and photo).
 - **Taking Orders**: You create orders for clients. Stock is deducted from your *personal* inventory immediately (or upon approval).
-- **End of Day**: You mark your delivered orders as "Paid" and submit a **Remittance** record to your Leader.
+- **End of Day**: You remit CASH sales proceeds to your Leader. **Your unsold inventory stays with you** and carries over to the next day. Stock accumulates over time - you receive new allocations from your leader as needed.
 
 ### 7.5 Finance
 **Purpose**: Audit and Reporting.

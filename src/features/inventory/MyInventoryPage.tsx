@@ -902,11 +902,11 @@ export default function MyInventory() {
       <Dialog open={remitDialogOpen} onOpenChange={setRemitDialogOpen}>
         <DialogContent className="w-[95vw] max-w-4xl h-[90vh] md:h-auto md:max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-4 pt-6 pb-4 md:px-6">
-            <DialogTitle className="text-lg md:text-xl">Remit Inventory to Leader/Manager</DialogTitle>
+            <DialogTitle className="text-lg md:text-xl">Remit Cash Sales to Leader/Manager</DialogTitle>
             <DialogDescription className="text-sm">
               {leaderName
-                ? `Return your unsold inventory to ${leaderName}${leaderRole === 'manager' ? ' (Manager)' : leaderRole === 'team_leader' ? ' (Team Leader)' : ''}. Sold orders are shown for reporting only.`
-                : 'Return your unsold inventory to your leader/manager. Sold orders are shown for reporting only.'}
+                ? `Remit CASH sales proceeds to ${leaderName}${leaderRole === 'manager' ? ' (Manager)' : leaderRole === 'team_leader' ? ' (Team Leader)' : ''}. Your unsold inventory stays with you for the next day.`
+                : 'Remit CASH sales proceeds to your leader/manager. Your unsold inventory stays with you for the next day.'}
             </DialogDescription>
             {!leaderId && (
               <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
@@ -915,17 +915,17 @@ export default function MyInventory() {
                 </p>
               </div>
             )}
-            {leaderId && !hasItemsToRemit && todayOrders.length === 0 && (
+            {leaderId && todayOrders.length === 0 && (
               <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm text-blue-800">
-                  ℹ️ You have no unsold inventory or sold orders to remit at this time.
+                  ℹ️ You have no CASH orders to remit today. Your unsold inventory carries over to tomorrow.
                 </p>
               </div>
             )}
-            {leaderId && !hasItemsToRemit && todayOrders.length > 0 && (
+            {leaderId && todayOrders.length > 0 && (
               <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
                 <p className="text-sm text-green-800">
-                  ✅ You can remit with just sold orders (no unsold inventory to return). Proceed to the Sold tab to confirm your orders.
+                  ✅ Remit your CASH sales proceeds. Your unsold inventory will carry over to tomorrow.
                 </p>
               </div>
             )}
@@ -936,7 +936,7 @@ export default function MyInventory() {
               <TabsList className="grid w-full grid-cols-4 gap-1 h-auto p-1">
                 <TabsTrigger value="unsold" className="flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 relative py-1.5 px-1 text-xs sm:text-sm min-w-0">
                   <Package className="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0" />
-                  <span className="text-[9px] sm:text-sm leading-tight truncate max-w-full">Unsold</span>
+                  <span className="text-[9px] sm:text-sm leading-tight truncate max-w-full">Current Stock</span>
                   {unsoldConfirmed && <CheckCircle2 className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-green-600 absolute top-0 right-0" />}
                 </TabsTrigger>
                 <TabsTrigger value="sold" className="flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1 relative py-1.5 px-1 text-xs sm:text-sm min-w-0">
@@ -1083,12 +1083,13 @@ export default function MyInventory() {
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
                   <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No unsold inventory to remit</p>
+                  <p className="text-sm">No inventory on hand</p>
+                  <p className="text-xs mt-1">Your inventory will show here when allocated by your leader</p>
                 </div>
               )}
 
               {/* Confirmation Checkbox */}
-              <div className="flex items-start space-x-2 p-3 md:p-4 bg-muted/30 rounded-lg border">
+              <div className="flex items-start space-x-2 p-3 md:p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <Checkbox
                   id="unsold-confirm"
                   checked={unsoldConfirmed}
@@ -1099,16 +1100,16 @@ export default function MyInventory() {
                   htmlFor="unsold-confirm"
                   className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                 >
-                  I have reviewed the unsold inventory items ({itemsToRemit.length} items, {totalRemitQuantity} units)
+                  ℹ️ I acknowledge my current inventory ({itemsToRemit.length} items, {totalRemitQuantity} units) will carry over to tomorrow and stay with me
                 </label>
               </div>
             </TabsContent>
 
             {/* Sold Orders Tab */}
             <TabsContent value="sold" className="flex-1 overflow-y-auto px-4 md:px-6 space-y-3 md:space-y-4 mt-2">
-              <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-xs md:text-sm text-blue-800">
-                  ℹ️ <strong>For reporting only:</strong> These sold orders are shown for tracking purposes. Only unsold inventory will be returned to your leader/manager.
+              <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-xs md:text-sm text-amber-900">
+                  💰 <strong>CASH Orders:</strong> Cash sales shown here will be remitted to your leader. Bank transfer orders are already processed through finance verification.
                 </p>
               </div>
               {loadingOrders ? (
@@ -1305,8 +1306,8 @@ export default function MyInventory() {
                     ⚠️ Review required sections
                   </p>
                   <ul className="text-[10px] md:text-sm text-yellow-700 space-y-0.5 ml-3">
-                    {!unsoldConfirmed && <li>• Confirm unsold inventory (required)</li>}
-                    {todayOrders.length > 0 && !soldConfirmed && <li>• Review sold orders (optional, for reporting)</li>}
+                    {!unsoldConfirmed && <li>• Confirm current inventory (required)</li>}
+                    {todayOrders.length > 0 && !soldConfirmed && <li>• Review CASH orders for remittance (optional)</li>}
                     {!signatureConfirmed && <li>• Add signature (required)</li>}
                   </ul>
                 </div>
@@ -1314,13 +1315,13 @@ export default function MyInventory() {
 
               {/* Summary Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 md:gap-4">
-                {/* Unsold Inventory Summary */}
-                <Card className={unsoldConfirmed ? 'border-green-200 bg-green-50' : 'border-gray-200'}>
+                {/* Inventory Retained Summary */}
+                <Card className={unsoldConfirmed ? 'border-blue-200 bg-blue-50' : 'border-gray-200'}>
                   <CardHeader className="pb-1.5 px-3 pt-3 md:pb-3 md:px-6 md:pt-6">
                     <div className="flex items-center justify-between gap-1.5">
                       <div className="flex items-center gap-1.5 min-w-0 flex-1">
                         <Package className="h-3.5 w-3.5 md:h-5 md:w-5 flex-shrink-0" />
-                        <h3 className="font-semibold text-[11px] md:text-base truncate">Unsold</h3>
+                        <h3 className="font-semibold text-[11px] md:text-base truncate">Inventory Retained</h3>
                       </div>
                       {unsoldConfirmed ? (
                         <CheckCircle2 className="h-3.5 w-3.5 md:h-5 md:w-5 text-green-600 flex-shrink-0" />
@@ -1361,13 +1362,13 @@ export default function MyInventory() {
                   </CardContent>
                 </Card>
 
-                {/* Sold Orders Summary */}
+                {/* Cash Orders Summary */}
                 <Card className={soldConfirmed ? 'border-green-200 bg-green-50' : 'border-gray-200'}>
                   <CardHeader className="pb-1.5 px-3 pt-3 md:pb-3 md:px-6 md:pt-6">
                     <div className="flex items-center justify-between gap-1.5">
                       <div className="flex items-center gap-1.5 min-w-0 flex-1">
                         <ShoppingCart className="h-3.5 w-3.5 md:h-5 md:w-5 flex-shrink-0" />
-                        <h3 className="font-semibold text-[11px] md:text-base truncate">Sold</h3>
+                        <h3 className="font-semibold text-[11px] md:text-base truncate">Cash Sales</h3>
                       </div>
                       {soldConfirmed ? (
                         <CheckCircle2 className="h-3.5 w-3.5 md:h-5 md:w-5 text-green-600 flex-shrink-0" />
@@ -1449,10 +1450,10 @@ export default function MyInventory() {
                   <div className="border-t pt-2 md:pt-4">
                     <h4 className="font-semibold mb-1.5 text-[10px] md:text-sm">What happens:</h4>
                     <ul className="text-[9px] md:text-sm space-y-0.5 text-muted-foreground leading-tight">
-                      <li>✓ Unsold inventory returned to leader/manager</li>
-                      <li>✓ Your agent inventory stock cleared (set to 0)</li>
-                      <li>✓ Sold orders recorded for reporting (not returned)</li>
-                      <li>✓ Signature saved</li>
+                      <li>✓ Your unsold inventory stays with you (carries over to tomorrow)</li>
+                      <li>✓ CASH order proceeds remitted to leader/manager</li>
+                      <li>✓ Cash deposit record created for finance verification</li>
+                      <li>✓ Signature saved for audit trail</li>
                       <li>✓ Remittance record created</li>
                       <li>✓ Leader/manager notified</li>
                     </ul>
@@ -1470,7 +1471,7 @@ export default function MyInventory() {
                         Ready to submit
                       </p>
                       <p className="text-[9px] md:text-sm text-green-700 mt-0.5">
-                        Click "Confirm Remit" below. {hasItemsToRemit ? 'Unsold inventory will be returned.' : 'Only sold orders will be recorded.'}
+                        Click "Confirm Remit" below. Your unsold inventory ({totalRemitQuantity} units) will stay with you. Only CASH proceeds will be remitted.
                       </p>
                     </div>
                   </div>
@@ -1484,9 +1485,9 @@ export default function MyInventory() {
                         Cannot submit yet
                       </p>
                       <p className="text-[9px] md:text-sm text-red-700 mt-0.5">
-                        {!unsoldConfirmed && 'Confirm unsold inventory. '}
+                        {!unsoldConfirmed && 'Confirm current inventory. '}
                         {!signatureConfirmed && 'Add signature. '}
-                        {todayOrders.length > 0 && !soldConfirmed && 'Review sold orders (optional).'}
+                        {todayOrders.length > 0 && !soldConfirmed && 'Review CASH orders (optional).'}
                       </p>
                     </div>
                   </div>
@@ -1521,10 +1522,10 @@ export default function MyInventory() {
               {remitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Remitting...
+                  Processing...
                 </>
               ) : (
-                'Confirm Remit'
+                'Confirm Cash Remittance'
               )}
             </Button>
           </DialogFooter>

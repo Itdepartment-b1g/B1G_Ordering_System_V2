@@ -685,7 +685,7 @@ export default function OrdersPage() {
                       <>
                         <div>Email: {clientDetails?.email || '—'}</div>
                         <div>Phone: {clientDetails?.phone || '—'}</div>
-                        <div>Company: {clientDetails?.company || '—'}</div>
+                        <div>Shop Name: {clientDetails?.company || '—'}</div>
                         <div>Address: {clientDetails?.address || '—'}</div>
                       </>
                     )}
@@ -1128,7 +1128,7 @@ export default function OrdersPage() {
                     )}
                     {bulkClientDetails.company && (
                       <div>
-                        <span className="text-muted-foreground">Company:</span>{' '}
+                        <span className="text-muted-foreground">Shop Name:</span>{' '}
                         {bulkClientDetails.company}
                       </div>
                     )}

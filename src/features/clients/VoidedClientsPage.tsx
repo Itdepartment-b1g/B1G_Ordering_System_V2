@@ -513,7 +513,7 @@ export default function VoidedClientsPage() {
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
                   <TableHead className="text-center">Name</TableHead>
-                  <TableHead className="text-center">Company</TableHead>
+                  <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
                   <TableHead className="text-center">Agent</TableHead>
@@ -621,7 +621,7 @@ export default function VoidedClientsPage() {
                 )}
                 <div>
                   <h3 className="text-xl font-semibold">{viewingClient.name}</h3>
-                  <p className="text-muted-foreground">{viewingClient.company || 'No company'}</p>
+                  <p className="text-muted-foreground">{viewingClient.company || 'No shop name'}</p>
                   <Badge variant="destructive" className="mt-1">Voided</Badge>
                 </div>
               </div>

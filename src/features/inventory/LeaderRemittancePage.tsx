@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -236,75 +236,10 @@ export default function LeaderRemittancePage() {
   };
 
   const fetchUnsoldItems = async (remittance: RemittanceLog) => {
-    if (!remittance.agent_id || !remittance.remitted_at) {
-      setUnsoldItems([]);
-      return;
-    }
-
-    setLoadingUnsoldItems(true);
-    try {
-      // Fetch inventory transactions for this remittance
-      // The remit function creates transactions with type 'return' and notes 'Remittance: Unsold inventory returned to leader'
-      const remittanceDate = new Date(remittance.remitted_at);
-      const startTime = new Date(remittanceDate);
-      startTime.setSeconds(0, 0); // Start of the minute
-      const endTime = new Date(remittanceDate);
-      endTime.setMinutes(endTime.getMinutes() + 1); // End of the minute
-
-      const { data: transactions, error: transactionsError } = await supabase
-        .from('inventory_transactions')
-        .select(`
-          id,
-          variant_id,
-          quantity,
-          created_at,
-          variant:variants(
-            id,
-            name,
-            variant_type,
-            brand:brands(name)
-          )
-        `)
-        .eq('transaction_type', 'return')
-        .eq('from_location', 'agent_inventory')
-        .eq('to_location', 'leader_inventory')
-        .gte('created_at', startTime.toISOString())
-        .lte('created_at', endTime.toISOString())
-        .order('created_at', { ascending: true });
-
-      if (transactionsError) throw transactionsError;
-
-      // Group by variant and sum quantities (in case there are multiple transactions)
-      const itemsMap = new Map<string, any>();
-      
-      (transactions || []).forEach((transaction: any) => {
-        const variantId = transaction.variant_id;
-        if (itemsMap.has(variantId)) {
-          itemsMap.get(variantId).quantity += transaction.quantity;
-        } else {
-          itemsMap.set(variantId, {
-            variantId: variantId,
-            variantName: transaction.variant?.name || 'Unknown',
-            brandName: transaction.variant?.brand?.name || 'Unknown',
-            variantType: transaction.variant?.variant_type || 'unknown',
-            quantity: transaction.quantity
-          });
-        }
-      });
-
-      const formattedItems = Array.from(itemsMap.values());
-      setUnsoldItems(formattedItems);
-    } catch (error: any) {
-      console.error('Error fetching unsold items:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load unsold items',
-        variant: 'destructive'
-      });
-      setUnsoldItems([]);
-    } finally {
-      setLoadingUnsoldItems(false);
-    }
+    // NEW BEHAVIOR: Agents now keep their unsold inventory
+    // No inventory is transferred during remittance, so unsold items section shows informational message
+    setLoadingUnsoldItems(false);
+    setUnsoldItems([]);
   };
 
   // Helper to check for missing orders
@@ -530,7 +465,10 @@ export default function LeaderRemittancePage() {
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Remittance Details</DialogTitle>
+            <DialogTitle>Cash Remittance Details</DialogTitle>
+            <DialogDescription>
+              Showing CASH deposit details and orders remitted by the agent
+            </DialogDescription>
           </DialogHeader>
 
           {selectedRemittance && (
@@ -555,15 +493,12 @@ export default function LeaderRemittancePage() {
 
               {/* Tabs for Details */}
               <Tabs defaultValue="summary" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="summary">
                     📊 Summary
                   </TabsTrigger>
-                  <TabsTrigger value="unsold">
-                    📦 Unsold Items ({unsoldItems.length})
-                  </TabsTrigger>
                   <TabsTrigger value="orders">
-                    🛒 Sold Orders ({selectedRemittance.orders_count})
+                    💰 Cash Orders ({selectedRemittance.orders_count})
                   </TabsTrigger>
                   <TabsTrigger value="signature">
                     ✍️ Signature
@@ -573,43 +508,43 @@ export default function LeaderRemittancePage() {
                 {/* Summary Tab */}
                 <TabsContent value="summary" className="space-y-4">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <Card>
+                    <Card className="bg-blue-50 border-blue-200">
                       <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Items Returned</CardTitle>
+                        <CardTitle className="text-sm">Inventory Status</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-2xl font-bold">{selectedRemittance.items_remitted}</div>
-                        <p className="text-xs text-muted-foreground">Unique items</p>
+                        <div className="text-lg font-bold text-blue-700">Retained</div>
+                        <p className="text-xs text-blue-600">Agent keeps unsold stock</p>
                       </CardContent>
                     </Card>
 
-                    <Card>
+                    <Card className="bg-blue-50 border-blue-200">
                       <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Total Units</CardTitle>
+                        <CardTitle className="text-sm">New Policy</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-2xl font-bold">{selectedRemittance.total_units}</div>
-                        <p className="text-xs text-muted-foreground">Quantity</p>
+                        <div className="text-sm font-medium text-blue-700">Cash Only</div>
+                        <p className="text-xs text-blue-600">Only cash proceeds remitted</p>
                       </CardContent>
                     </Card>
 
-                    <Card>
+                    <Card className="bg-green-50 border-green-200">
                       <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Orders Sold</CardTitle>
+                        <CardTitle className="text-sm">Cash Orders</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-2xl font-bold">{selectedRemittance.orders_count}</div>
-                        <p className="text-xs text-muted-foreground">Completed</p>
+                        <div className="text-2xl font-bold text-green-700">{selectedRemittance.orders_count}</div>
+                        <p className="text-xs text-green-600">Transactions</p>
                       </CardContent>
                     </Card>
 
-                    <Card>
+                    <Card className="bg-green-50 border-green-200">
                       <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Revenue</CardTitle>
+                        <CardTitle className="text-sm">Cash Revenue</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="text-2xl font-bold">₱{selectedRemittance.total_revenue.toLocaleString()}</div>
-                        <p className="text-xs text-muted-foreground">Total</p>
+                        <div className="text-2xl font-bold text-green-700">₱{selectedRemittance.total_revenue.toLocaleString()}</div>
+                        <p className="text-xs text-green-600">To be deposited</p>
                       </CardContent>
                     </Card>
                   </div>
@@ -625,82 +560,6 @@ export default function LeaderRemittancePage() {
                   </div>
                 </TabsContent>
 
-                {/* Unsold Items Tab */}
-                <TabsContent value="unsold" className="space-y-4">
-                  {loadingUnsoldItems ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="h-8 w-8 animate-spin" />
-                    </div>
-                  ) : unsoldItems.length > 0 ? (
-                    <>
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-sm">Unsold Items Returned</CardTitle>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            These items were returned to your inventory as unsold stock
-                          </p>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="border rounded-lg max-h-96 overflow-y-auto">
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>Brand</TableHead>
-                                  <TableHead>Product</TableHead>
-                                  <TableHead>Type</TableHead>
-                                  <TableHead className="text-right">Quantity</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {unsoldItems.map((item, index) => (
-                                  <TableRow key={`${item.variantId}-${index}`}>
-                                    <TableCell className="font-medium">{item.brandName}</TableCell>
-                                    <TableCell>{item.variantName}</TableCell>
-                                    <TableCell>
-                                      <Badge 
-                                        variant="secondary"
-                                        className={
-                                          item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                          item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
-                                          item.variantType === 'posm' ? 'bg-purple-100 text-purple-700' :
-                                          ''
-                                        }
-                                      >
-                                        {item.variantType || 'unknown'}
-                                      </Badge>
-                                    </TableCell>
-                                    <TableCell className="text-right font-semibold">
-                                      {item.quantity} units
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </div>
-                        </CardContent>
-                      </Card>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="border rounded-lg p-4">
-                          <p className="text-sm text-muted-foreground">Total Items</p>
-                          <p className="text-2xl font-bold">{unsoldItems.length}</p>
-                        </div>
-                        <div className="border rounded-lg p-4">
-                          <p className="text-sm text-muted-foreground">Total Units</p>
-                          <p className="text-2xl font-bold">
-                            {unsoldItems.reduce((sum, item) => sum + item.quantity, 0)}
-                          </p>
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                      <p>No unsold items were returned in this remittance</p>
-                      <p className="text-sm mt-2">All inventory was sold or this remittance only includes sold orders.</p>
-                    </div>
-                  )}
-                </TabsContent>
 
                 {/* Orders Tab */}
                 <TabsContent value="orders" className="space-y-4">

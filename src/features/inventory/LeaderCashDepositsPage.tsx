@@ -291,7 +291,7 @@ export default function LeaderCashDepositsPage() {
           <h1 className="text-3xl font-bold tracking-tight">Team Cash Deposits</h1>
           <p className="text-muted-foreground">Record cash deposits from agent remittances.</p>
         </div>
-        <Button variant="outline" size="icon" onClick={fetchData} title="Refresh">
+        <Button variant="outline" size="icon" onClick={() => fetchData()} title="Refresh">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
         </Button>
       </div>
