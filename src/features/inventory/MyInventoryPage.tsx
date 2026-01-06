@@ -262,7 +262,8 @@ export default function MyInventory() {
     }
   }, [todayOrders.length]);
 
-  // Fetch today's orders (not yet remitted)
+  // Fetch today's CASH orders (not yet remitted)
+  // Bank transfer orders go through finance verification separately
   const fetchTodayOrders = async () => {
     if (!user?.id) return;
 
@@ -271,7 +272,8 @@ export default function MyInventory() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Fetch today's orders that haven't been remitted
+      // Fetch today's CASH orders that haven't been remitted
+      // Bank transfer orders are handled through separate finance flow
       const { data, error } = await supabase
         .from('client_orders')
         .select(`
@@ -279,6 +281,7 @@ export default function MyInventory() {
           order_number,
           total_amount,
           status,
+          payment_method,
           created_at,
           clients(name),
           items:client_order_items(
@@ -291,6 +294,7 @@ export default function MyInventory() {
           )
         `)
         .eq('agent_id', user.id)
+        .eq('payment_method', 'CASH')  // CRITICAL: Only CASH orders for remittance
         .eq('remitted', false)  // Only non-remitted orders
         .gte('created_at', today.toISOString())
         .order('created_at', { ascending: false });
@@ -435,19 +439,7 @@ export default function MyInventory() {
       return;
     }
 
-    const itemsToRemit = getItemsToRemit();
-
-    // Allow remittance with just orders (no unsold inventory required)
-    // At minimum, agent must have confirmed unsold tab (even if empty) or have orders
-    if (itemsToRemit.length === 0 && todayOrders.length === 0) {
-      toast({
-        title: 'Nothing to remit',
-        description: 'You have no unsold inventory or sold orders to remit',
-        variant: 'destructive'
-      });
-      return;
-    }
-
+    // Validation: Ensure all required confirmations are in place
     if (!unsoldConfirmed) {
       toast({
         title: 'Please Confirm',
@@ -488,8 +480,10 @@ export default function MyInventory() {
       }
 
       toast({
-        title: 'Success!',
-        description: data.message || 'Unsold inventory remitted successfully',
+        title: 'Remittance Complete!',
+        description: todayOrders.length > 0 
+          ? `Cash remittance successful. ₱${todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} submitted to ${leaderName || 'your leader'}.`
+          : 'End of day process complete. Your inventory carries over to tomorrow.',
       });
 
       setRemitDialogOpen(false);
@@ -532,7 +526,7 @@ export default function MyInventory() {
           disabled={!canRemit}
           >
             <ArrowLeft className="h-4 w-4" />
-            Remit Inventory
+            End of Day Remittance
           {!leaderId && (
             <span className="ml-2 text-xs text-muted-foreground">(No leader assigned)</span>
         )}
@@ -902,30 +896,30 @@ export default function MyInventory() {
       <Dialog open={remitDialogOpen} onOpenChange={setRemitDialogOpen}>
         <DialogContent className="w-[95vw] max-w-4xl h-[90vh] md:h-auto md:max-h-[90vh] overflow-hidden flex flex-col p-0">
           <DialogHeader className="px-4 pt-6 pb-4 md:px-6">
-            <DialogTitle className="text-lg md:text-xl">Remit Cash Sales to Leader/Manager</DialogTitle>
+            <DialogTitle className="text-lg md:text-xl">End of Day Cash Remittance</DialogTitle>
             <DialogDescription className="text-sm">
               {leaderName
-                ? `Remit CASH sales proceeds to ${leaderName}${leaderRole === 'manager' ? ' (Manager)' : leaderRole === 'team_leader' ? ' (Team Leader)' : ''}. Your unsold inventory stays with you for the next day.`
-                : 'Remit CASH sales proceeds to your leader/manager. Your unsold inventory stays with you for the next day.'}
+                ? `Submit cash proceeds to ${leaderName}${leaderRole === 'manager' ? ' (Manager)' : leaderRole === 'team_leader' ? ' (Team Leader)' : ''}. Unsold inventory stays with you.`
+                : 'Submit cash proceeds to your leader/manager. Unsold inventory stays with you.'}
             </DialogDescription>
             {!leaderId && (
               <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                 <p className="text-sm text-yellow-800">
-                  ⚠️ You are not assigned to a leader/manager. Please contact your administrator to be assigned to a team.
+                  ⚠️ You are not assigned to a leader/manager. Please contact your administrator.
                 </p>
               </div>
             )}
             {leaderId && todayOrders.length === 0 && (
               <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm text-blue-800">
-                  ℹ️ You have no CASH orders to remit today. Your unsold inventory carries over to tomorrow.
+                  ℹ️ No cash sales today. Click confirm to complete end-of-day process.
                 </p>
               </div>
             )}
             {leaderId && todayOrders.length > 0 && (
               <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
                 <p className="text-sm text-green-800">
-                  ✅ Remit your CASH sales proceeds. Your unsold inventory will carry over to tomorrow.
+                  ✅ You have ₱{todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} in cash to remit from {todayOrders.length} order{todayOrders.length > 1 ? 's' : ''}.
                 </p>
               </div>
             )}
@@ -1100,7 +1094,7 @@ export default function MyInventory() {
                   htmlFor="unsold-confirm"
                   className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                 >
-                  ℹ️ I acknowledge my current inventory ({itemsToRemit.length} items, {totalRemitQuantity} units) will carry over to tomorrow and stay with me
+                  ✓ I acknowledge this inventory ({itemsToRemit.length} items, {totalRemitQuantity} units) stays with me and carries over to tomorrow
                 </label>
               </div>
             </TabsContent>
@@ -1109,7 +1103,7 @@ export default function MyInventory() {
             <TabsContent value="sold" className="flex-1 overflow-y-auto px-4 md:px-6 space-y-3 md:space-y-4 mt-2">
               <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                 <p className="text-xs md:text-sm text-amber-900">
-                  💰 <strong>CASH Orders:</strong> Cash sales shown here will be remitted to your leader. Bank transfer orders are already processed through finance verification.
+                  💰 <strong>Cash Sales Only:</strong> Only CASH orders are shown here. Bank transfer orders go through separate finance verification.
                 </p>
               </div>
               {loadingOrders ? (
@@ -1450,12 +1444,12 @@ export default function MyInventory() {
                   <div className="border-t pt-2 md:pt-4">
                     <h4 className="font-semibold mb-1.5 text-[10px] md:text-sm">What happens:</h4>
                     <ul className="text-[9px] md:text-sm space-y-0.5 text-muted-foreground leading-tight">
-                      <li>✓ Your unsold inventory stays with you (carries over to tomorrow)</li>
-                      <li>✓ CASH order proceeds remitted to leader/manager</li>
-                      <li>✓ Cash deposit record created for finance verification</li>
-                      <li>✓ Signature saved for audit trail</li>
-                      <li>✓ Remittance record created</li>
-                      <li>✓ Leader/manager notified</li>
+                      <li>✓ Unsold inventory stays with you (available tomorrow)</li>
+                      <li>✓ Cash proceeds handed to {leaderName || 'your leader'}</li>
+                      <li>✓ {todayOrders.length} order{todayOrders.length !== 1 ? 's' : ''} marked as remitted</li>
+                      <li>✓ Cash deposit record created (pending leader verification)</li>
+                      <li>✓ Digital signature captured for audit</li>
+                      <li>✓ {leaderName || 'Leader'} receives notification</li>
                     </ul>
                   </div>
                 </CardContent>
@@ -1468,26 +1462,29 @@ export default function MyInventory() {
                     <CheckCircle2 className="h-3.5 w-3.5 md:h-5 md:w-5 text-green-600 mt-0.5 flex-shrink-0" />
                     <div className="min-w-0 flex-1">
                       <p className="text-[10px] md:text-sm font-semibold text-green-800">
-                        Ready to submit
+                        Ready for remittance
                       </p>
                       <p className="text-[9px] md:text-sm text-green-700 mt-0.5">
-                        Click "Confirm Remit" below. Your unsold inventory ({totalRemitQuantity} units) will stay with you. Only CASH proceeds will be remitted.
+                        {todayOrders.length > 0 
+                          ? `Remitting ₱${todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} in cash. Your ${totalRemitQuantity} units of inventory stay with you.`
+                          : `No cash to remit today. Your ${totalRemitQuantity} units of inventory stay with you.`
+                        }
                       </p>
                     </div>
                   </div>
                 </div>
               ) : (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 md:p-4">
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2.5 md:p-4">
                   <div className="flex items-start gap-2">
-                    <div className="h-3.5 w-3.5 md:h-5 md:w-5 rounded-full border-2 border-red-400 mt-0.5 flex-shrink-0" />
+                    <div className="h-3.5 w-3.5 md:h-5 md:w-5 rounded-full border-2 border-yellow-600 mt-0.5 flex-shrink-0" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-[10px] md:text-sm font-semibold text-red-800">
-                        Cannot submit yet
+                      <p className="text-[10px] md:text-sm font-semibold text-yellow-800">
+                        Complete required steps
                       </p>
-                      <p className="text-[9px] md:text-sm text-red-700 mt-0.5">
-                        {!unsoldConfirmed && 'Confirm current inventory. '}
-                        {!signatureConfirmed && 'Add signature. '}
-                        {todayOrders.length > 0 && !soldConfirmed && 'Review CASH orders (optional).'}
+                      <p className="text-[9px] md:text-sm text-yellow-700 mt-0.5">
+                        {!unsoldConfirmed && 'Confirm inventory retention. '}
+                        {!signatureConfirmed && 'Add your signature. '}
+                        {todayOrders.length > 0 && !soldConfirmed && 'Review cash orders.'}
                       </p>
                     </div>
                   </div>
@@ -1513,8 +1510,7 @@ export default function MyInventory() {
                 !signatureDataUrl ||
                 !unsoldConfirmed ||
                 !signatureConfirmed ||
-                (todayOrders.length > 0 && !soldConfirmed) ||
-                (itemsToRemit.length === 0 && todayOrders.length === 0)
+                (todayOrders.length > 0 && !soldConfirmed)
               }
               variant="default"
               className="w-full sm:w-auto h-10 md:h-9 text-sm"
@@ -1525,7 +1521,7 @@ export default function MyInventory() {
                   Processing...
                 </>
               ) : (
-                'Confirm Cash Remittance'
+                todayOrders.length > 0 ? 'Complete Cash Remittance' : 'Complete End of Day'
               )}
             </Button>
           </DialogFooter>
