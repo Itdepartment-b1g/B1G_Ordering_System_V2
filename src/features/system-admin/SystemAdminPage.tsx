@@ -58,7 +58,7 @@ export default function SystemAdminPage() {
         try {
             const { data, error } = await supabase
                 .from('companies')
-                .select('id, company_name, company_email, super_admin_name, super_admin_email, status, created_at, updated_at')
+                .select('id, company_name, company_email, super_admin_name, super_admin_email, role, status, created_at, updated_at')
                 .order('created_at', { ascending: false });
 
             if (error) throw error;

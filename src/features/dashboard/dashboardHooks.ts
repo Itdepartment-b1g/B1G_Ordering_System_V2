@@ -386,7 +386,7 @@ export function useRecentActivity(page: number, itemsPerPage: number) {
             const [{ data: notifications, error }, { count }] = await Promise.all([
                 supabase
                     .from('notifications')
-                    .select('id, notification_type, title, is_read, created_at')
+                    .select('id, notification_type, title, message, is_read, created_at')
                     .eq('user_id', user.id)
                     .order('created_at', { ascending: false })
                     .range(offset, offset + itemsPerPage - 1),

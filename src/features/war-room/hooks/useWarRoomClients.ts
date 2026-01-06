@@ -45,8 +45,8 @@ export function useWarRoomClients() {
 
         if (fetchError) throw fetchError;
 
-        // Transform database clients to WarRoomClient format
-        const transformedClients: WarRoomClient[] = (data || []).map((client: Client) => {
+        // Transform database clients to WarRoomClient format 
+        const transformedClients: WarRoomClient[] = (data || []).map((client: any) => {
           // Extract city and region from address if available
           const addressParts = client.address?.split(',').map(s => s.trim()) || [];
           const city = addressParts.length > 1 ? addressParts[addressParts.length - 2] : 'Unknown';

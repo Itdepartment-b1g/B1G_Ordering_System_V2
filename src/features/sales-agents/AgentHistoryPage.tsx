@@ -32,7 +32,7 @@ type EventRow = {
   id: string;
   occurred_at: string;
   actor_id: string;
-  actor_role: 'admin' | 'leader' | 'sales_agent' | 'system';
+  actor_role: 'admin' | 'leader' | 'team_leader' | 'sales_agent' | 'mobile_sales' | 'system';
   performed_by: string;
   action: string;
   target_type: string;
@@ -106,7 +106,7 @@ export default function AgentHistoryPage() {
   const isInitialLoading = loading && events.length === 0;
 
   // Check if user is a leader
-  const isLeader = user?.role === 'sales_agent' && user?.position === 'Leader';
+  const isLeader = user?.role === 'team_leader';
 
   useEffect(() => {
     const load = async () => {
@@ -240,7 +240,7 @@ export default function AgentHistoryPage() {
         async (payload) => {
           // Ignore realtime events until initial load is complete to avoid UI flicker
           if (!initializedRef.current) return;
-          const newEvent = (payload as { new: EventRow }).new;
+          const newEvent = (payload as any).new as EventRow;
           const actorId = newEvent?.actor_id as string | null;
           const details = newEvent?.details || {};
           const targetLeaderId = details?.leader_id as string | undefined;
@@ -419,6 +419,8 @@ export default function AgentHistoryPage() {
     leader: 'bg-green-100 text-green-700',
     'sales agent': 'bg-blue-100 text-blue-700',
     sales_agent: 'bg-blue-100 text-blue-700',
+    mobile_sales: 'bg-blue-100 text-blue-700',
+    team_leader: 'bg-green-100 text-green-700',
     system: 'bg-gray-100 text-gray-700',
   };
 

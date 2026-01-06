@@ -51,7 +51,7 @@ export default function ManagementPortal() {
             setIsLoading(true);
             const { data, error } = await supabase
                 .from('companies')
-                .select('id, company_name, company_email, status, created_at, updated_at')
+                .select('id, company_name, company_email, super_admin_name, super_admin_email, role, status, created_at, updated_at')
                 .order('company_name');
 
             if (error) throw error;

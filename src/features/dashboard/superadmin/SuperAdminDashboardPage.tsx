@@ -33,7 +33,7 @@ export default function SuperAdminDashboardPage() {
       // Fetch users in the company
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, full_name, email, role, status, created_at')
+        .select('id, company_id, full_name, email, role, status, created_at, updated_at')
         .eq('company_id', user.company_id)
         .order('created_at', { ascending: false });
 

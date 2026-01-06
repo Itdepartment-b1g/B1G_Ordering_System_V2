@@ -21,7 +21,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       const { data: orders, error: ordersError } = await supabase
         .from('purchase_orders')
         .select(`
-          id, created_at, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
+          id, created_at, supplier_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
           suppliers (
             id,
             company_name,
@@ -62,7 +62,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             console.error('Error fetching items for order:', order.id, itemsError);
             return {
               ...order,
-              supplier: order.suppliers,
+              supplier: Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers,
               items: [],
             };
           }
@@ -80,7 +80,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
           return {
             ...order,
-            supplier: order.suppliers,
+            supplier: Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers,
             subtotal: parseFloat(order.subtotal),
             tax_rate: parseFloat(order.tax_rate),
             tax_amount: parseFloat(order.tax_amount),
