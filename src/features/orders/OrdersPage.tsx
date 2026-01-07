@@ -554,7 +554,7 @@ export default function OrdersPage() {
           <h1 className="text-3xl font-bold">Order Management</h1>
           <p className="text-muted-foreground">Review and approve purchase orders from sales agents</p>
         </div>
-        {isAdmin && (
+        {isFinance && (
           <Button onClick={handleOpenBulkApprove} className="gap-2">
             <CheckSquare className="h-4 w-4" />
             Bulk Approve Orders
@@ -828,7 +828,7 @@ export default function OrdersPage() {
                 </div>
               )}
 
-              {isAdmin && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (
+              {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (
                 <>
                   {/* Show warning if CASH order without deposit */}
                   {viewingOrder.paymentMethod === 'CASH' && !viewingOrder.depositId && (
