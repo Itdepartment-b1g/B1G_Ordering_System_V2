@@ -19,7 +19,8 @@ import {
   CheckCircle2,
   Filter,
   Camera,
-  X
+  X,
+  Eye
 } from 'lucide-react';
 
 // Interfaces
@@ -339,7 +340,19 @@ export default function LeaderCashDepositsPage() {
                     <TableCell className="font-mono text-xs">{deposit.referenceNumber || '-'}</TableCell>
                     <TableCell className="text-right font-bold text-lg">₱{deposit.amount.toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      {['finance', 'manager'].includes(user?.role || '') ? (
+                      {['finance', 'super_admin', 'admin'].includes(user?.role || '') ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedDepositToView(deposit);
+                            setViewDepositDialogOpen(true);
+                          }}
+                        >
+                          <Eye className="h-4 w-4 mr-1" />
+                          View Details
+                        </Button>
+                      ) : ['manager'].includes(user?.role || '') ? (
                         <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-200">
                           View Only
                         </Badge>

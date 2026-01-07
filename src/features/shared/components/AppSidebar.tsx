@@ -74,7 +74,6 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
-      { title: 'Remitted Stocks', url: '/inventory/remitted-stocks', icon: ArrowLeft },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
     ]
   },
@@ -97,6 +96,7 @@ const adminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
+      { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
     ]
   },
   {
@@ -231,9 +231,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Clock },
-      { title: 'Remitted Stocks', url: '/inventory/remitted-stocks', icon: ArrowLeft },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
-      { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
     ]
   },
   {
@@ -255,6 +253,7 @@ const superAdminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
+      { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
     ]
   },
   {
