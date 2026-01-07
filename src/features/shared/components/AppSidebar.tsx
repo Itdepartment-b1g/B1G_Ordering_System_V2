@@ -75,6 +75,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'Remitted Stocks', url: '/inventory/remitted-stocks', icon: ArrowLeft },
+      { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
     ]
   },
   {
@@ -231,7 +232,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Clock },
       { title: 'Remitted Stocks', url: '/inventory/remitted-stocks', icon: ArrowLeft },
-      { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
+      { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
     ]
   },

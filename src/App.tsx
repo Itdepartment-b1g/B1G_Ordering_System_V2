@@ -11,7 +11,7 @@ import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOr
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, LeaderRemittancePage, LeaderCashDepositsPage, RequestInventoryPage, PendingRequestsPage, AdminRequestsPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, RequestInventoryPage, PendingRequestsPage, AdminRequestsPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import { ClientsPage, MyClientsPage, PendingClientsPage } from "@/features/clients";
 import { AnalyticsPage } from "@/features/analytics";
 import VoidedClientsPage from "@/features/clients/VoidedClientsPage";
@@ -57,6 +57,7 @@ const App = () => (
                     <Route path="/inventory/main" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/allocations" element={<ProtectedRoute><StockAllocationsPage /></ProtectedRoute>} />
                     <Route path="/inventory/remitted-stocks" element={<ProtectedRoute><RemittedStocksPage /></ProtectedRoute>} />
+                    <Route path="/inventory/admin-team-remittances" element={<ProtectedRoute><AdminTeamRemittancesPage /></ProtectedRoute>} />
                     <Route path="/inventory/team-remittances" element={<ProtectedRoute><LeaderRemittancePage /></ProtectedRoute>} />
                     <Route path="/inventory/cash-deposits" element={<ProtectedRoute><LeaderCashDepositsPage /></ProtectedRoute>} />
                     <Route path="/inventory/request" element={<ProtectedRoute><RequestInventoryPage /></ProtectedRoute>} />
