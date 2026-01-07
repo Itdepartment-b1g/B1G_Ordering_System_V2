@@ -180,39 +180,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadUserProfile = async (session: any) => {
     const userId = session.user.id;
 
-    // 1. CACHE-FIRST: Try to load from cache for instant rendering
-    const cachedProfile = getCachedProfile();
-    if (cachedProfile && cachedProfile.id === userId) {
-      console.log('⚡ [AuthContext] Cache hit - loading instantly');
-      setUser(cachedProfile);
-      userRef.current = cachedProfile;
-      setIsLoading(false); // Unblock UI immediately
-      // Continue to fetch fresh data in background
-    } else {
-      // 2. FALLBACK: Use session metadata or existing user
-      const metadata = session.user.user_metadata;
-      const currentUser = userRef.current;
+    // 1. REFRESH VERIFICATION: fetching fresh data from DB is now PRIORITY
+    // We skip optimistic loading to prevent data flickering/race conditions
 
-      if (currentUser?.id === userId && currentUser?.role && currentUser.role !== 'mobile_sales') {
-        console.log('🛡️ [AuthContext] Preserving existing user from memory');
-        setIsLoading(false);
-      } else {
-        const basicUser: User = {
-          id: userId,
-          email: session.user.email || '',
-          role: metadata?.role || 'mobile_sales',
-          status: 'active',
-          full_name: metadata?.full_name || 'User',
-          company_id: metadata?.company_id || undefined,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-
-        console.log('⚡ [AuthContext] Using session metadata');
-        setUser(basicUser);
-        userRef.current = basicUser;
-        setIsLoading(false);
-      }
+    // Check if we already have this user in memory (fresh enough)
+    const currentUser = userRef.current;
+    if (currentUser?.id === userId && currentUser?.role && currentUser.role !== 'mobile_sales') {
+      // If we already have the user in memory, we can use it, but we should probably still verify
+      // For now, let's treat memory as "optimistic" but safe enough if we just navigated
     }
 
     // 2. BACKGROUND VERIFICATION: Fetch fresh data from DB
@@ -262,7 +237,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .maybeSingle();
 
         if (retryResult.error || !retryResult.data) {
-          console.error('⚠️ [AuthContext] Retry also failed, using optimistic data');
+          console.error('⚠️ [AuthContext] Retry also failed, checking cache as fallback');
+          const cached = getCachedProfile();
+          if (cached && cached.id === userId) {
+            console.log('⚠️ [AuthContext] Using cached profile as fallback');
+            setUser(cached);
+            userRef.current = cached;
+            setIsLoading(false);
+            return;
+          }
+
+          // Fallback to minimal session user if absolutely necessary
+          console.warn('⚠️ [AuthContext] No cache, using minimal session data');
+          const metadata = session.user.user_metadata;
+          const basicUser: User = {
+            id: userId,
+            email: session.user.email || '',
+            role: metadata?.role || 'mobile_sales',
+            status: 'active',
+            full_name: metadata?.full_name || 'User',
+            company_id: metadata?.company_id || undefined,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          setUser(basicUser);
+          userRef.current = basicUser;
+          setIsLoading(false);
           return;
         }
 
@@ -271,11 +271,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (profile.status === 'active') {
           console.log('✅ [AuthContext] Profile fetched on retry');
           console.log('✅ [AuthContext] Role:', profile.role);
-          console.log('✅ [AuthContext] Company ID:', profile.company_id);
           const updatedUser = profile as User;
           setUser(updatedUser);
           userRef.current = updatedUser; // Keep ref in sync
           setCachedProfile(updatedUser); // Cache for next time
+          setIsLoading(false); // Ensure loading is cleared
         }
         return;
       }
@@ -284,7 +284,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!profile) {
         console.warn('⚠️ [AuthContext] Profile not found in DB (using optimistic data)');
-        console.warn('⚠️ [AuthContext] User ID:', userId);
+        const cached = getCachedProfile();
+        if (cached && cached.id === userId) {
+          setUser(cached);
+          userRef.current = cached;
+        } else {
+          // Minimal fallback
+          const metadata = session.user.user_metadata;
+          const basicUser: User = {
+            id: userId,
+            email: session.user.email || '',
+            role: metadata?.role || 'mobile_sales',
+            status: 'active',
+            full_name: metadata?.full_name || 'User',
+            company_id: metadata?.company_id || undefined,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          setUser(basicUser);
+          userRef.current = basicUser;
+        }
+        setIsLoading(false);
         return;
       }
 
@@ -346,6 +366,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(updatedUser);
       userRef.current = updatedUser; // Keep ref in sync
       setCachedProfile(updatedUser); // Cache for faster subsequent loads
+      setIsLoading(false); // Unblock UI now that we have confirmed data
 
       // Set up real-time subscription to monitor company status changes (only for non-system-admins with company_id)
       if (updatedUser.company_id && updatedUser.role !== 'system_administrator') {

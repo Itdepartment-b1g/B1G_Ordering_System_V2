@@ -248,7 +248,7 @@ export default function ManagerTeamInventoryPage() {
                                 <TableRow>
                                     <TableHead className="w-[30%]">Agent</TableHead>
                                     <TableHead>Region</TableHead>
-                                    <TableHead className="text-right">Variant Types</TableHead>
+                                    <TableHead className="text-right">Brands</TableHead>
                                     <TableHead className="text-right">Total Stock</TableHead>
                                     <TableHead className="w-[100px]"></TableHead>
                                 </TableRow>
@@ -286,7 +286,7 @@ export default function ManagerTeamInventoryPage() {
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <Badge variant="secondary" className="font-bold">
-                                                {agent.totalStock.toLocaleString()} units
+                                                {agent.totalStock.toLocaleString()} stocks
                                             </Badge>
                                         </TableCell>
                                         <TableCell>
@@ -348,7 +348,7 @@ export default function ManagerTeamInventoryPage() {
                                                                                     </div>
                                                                                 </div>
                                                                                 <Badge variant={isExpanded ? "default" : "secondary"} className="ml-auto text-xs h-6 px-3">
-                                                                                    {brandItems.reduce((acc, i) => acc + i.stock, 0).toLocaleString()} units
+                                                                                    {brandItems.reduce((acc, i) => acc + i.stock, 0).toLocaleString()} stocks
                                                                                 </Badge>
                                                                             </div>
 
