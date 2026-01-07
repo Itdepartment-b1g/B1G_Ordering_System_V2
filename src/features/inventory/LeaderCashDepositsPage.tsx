@@ -69,7 +69,7 @@ export default function LeaderCashDepositsPage() {
 
   // Initial Fetch & Realtime
   useEffect(() => {
-    if (!user?.id || !['team_leader', 'super_admin', 'system_administrator', 'finance'].includes(user.role)) return;
+    if (!user?.id || !['team_leader', 'super_admin', 'system_administrator', 'finance', 'manager', 'admin'].includes(user.role)) return;
 
     // Initial fetch
     fetchData();
@@ -131,10 +131,49 @@ export default function LeaderCashDepositsPage() {
       let query = supabase
         .from('cash_deposits')
         .select(`
-          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url,
+          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id,
           agent:profiles!cash_deposits_agent_id_fkey(full_name)
         `)
         .order('created_at', { ascending: false });
+
+      // Apply Team Filtering for Managers and Team Leaders
+      if (['manager', 'team_leader'].includes(user?.role || '')) {
+        if (!user?.company_id) return;
+
+        // Fetch Team Hierarchy
+        const { data: relationships, error: relError } = await supabase
+          .from('leader_teams')
+          .select('agent_id, leader_id')
+          .eq('company_id', user.company_id);
+
+        if (relError) throw relError;
+
+        // Determine Team Members (Direct + Indirect for Managers)
+        const directReports = (relationships || [])
+          .filter(r => r.leader_id === user?.id)
+          .map(r => r.agent_id);
+
+        let allTeamIds = directReports;
+
+        if (user?.role === 'manager') {
+          const secondLevelReports = (relationships || [])
+            .filter(r => directReports.includes(r.leader_id))
+            .map(r => r.agent_id);
+          allTeamIds = Array.from(new Set([...directReports, ...secondLevelReports]));
+        }
+
+        // If no team members, return empty or handle gracefully
+        if (allTeamIds.length > 0) {
+          query = query.in('agent_id', allTeamIds);
+        } else {
+          // If no team, filter to empty list (impossible ID)
+          // Or just let it return their own if they have any, but 'agent_id' usually refers to the depositor.
+          // A safe way to return nothing is .in('id', []) but clearer is to just set empty.
+          setPendingDeposits([]);
+          setDepositHistory([]);
+          return;
+        }
+      }
 
       const { data, error } = await query;
       if (error) throw error;
@@ -156,6 +195,11 @@ export default function LeaderCashDepositsPage() {
 
     } catch (error) {
       console.error('Error fetching history', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load deposit history',
+        variant: 'destructive'
+      });
     }
   };
 
