@@ -39,6 +39,8 @@ export default function DashboardPage() {
       navigate('/sys-admin-dashboard', { replace: true });
     } else if (user?.role === 'super_admin') {
       navigate('/super-admin-dashboard', { replace: true });
+    } else if (user?.role === 'manager') {
+      navigate('/manager-dashboard', { replace: true });
     }
   }, [user?.role, navigate]);
 
@@ -266,7 +268,7 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {(agentsExpanded ? topPerformingAgents : topPerformingAgents.slice(0, 5)).map((agent: any, index: number) => (
+                    {(agentsExpanded ? topPerformingAgents : topPerformingAgents.slice(0, 5)).map((agent: { name: string; orders: number; revenue: number }, index: number) => (
                       <div key={index} className="flex items-center justify-between p-2 md:p-3 rounded-lg bg-gray-50">
                         <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
                           <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs md:text-sm font-semibold flex-shrink-0">
@@ -329,7 +331,7 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {(flavorsExpanded ? topFlavors : topFlavors.slice(0, 5)).map((flavor: any, index: number) => (
+                    {(flavorsExpanded ? topFlavors : topFlavors.slice(0, 5)).map((flavor: { name: string; orders: number; quantity: number }, index: number) => (
                       <div key={index} className="flex items-center justify-between p-2 md:p-3 rounded-lg bg-gray-50">
                         <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
                           <div className="flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-600 text-xs md:text-sm font-semibold flex-shrink-0">
@@ -464,10 +466,17 @@ export default function DashboardPage() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {pendingStockRequests.slice(0, 3).map((request: any) => {
-                        const agentName = request.profiles?.full_name || 'Unknown Agent';
-                        const variant = request.variants;
-                        const brandName = variant?.brands?.name || variant?.brands?.[0]?.name || 'Unknown';
+                      {pendingStockRequests.slice(0, 3).map((request: {
+                        id: string;
+                        profiles?: { full_name: string } | { full_name: string }[];
+                        variants?: { name: string; brands?: { name: string } | { name: string }[] } | { name: string; brands?: { name: string } | { name: string }[] }[];
+                        requested_quantity: number;
+                        requested_at: string
+                      }) => {
+                        const agentName = Array.isArray(request.profiles) ? request.profiles[0]?.full_name : (request.profiles as { full_name: string })?.full_name || 'Unknown Agent';
+                        const variant = Array.isArray(request.variants) ? request.variants[0] : request.variants;
+                        const brandObj = variant?.brands;
+                        const brandName = (Array.isArray(brandObj) ? brandObj[0]?.name : (brandObj as { name: string })?.name) || 'Unknown';
                         const variantName = variant?.name || 'Unknown';
                         return (
                           <div key={request.id} className="flex items-center justify-between p-3 rounded-lg border bg-yellow-50/30 border-yellow-200">
@@ -514,8 +523,14 @@ export default function DashboardPage() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {pendingOrderApprovals.slice(0, 3).map((order: any) => {
-                        const agentName = order.profiles?.full_name || 'Unknown Agent';
+                      {pendingOrderApprovals.slice(0, 3).map((order: {
+                        id: string;
+                        profiles?: { full_name: string } | { full_name: string }[];
+                        order_number: string;
+                        total_amount?: number;
+                        created_at: string
+                      }) => {
+                        const agentName = Array.isArray(order.profiles) ? order.profiles[0]?.full_name : (order.profiles as { full_name: string })?.full_name || 'Unknown Agent';
                         return (
                           <div key={order.id} className="flex items-center justify-between p-3 rounded-lg border bg-blue-50/30 border-blue-200">
                             <div className="flex-1 min-w-0">

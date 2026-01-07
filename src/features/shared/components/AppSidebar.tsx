@@ -48,7 +48,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 interface MenuItem {
   title: string;
   url: string;
-  icon: any;
+  icon: React.ElementType;
   hasSubmenu?: boolean;
   submenu?: MenuItem[];
 }
@@ -173,21 +173,20 @@ const systemAdminMenuItems: MenuItem[] = [
 ];
 
 const managerMenuItems: MenuItem[] = [
-  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-  { title: 'Team Management', url: '/team-management', icon: Crown },
+  { title: 'Manager Dashboard', url: '/manager-dashboard', icon: LayoutDashboard },
+  { title: 'My Team', url: '/manager-teams', icon: Users },
   {
     title: 'Inventory',
     url: '/inventory',
     icon: Package,
     hasSubmenu: true,
     submenu: [
-      { title: 'My Inventory', url: '/my-inventory', icon: Package },
-      { title: 'Teams Inventory', url: '/leader-inventory', icon: Crown },
+      { title: 'Team Inventory', url: '/manager-inventory', icon: Crown },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
     ]
   },
-  { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
+  { title: 'Team Clients', url: '/manager-clients', icon: ShoppingBag },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -294,41 +293,40 @@ export function AppSidebar() {
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // Filter menu items based on permissions
-  const filterMenuItems = (items: MenuItem[]): MenuItem[] => {
-    return items
-      .filter(item => {
-        // Check if user has permission for this route
-        if (!checkPermission(item.url)) {
-          return false;
-        }
-        // If item has submenu, filter submenu items too
-        if (item.hasSubmenu && item.submenu) {
-          const filteredSubmenu = item.submenu.filter(subItem =>
-            checkPermission(subItem.url)
-          );
-          // Only show parent if it has at least one accessible submenu item
-          return filteredSubmenu.length > 0;
-        }
-        return true;
-      })
-      .map(item => {
-        // Filter submenu items
-        if (item.hasSubmenu && item.submenu) {
-          return {
-            ...item,
-            submenu: item.submenu.filter(subItem => checkPermission(subItem.url))
-          };
-        }
-        return item;
-      });
-  };
-
   // Get menu items based on role, then filter by permissions
   const menuItems = useMemo(() => {
-    let baseMenuItems: MenuItem[] = [];
+    // Filter menu items based on permissions
+    const filterMenuItems = (items: MenuItem[]): MenuItem[] => {
+      return items
+        .filter(item => {
+          // Check if user has permission for this route
+          if (!checkPermission(item.url)) {
+            return false;
+          }
+          // If item has submenu, filter submenu items too
+          if (item.hasSubmenu && item.submenu) {
+            const filteredSubmenu = item.submenu.filter(subItem =>
+              checkPermission(subItem.url)
+            );
+            // Only show parent if it has at least one accessible submenu item
+            return filteredSubmenu.length > 0;
+          }
+          return true;
+        })
+        .map(item => {
+          // Filter submenu items
+          if (item.hasSubmenu && item.submenu) {
+            return {
+              ...item,
+              submenu: item.submenu.filter(subItem => checkPermission(subItem.url))
+            };
+          }
+          return item;
+        });
+    };
 
     // If impersonating, show the Super Admin workspace for the tenant
+    let baseMenuItems: MenuItem[] = [];
     if (impersonatedCompany) {
       baseMenuItems = superAdminMenuItems;
     } else if (user?.role === 'system_administrator') {
@@ -352,7 +350,7 @@ export function AppSidebar() {
 
     // Filter menu items based on permissions
     return filterMenuItems(baseMenuItems);
-  }, [user?.role, checkPermission]);
+  }, [user?.role, checkPermission, impersonatedCompany]);
 
   const toggleSubmenu = (menuTitle: string) => {
     setExpandedMenus(prev =>

@@ -17,6 +17,7 @@ import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { TeamManagementTab } from './components/TeamManagementTab';
 import { useAuth } from '@/features/auth';
+import { isAdmin, canAllocateFromMain } from '@/lib/roleUtils';
 import { formatPhoneNumber } from '@/lib/utils';
 import {
   AlertDialog,
@@ -781,179 +782,187 @@ export default function SalesAgentsPage() {
           <p className="text-muted-foreground">Manage your sales team and their performance</p>
         </div>
         <div className="hidden md:flex gap-2">
-          <Button variant="outline" onClick={() => setAllocationOpen(true)}>
-            <UserPlus className="h-4 w-4" />
-            Allocate Stock
-          </Button>
-          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4" />
-                Add Sales Agent
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add New Sales Agent</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Full Name</Label>
-                  <Input placeholder="Enter agent name" value={newAgent.name} onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Email</Label>
-                  <Input type="email" placeholder="agent@company.com" value={newAgent.email} onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Phone</Label>
-                  <Input
-                    placeholder="+63 917 555 0101"
-                    value={newAgent.phone}
-                    onChange={(e) => {
-                      const formatted = formatPhoneNumber(e.target.value);
-                      setNewAgent({ ...newAgent, phone: formatted });
-                    }}
-                    maxLength={17}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Region</Label>
-                  <Input placeholder="e.g., North, South" value={newAgent.region} onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Position</Label>
-                  <Select
-                    value={newAgent.position}
-                    onValueChange={(value) => setNewAgent({ ...newAgent, position: value as 'Leader' | 'Mobile Sales' | 'Hermanos Sales Agent' | '' })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select position" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Mobile Sales">Mobile Sales</SelectItem>
-                      <SelectItem value="Leader">Leader</SelectItem>
-                      <SelectItem value="Hermanos Sales Agent">Hermanos Sales Agent</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Cities</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="e.g., Manila, Cebu"
-                      value={currentCityInput}
-                      onChange={(e) => setCurrentCityInput(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && addCityToNewAgent()}
-                    />
-                    <Button type="button" variant="outline" onClick={addCityToNewAgent}>
-                      Add to Tags
-                    </Button>
-                  </div>
-                  {newAgent.cities.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {newAgent.cities.map((city, index) => (
-                        <Badge key={index} variant="secondary" className="flex items-center gap-1">
-                          {city}
-                          <button
-                            type="button"
-                            onClick={() => removeCityFromNewAgent(city)}
-                            className="ml-1 hover:text-destructive"
-                          >
-                            ×
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <Button className="w-full" onClick={async () => {
-                  if (!newAgent.name.trim() || !newAgent.email.trim()) {
-                    toast({ title: 'Error', description: 'Name and email are required', variant: 'destructive' });
-                    return;
-                  }
-                  try {
-                    setCreatingAgent(true);
-                    // 1) Create auth user via Vercel API route
-                    const res = await fetch('/api/create-agent', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        email: newAgent.email,
-                        password: 'Agent@123',
-                        full_name: newAgent.name,
-                        role: 'sales_agent'
-                      })
-                    });
-
-                    const fnRes = await res.json();
-
-                    if (!res.ok) {
-                      throw new Error(fnRes.error || 'Failed to create user');
-                    }
-
-                    const userId = fnRes.userId;
-                    if (!userId) throw new Error('Auth user not created');
-
-                    // 2) Insert profile row
-                    // Prepare city value - use null if empty array, otherwise join with comma
-                    const cityValue = newAgent.cities.length > 0
-                      ? newAgent.cities.join(',')
-                      : null;
-
-                    const { error: profileErr } = await supabase
-                      .from('profiles')
-                      .insert({
-                        id: userId,
-                        full_name: newAgent.name,
-                        email: newAgent.email,
-                        phone: newAgent.phone || null,
-                        region: newAgent.region || null,
-                        city: cityValue,
-
-                        role: newAgent.role || 'sales_agent',
-                        status: 'active',
-                        position: newAgent.position || null,
-                      } as any);
-                    if (profileErr) throw profileErr;
-
-                    toast({ title: 'Agent Created', description: 'Login password set to Agent@123' });
-                    setAddDialogOpen(false);
-                    setNewAgent({ name: '', email: '', phone: '', region: '', cities: [], position: '', role: 'sales_agent' });
-                    fetchAgents();
-                  } catch (e: any) {
-                    console.error('Create agent error:', e);
-                    toast({ title: 'Error', description: e.message || 'Failed to create agent', variant: 'destructive' });
-                  } finally {
-                    setCreatingAgent(false);
-                  }
-                }} disabled={creatingAgent}>
-                  {creatingAgent ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating...
-                    </>
-                  ) : 'Create Sales Agent'}
+          {canAllocateFromMain(user?.role) && (
+            <Button variant="outline" onClick={() => setAllocationOpen(true)}>
+              <UserPlus className="h-4 w-4 mr-2" />
+              Allocate Stock
+            </Button>
+          )}
+          {isAdmin(user?.role) && (
+            <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Sales Agent
                 </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Add New Sales Agent</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Full Name</Label>
+                    <Input placeholder="Enter agent name" value={newAgent.name} onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input type="email" placeholder="agent@company.com" value={newAgent.email} onChange={(e) => setNewAgent({ ...newAgent, email: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Phone</Label>
+                    <Input
+                      placeholder="+63 917 555 0101"
+                      value={newAgent.phone}
+                      onChange={(e) => {
+                        const formatted = formatPhoneNumber(e.target.value);
+                        setNewAgent({ ...newAgent, phone: formatted });
+                      }}
+                      maxLength={17}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Region</Label>
+                    <Input placeholder="e.g., North, South" value={newAgent.region} onChange={(e) => setNewAgent({ ...newAgent, region: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Position</Label>
+                    <Select
+                      value={newAgent.position}
+                      onValueChange={(value) => setNewAgent({ ...newAgent, position: value as 'Leader' | 'Mobile Sales' | 'Hermanos Sales Agent' | '' })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select position" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Mobile Sales">Mobile Sales</SelectItem>
+                        <SelectItem value="Leader">Leader</SelectItem>
+                        <SelectItem value="Hermanos Sales Agent">Hermanos Sales Agent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Cities</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="e.g., Manila, Cebu"
+                        value={currentCityInput}
+                        onChange={(e) => setCurrentCityInput(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && addCityToNewAgent()}
+                      />
+                      <Button type="button" variant="outline" onClick={addCityToNewAgent}>
+                        Add to Tags
+                      </Button>
+                    </div>
+                    {newAgent.cities.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {newAgent.cities.map((city, index) => (
+                          <Badge key={index} variant="secondary" className="flex items-center gap-1">
+                            {city}
+                            <button
+                              type="button"
+                              onClick={() => removeCityFromNewAgent(city)}
+                              className="ml-1 hover:text-destructive"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <Button className="w-full" onClick={async () => {
+                    if (!newAgent.name.trim() || !newAgent.email.trim()) {
+                      toast({ title: 'Error', description: 'Name and email are required', variant: 'destructive' });
+                      return;
+                    }
+                    try {
+                      setCreatingAgent(true);
+                      // 1) Create auth user via Vercel API route
+                      const res = await fetch('/api/create-agent', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          email: newAgent.email,
+                          password: 'Agent@123',
+                          full_name: newAgent.name,
+                          role: 'sales_agent'
+                        })
+                      });
+
+                      const fnRes = await res.json();
+
+                      if (!res.ok) {
+                        throw new Error(fnRes.error || 'Failed to create user');
+                      }
+
+                      const userId = fnRes.userId;
+                      if (!userId) throw new Error('Auth user not created');
+
+                      // 2) Insert profile row
+                      // Prepare city value - use null if empty array, otherwise join with comma
+                      const cityValue = newAgent.cities.length > 0
+                        ? newAgent.cities.join(',')
+                        : null;
+
+                      const { error: profileErr } = await supabase
+                        .from('profiles')
+                        .insert({
+                          id: userId,
+                          full_name: newAgent.name,
+                          email: newAgent.email,
+                          phone: newAgent.phone || null,
+                          region: newAgent.region || null,
+                          city: cityValue,
+
+                          role: newAgent.role || 'sales_agent',
+                          status: 'active',
+                          position: newAgent.position || null,
+                        } as any);
+                      if (profileErr) throw profileErr;
+
+                      toast({ title: 'Agent Created', description: 'Login password set to Agent@123' });
+                      setAddDialogOpen(false);
+                      setNewAgent({ name: '', email: '', phone: '', region: '', cities: [], position: '', role: 'sales_agent' });
+                      fetchAgents();
+                    } catch (e: any) {
+                      console.error('Create agent error:', e);
+                      toast({ title: 'Error', description: e.message || 'Failed to create agent', variant: 'destructive' });
+                    } finally {
+                      setCreatingAgent(false);
+                    }
+                  }} disabled={creatingAgent}>
+                    {creatingAgent ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Creating...
+                      </>
+                    ) : 'Create Sales Agent'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+        </div >
+      </div >
 
       {/* Mobile quick actions under title */}
       <div className="md:hidden flex gap-2">
-        <Button variant="outline" className="flex-1" onClick={() => setAllocationOpen(true)}>
-          <UserPlus className="h-4 w-4 mr-2" /> Allocate Stock
-        </Button>
-        <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="flex-1">
-              <Plus className="h-4 w-4 mr-2" /> Add Agent
-            </Button>
-          </DialogTrigger>
-          {/* existing DialogContent for add agent remains below */}
-        </Dialog>
+        {canAllocateFromMain(user?.role) && (
+          <Button variant="outline" className="flex-1" onClick={() => setAllocationOpen(true)}>
+            <UserPlus className="h-4 w-4 mr-2" /> Allocate Stock
+          </Button>
+        )}
+        {isAdmin(user?.role) && (
+          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="flex-1">
+                <Plus className="h-4 w-4 mr-2" /> Add Agent
+              </Button>
+            </DialogTrigger>
+            {/* existing DialogContent for add agent remains below */}
+          </Dialog>
+        )}
       </div>
 
       {/* Tabs for different views */}
@@ -1920,8 +1929,8 @@ export default function SalesAgentsPage() {
         <TabsContent value="teams" className="space-y-6">
           <TeamManagementTab />
         </TabsContent>
-      </Tabs>
-    </div>
+      </Tabs >
+    </div >
   );
 }
 

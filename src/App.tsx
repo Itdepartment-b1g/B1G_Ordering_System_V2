@@ -20,6 +20,10 @@ import { SalesAgentsPage, TasksPage, ArchiveTasksPage, AgentHistoryPage } from "
 import SalesAgentsOnlyPage from "@/features/sales-agents/SalesAgentsOnlyPage";
 import TeamManagementPage from "@/features/sales-agents/TeamManagementPage";
 import MyTeamPage from "@/features/sales-agents/MyTeamPage";
+import ManagerTeamsPage from "@/features/manager/ManagerTeamsPage";
+import ManagerTeamInventoryPage from "@/features/manager/ManagerTeamInventoryPage";
+import ManagerClientsPage from "@/features/manager/ManagerClientsPage";
+import ManagerDashboardPage from "@/features/manager/ManagerDashboardPage";
 import { FinancePage } from "@/features/finance";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
@@ -62,6 +66,10 @@ const App = () => (
                     <Route path="/leader-inventory" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/team-members" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/my-team" element={<ProtectedRoute><MyTeamPage /></ProtectedRoute>} />
+                    <Route path="/manager-teams" element={<ProtectedRoute><ManagerTeamsPage /></ProtectedRoute>} />
+                    <Route path="/manager-inventory" element={<ProtectedRoute><ManagerTeamInventoryPage /></ProtectedRoute>} />
+                    <Route path="/manager-clients" element={<ProtectedRoute><ManagerClientsPage /></ProtectedRoute>} />
+                    <Route path="/manager-dashboard" element={<ProtectedRoute><ManagerDashboardPage /></ProtectedRoute>} />
                     <Route path="/tasks" element={<ProtectedRoute><TasksPage /></ProtectedRoute>} />
                     <Route path="/tasks/archive" element={<ProtectedRoute><ArchiveTasksPage /></ProtectedRoute>} />
                     <Route path="/clients" element={<ProtectedRoute><ClientsPage /></ProtectedRoute>} />

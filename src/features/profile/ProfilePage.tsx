@@ -44,7 +44,6 @@ export default function ProfilePage() {
     city: '',
     country: '',
     region: '',
-    position: '',
     role: '',
   });
   const [assignedCities, setAssignedCities] = useState<string[]>([]);
@@ -71,7 +70,7 @@ export default function ProfilePage() {
       setLoading(true);
       const { data, error } = await supabase
         .from('profiles')
-        .select('full_name, email, phone, address, city, country, region, position, role')
+        .select('full_name, email, phone, address, city, country, region, role')
         .eq('id', user?.id)
         .single();
 
@@ -86,7 +85,6 @@ export default function ProfilePage() {
           city: data.city || '',
           country: data.country || '',
           region: data.region || '',
-          position: data.position || '',
           role: data.role || '',
         });
 
@@ -229,10 +227,6 @@ export default function ProfilePage() {
                     case 'mobile_sales':
                       return 'SALES AGENT';
                     default:
-                      // Fallback: check position for leader
-                      if ((profile.position || '').toLowerCase().includes('leader')) {
-                        return 'LEADER';
-                      }
                       return 'SALES AGENT';
                   }
                 })()}

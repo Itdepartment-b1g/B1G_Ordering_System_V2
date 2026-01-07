@@ -77,6 +77,7 @@ export default function ClientsPage() {
   const [allClientsRevenue, setAllClientsRevenue] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [isManager, setIsManager] = useState(false);
   const [roleResolved, setRoleResolved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -253,6 +254,7 @@ export default function ClientsPage() {
     const userRole = user.role;
     setIsAdmin(userRole === 'admin' || userRole === 'super_admin' || userRole === 'system_administrator');
     setIsSuperAdmin(userRole === 'super_admin' || userRole === 'system_administrator');
+    setIsManager(userRole === 'manager');
     setRoleResolved(true);
   }, [user?.role]);
 
@@ -363,7 +365,29 @@ export default function ClientsPage() {
   const fetchClients = async () => {
     try {
       setLoading(true);
-      const isAgent = !isAdmin && !!user?.id; // treat non-admins as agents for filtering
+      const isManager = user?.role === 'manager';
+      // Agents see own clients; Managers see team clients; Admins see company clients
+      const isAgent = !isAdmin && !isManager && !!user?.id;
+
+      let teamAgentIds: string[] = [];
+
+      if (isManager && user?.id) {
+        // Determine team members for Manager
+        // Managers see clients of everyone in their team (from leader_teams)
+        // Assuming manager is the 'leader_id' in leader_teams
+        const { data: teamData, error: teamError } = await supabase
+          .from('leader_teams')
+          .select('agent_id')
+          .eq('leader_id', user.id);
+
+        if (!teamError && teamData) {
+          teamAgentIds = teamData.map(t => t.agent_id);
+          // Optionally include manager's own clients if they have any? 
+          // Usually managers don't have personal clients, but logical to include self.
+          teamAgentIds.push(user.id);
+        }
+      }
+
       let clientsQuery = supabase
         .from('clients')
         .select(`
@@ -379,6 +403,11 @@ export default function ClientsPage() {
 
       if (isAgent && user?.id) {
         clientsQuery = clientsQuery.eq('agent_id', user.id);
+      } else if (isManager && teamAgentIds.length > 0) {
+        clientsQuery = clientsQuery.in('agent_id', teamAgentIds);
+      } else if (isManager && teamAgentIds.length === 0) {
+        // Manager with no team => see nothing (or just self if allowed)
+        clientsQuery = clientsQuery.eq('agent_id', user.id); // Default to self if empty team
       }
 
       const { data, error } = await clientsQuery;
@@ -390,9 +419,15 @@ export default function ClientsPage() {
         .from('client_order_stats')
         .select('client_id, agent_id, total_orders, total_spent, last_order_date')
         .eq('company_id', user?.company_id);
+
       if (isAgent && user?.id) {
         statsQuery = statsQuery.eq('agent_id', user.id);
+      } else if (isManager && teamAgentIds.length > 0) {
+        statsQuery = statsQuery.in('agent_id', teamAgentIds);
+      } else if (isManager) {
+        statsQuery = statsQuery.eq('agent_id', user.id);
       }
+
       const { data: statsView, error: statsError } = await statsQuery;
 
       let ordersByClient: Record<string, { count: number; total: number; last?: string }> = {};
@@ -412,9 +447,15 @@ export default function ClientsPage() {
           .select('client_id, count:id, sum:total_amount, max:order_date')
           .eq('company_id', user?.company_id)
           .or('stage.eq.admin_approved,status.eq.approved');
+
         if (isAgent && user?.id) {
           aggQuery = aggQuery.eq('agent_id', user.id);
+        } else if (isManager && teamAgentIds.length > 0) {
+          aggQuery = aggQuery.in('agent_id', teamAgentIds);
+        } else if (isManager) {
+          aggQuery = aggQuery.eq('agent_id', user.id);
         }
+
         const { data: aggRows, error: aggError } = await aggQuery as any;
 
         let ordersByClient: Record<string, { count: number; total: number; last?: string }> = {};
@@ -433,9 +474,15 @@ export default function ClientsPage() {
             .from('client_orders')
             .select('client_id, total_amount, stage, status, order_date, agent_id')
             .or('stage.eq.admin_approved,status.eq.approved');
+
           if (isAgent && user?.id) {
             ordersQuery = ordersQuery.eq('agent_id', user.id);
+          } else if (isManager && teamAgentIds.length > 0) {
+            ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
+          } else if (isManager) {
+            ordersQuery = ordersQuery.eq('agent_id', user.id);
           }
+
           const { data: approvedOrders } = await ordersQuery;
           ordersByClient = (approvedOrders || []).reduce((acc: any, o: any) => {
             const cid = o.client_id;
@@ -2025,36 +2072,39 @@ export default function ClientsPage() {
               )}
             </Button>
           )}
-          {isAdmin && (
-            <>
-              <Button
-                variant="outline"
-                onClick={handleDownloadTemplate}
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Template
+          {/* Actions: Only Admins can Add/Import. Managers are read-only. */}
+          {(isAdmin || isSuperAdmin) && (
+            <div className="flex gap-2">
+              <Button variant="outline" className="gap-2" onClick={handleDownloadTemplate}>
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline">Template</span>
               </Button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={handleImportClients}
-              />
-              <Button
-                variant="outline"
-                onClick={handleImportClick}
-                disabled={importing}
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                {importing ? 'Importing...' : 'Import'}
+              <div className="relative">
+                <input
+                  type="file"
+                  ref={importInputRef}
+                  onChange={handleImportClients}
+                  accept=".csv,.txt"
+                  className="hidden"
+                />
+                <Button variant="outline" className="gap-2" onClick={handleImportClick} disabled={importing}>
+                  {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  <span className="hidden sm:inline">Import</span>
+                </Button>
+              </div>
+              <Button className="gap-2" onClick={() => setAddDialogOpen(true)}>
+                <Plus className="h-4 w-4" />
+                <span className="hidden sm:inline">Add Client</span>
               </Button>
-            </>
+            </div>
           )}
-          <Button variant="outline" onClick={handleOpenCityBulkTransfer}>
-            <Users className="h-4 w-4 mr-2" />
-            City Bulk Transfer
-          </Button>
+          {/* City Bulk Transfer is also an admin-only action */}
+          {(isAdmin || isSuperAdmin) && (
+            <Button variant="outline" onClick={handleOpenCityBulkTransfer}>
+              <Users className="h-4 w-4 mr-2" />
+              City Bulk Transfer
+            </Button>
+          )}
           <Dialog open={addDialogOpen} onOpenChange={(open) => {
             setAddDialogOpen(open);
             if (open) {
@@ -2677,18 +2727,22 @@ export default function ClientsPage() {
                             <Eye className="h-4 w-4 mr-2" />
                             View Details
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleOpenTransfer(client)}>
-                            <ArrowRightLeft className="h-4 w-4 mr-2" />
-                            Transfer Client
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleOpenEdit(client)}>
-                            <Edit className="h-4 w-4 mr-2" />
-                            Edit Client
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleOpenDelete(client)} className="text-destructive focus:text-destructive">
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete Client
-                          </DropdownMenuItem>
+                          {!isAdmin && !isManager && (
+                            <>
+                              <DropdownMenuItem onClick={() => handleOpenTransfer(client)}>
+                                <ArrowRightLeft className="h-4 w-4 mr-2" />
+                                Transfer Client
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleOpenEdit(client)}>
+                                <Edit className="h-4 w-4 mr-2" />
+                                Edit Client
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleOpenDelete(client)} className="text-destructive focus:text-destructive">
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete Client
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

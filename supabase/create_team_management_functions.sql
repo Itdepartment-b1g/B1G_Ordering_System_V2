@@ -5,8 +5,6 @@
 --   1. assign_agent_to_leader - Assigns a mobile sales agent to a team leader
 --   2. remove_agent_from_team - Removes an agent from their assigned team
 -- ============================================================================
-
--- ============================================================================
 -- ASSIGN AGENT TO LEADER FUNCTION
 -- ============================================================================
 DROP FUNCTION IF EXISTS assign_agent_to_leader(UUID, UUID, UUID);

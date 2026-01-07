@@ -61,6 +61,7 @@ interface Leader {
 
 export function TeamManagementTab() {
   const { user } = useAuth();
+  const isManager = user?.role === 'manager';
   const [leaders, setLeaders] = useState<Leader[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -654,17 +655,20 @@ export function TeamManagementTab() {
                   <p className="text-muted-foreground mb-8 text-sm leading-relaxed">
                     Get started by promoting a mobile sales agent to team leader or manager
                   </p>
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button className="shadow-sm">
-                        <Sparkles className="h-4 w-4 mr-2" />
-                        Promote First Leader
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="sm:max-w-[600px]">
-                      <LeaderAssignmentSection />
-                    </DialogContent>
-                  </Dialog>
+                  {!isManager && (
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button className="shadow-sm">
+                          <Sparkles className="h-4 w-4 mr-2" />
+                          Promote First Leader
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[600px]">
+                        {/* Leader Assignment Section - Admins Only */}
+                        <LeaderAssignmentSection />
+                      </DialogContent>
+                    </Dialog>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -715,13 +719,15 @@ export function TeamManagementTab() {
                               <Users className="h-4 w-4 mr-2" />
                               Manage Team
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleUnpromoteClick(leader.id)}
-                              className="text-orange-600 focus:text-orange-600"
-                            >
-                              <UserMinus className="h-4 w-4 mr-2" />
-                              {leader.role === 'manager' ? 'Unpromote to Team Leader' : 'Unpromote to Mobile Sales'}
-                            </DropdownMenuItem>
+                            {!isManager && (
+                              <DropdownMenuItem
+                                onClick={() => handleUnpromoteClick(leader.id)}
+                                className="text-orange-600 focus:text-orange-600"
+                              >
+                                <UserMinus className="h-4 w-4 mr-2" />
+                                {leader.role === 'manager' ? 'Unpromote to Team Leader' : 'Unpromote to Mobile Sales'}
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -754,7 +760,7 @@ export function TeamManagementTab() {
                         ) : (
                           <div className="pt-3 border-t border-border/50">
                             <p className="text-xs text-muted-foreground text-center py-2">No team members assigned</p>
-                            {user?.role !== 'manager' && (
+                            {user?.role !== 'manager' && !isManager && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -844,19 +850,21 @@ export function TeamManagementTab() {
                           <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 font-medium">
                             Unassigned
                           </Badge>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="shadow-sm"
-                            onClick={() => {
-                              setIsPreselectedManager(false);
-                              setAssignDialogOpen(true);
-                              setSelectedAgent(agent.id);
-                            }}
-                          >
-                            <UserPlus className="h-3.5 w-3.5 mr-2" />
-                            Assign
-                          </Button>
+                          {!isManager && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="shadow-sm"
+                              onClick={() => {
+                                setIsPreselectedManager(false);
+                                setAssignDialogOpen(true);
+                                setSelectedAgent(agent.id);
+                              }}
+                            >
+                              <UserPlus className="h-3.5 w-3.5 mr-2" />
+                              Assign
+                            </Button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1023,15 +1031,17 @@ export function TeamManagementTab() {
                         <p className="text-xs text-muted-foreground">{member.region} • {member.role}</p>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                      onClick={() => handleUnassignClick(member.id)}
-                    >
-                      <UserMinus className="h-4 w-4 mr-2" />
-                      Remove
-                    </Button>
+                    {!isManager && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        onClick={() => handleUnassignClick(member.id)}
+                      >
+                        <UserMinus className="h-4 w-4 mr-2" />
+                        Remove
+                      </Button>
+                    )}
                   </div>
                 ));
               })()}
@@ -1045,17 +1055,19 @@ export function TeamManagementTab() {
             >
               Close
             </Button>
-            <Button
-              onClick={() => {
-                setManageTeamDialogOpen(false);
-                setIsPreselectedManager(true);
-                setAssignDialogOpen(true);
-                setSelectedLeader(selectedTeamLeaderId || '');
-              }}
-            >
-              <UserPlus className="h-4 w-4 mr-2" />
-              Add Member
-            </Button>
+            {!isManager && (
+              <Button
+                onClick={() => {
+                  setManageTeamDialogOpen(false);
+                  setIsPreselectedManager(true);
+                  setAssignDialogOpen(true);
+                  setSelectedLeader(selectedTeamLeaderId || '');
+                }}
+              >
+                <UserPlus className="h-4 w-4 mr-2" />
+                Add Member
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>
