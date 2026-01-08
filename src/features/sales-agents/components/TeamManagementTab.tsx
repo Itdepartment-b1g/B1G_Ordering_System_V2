@@ -65,11 +65,20 @@ interface Leader {
   leaderId?: string; // Added to track if assigned to Admin
 }
 
+
 interface Props {
   isManager?: boolean;
+  createTeamDialogOpen?: boolean;
+  setCreateTeamDialogOpen?: (open: boolean) => void;
+  showCreateButton?: boolean;
 }
 
-export function TeamManagementTab({ isManager = false }: Props) {
+export function TeamManagementTab({
+  isManager = false,
+  createTeamDialogOpen: externalCreateTeamDialogOpen,
+  setCreateTeamDialogOpen: setExternalCreateTeamDialogOpen,
+  showCreateButton = true
+}: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -77,7 +86,7 @@ export function TeamManagementTab({ isManager = false }: Props) {
   const [loading, setLoading] = useState(true);
   const [assignManagerDialogOpen, setAssignManagerDialogOpen] = useState(false);
   const [assignLeaderDialogOpen, setAssignLeaderDialogOpen] = useState(false);
-  const [createTeamDialogOpen, setCreateTeamDialogOpen] = useState(false);
+  const [internalCreateTeamDialogOpen, setInternalCreateTeamDialogOpen] = useState(false);
   const [creatingTeam, setCreatingTeam] = useState(false);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [unassignDialogOpen, setUnassignDialogOpen] = useState(false);
@@ -92,8 +101,13 @@ export function TeamManagementTab({ isManager = false }: Props) {
   const [selectedTeamLeaderId, setSelectedTeamLeaderId] = useState<string | null>(null);
   const [isPreselectedManager, setIsPreselectedManager] = useState(false);
   const [newTeamName, setNewTeamName] = useState(''); // New State for Team Name
+  const [subTeams, setSubTeams] = useState<any[]>([]); // New State for SubTeams
 
   const [manageTeamDialogOpen, setManageTeamDialogOpen] = useState(false);
+
+  // Derived state for dialog control to support both controlled and uncontrolled modes
+  const isCreateTeamDialogOpen = externalCreateTeamDialogOpen ?? internalCreateTeamDialogOpen;
+  const setCreateTeamDialogOpen = setExternalCreateTeamDialogOpen ?? setInternalCreateTeamDialogOpen;
 
   // Derived lists for cleaner usage
   const unassignedTeamLeaders = agents.filter(a => !a.leaderId && a.role === 'team_leader');
@@ -130,7 +144,7 @@ export function TeamManagementTab({ isManager = false }: Props) {
       const companyFilter = user?.company_id ? { company_id: user.company_id } : {};
 
       // Execute all queries in parallel for maximum speed
-      const [agentsResult, teamResult] = await Promise.all([
+      const [agentsResult, teamResult, subTeamResult] = await Promise.all([
         // Fetch all relevant profiles
         supabase
           .from('profiles')
@@ -145,14 +159,22 @@ export function TeamManagementTab({ isManager = false }: Props) {
           .from('leader_teams')
           .select('agent_id, leader_id')
           .match(companyFilter)
-          .limit(200)
+          .limit(200),
+
+        // Fetch sub-teams overview
+        supabase
+          .from('sub_teams_overview')
+          .select('*')
+          .match(companyFilter)
       ]);
 
       if (agentsResult.error) throw agentsResult.error;
       if (teamResult.error) throw teamResult.error;
+      if (subTeamResult.error) throw subTeamResult.error;
 
       const agentsData = agentsResult.data || [];
       const teamData = teamResult.data || [];
+      const subTeamsData = subTeamResult.data || [];
 
       // Create lookup maps for O(1) access
       const teamMap = new Map(teamData.map(t => [t.agent_id, t.leader_id]));
@@ -203,6 +225,7 @@ export function TeamManagementTab({ isManager = false }: Props) {
 
       setAgents(processedAgents);
       setLeaders(Array.from(leadersMap.values()));
+      setSubTeams(subTeamsData);
 
     } catch (error) {
       console.error('Error fetching team data:', error);
@@ -573,7 +596,7 @@ export function TeamManagementTab({ isManager = false }: Props) {
   return (
     <div className="space-y-8">
       {/* Create Team Dialog */}
-      <Dialog open={createTeamDialogOpen} onOpenChange={setCreateTeamDialogOpen}>
+      <Dialog open={isCreateTeamDialogOpen} onOpenChange={setCreateTeamDialogOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Create New Manager Team</DialogTitle>
@@ -630,7 +653,7 @@ export function TeamManagementTab({ isManager = false }: Props) {
         </DialogContent>
       </Dialog>
 
-      {!isManager && (
+      {!isManager && showCreateButton && (
         <div className="flex justify-end">
           <Button onClick={() => {
             setSelectedLeader('');
@@ -968,11 +991,25 @@ export function TeamManagementTab({ isManager = false }: Props) {
                       <div className="space-y-4">
                         <div className="flex items-center justify-between py-2">
                           <span className="text-sm font-medium text-muted-foreground">Team Size</span>
-                          <Badge variant="secondary" className="font-medium">{teamAgents.length} {teamAgents.length === 1 ? 'member' : 'members'}</Badge>
+                          {/* Total Size Calculation */}
+                          {(() => {
+                            const mySubTeams = subTeams.filter(st => st.manager_id === leader.id);
+                            const totalSubTeamMembers = mySubTeams.reduce((acc, st) => acc + (st.member_ids?.length || 0), 0);
+                            const totalSize = teamAgents.length + totalSubTeamMembers;
+                            return (
+                              <Badge variant="secondary" className="font-medium">
+                                {totalSize} {totalSize === 1 ? 'member' : 'members'}
+                              </Badge>
+                            );
+                          })()}
                         </div>
+
+                        {/* DIRECT REPORTS (Team Leaders) */}
                         {teamAgents.length > 0 ? (
                           <div className="pt-3 border-t border-border/50">
-                            <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Team Members</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">
+                              {leader.role === 'manager' ? 'Team Leaders' : 'Team Members'}
+                            </p>
                             <div className="space-y-2.5">
                               {teamAgents.slice(0, 3).map(agent => (
                                 <div key={agent.id} className="flex items-center gap-2.5 text-sm">
@@ -991,19 +1028,52 @@ export function TeamManagementTab({ isManager = false }: Props) {
                           </div>
                         ) : (
                           <div className="pt-3 border-t border-border/50">
-                            <p className="text-xs text-muted-foreground text-center py-2">No team members assigned</p>
-                            {user?.role !== 'manager' && !isManager && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full mt-2"
-                                onClick={() => openAssignmentDialog(leader.id, leader.role as string)}
-                              >
-                                <UserPlus className="h-3.5 w-3.5 mr-2" />
-                                Assign Agent
-                              </Button>
+                            {/* Only show "No members" if also no sub-teams */}
+                            {(!subTeams.some(st => st.manager_id === leader.id)) && (
+                              <p className="text-xs text-muted-foreground text-center py-2">No team members assigned</p>
                             )}
                           </div>
+                        )}
+
+                        {/* SUB TEAMS SECTION */}
+                        {(() => {
+                          const mySubTeams = subTeams.filter(st => st.manager_id === leader.id);
+                          if (mySubTeams.length > 0) {
+                            return (
+                              <div className="pt-3 border-t border-border/50">
+                                <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">Sub-Teams</p>
+                                <div className="space-y-3">
+                                  {mySubTeams.map(st => (
+                                    <div key={st.id} className="p-2 rounded bg-slate-50 border text-xs">
+                                      <div className="flex justify-between items-center mb-1">
+                                        <span className="font-semibold text-slate-700">{st.leader_name}'s Team</span>
+                                        <Badge variant="outline" className="h-5 px-1 bg-white text-[10px]">
+                                          {st.member_ids?.length || 0}
+                                        </Badge>
+                                      </div>
+                                      <div className="truncate text-muted-foreground">
+                                        {st.members_details?.map((m: any) => m.name).join(', ') || 'No members'}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
+
+                        {/* Assign Button (Only if simple member/leader view needed, but Manage Dialog is preferred generally) */}
+                        {teamAgents.length === 0 && !subTeams.some(st => st.manager_id === leader.id) && user?.role !== 'manager' && !isManager && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full mt-2"
+                            onClick={() => openAssignmentDialog(leader.id, leader.role as string)}
+                          >
+                            <UserPlus className="h-3.5 w-3.5 mr-2" />
+                            Assign Agent
+                          </Button>
                         )}
                       </div>
                     </CardContent>
@@ -1245,6 +1315,8 @@ export function TeamManagementTab({ isManager = false }: Props) {
               <HierarchicalTeamList
                 managerId={selectedTeamLeaderId}
                 agents={agents}
+                onRemoveFromTeam={handleUnassignClick}
+                isManagerView={isManager}
                 onAssignToLeader={(leaderId) => {
                   setManageTeamDialogOpen(false);
                   setIsPreselectedManager(true);
@@ -1252,8 +1324,6 @@ export function TeamManagementTab({ isManager = false }: Props) {
                   const role = leaders.find(l => l.id === leaderId)?.role || agents.find(a => a.id === leaderId)?.role || 'team_leader';
                   openAssignmentDialog(leaderId, role);
                 }}
-                onRemoveFromTeam={(agentId) => handleUnassignClick(agentId)}
-                isManagerView={isManager}
               />
             )}
           </div>
