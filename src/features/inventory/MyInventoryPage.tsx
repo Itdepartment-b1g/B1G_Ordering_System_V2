@@ -50,12 +50,23 @@ export default function MyInventory() {
     );
   };
 
-  const filteredBrands = agentBrands.filter(brand =>
-    brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    brand.flavors.some(f => f.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-    brand.batteries.some(b => b.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-    (brand.posms || []).some(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const getTotalStock = (brand: any) => {
+    const flavorStock = brand.flavors.reduce((sum: number, f: any) => sum + f.stock, 0);
+    const batteryStock = brand.batteries.reduce((sum: number, b: any) => sum + b.stock, 0);
+    const posmStock = (brand.posms || []).reduce((sum: number, p: any) => sum + p.stock, 0);
+    return flavorStock + batteryStock + posmStock;
+  };
+
+  const filteredBrands = agentBrands.filter(brand => {
+    const hasStock = getTotalStock(brand) > 0;
+    const matchesSearch =
+      brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      brand.flavors.some(f => f.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      brand.batteries.some(b => b.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (brand.posms || []).some(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+    return hasStock && matchesSearch;
+  });
 
   const getTotalVariants = () => {
     let count = 0;
@@ -63,13 +74,6 @@ export default function MyInventory() {
       count += brand.flavors.length + brand.batteries.length + (brand.posms || []).length;
     });
     return count;
-  };
-
-  const getTotalStock = (brand: any) => {
-    const flavorStock = brand.flavors.reduce((sum: number, f: any) => sum + f.stock, 0);
-    const batteryStock = brand.batteries.reduce((sum: number, b: any) => sum + b.stock, 0);
-    const posmStock = (brand.posms || []).reduce((sum: number, p: any) => sum + p.stock, 0);
-    return flavorStock + batteryStock + posmStock;
   };
 
   const getLowStockCount = () => {
@@ -350,40 +354,40 @@ export default function MyInventory() {
     try {
       // Convert base64 data URI to blob without using fetch (to avoid CSP violation)
       let blob: Blob;
-      
+
       if (signatureDataUrl.startsWith('data:')) {
         // Extract base64 data from data URI
         const base64Data = signatureDataUrl.split(',')[1];
         if (!base64Data) {
           throw new Error('Invalid data URI format');
         }
-        
+
         // Convert base64 to binary string
         const binaryString = atob(base64Data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
-        
+
         // Create blob from bytes
         blob = new Blob([bytes], { type: 'image/png' });
       } else {
         // Fallback: if it's already a URL, try to fetch (but this shouldn't happen)
-      const response = await fetch(signatureDataUrl);
+        const response = await fetch(signatureDataUrl);
         blob = await response.blob();
       }
 
       // Create folder structure: date_folder/user_name_folder/signature.png
       const today = new Date();
       const dateFolder = format(today, 'yyyy-MM-dd'); // Format: 2025-01-15
-      
+
       // Sanitize user name for folder name (replace spaces and special chars with hyphens)
       const userName = user.full_name || 'unknown-user';
       const sanitizedUserName = userName
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
         .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
-      
+
       const timestamp = new Date().getTime();
       const filename = `${dateFolder}/${sanitizedUserName}/${timestamp}.png`;
 
@@ -481,7 +485,7 @@ export default function MyInventory() {
 
       toast({
         title: 'Remittance Complete!',
-        description: todayOrders.length > 0 
+        description: todayOrders.length > 0
           ? `Cash remittance successful. ₱${todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} submitted to ${leaderName || 'your leader'}.`
           : 'End of day process complete. Your inventory carries over to tomorrow.',
       });
@@ -518,18 +522,18 @@ export default function MyInventory() {
           <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">My Inventory</h1>
           <p className="text-sm md:text-base text-muted-foreground">Products allocated to you by admin</p>
         </div>
-          <Button
-            onClick={() => setRemitDialogOpen(true)}
-            variant="outline"
-            className="gap-2 w-full sm:w-auto"
-            size="sm"
+        <Button
+          onClick={() => setRemitDialogOpen(true)}
+          variant="outline"
+          className="gap-2 w-full sm:w-auto"
+          size="sm"
           disabled={!canRemit}
-          >
-            <ArrowLeft className="h-4 w-4" />
-            End of Day Remittance
+        >
+          <ArrowLeft className="h-4 w-4" />
+          End of Day Remittance
           {!leaderId && (
             <span className="ml-2 text-xs text-muted-foreground">(No leader assigned)</span>
-        )}
+          )}
         </Button>
       </div>
 
@@ -600,7 +604,7 @@ export default function MyInventory() {
                         {brand.flavors.length} {brand.flavors.length === 1 ? 'Flavor' : 'Flavors'}
                         {brand.batteries.length > 0 && ` • ${brand.batteries.length} ${brand.batteries.length === 1 ? 'Battery' : 'Batteries'}`}
                         {(brand.posms || []).length > 0 && ` • ${(brand.posms || []).length} POSM${(brand.posms || []).length === 1 ? '' : 's'}`}
-                    </div>
+                      </div>
                     </div>
                     <div className="text-right ml-4">
                       <div className="text-xs text-muted-foreground mb-1">Total Stock</div>
@@ -997,26 +1001,25 @@ export default function MyInventory() {
                               <div className="font-semibold text-sm">{item.brandName}</div>
                               <div className="text-sm text-muted-foreground">{item.variantName}</div>
                             </div>
-                            <Badge 
-                              variant="secondary" 
-                              className={`ml-2 text-xs ${
-                                item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
-                                'bg-purple-100 text-purple-700'
-                              }`}
+                            <Badge
+                              variant="secondary"
+                              className={`ml-2 text-xs ${item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                  item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
+                                    'bg-purple-100 text-purple-700'
+                                }`}
                             >
                               {item.variantType === 'posm' ? 'POSM' : item.variantType.charAt(0).toUpperCase() + item.variantType.slice(1)}
                             </Badge>
                           </div>
                           <div className="pt-2 border-t space-y-2">
                             <div className="flex justify-between items-center">
-                                <div className="text-xs text-muted-foreground">Quantity</div>
-                                <div className="font-semibold text-sm">{item.quantity}</div>
-                              </div>
+                              <div className="text-xs text-muted-foreground">Quantity</div>
+                              <div className="font-semibold text-sm">{item.quantity}</div>
+                            </div>
                             <div className="flex justify-between items-center">
                               <div className="text-xs text-muted-foreground">Price Value</div>
                               <div className="font-semibold text-sm">₱{(item.quantity * (item.price || 0)).toLocaleString()}</div>
-                              </div>
+                            </div>
                             <div className="flex justify-between items-center">
                               <div className="text-xs text-muted-foreground">DSP Value</div>
                               <div className="font-semibold text-sm text-blue-600">₱{(item.quantity * (item.dspPrice || 0)).toLocaleString()}</div>
@@ -1052,12 +1055,12 @@ export default function MyInventory() {
                               <TableCell className="font-medium">{item.brandName}</TableCell>
                               <TableCell>{item.variantName}</TableCell>
                               <TableCell>
-                                <Badge 
+                                <Badge
                                   variant="secondary"
                                   className={
                                     item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                    item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
-                                    'bg-purple-100 text-purple-700'
+                                      item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
+                                        'bg-purple-100 text-purple-700'
                                   }
                                 >
                                   {item.variantType === 'posm' ? 'POSM' : item.variantType.charAt(0).toUpperCase() + item.variantType.slice(1)}
@@ -1229,20 +1232,20 @@ export default function MyInventory() {
 
               {/* Confirmation Checkbox - Optional for sold orders */}
               {todayOrders.length > 0 && (
-              <div className="flex items-start space-x-2 p-3 md:p-4 bg-muted/30 rounded-lg border">
-                <Checkbox
-                  id="sold-confirm"
-                  checked={soldConfirmed}
-                  onCheckedChange={(checked) => setSoldConfirmed(checked === true)}
-                  className="mt-0.5"
-                />
-                <label
-                  htmlFor="sold-confirm"
-                  className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                >
+                <div className="flex items-start space-x-2 p-3 md:p-4 bg-muted/30 rounded-lg border">
+                  <Checkbox
+                    id="sold-confirm"
+                    checked={soldConfirmed}
+                    onCheckedChange={(checked) => setSoldConfirmed(checked === true)}
+                    className="mt-0.5"
+                  />
+                  <label
+                    htmlFor="sold-confirm"
+                    className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                  >
                     I have reviewed today's sold orders ({todayOrders.length} orders) - <span className="text-muted-foreground">Optional</span>
-                </label>
-              </div>
+                  </label>
+                </div>
               )}
             </TabsContent>
 
@@ -1465,7 +1468,7 @@ export default function MyInventory() {
                         Ready for remittance
                       </p>
                       <p className="text-[9px] md:text-sm text-green-700 mt-0.5">
-                        {todayOrders.length > 0 
+                        {todayOrders.length > 0
                           ? `Remitting ₱${todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} in cash. Your ${totalRemitQuantity} units of inventory stay with you.`
                           : `No cash to remit today. Your ${totalRemitQuantity} units of inventory stay with you.`
                         }

@@ -1,5 +1,5 @@
 -- ============================================================================
--- DATABASE CLEANUP & RECOVERY
+-- DATABASE CLEANUP & RECOVERY (DO NOT RUN THIS ONLY IF NECESSARY)
 -- ============================================================================
 
 -- 1. Terminate other connections to clear locks (except this one)

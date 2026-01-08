@@ -1,41 +1,37 @@
 // ============================================================================
 // PROFILE CACHE UTILITY
 // ============================================================================
-// Secure caching for user profile data with TTL and validation
+// Secure caching for user profile data with persistent session storage
+// and stale-while-revalidate strategy.
 // ============================================================================
 
 import type { User } from '@/features/auth/types';
 
 const CACHE_KEY = 'user_profile_v1';
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes (User requested increase)
 
 interface CachedProfile {
   data: User;
   timestamp: number;
-  version: string; // Track cache schema version
+  version: string;
 }
 
 /**
- * Get cached profile if valid
+ * Get cached profile even if stale (unless corrupted)
+ * Persists across page refreshes via sessionStorage
  */
 export function getCachedProfile(): User | null {
   try {
-    const cached = localStorage.getItem(CACHE_KEY);
+    // Use sessionStorage so it survives refresh but clears on tab close
+    // (User asked for "persistent storage... so it survives page refreshes" - sessionStorage does exactly this)
+    const cached = sessionStorage.getItem(CACHE_KEY);
     if (!cached) return null;
 
     const profile: CachedProfile = JSON.parse(cached);
-    
+
     // Validate cache structure
     if (!profile.data || !profile.timestamp || !profile.version) {
       console.warn('🗑️ [ProfileCache] Invalid cache structure, clearing');
-      clearProfileCache();
-      return null;
-    }
-
-    // Check if cache is expired
-    const age = Date.now() - profile.timestamp;
-    if (age > CACHE_TTL) {
-      console.log('⏰ [ProfileCache] Cache expired, clearing');
       clearProfileCache();
       return null;
     }
@@ -47,7 +43,7 @@ export function getCachedProfile(): User | null {
       return null;
     }
 
-    console.log(`✅ [ProfileCache] Cache hit (age: ${Math.round(age / 1000)}s)`);
+    // Return data even if expired (caller will check staleness)
     return profile.data;
   } catch (error) {
     console.error('❌ [ProfileCache] Error reading cache:', error);
@@ -57,11 +53,31 @@ export function getCachedProfile(): User | null {
 }
 
 /**
+ * Check if the current cache is stale (older than TTL)
+ */
+export function isCacheStale(): boolean {
+  try {
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (!cached) return true; // No cache = stale
+
+    const profile: CachedProfile = JSON.parse(cached);
+    const age = Date.now() - profile.timestamp;
+
+    const isStale = age > CACHE_TTL;
+    if (isStale) {
+      console.log(`⏰ [ProfileCache] Cache is stale (age: ${Math.round(age / 1000)}s)`);
+    }
+    return isStale;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Save profile to cache
  */
 export function setCachedProfile(user: User): void {
   try {
-    // Validate required fields before caching
     if (!user.id || !user.email || !user.role) {
       console.warn('⚠️ [ProfileCache] Cannot cache incomplete profile');
       return;
@@ -73,14 +89,22 @@ export function setCachedProfile(user: User): void {
       version: '1.0'
     };
 
-    localStorage.setItem(CACHE_KEY, JSON.stringify(profile));
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(profile));
     console.log('💾 [ProfileCache] Profile cached successfully');
   } catch (error) {
     console.error('❌ [ProfileCache] Error saving cache:', error);
-    // If localStorage is full, clear old cache
+    // If quota exceeded, try to clear and retry once
     if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-      console.warn('🗑️ [ProfileCache] Storage quota exceeded, clearing cache');
-      clearProfileCache();
+      try {
+        sessionStorage.clear();
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+          data: user,
+          timestamp: Date.now(),
+          version: '1.0'
+        }));
+      } catch (e) {
+        console.warn('🗑️ [ProfileCache] Storage quota exceeded');
+      }
     }
   }
 }
@@ -90,7 +114,7 @@ export function setCachedProfile(user: User): void {
  */
 export function clearProfileCache(): void {
   try {
-    localStorage.removeItem(CACHE_KEY);
+    sessionStorage.removeItem(CACHE_KEY);
     console.log('🗑️ [ProfileCache] Cache cleared');
   } catch (error) {
     console.error('❌ [ProfileCache] Error clearing cache:', error);
@@ -102,7 +126,7 @@ export function clearProfileCache(): void {
  */
 export function getCacheAge(): number | null {
   try {
-    const cached = localStorage.getItem(CACHE_KEY);
+    const cached = sessionStorage.getItem(CACHE_KEY);
     if (!cached) return null;
 
     const profile: CachedProfile = JSON.parse(cached);
@@ -111,12 +135,3 @@ export function getCacheAge(): number | null {
     return null;
   }
 }
-
-/**
- * Check if cache is valid (not expired)
- */
-export function isCacheValid(): boolean {
-  const age = getCacheAge();
-  return age !== null && age * 1000 < CACHE_TTL;
-}
-

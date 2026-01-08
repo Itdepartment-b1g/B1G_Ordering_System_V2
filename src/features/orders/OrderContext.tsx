@@ -413,30 +413,35 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
       console.log('✅ Order created with ID:', newOrder.id, 'Number:', newOrder.order_number);
 
-      // 3. Fetch agent inventory prices for each item to capture selling_price, dsp_price, and rsp_price
-      const orderItemsWithPrices = await Promise.all(
-        order.items.map(async (item) => {
-          // Fetch agent inventory to get the prices at time of order
-          const { data: agentInv } = await supabase
-            .from('agent_inventory')
-            .select('selling_price, dsp_price, rsp_price, allocated_price')
-            .eq('agent_id', order.agentId)
-            .eq('variant_id', item.id)
-            .maybeSingle();
+      // 3. Batch fetch agent inventory prices for all items
+      const variantIds = order.items.map(i => i.id);
+      const { data: agentInventoryItems } = await supabase
+        .from('agent_inventory')
+        .select('variant_id, selling_price, dsp_price, rsp_price, allocated_price')
+        .eq('agent_id', order.agentId)
+        .in('variant_id', variantIds);
 
-          return {
-            company_id: companyId,
-            client_order_id: newOrder.id,
-            variant_id: item.id,
-            quantity: item.quantity,
-            unit_price: item.unitPrice,
-            selling_price: item.sellingPrice ?? agentInv?.selling_price ?? null,
-            dsp_price: item.dspPrice ?? agentInv?.dsp_price ?? null,
-            rsp_price: item.rspPrice ?? agentInv?.rsp_price ?? null,
-            total_price: item.total // Missing field in previous logic
-          };
-        })
-      );
+      // Create lookup map for O(1) access
+      const inventoryMap = new Map();
+      (agentInventoryItems || []).forEach((item: any) => {
+        inventoryMap.set(item.variant_id, item);
+      });
+
+      const orderItemsWithPrices = order.items.map((item) => {
+        const agentInv = inventoryMap.get(item.id);
+
+        return {
+          company_id: companyId,
+          client_order_id: newOrder.id,
+          variant_id: item.id,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          selling_price: item.sellingPrice ?? agentInv?.selling_price ?? null,
+          dsp_price: item.dspPrice ?? agentInv?.dsp_price ?? null,
+          rsp_price: item.rspPrice ?? agentInv?.rsp_price ?? null,
+          total_price: item.total
+        };
+      });
 
       const { error: itemsError } = await supabase
         .from('client_order_items')

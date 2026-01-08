@@ -248,3 +248,15 @@ export function useManagerTeamInventory() {
         staleTime: 1000 * 60 * 5, // 5 minutes
     });
 }
+
+import { fetchSubTeams } from '../api/subTeams';
+
+export function useManagerSubTeams() {
+    const { user } = useAuth();
+    return useQuery({
+        queryKey: ['manager', 'subTeams', user?.company_id],
+        queryFn: () => fetchSubTeams(user!.company_id!),
+        enabled: !!user?.company_id && user.role === 'manager',
+        staleTime: 1000 * 60 * 5, // 5 minutes
+    });
+}

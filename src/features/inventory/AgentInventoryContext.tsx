@@ -31,7 +31,7 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
           .from('brands')
           .select('id, name')
           .order('name'),
-        
+
         // 2. Fetch agent's inventory items
         supabase
           .from('agent_inventory')
@@ -50,7 +50,7 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
             )
           `)
           .eq('agent_id', user.id),
-        
+
         // 3. Fetch main inventory prices (unit_price) for reference
         supabase
           .from('main_inventory')
@@ -142,6 +142,7 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user?.id) {
       console.log('⚠️ No user ID available, skipping inventory fetch and subscription');
+      setLoading(false);
       return;
     }
 
@@ -163,7 +164,7 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
     // Subscribe to agent_inventory changes for users with inventory (mobile_sales, team_leader, manager)
     if (hasInventory(user.role)) {
       console.log(`🎧 Setting up real-time subscription for agent_inventory (user: ${user.id}, role: ${user.role})`);
-      
+
       // Subscribe to agent_inventory changes for this user
       channel = subscribeToTable(
         'agent_inventory',

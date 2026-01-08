@@ -2,15 +2,17 @@ import { useState, useEffect, ReactNode, useRef, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
-import { getCachedProfile, setCachedProfile, clearProfileCache } from '@/lib/profileCache';
+import { getCachedProfile, setCachedProfile, clearProfileCache, isCacheStale } from '@/lib/profileCache';
 import { startTokenMonitoring, stopTokenMonitoring, cleanupLocalStorage, logSecurityEvent } from '@/lib/security';
 import { AuthContext } from './hooks';
 import type { User, LoginResult } from './types';
+import { Loader2 } from 'lucide-react';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [impersonatedCompany, setImpersonatedCompany] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Handle global read-only mode for impersonation
   useEffect(() => {
@@ -29,17 +31,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Clean up deprecated localStorage items
     cleanupLocalStorage();
-
-    // Start security monitoring
-    startTokenMonitoring(() => {
-      logSecurityEvent('Token tampering detected');
-      toast({
-        title: 'Security Alert',
-        description: 'Suspicious activity detected. Please log in again.',
-        variant: 'destructive'
-      });
-      logout();
-    });
 
     // Load impersonation from sessionStorage
     const savedImpersonation = sessionStorage.getItem('impersonated_company');
@@ -128,6 +119,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         userRef.current = null;
         setIsLoading(false);
         localStorage.removeItem('just_logged_out');
+
+        // Even if logged out, we are "initialized"
+        setIsInitialized(true);
         return;
       }
 
@@ -138,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         userRef.current = null;
         setIsLoading(false);
+        setIsInitialized(true);
         return;
       }
 
@@ -145,67 +140,84 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         userRef.current = null;
         setIsLoading(false);
+        setIsInitialized(true);
         return;
       }
 
       await loadUserProfile(session);
+
+      // Start security monitoring ONLY after we have a valid session/initialization
+      // This prevents the "No auth token" warning during initial load
+      startTokenMonitoring(() => {
+        logSecurityEvent('Token tampering detected');
+        toast({
+          title: 'Security Alert',
+          description: 'Suspicious activity detected. Please log in again.',
+          variant: 'destructive'
+        });
+        logout();
+      });
+
     } catch (error) {
       console.error('❌ [AuthContext] Auth initialization error:', error);
       setUser(null);
       userRef.current = null;
       setIsLoading(false);
+    } finally {
+      setIsInitialized(true);
     }
   };
 
   const loadUserProfile = async (session: any, forceRefresh = false) => {
     const userId = session.user.id;
+    const { isCacheStale } = await import('@/lib/profileCache'); // Dynamic import to avoid circular dep issues slightly, though static is fine
 
     // 1. MEMORY CACHE CHECK
-    // If we have the user in memory and it matches the session user, and we aren't forced to refresh
     if (!forceRefresh && userRef.current?.id === userId) {
-      // Already loaded, no need to do anything
-      console.log('✅ [AuthContext] User already in memory, skipping fetch');
+      console.log('✅ [AuthContext] User already in memory');
       setIsLoading(false);
       return;
     }
 
-    // 2. LOCAL STORAGE CACHE CHECK
-    // If we have a valid cached profile, use it immediately to unblock UI
+    // 2. PERSISTENT CACHE CHECK (Stale-While-Revalidate)
     const cached = getCachedProfile();
-    if (!forceRefresh && cached && cached.id === userId) {
-      console.log('✅ [AuthContext] Using cached profile');
+    const shouldFetch = forceRefresh || !cached || isCacheStale();
+
+    if (cached && cached.id === userId) {
+      console.log('✅ [AuthContext] Using cached profile (Instant Load)');
       setUser(cached);
       userRef.current = cached;
       setIsLoading(false);
-      // We can optionally verify in background if needed, but for now we trust the cache
-      // unless forceRefresh is true or we want a "stale-while-revalidate" strategy.
-      // Given the requirement to reduce calls, we stop here.
-      return;
-    }
 
-    // 3. DB FETCH
-    try {
-      console.log('🔍 [AuthContext] Fetching profile from DB...');
-
-      // Only set loading if we didn't have a cache hit (meaning user is waiting)
-      if (!userRef.current) {
-        setIsLoading(true);
+      // If cache is fresh and no forced refresh, we are done!
+      if (!shouldFetch) {
+        return;
       }
 
-      // Standard fetch without aggressive timeout race
-      const { data: profile, error } = await supabase
+      console.log('🔄 [AuthContext] Cache is stale, refreshing in background...');
+    } else {
+      // No cache found - we must show loading
+      console.log('🔍 [AuthContext] No cache found, fetching from DB...');
+      setIsLoading(true); // Ensure loading is shown for initial fetch
+    }
+
+    // 3. DB FETCH (Background if cached, Blocking if not)
+    try {
+      // Standard fetch with joined company data
+      const { data: profileData, error } = await supabase
         .from('profiles')
-        .select('id, email, full_name, role, status, company_id, phone, region, city, address, country, avatar_url, created_at, updated_at')
+        .select(`
+          id, email, full_name, role, status, company_id, phone, region, city, address, country, avatar_url, created_at, updated_at,
+          companies (status)
+        `)
         .eq('id', userId)
         .maybeSingle();
 
       if (error) {
         console.error('⚠️ [AuthContext] Profile fetch failed:', error);
-
-        // Retry logic could go here if needed, but standard failover is better
-        // Fallback to minimal session user if absolutely necessary
+        // If we failed and didn't have a cache, try to construct a fallback
         if (!userRef.current) {
-          console.warn('⚠️ [AuthContext] No cache, using minimal session data');
+          // ... existing fallback logic ...
           const metadata = session.user.user_metadata;
           const basicUser: User = {
             id: userId,
@@ -220,13 +232,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(basicUser);
           userRef.current = basicUser;
         }
-        setIsLoading(false);
         return;
       }
 
-      if (!profile) {
-        console.warn('⚠️ [AuthContext] Profile not found in DB');
-        // Fallback or create? For now, fallback to session metadata
+      if (!profileData) {
+        // ... existing not found logic ...
         if (!userRef.current) {
           const metadata = session.user.user_metadata;
           const basicUser: User = {
@@ -242,61 +252,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(basicUser);
           userRef.current = basicUser;
         }
-        setIsLoading(false);
         return;
       }
 
-      // Check status
-      if (profile.status !== 'active') {
-        console.warn('❌ [AuthContext] User account is not active (revoking access)');
+      // Check user status
+      if (profileData.status !== 'active') {
+        console.warn('❌ [AuthContext] User account is not active');
         setUser(null);
         userRef.current = null;
         await supabase.auth.signOut();
-        toast({
-          title: "Access Denied",
-          description: "Your account is not active.",
-          variant: "destructive",
-        });
-        setIsLoading(false);
+        toast({ title: "Access Denied", description: "Your account is not active.", variant: "destructive" });
         return;
       }
 
       // Check company status
-      if (profile.company_id && profile.role !== 'system_administrator') {
-        const { data: company, error: companyError } = await supabase
-          .from('companies')
-          .select('status')
-          .eq('id', profile.company_id)
-          .single();
-
-        if (company && company.status === 'inactive') {
-          console.warn('❌ [AuthContext] Company is inactive (logging out user)');
+      if (profileData.company_id && profileData.role !== 'system_administrator') {
+        const companyStatus = (profileData.companies as any)?.status;
+        if (companyStatus === 'inactive') {
+          console.warn('❌ [AuthContext] Company is inactive');
           await supabase.auth.signOut();
           setUser(null);
           userRef.current = null;
-          toast({
-            title: "Access Denied",
-            description: "Your company account has been deactivated.",
-            variant: "destructive",
-          });
-          setIsLoading(false);
+          toast({ title: "Access Denied", description: "Company account deactivated.", variant: "destructive" });
           return;
         }
       }
 
       // Valid profile - update state and cache
-      console.log('✅ [AuthContext] Profile fetched and updated');
+      console.log('✅ [AuthContext] Profile refreshed from DB');
+      const { companies, ...profile } = profileData;
       const updatedUser = profile as User;
+
+      // Update state
       setUser(updatedUser);
       userRef.current = updatedUser;
-      setCachedProfile(updatedUser);
-      setIsLoading(false);
 
-      // Setup Realtime (only if changed or new)
+      // Update Persistent Cache
+      setCachedProfile(updatedUser);
+
+      // Setup Realtime
       setupCompanyListener(updatedUser);
 
     } catch (error: any) {
       console.error('❌ [AuthContext] Profile fetch exception:', error);
+    } finally {
       setIsLoading(false);
     }
   };
@@ -495,9 +494,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       startImpersonation,
       stopImpersonation,
       isAuthenticated: !!user,
-      isLoading
-    }}>
-      {children}
+      isLoading,
+      isInitialized
+    } as any}>
+      {!isInitialized ? (
+        <div className="flex h-screen w-full items-center justify-center bg-background">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm font-medium text-muted-foreground animate-pulse">
+              Initializing application...
+            </p>
+          </div>
+        </div>
+      ) : (
+        children
+      )}
     </AuthContext.Provider>
   );
 }
