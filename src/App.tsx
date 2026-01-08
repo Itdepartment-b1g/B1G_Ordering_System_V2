@@ -31,12 +31,15 @@ import { WarRoomPage } from "@/features/war-room";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components";
 
+import { PrefetchController } from "@/features/core/PrefetchController";
+
 const App = () => (
   <PersistQueryClientProvider
     client={queryClient}
     persistOptions={{ persister }}
   >
     <AuthProvider>
+      <PrefetchController />
       <OrderProvider>
         <PurchaseOrderProvider>
           <InventoryProvider>

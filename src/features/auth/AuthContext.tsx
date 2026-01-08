@@ -64,30 +64,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (session?.user) {
-
-        if (event === 'TOKEN_REFRESHED' && userRef.current?.id === session.user.id) {
-          console.log('🔄 [AuthContext] Token refreshed, checking company status...');
-          const currentUser = userRef.current;
-          if (currentUser?.company_id && currentUser.role !== 'system_administrator') {
-            const { data: company } = await supabase
-              .from('companies')
-              .select('status')
-              .eq('id', currentUser.company_id)
-              .single();
-
-            if (company && company.status === 'inactive') {
-              console.warn('❌ [AuthContext] Company became inactive, logging out');
-              await supabase.auth.signOut();
-              setUser(null);
-              userRef.current = null;
-              toast({
-                title: "Access Denied",
-                description: "Your company account has been deactivated. Please contact your system administrator.",
-                variant: "destructive",
-              });
-              return;
-            }
-          }
+        // Optimization: If we already have the user loaded, don't re-fetch on every event
+        // unless it's a different user
+        if (userRef.current?.id === session.user.id) {
+          console.log('🔄 [AuthContext] Session refreshed for same user, skipping profile reload');
           return;
         }
 
@@ -177,119 +157,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const loadUserProfile = async (session: any) => {
+  const loadUserProfile = async (session: any, forceRefresh = false) => {
     const userId = session.user.id;
 
-    // 1. REFRESH VERIFICATION: fetching fresh data from DB is now PRIORITY
-    // We skip optimistic loading to prevent data flickering/race conditions
-
-    // Check if we already have this user in memory (fresh enough)
-    const currentUser = userRef.current;
-    if (currentUser?.id === userId && currentUser?.role && currentUser.role !== 'mobile_sales') {
-      // If we already have the user in memory, we can use it, but we should probably still verify
-      // For now, let's treat memory as "optimistic" but safe enough if we just navigated
+    // 1. MEMORY CACHE CHECK
+    // If we have the user in memory and it matches the session user, and we aren't forced to refresh
+    if (!forceRefresh && userRef.current?.id === userId) {
+      // Already loaded, no need to do anything
+      console.log('✅ [AuthContext] User already in memory, skipping fetch');
+      setIsLoading(false);
+      return;
     }
 
-    // 2. BACKGROUND VERIFICATION: Fetch fresh data from DB
-    try {
-      console.log('🔍 [AuthContext] Verifying profile in background...');
+    // 2. LOCAL STORAGE CACHE CHECK
+    // If we have a valid cached profile, use it immediately to unblock UI
+    const cached = getCachedProfile();
+    if (!forceRefresh && cached && cached.id === userId) {
+      console.log('✅ [AuthContext] Using cached profile');
+      setUser(cached);
+      userRef.current = cached;
+      setIsLoading(false);
+      // We can optionally verify in background if needed, but for now we trust the cache
+      // unless forceRefresh is true or we want a "stale-while-revalidate" strategy.
+      // Given the requirement to reduce calls, we stop here.
+      return;
+    }
 
-      // Fetch user profile from profiles table with explicit fields including company_id
-      const profileQuery = supabase
+    // 3. DB FETCH
+    try {
+      console.log('🔍 [AuthContext] Fetching profile from DB...');
+
+      // Only set loading if we didn't have a cache hit (meaning user is waiting)
+      if (!userRef.current) {
+        setIsLoading(true);
+      }
+
+      // Standard fetch without aggressive timeout race
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('id, email, full_name, role, status, company_id, phone, region, city, address, country, avatar_url, created_at, updated_at')
         .eq('id', userId)
         .maybeSingle();
 
-      // Create a timeout promise (shorter timeout for background sync)
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Background profile fetch timeout')), 10000)
-      );
+      if (error) {
+        console.error('⚠️ [AuthContext] Profile fetch failed:', error);
 
-      const startTime = Date.now();
-
-      // Race between the query and timeout
-      const result = await Promise.race([
-        profileQuery,
-        timeoutPromise
-      ]) as { data: any; error: any };
-
-      const elapsed = Date.now() - startTime;
-      console.log(`⏱️ [AuthContext] Background sync completed in ${elapsed}ms`);
-
-      if (result.error) {
-        console.error('⚠️ [AuthContext] Background profile sync failed:', result.error);
-        console.error('⚠️ [AuthContext] Error details:', {
-          message: result.error.message,
-          code: result.error.code,
-          details: result.error.details,
-          hint: result.error.hint
-        });
-
-        // If there's an error, try to retry once after a short delay
-        console.log('🔄 [AuthContext] Retrying profile fetch...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        const retryResult = await supabase
-          .from('profiles')
-          .select('id, email, full_name, role, status, company_id, phone, region, city, address, country, avatar_url, created_at, updated_at')
-          .eq('id', userId)
-          .maybeSingle();
-
-        if (retryResult.error || !retryResult.data) {
-          console.error('⚠️ [AuthContext] Retry also failed, checking cache as fallback');
-          const cached = getCachedProfile();
-          if (cached && cached.id === userId) {
-            console.log('⚠️ [AuthContext] Using cached profile as fallback');
-            setUser(cached);
-            userRef.current = cached;
-            setIsLoading(false);
-            return;
-          }
-
-          // Fallback to minimal session user if absolutely necessary
+        // Retry logic could go here if needed, but standard failover is better
+        // Fallback to minimal session user if absolutely necessary
+        if (!userRef.current) {
           console.warn('⚠️ [AuthContext] No cache, using minimal session data');
-          const metadata = session.user.user_metadata;
-          const basicUser: User = {
-            id: userId,
-            email: session.user.email || '',
-            role: metadata?.role || 'mobile_sales',
-            status: 'active',
-            full_name: metadata?.full_name || 'User',
-            company_id: metadata?.company_id || undefined,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          setUser(basicUser);
-          userRef.current = basicUser;
-          setIsLoading(false);
-          return;
-        }
-
-        // Use retry result
-        const profile = retryResult.data;
-        if (profile.status === 'active') {
-          console.log('✅ [AuthContext] Profile fetched on retry');
-          console.log('✅ [AuthContext] Role:', profile.role);
-          const updatedUser = profile as User;
-          setUser(updatedUser);
-          userRef.current = updatedUser; // Keep ref in sync
-          setCachedProfile(updatedUser); // Cache for next time
-          setIsLoading(false); // Ensure loading is cleared
-        }
-        return;
-      }
-
-      const profile = result.data;
-
-      if (!profile) {
-        console.warn('⚠️ [AuthContext] Profile not found in DB (using optimistic data)');
-        const cached = getCachedProfile();
-        if (cached && cached.id === userId) {
-          setUser(cached);
-          userRef.current = cached;
-        } else {
-          // Minimal fallback
           const metadata = session.user.user_metadata;
           const basicUser: User = {
             id: userId,
@@ -308,32 +224,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      console.log('📊 [AuthContext] Profile fetched from DB:', profile);
+      if (!profile) {
+        console.warn('⚠️ [AuthContext] Profile not found in DB');
+        // Fallback or create? For now, fallback to session metadata
+        if (!userRef.current) {
+          const metadata = session.user.user_metadata;
+          const basicUser: User = {
+            id: userId,
+            email: session.user.email || '',
+            role: metadata?.role || 'mobile_sales',
+            status: 'active',
+            full_name: metadata?.full_name || 'User',
+            company_id: metadata?.company_id || undefined,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          setUser(basicUser);
+          userRef.current = basicUser;
+        }
+        setIsLoading(false);
+        return;
+      }
 
+      // Check status
       if (profile.status !== 'active') {
         console.warn('❌ [AuthContext] User account is not active (revoking access)');
-        setUser(null); // Revoke access if DB says inactive
+        setUser(null);
         userRef.current = null;
+        await supabase.auth.signOut();
         toast({
           title: "Access Denied",
           description: "Your account is not active.",
           variant: "destructive",
         });
+        setIsLoading(false);
         return;
       }
 
-      // Check if company_id is missing and warn
-      if (!profile.company_id) {
-        console.error('❌ [AuthContext] Profile is missing company_id!');
-        console.error('❌ [AuthContext] Profile data:', profile);
-        toast({
-          title: "Profile Issue",
-          description: "Your profile is missing company information. Please contact support.",
-          variant: "destructive",
-        });
-      }
-
-      // Check company status (skip for system_administrator as they don't belong to a company)
+      // Check company status
       if (profile.company_id && profile.role !== 'system_administrator') {
         const { data: company, error: companyError } = await supabase
           .from('companies')
@@ -341,65 +269,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .eq('id', profile.company_id)
           .single();
 
-        if (companyError) {
-          console.error('❌ [AuthContext] Error checking company status:', companyError);
-        } else if (company && company.status === 'inactive') {
+        if (company && company.status === 'inactive') {
           console.warn('❌ [AuthContext] Company is inactive (logging out user)');
-          // Log out the user
           await supabase.auth.signOut();
           setUser(null);
           userRef.current = null;
           toast({
             title: "Access Denied",
-            description: "Your company account has been deactivated. Please contact your system administrator.",
+            description: "Your company account has been deactivated.",
             variant: "destructive",
           });
+          setIsLoading(false);
           return;
         }
       }
 
-      // Update with fresh data from DB
-      console.log('✅ [AuthContext] Profile verified and updated from DB');
-      console.log('✅ [AuthContext] Role:', profile.role);
-      console.log('✅ [AuthContext] Company ID:', profile.company_id);
+      // Valid profile - update state and cache
+      console.log('✅ [AuthContext] Profile fetched and updated');
       const updatedUser = profile as User;
       setUser(updatedUser);
-      userRef.current = updatedUser; // Keep ref in sync
-      setCachedProfile(updatedUser); // Cache for faster subsequent loads
-      setIsLoading(false); // Unblock UI now that we have confirmed data
+      userRef.current = updatedUser;
+      setCachedProfile(updatedUser);
+      setIsLoading(false);
 
-      // Set up real-time subscription to monitor company status changes (only for non-system-admins with company_id)
-      if (updatedUser.company_id && updatedUser.role !== 'system_administrator') {
-        // Clean up any existing subscription first
-        if ((window as any).companyStatusChannel) {
-          unsubscribe((window as any).companyStatusChannel);
-        }
-
-        // Subscribe to changes in the company table
-        const companyChannel = subscribeToTable('companies', async (payload: any) => {
-          // Check if the changed company is the user's company
-          if (payload.new?.id === updatedUser.company_id || payload.old?.id === updatedUser.company_id) {
-            if (payload.new?.status === 'inactive') {
-              console.warn('❌ [AuthContext] Company status changed to inactive via real-time, logging out');
-              await supabase.auth.signOut();
-              setUser(null);
-              userRef.current = null;
-              toast({
-                title: "Access Denied",
-                description: "Your company account has been deactivated. Please contact your system administrator.",
-                variant: "destructive",
-              });
-            }
-          }
-        });
-
-        // Store channel reference for cleanup
-        (window as any).companyStatusChannel = companyChannel;
-      }
+      // Setup Realtime (only if changed or new)
+      setupCompanyListener(updatedUser);
 
     } catch (error: any) {
-      console.warn('⚠️ [AuthContext] Background sync exception:', error);
-      // Ignore errors to keep the session alive
+      console.error('❌ [AuthContext] Profile fetch exception:', error);
+      setIsLoading(false);
+    }
+  };
+
+  // Helper to separate listener logic
+  const setupCompanyListener = (user: User) => {
+    if (user.company_id && user.role !== 'system_administrator') {
+      if ((window as any).companyStatusChannel) {
+        // If already subscribed to THIS company, skip
+        // But simpler to just unsubscribe and resubscribe to be safe/lazy
+        unsubscribe((window as any).companyStatusChannel);
+      }
+
+      const companyChannel = subscribeToTable('companies', async (payload: any) => {
+        if (payload.new?.id === user.company_id || payload.old?.id === user.company_id) {
+          if (payload.new?.status === 'inactive') {
+            console.warn('❌ [AuthContext] Company inactive via real-time, logging out');
+            await supabase.auth.signOut();
+            setUser(null);
+            userRef.current = null;
+            window.location.href = '/login';
+          }
+        }
+      });
+      (window as any).companyStatusChannel = companyChannel;
     }
   };
 
@@ -556,7 +478,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        await loadUserProfile(session);
+        await loadUserProfile(session, true);
       }
     } catch (error) {
       console.error('Refresh profile error:', error);

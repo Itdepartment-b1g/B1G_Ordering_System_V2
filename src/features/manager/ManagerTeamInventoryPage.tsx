@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useManagerTeamInventory } from './hooks/useManagerData';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,17 +52,11 @@ export default function ManagerTeamInventoryPage() {
     const { user } = useAuth();
     const { toast } = useToast();
 
-    const [loading, setLoading] = useState(true);
-    const [teamData, setTeamData] = useState<AgentInventorySummary[]>([]);
+    const { data: teamData = [], isLoading: loading } = useManagerTeamInventory();
+
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedAgent, setSelectedAgent] = useState<AgentInventorySummary | null>(null);
     const [expandedBrands, setExpandedBrands] = useState<string[]>([]); // Added state for expanded brands
-
-    useEffect(() => {
-        if (user) {
-            fetchTeamInventory();
-        }
-    }, [user]);
 
     // Reset expanded brands when modal closes or agent changes
     useEffect(() => {
@@ -69,126 +64,6 @@ export default function ManagerTeamInventoryPage() {
             setExpandedBrands([]);
         }
     }, [selectedAgent]);
-
-    const fetchTeamInventory = async () => {
-        try {
-            setLoading(true);
-            if (!user?.company_id) return;
-
-            // 1. Get Team Hierarchy
-            const { data: relationships, error: relError } = await supabase
-                .from('leader_teams')
-                .select('agent_id, leader_id')
-                .eq('company_id', user.company_id);
-
-            if (relError) throw relError;
-
-            // Define who is in the team (Direct + Indirect)
-            const directReports = (relationships || [])
-                .filter(r => r.leader_id === user?.id)
-                .map(r => r.agent_id);
-
-            const secondLevelReports = (relationships || [])
-                .filter(r => directReports.includes(r.leader_id))
-                .map(r => r.agent_id);
-
-            const allTeamIds = Array.from(new Set([...directReports, ...secondLevelReports]));
-
-            if (allTeamIds.length === 0) {
-                setTeamData([]);
-                setLoading(false);
-                return;
-            }
-
-            // 2. Fetch Profiles (for name/role)
-            const { data: profiles, error: profError } = await supabase
-                .from('profiles')
-                .select('id, full_name, role, region')
-                .eq('company_id', user.company_id)
-                .in('id', allTeamIds);
-
-            if (profError) throw profError;
-
-            // 3. Fetch Inventory Data (grouped logic)
-            // We fetch all non-zero inventory for these agents
-            const { data: inventoryData, error: invError } = await supabase
-                .from('agent_inventory')
-                .select(`
-                    id,
-                    stock,
-                    agent_id,
-                    variants!inner (
-                        id,
-                        name,
-                        variant_type,
-                        brand_id, 
-                        brands!inner (
-                            id,
-                            name
-                        )
-                    )
-                `)
-                .eq('company_id', user.company_id)
-                .in('agent_id', allTeamIds)
-                .gt('stock', 0);
-
-            if (invError) throw invError;
-
-            // 4. Process and Aggregate Data
-            const inventoryMap = new Map<string, DetailedInventoryItem[]>();
-
-            inventoryData?.forEach((item: any) => {
-                const agentId = item.agent_id;
-                if (!inventoryMap.has(agentId)) {
-                    inventoryMap.set(agentId, []);
-                }
-
-                inventoryMap.get(agentId)?.push({
-                    id: item.id,
-                    variantName: item.variants.name,
-                    variantType: item.variants.variant_type,
-                    brandId: item.variants.brands.id, // Capture brandId
-                    brandName: item.variants.brands.name,
-                    stock: item.stock
-                });
-            });
-
-            // Map profiles to summaries
-            const summaries: AgentInventorySummary[] = (profiles || []).map(profile => {
-                const agentInventory = inventoryMap.get(profile.id) || [];
-                const totalStock = agentInventory.reduce((sum, i) => sum + i.stock, 0);
-
-                return {
-                    agentId: profile.id,
-                    agentName: profile.full_name,
-                    agentRole: profile.role,
-                    agentRegion: profile.region || 'N/A',
-                    totalStock: totalStock,
-                    variantCount: agentInventory.length,
-                    inventory: agentInventory.sort((a, b) => b.stock - a.stock) // Sort by highest stock first in detail view
-                };
-            });
-
-            // Sort: Leaders first, then by Total Stock desc
-            summaries.sort((a, b) => {
-                if (a.agentRole === 'team_leader' && b.agentRole !== 'team_leader') return -1;
-                if (a.agentRole !== 'team_leader' && b.agentRole === 'team_leader') return 1;
-                return b.totalStock - a.totalStock;
-            });
-
-            setTeamData(summaries);
-
-        } catch (error) {
-            console.error('Error fetching inventory:', error);
-            toast({
-                title: 'Error',
-                description: 'Failed to load team inventory.',
-                variant: 'destructive'
-            });
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const getInitials = (name: string) => name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
 
