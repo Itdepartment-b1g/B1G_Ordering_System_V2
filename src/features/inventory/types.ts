@@ -18,3 +18,53 @@ export interface AgentBrand {
     batteries: AgentVariant[];
     posms: AgentVariant[];
 }
+
+// Remittance-related types
+export interface RemittanceOrderItem {
+    variantName: string;
+    brandName: string;
+    quantity: number;
+    unitPrice: number;
+}
+
+export interface RemittanceOrder {
+    id: string;
+    orderNumber: string;
+    clientName: string;
+    totalAmount: number;
+    paymentMethod: 'CASH' | 'GCASH' | 'BANK_TRANSFER';
+    bankType?: string;
+    items: RemittanceOrderItem[];
+    createdAt: string;
+    agentNotes?: string;
+}
+
+export interface BankOrderNote {
+    order_id: string;
+    notes: string;
+}
+
+// Return inventory types
+export interface ReturnItem {
+    variant_id: string;
+    variantName: string;
+    brandName: string;
+    variantType: 'flavor' | 'battery' | 'posm';
+    quantity: number;
+    maxQuantity: number;
+}
+
+export interface InventoryReturn {
+    id: string;
+    companyId: string;
+    agentId: string;
+    receiverId: string;
+    returnDate: string;
+    returnType: 'full' | 'partial';
+    returnReason: string;
+    reasonNotes?: string;
+    signatureUrl?: string;
+    signaturePath?: string;
+    items: ReturnItem[];
+    createdAt: string;
+}

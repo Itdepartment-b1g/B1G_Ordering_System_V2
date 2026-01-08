@@ -8,14 +8,18 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, ChevronDown, ChevronRight, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck } from 'lucide-react';
+import { Search, Package, ChevronDown, ChevronRight, ArrowLeft, FileSignature, ShoppingCart, Loader2, CheckCircle2, ClipboardCheck, PackageMinus, Info } from 'lucide-react';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
+import { Textarea } from '@/components/ui/textarea';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { format } from 'date-fns';
 import { useAgentInventory } from './hooks';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
+import type { RemittanceOrder, BankOrderNote } from './types';
 
 export default function MyInventory() {
   const { agentBrands } = useAgentInventory();
@@ -30,12 +34,15 @@ export default function MyInventory() {
   const [leaderRole, setLeaderRole] = useState<string | null>(null);
 
   // New state for orders and signature
-  const [todayOrders, setTodayOrders] = useState<any[]>([]);
+  const [todayCashOrders, setTodayCashOrders] = useState<RemittanceOrder[]>([]);
+  const [todayBankOrders, setTodayBankOrders] = useState<RemittanceOrder[]>([]);
+  const [bankOrderNotes, setBankOrderNotes] = useState<Map<string, string>>(new Map());
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<RemittanceOrder | null>(null);
   const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false);
 
   // Confirmation checkboxes for each section
   const [unsoldConfirmed, setUnsoldConfirmed] = useState(false);
@@ -261,13 +268,14 @@ export default function MyInventory() {
 
   // Auto-confirm sold orders if there are none (optional section)
   useEffect(() => {
-    if (todayOrders.length === 0) {
+    if (todayCashOrders.length === 0 && todayBankOrders.length === 0) {
       setSoldConfirmed(true);
     }
-  }, [todayOrders.length]);
+  }, [todayCashOrders.length, todayBankOrders.length]);
 
-  // Fetch today's CASH orders (not yet remitted)
-  // Bank transfer orders go through finance verification separately
+  // Fetch today's orders (CASH + BANK_TRANSFER/GCASH)
+  // CASH orders require physical cash remittance
+  // Bank transfer orders just need acknowledgment with notes
   const fetchTodayOrders = async () => {
     if (!user?.id) return;
 
@@ -276,8 +284,7 @@ export default function MyInventory() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Fetch today's CASH orders that haven't been remitted
-      // Bank transfer orders are handled through separate finance flow
+      // Fetch ALL today's orders that haven't been remitted
       const { data, error } = await supabase
         .from('client_orders')
         .select(`
@@ -286,6 +293,8 @@ export default function MyInventory() {
           total_amount,
           status,
           payment_method,
+          bank_type,
+          agent_remittance_notes,
           created_at,
           clients(name),
           items:client_order_items(
@@ -298,43 +307,45 @@ export default function MyInventory() {
           )
         `)
         .eq('agent_id', user.id)
-        .eq('payment_method', 'CASH')  // CRITICAL: Only CASH orders for remittance
         .eq('remitted', false)  // Only non-remitted orders
         .gte('created_at', today.toISOString())
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      // Group orders with their items
-      const formattedOrders = (data || []).map((order: any) => {
+      // Format and split orders by payment type
+      const cashOrders: RemittanceOrder[] = [];
+      const bankOrders: RemittanceOrder[] = [];
+
+      (data || []).forEach((order: any) => {
         const items = (order.items || []).map((item: any) => ({
           variantName: item.variant?.name || 'Unknown',
           brandName: item.variant?.brand?.name || 'Unknown',
           quantity: item.quantity,
-          price: item.unit_price || 0,
-          amount: item.quantity * (item.unit_price || 0)
+          unitPrice: item.unit_price || 0
         }));
 
-        // Get unique brand names
-        const uniqueBrands = [...new Set(items.map((item: any) => item.brandName))];
-
-        // Calculate total quantity
-        const totalQuantity = items.reduce((sum: number, item: any) => sum + item.quantity, 0);
-
-        return {
+        const formattedOrder: RemittanceOrder = {
           id: order.id,
           orderNumber: order.order_number,
           clientName: order.clients?.name || 'Unknown',
-          brands: uniqueBrands.length > 0 ? uniqueBrands.join(', ') : '-',
-          totalQuantity: totalQuantity,
           totalAmount: order.total_amount,
-          status: order.status,
+          paymentMethod: order.payment_method,
+          bankType: order.bank_type,
+          items,
           createdAt: order.created_at,
-          items: items
+          agentNotes: order.agent_remittance_notes
         };
+
+        if (order.payment_method === 'CASH') {
+          cashOrders.push(formattedOrder);
+        } else if (order.payment_method === 'BANK_TRANSFER' || order.payment_method === 'GCASH') {
+          bankOrders.push(formattedOrder);
+        }
       });
 
-      setTodayOrders(formattedOrders);
+      setTodayCashOrders(cashOrders);
+      setTodayBankOrders(bankOrders);
     } catch (error: any) {
       console.error('Error fetching today orders:', error);
       toast({
@@ -461,17 +472,28 @@ export default function MyInventory() {
         throw new Error('Failed to upload signature');
       }
 
-      // Get unique order IDs
-      const orderIds = [...new Set(todayOrders.map(order => order.id))];
+      // Get unique order IDs from both cash and bank orders
+      const cashOrderIds = todayCashOrders.map(order => order.id);
+      const bankOrderIds = todayBankOrders.map(order => order.id);
+      const allOrderIds = [...cashOrderIds, ...bankOrderIds];
 
-      // Call remit function with orders and signature
+      // Prepare bank order notes in the format expected by the function
+      const bankNotes: BankOrderNote[] = Array.from(bankOrderNotes.entries())
+        .filter(([orderId, notes]) => notes.trim())
+        .map(([orderId, notes]) => ({
+          order_id: orderId,
+          notes: notes.trim()
+        }));
+
+      // Call remit function with orders, bank notes, and signature
       const { data, error } = await supabase.rpc('remit_inventory_to_leader', {
         p_agent_id: user.id,
         p_leader_id: leaderId,
         p_performed_by: user.id,
-        p_order_ids: orderIds,
+        p_order_ids: allOrderIds,
         p_signature_url: signatureData.url,
-        p_signature_path: signatureData.path
+        p_signature_path: signatureData.path,
+        p_bank_order_notes: bankNotes
       });
 
       if (error) {
@@ -483,16 +505,32 @@ export default function MyInventory() {
         throw new Error(data.message || 'Failed to remit inventory');
       }
 
+      // Build summary message
+      const cashTotal = todayCashOrders.reduce((sum, o) => sum + o.totalAmount, 0);
+      const bankTotal = todayBankOrders.reduce((sum, o) => sum + o.totalAmount, 0);
+      const totalOrders = todayCashOrders.length + todayBankOrders.length;
+      
+      let description = '';
+      if (todayCashOrders.length > 0 && todayBankOrders.length > 0) {
+        description = `Remittance complete! ${todayCashOrders.length} cash order(s) (₱${cashTotal.toLocaleString()}) and ${todayBankOrders.length} bank order(s) (₱${bankTotal.toLocaleString()}) processed.`;
+      } else if (todayCashOrders.length > 0) {
+        description = `Cash remittance successful! ₱${cashTotal.toLocaleString()} from ${todayCashOrders.length} order(s) submitted to ${leaderName || 'your leader'}.`;
+      } else if (todayBankOrders.length > 0) {
+        description = `${todayBankOrders.length} bank transfer order(s) acknowledged (₱${bankTotal.toLocaleString()}).`;
+      } else {
+        description = 'End of day process complete. Your inventory carries over to tomorrow.';
+      }
+
       toast({
         title: 'Remittance Complete!',
-        description: todayOrders.length > 0
-          ? `Cash remittance successful. ₱${todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} submitted to ${leaderName || 'your leader'}.`
-          : 'End of day process complete. Your inventory carries over to tomorrow.',
+        description
       });
 
       setRemitDialogOpen(false);
       setSignatureDataUrl(null);
-      setTodayOrders([]);
+      setTodayCashOrders([]);
+      setTodayBankOrders([]);
+      setBankOrderNotes(new Map());
 
       // Refresh page
       window.location.reload();
@@ -522,19 +560,31 @@ export default function MyInventory() {
           <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">My Inventory</h1>
           <p className="text-sm md:text-base text-muted-foreground">Products allocated to you by admin</p>
         </div>
-        <Button
-          onClick={() => setRemitDialogOpen(true)}
-          variant="outline"
-          className="gap-2 w-full sm:w-auto"
-          size="sm"
-          disabled={!canRemit}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          End of Day Remittance
-          {!leaderId && (
-            <span className="ml-2 text-xs text-muted-foreground">(No leader assigned)</span>
-          )}
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button
+            onClick={() => setRemitDialogOpen(true)}
+            variant="outline"
+            className="gap-2 w-full sm:w-auto"
+            size="sm"
+            disabled={!canRemit}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            End of Day Remittance
+            {!leaderId && (
+              <span className="ml-2 text-xs text-muted-foreground">(No leader assigned)</span>
+            )}
+          </Button>
+          <Button
+            onClick={() => setReturnDialogOpen(true)}
+            variant="destructive"
+            className="gap-2 w-full sm:w-auto"
+            size="sm"
+            disabled={!leaderId}
+          >
+            <PackageMinus className="h-4 w-4" />
+            Return Inventory
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
@@ -913,17 +963,19 @@ export default function MyInventory() {
                 </p>
               </div>
             )}
-            {leaderId && todayOrders.length === 0 && (
+            {leaderId && todayCashOrders.length === 0 && todayBankOrders.length === 0 && (
               <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm text-blue-800">
-                  ℹ️ No cash sales today. Click confirm to complete end-of-day process.
+                  ℹ️ No orders today. Click confirm to complete end-of-day process.
                 </p>
               </div>
             )}
-            {leaderId && todayOrders.length > 0 && (
+            {leaderId && (todayCashOrders.length > 0 || todayBankOrders.length > 0) && (
               <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
                 <p className="text-sm text-green-800">
-                  ✅ You have ₱{todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} in cash to remit from {todayOrders.length} order{todayOrders.length > 1 ? 's' : ''}.
+                  ✅ {todayCashOrders.length > 0 && `₱${todayCashOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} in cash from ${todayCashOrders.length} order(s)`}
+                  {todayCashOrders.length > 0 && todayBankOrders.length > 0 && ' + '}
+                  {todayBankOrders.length > 0 && `${todayBankOrders.length} bank transfer order(s)`}
                 </p>
               </div>
             )}
@@ -1104,134 +1156,248 @@ export default function MyInventory() {
 
             {/* Sold Orders Tab */}
             <TabsContent value="sold" className="flex-1 overflow-y-auto px-4 md:px-6 space-y-3 md:space-y-4 mt-2">
-              <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <p className="text-xs md:text-sm text-amber-900">
-                  💰 <strong>Cash Sales Only:</strong> Only CASH orders are shown here. Bank transfer orders go through separate finance verification.
-                </p>
-              </div>
-              {loadingOrders ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin" />
-                </div>
-              ) : todayOrders.length > 0 ? (
-                <>
-                  <Card>
-                    <CardContent className="p-3 md:p-4">
-                      <div className="grid grid-cols-2 gap-2 md:gap-4 text-center">
-                        <div>
-                          <div className="text-lg md:text-2xl font-bold text-green-600">
-                            {todayOrders.length}
-                          </div>
-                          <div className="text-[10px] md:text-xs text-muted-foreground">Orders</div>
-                        </div>
-                        <div>
-                          <div className="text-lg md:text-2xl font-bold text-green-600">
-                            ₱{todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()}
-                          </div>
-                          <div className="text-[10px] md:text-xs text-muted-foreground">Revenue</div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+              {/* Nested Tabs for Cash vs Bank Orders */}
+              <Tabs defaultValue="cash" className="w-full">
+                <TabsList className="grid w-full grid-cols-2 mb-4">
+                  <TabsTrigger value="cash" className="text-xs md:text-sm">
+                    Cash Orders ({todayCashOrders.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="bank" className="text-xs md:text-sm">
+                    Bank Transfer ({todayBankOrders.length})
+                  </TabsTrigger>
+                </TabsList>
 
-                  {/* Mobile Card Layout */}
-                  <div className="md:hidden space-y-2">
-                    {todayOrders.map((order) => (
-                      <Card key={order.id} className="border">
-                        <CardContent className="p-3">
-                          <div className="flex justify-between items-start mb-2 pb-2 border-b">
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs text-muted-foreground">Order #</div>
-                              <div className="font-mono text-xs font-semibold truncate">{order.orderNumber}</div>
+                {/* Cash Orders Sub-Tab */}
+                <TabsContent value="cash" className="space-y-3">
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <p className="text-xs md:text-sm text-green-900">
+                      💵 <strong>Cash Remittance:</strong> Physical cash from these orders must be remitted to your leader.
+                    </p>
+                  </div>
+                  {loadingOrders ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-8 w-8 animate-spin" />
+                    </div>
+                  ) : todayCashOrders.length > 0 ? (
+                    <>
+                      <Card>
+                        <CardContent className="p-3 md:p-4">
+                          <div className="grid grid-cols-2 gap-2 md:gap-4 text-center">
+                            <div>
+                              <div className="text-lg md:text-2xl font-bold text-green-600">
+                                {todayCashOrders.length}
+                              </div>
+                              <div className="text-[10px] md:text-xs text-muted-foreground">Orders</div>
                             </div>
-                            <div className="text-right ml-2">
-                              <div className="text-xs text-muted-foreground">Amount</div>
-                              <div className="font-bold text-sm text-green-600">₱{order.totalAmount.toFixed(2)}</div>
+                            <div>
+                              <div className="text-lg md:text-2xl font-bold text-green-600">
+                                ₱{todayCashOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()}
+                              </div>
+                              <div className="text-[10px] md:text-xs text-muted-foreground">Cash to Remit</div>
                             </div>
                           </div>
-                          <div className="space-y-1.5">
-                            <div className="flex justify-between items-center gap-2">
-                              <div className="text-xs text-muted-foreground">Client</div>
-                              <div className="text-sm font-medium truncate">{order.clientName}</div>
-                            </div>
-                            <div className="flex justify-between items-center gap-2">
-                              <div className="text-xs text-muted-foreground">Brand</div>
-                              <div className="text-xs truncate">{order.brands}</div>
-                            </div>
-                            <div className="flex justify-between items-center gap-2">
-                              <div className="text-xs text-muted-foreground">Quantity</div>
-                              <div className="text-sm font-semibold">{order.totalQuantity}</div>
-                            </div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="w-full mt-3 h-8 text-xs"
-                            onClick={() => {
-                              setSelectedOrder(order);
-                              setShowOrderDetailsModal(true);
-                            }}
-                          >
-                            View Details
-                          </Button>
                         </CardContent>
                       </Card>
+
+                      {/* Mobile Card Layout */}
+                      <div className="md:hidden space-y-2">
+                        {todayCashOrders.map((order) => (
+                          <Card key={order.id} className="border">
+                            <CardContent className="p-3">
+                              <div className="flex justify-between items-start mb-2 pb-2 border-b">
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-xs text-muted-foreground">Order #</div>
+                                  <div className="font-mono text-xs font-semibold truncate">{order.orderNumber}</div>
+                                </div>
+                                <div className="text-right ml-2">
+                                  <div className="text-xs text-muted-foreground">Amount</div>
+                                  <div className="font-bold text-sm text-green-600">₱{order.totalAmount.toFixed(2)}</div>
+                                </div>
+                              </div>
+                              <div className="space-y-1.5">
+                                <div className="flex justify-between items-center gap-2">
+                                  <div className="text-xs text-muted-foreground">Client</div>
+                                  <div className="text-sm font-medium truncate">{order.clientName}</div>
+                                </div>
+                                <div className="flex justify-between items-center gap-2">
+                                  <div className="text-xs text-muted-foreground">Items</div>
+                                  <div className="text-xs">{order.items.length} item(s)</div>
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full mt-3 h-8 text-xs"
+                                onClick={() => {
+                                  setSelectedOrder(order);
+                                  setShowOrderDetailsModal(true);
+                                }}
+                              >
+                                View Details
+                              </Button>
+                            </CardContent>
+                          </Card>
                     ))}
                   </div>
 
-                  {/* Desktop Table Layout */}
-                  <div className="hidden md:block border rounded-lg overflow-hidden">
-                    <div className="max-h-96 overflow-y-auto">
-                      <Table>
-                        <TableHeader className="sticky top-0 bg-background">
-                          <TableRow>
-                            <TableHead>Order#</TableHead>
-                            <TableHead>Client</TableHead>
-                            <TableHead>Brand</TableHead>
-                            <TableHead className="text-right">Qty</TableHead>
-                            <TableHead className="text-right">Amount</TableHead>
-                            <TableHead className="text-center w-24">Action</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {todayOrders.map((order) => (
-                            <TableRow key={order.id}>
-                              <TableCell className="font-mono text-sm">{order.orderNumber}</TableCell>
-                              <TableCell>{order.clientName}</TableCell>
-                              <TableCell className="text-sm">{order.brands}</TableCell>
-                              <TableCell className="text-right font-semibold">{order.totalQuantity}</TableCell>
-                              <TableCell className="text-right font-semibold text-green-600">
-                                ₱{order.totalAmount.toFixed(2)}
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8"
-                                  onClick={() => {
-                                    setSelectedOrder(order);
-                                    setShowOrderDetailsModal(true);
-                                  }}
-                                >
-                                  View
-                                </Button>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                      {/* Desktop Table Layout */}
+                      <div className="hidden md:block border rounded-lg overflow-hidden">
+                        <div className="max-h-96 overflow-y-auto">
+                          <Table>
+                            <TableHeader className="sticky top-0 bg-background">
+                              <TableRow>
+                                <TableHead>Order#</TableHead>
+                                <TableHead>Client</TableHead>
+                                <TableHead className="text-right">Items</TableHead>
+                                <TableHead className="text-right">Amount</TableHead>
+                                <TableHead className="text-center w-24">Action</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {todayCashOrders.map((order) => (
+                                <TableRow key={order.id}>
+                                  <TableCell className="font-mono text-sm">{order.orderNumber}</TableCell>
+                                  <TableCell>{order.clientName}</TableCell>
+                                  <TableCell className="text-right">{order.items.length}</TableCell>
+                                  <TableCell className="text-right font-semibold text-green-600">
+                                    ₱{order.totalAmount.toFixed(2)}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8"
+                                      onClick={() => {
+                                        setSelectedOrder(order);
+                                        setShowOrderDetailsModal(true);
+                                      }}
+                                    >
+                                      View
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <ShoppingCart className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No cash orders today</p>
                     </div>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <ShoppingCart className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No orders sold today</p>
-                </div>
-              )}
+                  )}
+                </TabsContent>
 
-              {/* Confirmation Checkbox - Optional for sold orders */}
-              {todayOrders.length > 0 && (
+                {/* Bank Transfer Orders Sub-Tab */}
+                <TabsContent value="bank" className="space-y-3">
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription className="text-xs md:text-sm">
+                      <strong>Bank Transfer Orders:</strong> These orders go through finance verification. You can add notes/remarks for each order below.
+                    </AlertDescription>
+                  </Alert>
+
+                  {loadingOrders ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-8 w-8 animate-spin" />
+                    </div>
+                  ) : todayBankOrders.length > 0 ? (
+                    <>
+                      <Card>
+                        <CardContent className="p-3 md:p-4">
+                          <div className="grid grid-cols-2 gap-2 md:gap-4 text-center">
+                            <div>
+                              <div className="text-lg md:text-2xl font-bold text-blue-600">
+                                {todayBankOrders.length}
+                              </div>
+                              <div className="text-[10px] md:text-xs text-muted-foreground">Orders</div>
+                            </div>
+                            <div>
+                              <div className="text-lg md:text-2xl font-bold text-blue-600">
+                                ₱{todayBankOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()}
+                              </div>
+                              <div className="text-[10px] md:text-xs text-muted-foreground">Total Value</div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      {/* Bank Orders List with Notes */}
+                      <div className="space-y-3">
+                        {todayBankOrders.map((order) => (
+                          <Card key={order.id} className="border">
+                            <CardContent className="p-3 md:p-4 space-y-3">
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1 space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">Order #:</span>
+                                    <span className="font-mono text-sm font-semibold">{order.orderNumber}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">Client:</span>
+                                    <span className="text-sm">{order.clientName}</span>
+                                  </div>
+                                  {order.bankType && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-muted-foreground">Bank:</span>
+                                      <Badge variant="outline" className="text-xs">{order.bankType}</Badge>
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">Items:</span>
+                                    <span className="text-sm">{order.items.length}</span>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-xs text-muted-foreground">Amount</div>
+                                  <div className="font-bold text-lg text-blue-600">₱{order.totalAmount.toFixed(2)}</div>
+                                </div>
+                              </div>
+                              
+                              <div className="space-y-2">
+                                <label className="text-xs font-medium">Agent Notes/Remarks</label>
+                                <Textarea
+                                  placeholder="Add any notes or remarks for this order..."
+                                  value={bankOrderNotes.get(order.id) || ''}
+                                  onChange={(e) => {
+                                    const newNotes = new Map(bankOrderNotes);
+                                    newNotes.set(order.id, e.target.value);
+                                    setBankOrderNotes(newNotes);
+                                  }}
+                                  rows={2}
+                                  className="text-sm"
+                                />
+                              </div>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full"
+                                onClick={() => {
+                                  setSelectedOrder(order);
+                                  setShowOrderDetailsModal(true);
+                                }}
+                              >
+                                View Order Details
+                              </Button>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <ShoppingCart className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No bank transfer orders today</p>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+
+              {/* Confirmation Checkbox for ALL orders */}
+              {(todayCashOrders.length > 0 || todayBankOrders.length > 0) && (
                 <div className="flex items-start space-x-2 p-3 md:p-4 bg-muted/30 rounded-lg border">
                   <Checkbox
                     id="sold-confirm"
@@ -1243,7 +1409,7 @@ export default function MyInventory() {
                     htmlFor="sold-confirm"
                     className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                   >
-                    I have reviewed today's sold orders ({todayOrders.length} orders) - <span className="text-muted-foreground">Optional</span>
+                    I have reviewed today's orders ({todayCashOrders.length + todayBankOrders.length} orders total) - <span className="text-muted-foreground">Optional</span>
                   </label>
                 </div>
               )}
@@ -1297,14 +1463,14 @@ export default function MyInventory() {
             {/* Summary Tab */}
             <TabsContent value="summary" className="flex-1 overflow-y-auto px-3 md:px-6 space-y-2.5 md:space-y-4 mt-2">
               {/* Validation Warning */}
-              {(!unsoldConfirmed || !signatureConfirmed || (todayOrders.length > 0 && !soldConfirmed)) && (
+              {(!unsoldConfirmed || !signatureConfirmed || ((todayCashOrders.length > 0 || todayBankOrders.length > 0) && !soldConfirmed)) && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2.5 md:p-4">
                   <p className="text-[11px] md:text-sm text-yellow-800 font-semibold mb-1.5">
                     ⚠️ Review required sections
                   </p>
                   <ul className="text-[10px] md:text-sm text-yellow-700 space-y-0.5 ml-3">
                     {!unsoldConfirmed && <li>• Confirm current inventory (required)</li>}
-                    {todayOrders.length > 0 && !soldConfirmed && <li>• Review CASH orders for remittance (optional)</li>}
+                    {(todayCashOrders.length > 0 || todayBankOrders.length > 0) && !soldConfirmed && <li>• Review orders for remittance (optional)</li>}
                     {!signatureConfirmed && <li>• Add signature (required)</li>}
                   </ul>
                 </div>
@@ -1378,16 +1544,16 @@ export default function MyInventory() {
                     <div className="space-y-1 md:space-y-2">
                       <div className="flex justify-between gap-2 text-[10px] md:text-sm">
                         <span className="text-muted-foreground">Orders:</span>
-                        <span className="font-semibold">{todayOrders.length}</span>
+                        <span className="font-semibold">{todayCashOrders.length + todayBankOrders.length}</span>
                       </div>
                       <div className="flex justify-between gap-2 text-[10px] md:text-sm">
                         <span className="text-muted-foreground">Sold:</span>
-                        <span className="font-semibold">{todayOrders.reduce((sum, o) => sum + o.totalQuantity, 0)}</span>
+                        <span className="font-semibold">{[...todayCashOrders, ...todayBankOrders].reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0)}</span>
                       </div>
                       <div className="flex justify-between gap-2 text-[10px] md:text-sm">
                         <span className="text-muted-foreground">Revenue:</span>
                         <span className="font-semibold truncate">
-                          ₱{todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()}
+                          ₱{[...todayCashOrders, ...todayBankOrders].reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()}
                         </span>
                       </div>
                     </div>
@@ -1449,7 +1615,7 @@ export default function MyInventory() {
                     <ul className="text-[9px] md:text-sm space-y-0.5 text-muted-foreground leading-tight">
                       <li>✓ Unsold inventory stays with you (available tomorrow)</li>
                       <li>✓ Cash proceeds handed to {leaderName || 'your leader'}</li>
-                      <li>✓ {todayOrders.length} order{todayOrders.length !== 1 ? 's' : ''} marked as remitted</li>
+                      <li>✓ {todayCashOrders.length + todayBankOrders.length} order{(todayCashOrders.length + todayBankOrders.length) !== 1 ? 's' : ''} marked as remitted</li>
                       <li>✓ Cash deposit record created (pending leader verification)</li>
                       <li>✓ Digital signature captured for audit</li>
                       <li>✓ {leaderName || 'Leader'} receives notification</li>
@@ -1459,7 +1625,7 @@ export default function MyInventory() {
               </Card>
 
               {/* Final Confirmation */}
-              {unsoldConfirmed && signatureConfirmed && (todayOrders.length === 0 || soldConfirmed) ? (
+              {unsoldConfirmed && signatureConfirmed && ((todayCashOrders.length === 0 && todayBankOrders.length === 0) || soldConfirmed) ? (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-2.5 md:p-4">
                   <div className="flex items-start gap-2">
                     <CheckCircle2 className="h-3.5 w-3.5 md:h-5 md:w-5 text-green-600 mt-0.5 flex-shrink-0" />
@@ -1468,8 +1634,8 @@ export default function MyInventory() {
                         Ready for remittance
                       </p>
                       <p className="text-[9px] md:text-sm text-green-700 mt-0.5">
-                        {todayOrders.length > 0
-                          ? `Remitting ₱${todayOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} in cash. Your ${totalRemitQuantity} units of inventory stay with you.`
+                        {todayCashOrders.length > 0 || todayBankOrders.length > 0
+                          ? `Processing ${todayCashOrders.length + todayBankOrders.length} order(s). ${todayCashOrders.length > 0 ? `₱${todayCashOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()} in cash to remit.` : ''} Your ${totalRemitQuantity} units of inventory stay with you.`
                           : `No cash to remit today. Your ${totalRemitQuantity} units of inventory stay with you.`
                         }
                       </p>
@@ -1487,7 +1653,7 @@ export default function MyInventory() {
                       <p className="text-[9px] md:text-sm text-yellow-700 mt-0.5">
                         {!unsoldConfirmed && 'Confirm inventory retention. '}
                         {!signatureConfirmed && 'Add your signature. '}
-                        {todayOrders.length > 0 && !soldConfirmed && 'Review cash orders.'}
+                        {(todayCashOrders.length > 0 || todayBankOrders.length > 0) && !soldConfirmed && 'Review orders.'}
                       </p>
                     </div>
                   </div>
@@ -1513,7 +1679,7 @@ export default function MyInventory() {
                 !signatureDataUrl ||
                 !unsoldConfirmed ||
                 !signatureConfirmed ||
-                (todayOrders.length > 0 && !soldConfirmed)
+                ((todayCashOrders.length > 0 || todayBankOrders.length > 0) && !soldConfirmed)
               }
               variant="default"
               className="w-full sm:w-auto h-10 md:h-9 text-sm"
@@ -1524,7 +1690,7 @@ export default function MyInventory() {
                   Processing...
                 </>
               ) : (
-                todayOrders.length > 0 ? 'Complete Cash Remittance' : 'Complete End of Day'
+                todayCashOrders.length > 0 || todayBankOrders.length > 0 ? 'Complete Remittance' : 'Complete End of Day'
               )}
             </Button>
           </DialogFooter>
@@ -1581,13 +1747,31 @@ export default function MyInventory() {
                       <div className="text-sm font-medium">{selectedOrder.clientName}</div>
                     </div>
                     <div>
+                      <div className="text-xs text-muted-foreground mb-1">Payment Method</div>
+                      <Badge variant={selectedOrder.paymentMethod === 'CASH' ? 'default' : 'secondary'} className="text-xs">
+                        {selectedOrder.paymentMethod}
+                      </Badge>
+                    </div>
+                    {selectedOrder.bankType && (
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Bank</div>
+                        <div className="text-sm font-medium">{selectedOrder.bankType}</div>
+                      </div>
+                    )}
+                    <div>
                       <div className="text-xs text-muted-foreground mb-1">Total Amount</div>
                       <div className="text-base font-bold text-green-600">₱{selectedOrder.totalAmount.toFixed(2)}</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground mb-1">Total Quantity</div>
-                      <div className="text-base font-bold">{selectedOrder.totalQuantity}</div>
+                      <div className="text-base font-bold">{selectedOrder.items.reduce((sum, item) => sum + item.quantity, 0)}</div>
                     </div>
+                    {selectedOrder.agentNotes && (
+                      <div className="col-span-2">
+                        <div className="text-xs text-muted-foreground mb-1">Agent Notes</div>
+                        <div className="text-sm p-2 bg-muted/50 rounded border">{selectedOrder.agentNotes}</div>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1616,11 +1800,11 @@ export default function MyInventory() {
                             </div>
                             <div>
                               <div className="text-[10px] text-muted-foreground">Price</div>
-                              <div className="font-semibold text-sm">₱{item.price.toFixed(2)}</div>
+                              <div className="font-semibold text-sm">₱{item.unitPrice.toFixed(2)}</div>
                             </div>
                             <div>
                               <div className="text-[10px] text-muted-foreground">Amount</div>
-                              <div className="font-semibold text-sm text-green-600">₱{item.amount.toLocaleString()}</div>
+                              <div className="font-semibold text-sm text-green-600">₱{(item.quantity * item.unitPrice).toFixed(2)}</div>
                             </div>
                           </div>
                         </div>
@@ -1649,8 +1833,8 @@ export default function MyInventory() {
                           </TableCell>
                           <TableCell className="font-medium">{item.variantName}</TableCell>
                           <TableCell className="text-right font-semibold">{item.quantity}</TableCell>
-                          <TableCell className="text-right">₱{item.price.toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-semibold text-green-600">₱{item.amount.toLocaleString()}</TableCell>
+                          <TableCell className="text-right">₱{item.unitPrice.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-semibold text-green-600">₱{(item.quantity * item.unitPrice).toFixed(2)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1671,6 +1855,14 @@ export default function MyInventory() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Return Inventory Dialog */}
+      <ReturnInventoryDialog
+        open={returnDialogOpen}
+        onOpenChange={setReturnDialogOpen}
+        leaderId={leaderId}
+        leaderName={leaderName}
+      />
     </div>
   );
 }
