@@ -104,7 +104,7 @@ export default function ManagerClientsPage() {
 
             const { data: clientsData, error } = await supabase
                 .from('clients')
-                .select('*')
+                .select('*, client_orders(count)')
                 .eq('company_id', user.company_id)
                 .in('agent_id', allTeamIds)
                 .order('name');
@@ -113,6 +113,9 @@ export default function ManagerClientsPage() {
 
             const mappedClients: Client[] = (clientsData || []).map((client: any) => {
                 const agentProfile = profiledMap.get(client.agent_id);
+                // Parse count safely
+                const ordersCount = client.client_orders?.[0]?.count || 0;
+
                 return {
                     id: client.id,
                     name: client.name,
@@ -126,7 +129,7 @@ export default function ManagerClientsPage() {
                     agent_id: client.agent_id,
                     agentName: agentProfile?.full_name || 'Unknown',
                     agentRole: agentProfile?.role || 'sales_agent',
-                    total_orders: client.total_orders || 0,
+                    total_orders: ordersCount,
                     total_spent: client.total_spent || 0
                 };
             });
@@ -253,8 +256,9 @@ export default function ManagerClientsPage() {
                                         <TableHead className="w-[30%]">Client Details</TableHead>
                                         <TableHead>Location</TableHead>
                                         <TableHead>Assigned Agent</TableHead>
+                                        <TableHead>Account Type</TableHead>
                                         <TableHead>Status</TableHead>
-                                        <TableHead className="text-right pr-6">Total Spent</TableHead>
+                                        <TableHead className="text-right pr-6">Total Orders</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -293,15 +297,21 @@ export default function ManagerClientsPage() {
                                                 </div>
                                             </TableCell>
                                             <TableCell>
+                                                {client.account_type === 'Key Accounts' ? (
+                                                    <Badge variant="outline" className="border-amber-200 text-amber-700 bg-amber-50">
+                                                        Key Account
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-sm text-muted-foreground">Standard</span>
+                                                )}
+                                            </TableCell>
+                                            <TableCell>
                                                 <Badge variant={client.status === 'active' ? 'default' : 'secondary'} className="capitalize font-normal text-xs px-2 py-0.5">
                                                     {client.status}
                                                 </Badge>
-                                                {client.account_type === 'Key Accounts' && (
-                                                    <Badge variant="outline" className="ml-2 border-amber-200 text-amber-700 bg-amber-50 text-[10px]">KA</Badge>
-                                                )}
                                             </TableCell>
                                             <TableCell className="text-right pr-6 font-mono text-sm">
-                                                ₱{client.total_spent.toLocaleString()}
+                                                {client.total_orders}
                                             </TableCell>
                                         </TableRow>
                                     ))}
@@ -312,7 +322,6 @@ export default function ManagerClientsPage() {
                 </CardContent>
                 <div className="p-4 border-t bg-muted/20 text-xs text-muted-foreground flex justify-between">
                     <span>Showing {filteredClients.length} clients</span>
-                    <span>Real-time data</span>
                 </div>
             </Card>
         </div>

@@ -1,3 +1,4 @@
+
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -19,6 +20,7 @@ export interface ManagerDepositRow {
     status: string;
     agentName: string;
     agentId: string;
+    depositSlipUrl?: string;
 }
 
 export interface ManagerRemittanceRow {
@@ -78,9 +80,9 @@ export const fetchManagerDashboardData = async (companyId: string, userId: strin
     const { data: depositsData, error: depositsError } = await supabase
         .from('cash_deposits')
         .select(`
-      id, deposit_date, amount, bank_account, reference_number, status, 
-      profiles!cash_deposits_agent_id_fkey(full_name, id)
-    `)
+id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url,
+    profiles!cash_deposits_agent_id_fkey(full_name, id)
+        `)
         .in('agent_id', allTeamIds)
         .eq('status', 'pending_verification')
         .order('deposit_date', { ascending: false });
@@ -95,16 +97,17 @@ export const fetchManagerDashboardData = async (companyId: string, userId: strin
         referenceNumber: d.reference_number,
         status: d.status,
         agentName: d.profiles?.full_name || 'Unknown',
-        agentId: d.profiles?.id || ''
+        agentId: d.profiles?.id || '',
+        depositSlipUrl: d.deposit_slip_url
     }));
 
     // 3. Fetch Remittances (Remitted TO me)
     const { data: remittancesData, error: remitError } = await supabase
         .from('remittances_log')
         .select(`
-      id, remittance_date, remitted_at, items_remitted, total_revenue, orders_count,
-      profiles!remittances_log_agent_id_fkey(full_name)
-    `)
+id, remittance_date, remitted_at, items_remitted, total_revenue, orders_count,
+    profiles!remittances_log_agent_id_fkey(full_name)
+        `)
         .eq('leader_id', userId)
         .order('remitted_at', { ascending: false })
         .limit(20);
@@ -142,6 +145,12 @@ export const fetchManagerTeamInventory = async (companyId: string, userId: strin
 
     if (relError) throw relError;
 
+    // Map agent_id -> leader_id
+    const agentLeaderMap = new Map<string, string>();
+    (relationships || []).forEach(r => {
+        agentLeaderMap.set(r.agent_id, r.leader_id);
+    });
+
     const directReports = (relationships || [])
         .filter(r => r.leader_id === userId)
         .map(r => r.agent_id);
@@ -154,32 +163,42 @@ export const fetchManagerTeamInventory = async (companyId: string, userId: strin
 
     if (allTeamIds.length === 0) return [];
 
-    // 2. Fetch Profiles
+    const allProfileIds = Array.from(new Set([...allTeamIds, ...directReports, userId]));
+
     const { data: profiles, error: profError } = await supabase
         .from('profiles')
         .select('id, full_name, role, region')
         .eq('company_id', companyId)
-        .in('id', allTeamIds);
+        .in('id', allProfileIds);
 
     if (profError) throw profError;
 
-    // 3. Fetch Inventory Data
+    const profileMap = new Map(profiles?.map(p => [p.id, p]));
+
     const { data: inventoryData, error: invError } = await supabase
         .from('agent_inventory')
         .select(`
+id,
+    stock,
+    agent_id,
+    allocated_price,
+    dsp_price,
+    rsp_price,
+    variants!inner(
+        id,
+        name,
+        variant_type,
+        brand_id,
+        brands!inner(
             id,
-            stock,
-            agent_id,
-            variants!inner (
-                id,
-                name,
-                variant_type,
-                brand_id, 
-                brands!inner (
-                    id,
-                    name
-                )
-            )
+            name
+        ),
+        main_inventory(
+            unit_price,
+            dsp_price,
+            rsp_price
+        )
+    )
         `)
         .eq('company_id', companyId)
         .in('agent_id', allTeamIds)
@@ -196,36 +215,69 @@ export const fetchManagerTeamInventory = async (companyId: string, userId: strin
             inventoryMap.set(agentId, []);
         }
 
+        // Get fallback prices from main_inventory (current pricing strategy)
+        // main_inventory is an array because of the one-to-many relationship direction (though logically 1:1)
+        const mainInv = item.variants?.main_inventory?.[0];
+
+        const allocatedPrice = item.allocated_price || mainInv?.unit_price || 0;
+        const dspPrice = item.dsp_price || mainInv?.dsp_price || 0;
+        const rspPrice = item.rsp_price || mainInv?.rsp_price || 0;
+
+        // Use allocated/unit price for value calculation
+        const unitValue = allocatedPrice;
+        const totalValue = (item.stock || 0) * unitValue;
+
         inventoryMap.get(agentId)?.push({
             id: item.id,
             variantName: item.variants.name,
             variantType: item.variants.variant_type,
             brandId: item.variants.brands.id,
             brandName: item.variants.brands.name,
-            stock: item.stock
+            stock: item.stock,
+            value: totalValue,
+            allocatedPrice: allocatedPrice,
+            dspPrice: dspPrice,
+            rspPrice: rspPrice
         });
     });
 
-    const summaries = (profiles || []).map(profile => {
+    // Build Summaries for ALL TEAM IDS (excluding myself if I'm not in allTeamIds layout logic, but usually I view my team)
+    // The previous code mapped (profiles || []). But profiles now includes ME (leader).
+    // We only want summaries for the AGENTS in my team.
+
+    const myTeamProfiles = profiles?.filter(p => allTeamIds.includes(p.id)) || [];
+
+    const summaries = myTeamProfiles.map(profile => {
         const agentInventory = inventoryMap.get(profile.id) || [];
         const totalStock = agentInventory.reduce((sum, i) => sum + i.stock, 0);
+        const totalValue = agentInventory.reduce((sum, i) => sum + i.value, 0);
+        const totalDspValue = agentInventory.reduce((sum, i) => sum + (i.dspPrice * i.stock), 0);
+        const totalRspValue = agentInventory.reduce((sum, i) => sum + (i.rspPrice * i.stock), 0);
+
+        // Determine Leader info
+        const directLeaderId = agentLeaderMap.get(profile.id);
+        const isDirectReport = directLeaderId === userId;
+        const leaderProfile = directLeaderId ? profileMap.get(directLeaderId) : null;
 
         return {
             agentId: profile.id,
             agentName: profile.full_name,
             agentRole: profile.role,
             agentRegion: profile.region || 'N/A',
+            leaderId: directLeaderId,
+            leaderName: leaderProfile?.full_name || 'Unknown',
+            isDirectReport: isDirectReport,
             totalStock: totalStock,
+            totalValue: totalValue,
+            totalDspValue: totalDspValue,
+            totalRspValue: totalRspValue,
             variantCount: agentInventory.length,
             inventory: agentInventory.sort((a, b) => b.stock - a.stock)
         };
     });
 
-    return summaries.sort((a, b) => {
-        if (a.agentRole === 'team_leader' && b.agentRole !== 'team_leader') return -1;
-        if (a.agentRole !== 'team_leader' && b.agentRole === 'team_leader') return 1;
-        return b.totalStock - a.totalStock;
-    });
+    // Grouping happens on the Frontend Page, so just return the flat list with metadata
+    return summaries.sort((a, b) => b.totalStock - a.totalStock);
 };
 
 // Hooks

@@ -183,7 +183,8 @@ const managerMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Team Inventory', url: '/manager-inventory', icon: Crown },
-      { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
+      { title: 'Team Requests', url: '/manager-requests', icon: Send },
+      { title: 'Team Remittances', url: '/manager-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
     ]
   },

@@ -1,11 +1,12 @@
-import { useRef, useState } from 'react'; // Removed useEffect, useCallback
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useManagerDashboardData } from './hooks/useManagerData';
+import { useManagerDashboardData, ManagerDepositRow } from './hooks/useManagerData';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
     Users,
     Package,
@@ -15,93 +16,28 @@ import {
     CheckCircle2,
     Clock,
     ArrowUpRight,
-    Filter
+    Filter,
+    Eye,
+    Loader2
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { format } from 'date-fns';
 
-interface DashboardStats {
-    totalMembers: number;
-    totalLeaders: number;
-    totalInventory: number;
-    pendingDepositsCount: number;
-}
-
-interface CashDeposit {
-    id: string;
-    depositDate: string;
-    amount: number;
-    bankAccount: string;
-    referenceNumber: string;
-    status: string;
-    agentName: string;
-    agentId: string;
-}
-
-
-interface RemittanceLog {
-    id: string;
-    remittance_date: string;
-    remitted_at: string;
-    agent_name: string;
-    items_remitted: number;
-    total_revenue: number;
-    orders_count: number;
-}
-
-interface DepositRow {
-    id: string;
-    deposit_date: string;
-    amount: number;
-    bank_account: string;
-    reference_number: string;
-    status: string;
-    profiles: {
-        full_name: string;
-        id: string;
-    } | null; // Supabase joins can be object or array, commonly object for single relation
-}
-
-interface RemittanceRow {
-    id: string;
-    remittance_date: string;
-    remitted_at: string;
-    items_remitted: number;
-    total_revenue: number;
-    orders_count: number;
-    profiles: {
-        full_name: string;
-    } | null;
-}
-
 export default function ManagerDashboardPage() {
     const { user } = useAuth();
     const { toast } = useToast();
-    const queryClient = useQueryClient(); // Add this import if not present, and import from @tanstack/react-query
 
     const { data, isLoading, refetch } = useManagerDashboardData();
 
-    // Optimistic / Mutation function for verify
-    const handleVerifyDeposit = async (id: string) => {
-        // Optimistic update
-        toast({ title: "Verified", description: "Deposit marked as verified." });
+    // State for View Details Dialog
+    const [viewDepositDialogOpen, setViewDepositDialogOpen] = useState(false);
+    const [selectedDeposit, setSelectedDeposit] = useState<ManagerDepositRow | null>(null);
 
-        const { error } = await supabase
-            .from('cash_deposits')
-            .update({ status: 'verified', updated_at: new Date().toISOString() })
-            .eq('id', id);
-
-        if (error) {
-            toast({ title: "Error", description: "Failed to verify deposit", variant: "destructive" });
-            refetch(); // Revert/Refresh
-        } else {
-            // Invalidate to refetch fresh data
-            queryClient.invalidateQueries({ queryKey: ['manager', 'dashboard', user?.company_id, user?.id] });
-            // Also invalidate the deposit history in cash deposits page if we want consistency across tabs
-            queryClient.invalidateQueries({ queryKey: ['manager', 'deposits', user?.company_id] });
-        }
+    const openDepositDetails = (deposit: ManagerDepositRow) => {
+        setSelectedDeposit(deposit);
+        setViewDepositDialogOpen(true);
     };
 
     if (isLoading) {
@@ -220,8 +156,9 @@ export default function ManagerDashboardPage() {
                                                 <TableCell className="font-mono text-xs">{deposit.referenceNumber}</TableCell>
                                                 <TableCell className="text-right font-bold">₱{deposit.amount.toLocaleString()}</TableCell>
                                                 <TableCell className="text-right">
-                                                    <Button size="sm" onClick={() => handleVerifyDeposit(deposit.id)} className="bg-emerald-600 hover:bg-emerald-700">
-                                                        Verify
+                                                    <Button variant="ghost" size="sm" onClick={() => openDepositDetails(deposit)}>
+                                                        <Eye className="h-4 w-4 mr-1" />
+                                                        View Details
                                                     </Button>
                                                 </TableCell>
                                             </TableRow>
@@ -278,6 +215,83 @@ export default function ManagerDashboardPage() {
                     </Card>
                 </TabsContent>
             </Tabs>
+
+            {/* View Details / Verify Dialog */}
+            <Dialog open={viewDepositDialogOpen} onOpenChange={setViewDepositDialogOpen}>
+                <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Deposit Details</DialogTitle>
+                        <DialogDescription>
+                            Review the details of this cash deposit.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {selectedDeposit && (
+                        <div className="space-y-4 py-4">
+                            <div className="p-4 bg-emerald-50 rounded-lg flex justify-between items-center border border-emerald-100">
+                                <span className="text-emerald-800 font-medium">Amount:</span>
+                                <span className="text-2xl font-bold text-emerald-700">
+                                    ₱{selectedDeposit.amount.toLocaleString()}
+                                </span>
+                            </div>
+
+                            <div className="space-y-3 text-sm">
+                                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                                    <span className="text-muted-foreground">Date</span>
+                                    <span className="col-span-2 font-medium">
+                                        {format(new Date(selectedDeposit.depositDate), 'MMMM dd, yyyy')}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                                    <span className="text-muted-foreground">Agent</span>
+                                    <span className="col-span-2 font-medium">{selectedDeposit.agentName}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                                    <span className="text-muted-foreground">Bank</span>
+                                    <span className="col-span-2 font-medium">{selectedDeposit.bankAccount}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                                    <span className="text-muted-foreground">Reference</span>
+                                    <span className="col-span-2 font-mono">{selectedDeposit.referenceNumber}</span>
+                                </div>
+                            </div>
+
+                            {selectedDeposit.depositSlipUrl ? (
+                                <div className="mt-4">
+                                    <h4 className="text-sm font-medium mb-2">Deposit Slip</h4>
+                                    <div className="border rounded-lg overflow-hidden bg-gray-50">
+                                        <img
+                                            src={selectedDeposit.depositSlipUrl}
+                                            alt="Deposit Slip"
+                                            className="w-full h-auto object-contain max-h-[300px]"
+                                        />
+                                    </div>
+                                    <div className="mt-2 text-center">
+                                        <a
+                                            href={selectedDeposit.depositSlipUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-xs text-blue-600 hover:underline"
+                                        >
+                                            View Full Image
+                                        </a>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="mt-4 p-4 border border-dashed rounded-lg text-center text-muted-foreground">
+                                    <p className="text-sm">No deposit slip image attached.</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <Button variant="outline" onClick={() => setViewDepositDialogOpen(false)}>
+                            Close
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

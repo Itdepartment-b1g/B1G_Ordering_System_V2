@@ -22,6 +22,8 @@ import TeamManagementPage from "@/features/sales-agents/TeamManagementPage";
 import MyTeamPage from "@/features/sales-agents/MyTeamPage";
 import ManagerTeamsPage from "@/features/manager/ManagerTeamsPage";
 import ManagerTeamInventoryPage from "@/features/manager/ManagerTeamInventoryPage";
+import ManagerTeamRemittancesPage from "@/features/manager/ManagerTeamRemittancesPage";
+import ManagerRequestsPage from "@/features/manager/ManagerRequestsPage";
 import ManagerClientsPage from "@/features/manager/ManagerClientsPage";
 import ManagerDashboardPage from "@/features/manager/ManagerDashboardPage";
 import { FinancePage } from "@/features/finance";
@@ -72,6 +74,8 @@ const App = () => (
                     <Route path="/my-team" element={<ProtectedRoute><MyTeamPage /></ProtectedRoute>} />
                     <Route path="/manager-teams" element={<ProtectedRoute><ManagerTeamsPage /></ProtectedRoute>} />
                     <Route path="/manager-inventory" element={<ProtectedRoute><ManagerTeamInventoryPage /></ProtectedRoute>} />
+                    <Route path="/manager-remittances" element={<ProtectedRoute><ManagerTeamRemittancesPage /></ProtectedRoute>} />
+                    <Route path="/manager-requests" element={<ProtectedRoute><ManagerRequestsPage /></ProtectedRoute>} />
                     <Route path="/manager-clients" element={<ProtectedRoute><ManagerClientsPage /></ProtectedRoute>} />
                     <Route path="/manager-dashboard" element={<ProtectedRoute><ManagerDashboardPage /></ProtectedRoute>} />
                     <Route path="/tasks" element={<ProtectedRoute><TasksPage /></ProtectedRoute>} />
