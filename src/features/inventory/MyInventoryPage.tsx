@@ -64,31 +64,46 @@ export default function MyInventory() {
     return flavorStock + batteryStock + posmStock;
   };
 
-  const filteredBrands = agentBrands.filter(brand => {
-    const hasStock = getTotalStock(brand) > 0;
+  // Create a deep copy of brands with filtering applied at the variant level
+  // Only include brands that end up having at least one item with stock > 0
+  const activeBrands = agentBrands
+    .map(brand => ({
+      ...brand,
+      flavors: brand.flavors.filter((f: any) => f.stock > 0),
+      batteries: brand.batteries.filter((b: any) => b.stock > 0),
+      posms: (brand.posms || []).filter((p: any) => p.stock > 0)
+    }))
+    .filter(brand => {
+      const flavorCount = brand.flavors.length;
+      const batteryCount = brand.batteries.length;
+      const posmCount = brand.posms.length;
+      return (flavorCount + batteryCount + posmCount) > 0;
+    });
+
+  const filteredBrands = activeBrands.filter(brand => {
     const matchesSearch =
       brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       brand.flavors.some(f => f.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
       brand.batteries.some(b => b.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (brand.posms || []).some(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+      brand.posms.some(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    return hasStock && matchesSearch;
+    return matchesSearch;
   });
 
   const getTotalVariants = () => {
     let count = 0;
-    agentBrands.forEach(brand => {
-      count += brand.flavors.length + brand.batteries.length + (brand.posms || []).length;
+    activeBrands.forEach(brand => {
+      count += brand.flavors.length + brand.batteries.length + brand.posms.length;
     });
     return count;
   };
 
   const getLowStockCount = () => {
     let count = 0;
-    agentBrands.forEach(brand => {
+    activeBrands.forEach(brand => {
       count += brand.flavors.filter(f => f.status === 'low').length;
       count += brand.batteries.filter(b => b.status === 'low').length;
-      count += (brand.posms || []).filter(p => p.status === 'low').length;
+      count += brand.posms.filter(p => p.status === 'low').length;
     });
     return count;
   };
@@ -509,7 +524,7 @@ export default function MyInventory() {
       const cashTotal = todayCashOrders.reduce((sum, o) => sum + o.totalAmount, 0);
       const bankTotal = todayBankOrders.reduce((sum, o) => sum + o.totalAmount, 0);
       const totalOrders = todayCashOrders.length + todayBankOrders.length;
-      
+
       let description = '';
       if (todayCashOrders.length > 0 && todayBankOrders.length > 0) {
         description = `Remittance complete! ${todayCashOrders.length} cash order(s) (₱${cashTotal.toLocaleString()}) and ${todayBankOrders.length} bank order(s) (₱${bankTotal.toLocaleString()}) processed.`;
@@ -596,7 +611,7 @@ export default function MyInventory() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl md:text-3xl font-bold">{agentBrands.length}</div>
+            <div className="text-2xl md:text-3xl font-bold">{activeBrands.length}</div>
           </CardContent>
         </Card>
         <Card className="border-l-4 border-l-blue-500">
@@ -1056,8 +1071,8 @@ export default function MyInventory() {
                             <Badge
                               variant="secondary"
                               className={`ml-2 text-xs ${item.variantType === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                  item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
-                                    'bg-purple-100 text-purple-700'
+                                item.variantType === 'battery' ? 'bg-green-100 text-green-700' :
+                                  'bg-purple-100 text-purple-700'
                                 }`}
                             >
                               {item.variantType === 'posm' ? 'POSM' : item.variantType.charAt(0).toUpperCase() + item.variantType.slice(1)}
@@ -1237,8 +1252,8 @@ export default function MyInventory() {
                               </Button>
                             </CardContent>
                           </Card>
-                    ))}
-                  </div>
+                        ))}
+                      </div>
 
                       {/* Desktop Table Layout */}
                       <div className="hidden md:block border rounded-lg overflow-hidden">
@@ -1355,7 +1370,7 @@ export default function MyInventory() {
                                   <div className="font-bold text-lg text-blue-600">₱{order.totalAmount.toFixed(2)}</div>
                                 </div>
                               </div>
-                              
+
                               <div className="space-y-2">
                                 <label className="text-xs font-medium">Agent Notes/Remarks</label>
                                 <Textarea

@@ -147,9 +147,26 @@ BEGIN
       v_return_id, v_variant_id, v_quantity, v_allocated_price
     );
 
-    -- Note: Transaction log removed per user request
-    -- All return details are tracked in inventory_returns and inventory_return_items tables
-    -- Agent inventory is updated directly (deduct from agent, add to receiver)
+    -- Log inventory transaction
+    INSERT INTO inventory_transactions (
+      company_id,
+      variant_id,
+      transaction_type,
+      quantity,
+      from_location,
+      to_location,
+      performed_by,
+      notes
+    ) VALUES (
+      v_company_id,
+      v_variant_id,
+      'return',
+      v_quantity,
+      CONCAT('agent_inventory:', p_agent_id),
+      CONCAT('agent_inventory:', p_receiver_id),
+      p_agent_id,
+      CONCAT('Returned ', v_quantity, ' units to leader. Reason: ', p_return_reason, CASE WHEN p_reason_notes IS NOT NULL AND p_reason_notes <> '' THEN CONCAT(' - ', p_reason_notes) ELSE '' END)
+    );
 
     v_total_items := v_total_items + 1;
     v_total_quantity := v_total_quantity + v_quantity;

@@ -671,8 +671,21 @@ export default function LeaderCashDepositsPage() {
                 <div className="grid grid-cols-3 gap-2 py-2 border-b">
                   <span className="text-muted-foreground">Status</span>
                   <span className="col-span-2 flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                    <span className="font-medium text-emerald-700">Verified</span>
+                    {selectedDepositToView.status === 'verified' ? (
+                      <>
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        <span className="font-medium text-emerald-700">Verified</span>
+                      </>
+                    ) : selectedDepositToView.status === 'pending_verification' ? (
+                      <>
+                        <AlertCircle className="h-4 w-4 text-amber-600" />
+                        <span className="font-medium text-amber-700">Pending Verification</span>
+                      </>
+                    ) : (
+                      <span className="font-medium text-muted-foreground capitalize">
+                        {selectedDepositToView.status.replace('_', ' ')}
+                      </span>
+                    )}
                   </span>
                 </div>
 
@@ -731,6 +744,6 @@ export default function LeaderCashDepositsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   );
 }

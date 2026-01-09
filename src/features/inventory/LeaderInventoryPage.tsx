@@ -301,12 +301,21 @@ export default function LeaderInventoryPage() {
         teamData = data;
         teamError = error;
       } else {
-        // For leader, show only their team members
-        const { data, error } = await supabase
+        // For leader, show team members directly assigned OR in their sub-team
+
+        // 1. Check if this leader manages a sub-team
+        const { data: subTeamData } = await supabase
+          .from('sub_teams')
+          .select('id')
+          .eq('leader_id', user.id)
+          .single();
+
+        let query = supabase
           .from('leader_teams')
           .select(`
             agent_id,
             leader_id,
+            sub_team_id,
             profiles!leader_teams_agent_id_fkey(
               id,
               full_name,
@@ -317,8 +326,17 @@ export default function LeaderInventoryPage() {
               status,
               role
             )
-          `)
-          .eq('leader_id', user.id);
+          `);
+
+        if (subTeamData) {
+          // Fetch agents where leader_id matches OR sub_team_id matches
+          query = query.or(`leader_id.eq.${user.id},sub_team_id.eq.${subTeamData.id}`);
+        } else {
+          // plain direct assignment
+          query = query.eq('leader_id', user.id);
+        }
+
+        const { data, error } = await query;
         teamData = data;
         teamError = error;
       }
