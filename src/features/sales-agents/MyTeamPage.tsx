@@ -53,7 +53,7 @@ export default function MyTeamPage() {
     try {
       setLoadingTeam(true);
 
-      // ✅ OPTIMIZED: Single query with nested client_orders join
+      // ✅ OPTIMIZED: Single query with nested client_orders join via profiles
       // This replaces the N+1 pattern (1 query + N queries per member)
       const { data: teamData, error: teamError } = await supabase
         .from('leader_teams')
@@ -67,12 +67,12 @@ export default function MyTeamPage() {
             region,
             city,
             status,
-            created_at
-          ),
-          agent_orders:client_orders!client_orders_agent_id_fkey(
-            total_amount,
-            status,
-            created_at
+            created_at,
+            agent_orders:client_orders!client_orders_agent_id_fkey(
+              total_amount,
+              status,
+              created_at
+            )
           )
         `)
         .eq('leader_id', user.id);
@@ -93,8 +93,8 @@ export default function MyTeamPage() {
             return null;
           }
 
-          // All order data is already loaded - just aggregate in memory
-          const salesData = member.agent_orders || [];
+          // Order data is now nested inside profiles
+          const salesData = member.profiles.agent_orders || [];
 
           const totalSales = salesData.reduce((sum: number, order: any) => sum + (order.total_amount || 0), 0);
           const ordersCount = salesData.length;

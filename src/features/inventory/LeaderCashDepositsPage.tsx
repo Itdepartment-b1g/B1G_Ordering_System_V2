@@ -215,8 +215,15 @@ export default function LeaderCashDepositsPage() {
     setReferenceNumber('');
     setDepositSlipFile(null);
     setShowCamera(false);
-    // Open selection first instead of deposit dialog
-    setDepositTypeSelectionOpen(true);
+
+    // If type is already known (from recent remittance update), skip selection
+    if (pendingDeposit.depositType === 'CASH' || pendingDeposit.depositType === 'CHEQUE') {
+      setDepositType(pendingDeposit.depositType);
+      setDepositDialogOpen(true);
+    } else {
+      // Fallback for old records or unspecified types
+      setDepositTypeSelectionOpen(true);
+    }
   };
 
   const handleSelectDepositType = (type: 'CASH' | 'CHEQUE') => {
