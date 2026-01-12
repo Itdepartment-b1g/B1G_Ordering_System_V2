@@ -141,13 +141,13 @@ export default function OrdersPage() {
   const handleConfirmApprove = async () => {
     if (!orderToApprove) return;
 
-    // Safety check: Block approval of cash orders without deposit OR without bank details recorded
-    if (orderToApprove.paymentMethod === 'CASH' && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
+    // Safety check: Block approval of cash/cheque orders without deposit OR without bank details recorded
+    if ((orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE') && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
       toast({
         title: 'Cannot Approve',
         description: orderToApprove.depositId
           ? 'The team leader must record the deposit details (bank account and reference number) before this order can be approved.'
-          : 'Cash orders require a deposit to be recorded by the team leader before they can be approved.',
+          : 'Cash and Cheque orders require a deposit to be recorded by the team leader before they can be approved.',
         variant: 'destructive',
         duration: 7000
       });
@@ -161,8 +161,8 @@ export default function OrdersPage() {
         await updateOrderStatus(orderToApprove.id, 'approved');
 
         // Show appropriate success message
-        const successMessage = orderToApprove.paymentMethod === 'CASH' && orderToApprove.depositId
-          ? 'Order approved and cash deposit verified.'
+        const successMessage = (orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE') && orderToApprove.depositId
+          ? 'Order approved and deposit verified.'
           : 'Order approval complete.';
 
         toast({
@@ -272,15 +272,15 @@ export default function OrdersPage() {
   const handleBulkApprove = async () => {
     if (agentOrders.length === 0) return;
 
-    // Check for cash orders without deposits OR without bank details recorded
-    const cashOrdersWithoutDeposit = agentOrders.filter(
-      order => order.paymentMethod === 'CASH' && (!order.depositId || !order.depositBankAccount)
+    // Check for cash/cheque orders without deposits OR without bank details recorded
+    const ordersWithoutDeposit = agentOrders.filter(
+      order => (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (!order.depositId || !order.depositBankAccount)
     );
 
-    if (cashOrdersWithoutDeposit.length > 0) {
+    if (ordersWithoutDeposit.length > 0) {
       toast({
         title: 'Cannot Approve',
-        description: `${cashOrdersWithoutDeposit.length} cash order(s) cannot be approved. The team leader must record the deposit details (bank account and reference number) first.`,
+        description: `${ordersWithoutDeposit.length} cash/cheque order(s) cannot be approved. The team leader must record the deposit details (bank account and reference number) first.`,
         variant: 'destructive',
         duration: 7000
       });
@@ -295,9 +295,9 @@ export default function OrdersPage() {
 
       for (const order of agentOrders) {
         try {
-          // Double-check cash orders before approval (safety net)
-          if (order.paymentMethod === 'CASH' && (!order.depositId || !order.depositBankAccount)) {
-            console.warn(`Skipping cash order ${order.orderNumber} - deposit not recorded or bank details missing`);
+          // Double-check cash/cheque orders before approval (safety net)
+          if ((order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (!order.depositId || !order.depositBankAccount)) {
+            console.warn(`Skipping cash/cheque order ${order.orderNumber} - deposit not recorded or bank details missing`);
             skippedCash++;
             continue;
           }
@@ -369,10 +369,10 @@ export default function OrdersPage() {
                       <Badge variant={getStatusVariant(order) as any}>
                         {getStatusLabel(order)}
                       </Badge>
-                      {order.paymentMethod === 'CASH' && (order.stage === 'finance_pending' || order.status === 'pending') && (
+                      {(order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (order.stage === 'finance_pending' || order.status === 'pending') && (
                         order.depositId && order.depositBankAccount ? (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
-                            Cash Deposited
+                            Deposit Recorded
                           </Badge>
                         ) : order.depositId ? (
                           <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
@@ -446,10 +446,10 @@ export default function OrdersPage() {
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
-                          {order.paymentMethod === 'CASH' && (order.stage === 'finance_pending' || order.status === 'pending') && (
+                          {(order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (order.stage === 'finance_pending' || order.status === 'pending') && (
                             order.depositId && order.depositBankAccount ? (
                               <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
-                                Cash Deposited
+                                Deposit Recorded
                               </Badge>
                             ) : order.depositId ? (
                               <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
@@ -768,8 +768,7 @@ export default function OrdersPage() {
                                 <span className="ml-2 text-sm text-muted-foreground">({viewingOrder.bankType})</span>
                               )}
                             </>
-                          ) :
-                            'Cash'}
+                          ) : viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}
                       </p>
                     </div>
                     {viewingOrder.paymentProofUrl && (
@@ -788,10 +787,10 @@ export default function OrdersPage() {
                       </div>
                     )}
 
-                    {/* CASH Orders: Show deposit slip if recorded */}
-                    {viewingOrder.paymentMethod === 'CASH' && viewingOrder.depositSlipUrl && (
+                    {/* CASH/CHEQUE Orders: Show deposit slip if recorded */}
+                    {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositSlipUrl && (
                       <div className="pt-3 border-t">
-                        <Label className="text-muted-foreground">Cash Deposit Slip</Label>
+                        <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
                         {viewingOrder.depositReferenceNumber && (
                           <p className="text-xs text-muted-foreground mt-1">
                             Reference: {viewingOrder.depositReferenceNumber}
@@ -814,13 +813,13 @@ export default function OrdersPage() {
                       </div>
                     )}
 
-                    {/* CASH Orders: Show message if deposit not recorded yet */}
-                    {viewingOrder.paymentMethod === 'CASH' && !viewingOrder.depositSlipUrl && viewingOrder.depositId && (
+                    {/* CASH/CHEQUE Orders: Show message if deposit not recorded yet */}
+                    {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositSlipUrl && viewingOrder.depositId && (
                       <div className="pt-3 border-t">
-                        <Label className="text-muted-foreground">Cash Deposit Slip</Label>
+                        <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
                         <p className="text-sm text-amber-700 mt-2 flex items-center gap-1">
                           <AlertCircle className="h-4 w-4" />
-                          Waiting for team leader to upload deposit slip
+                          Waiting for team leader to upload deposit image
                         </p>
                       </div>
                     )}
@@ -830,21 +829,21 @@ export default function OrdersPage() {
 
               {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (
                 <>
-                  {/* Show warning if CASH order without deposit */}
-                  {viewingOrder.paymentMethod === 'CASH' && !viewingOrder.depositId && (
+                  {/* Show warning if CASH/CHEQUE order without deposit (unlikely if remitted, but good safety) */}
+                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositId && (
                     <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
                       <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
                       <div className="flex-1">
-                        <p className="font-semibold text-amber-900">Cash Deposit Required</p>
+                        <p className="font-semibold text-amber-900">Deposit Required</p>
                         <p className="text-sm text-amber-700 mt-1">
-                          This cash order cannot be approved until the team leader has deposited the cash and recorded it in the system.
+                          This order cannot be approved until the team leader has deposited the payment (cash/cheque) and recorded it in the system.
                         </p>
                       </div>
                     </div>
                   )}
 
-                  {/* Show warning if CASH order with deposit but bank details not recorded yet */}
-                  {viewingOrder.paymentMethod === 'CASH' && viewingOrder.depositId && !viewingOrder.depositBankAccount && (
+                  {/* Show warning if CASH/CHEQUE order with deposit but bank details not recorded yet */}
+                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && !viewingOrder.depositBankAccount && (
                     <div className="flex items-start gap-3 p-4 bg-orange-50 border border-orange-200 rounded-lg">
                       <AlertCircle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
                       <div className="flex-1">
@@ -856,14 +855,14 @@ export default function OrdersPage() {
                     </div>
                   )}
 
-                  {/* Show info if CASH order with deposit AND bank details recorded */}
-                  {viewingOrder.paymentMethod === 'CASH' && viewingOrder.depositId && viewingOrder.depositBankAccount && (
+                  {/* Show info if CASH/CHEQUE order with deposit AND bank details recorded */}
+                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && viewingOrder.depositBankAccount && (
                     <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                       <CheckCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
                       <div className="flex-1">
-                        <p className="font-semibold text-blue-900">Cash Deposit Recorded</p>
+                        <p className="font-semibold text-blue-900">Deposit Recorded</p>
                         <p className="text-sm text-blue-700 mt-1">
-                          Team leader has deposited the cash to {viewingOrder.depositBankAccount}. Approving this order will also verify the cash deposit.
+                          Team leader has deposited the payment to {viewingOrder.depositBankAccount}. Approving this order will also verify the deposit.
                         </p>
                       </div>
                     </div>
@@ -876,10 +875,10 @@ export default function OrdersPage() {
                         setViewDialogOpen(false);
                         handleOpenApprove(viewingOrder);
                       }}
-                      disabled={viewingOrder.paymentMethod === 'CASH' && (!viewingOrder.depositId || !viewingOrder.depositBankAccount)}
+                      disabled={(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && (!viewingOrder.depositId || !viewingOrder.depositBankAccount)}
                     >
                       <CheckCircle className="h-4 w-4 mr-2" />
-                      {viewingOrder.paymentMethod === 'CASH' && viewingOrder.depositId && viewingOrder.depositBankAccount
+                      {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && viewingOrder.depositBankAccount
                         ? 'Approve Order & Verify Deposit'
                         : 'Finance Approve'}
                     </Button>

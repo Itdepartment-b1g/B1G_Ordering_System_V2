@@ -4,7 +4,7 @@
 -- This function handles order approval for finance team with different logic
 -- based on payment method:
 -- 1. BANK_TRANSFER/GCASH: Simply approve the order
--- 2. CASH: Approve the order AND verify the linked cash_deposit
+-- 2. CASH/CHEQUE: Approve the order AND verify the linked cash_deposit
 -- ============================================================================
 
 DROP FUNCTION IF EXISTS approve_order_and_verify_deposit(UUID);
@@ -32,11 +32,11 @@ BEGIN
     RETURN json_build_object('success', false, 'message', 'Order not found');
   END IF;
 
-  -- 2. CRITICAL CHECK: Cash orders require a deposit_id before approval
-  IF v_order_payment_method = 'CASH' AND v_deposit_id IS NULL THEN
+  -- 2. CRITICAL CHECK: Cash/Cheque orders require a deposit_id before approval
+  IF (v_order_payment_method = 'CASH' OR v_order_payment_method = 'CHEQUE') AND v_deposit_id IS NULL THEN
     RETURN json_build_object(
       'success', false, 
-      'message', 'Cash orders cannot be approved without a recorded deposit. Please have the team leader record the cash deposit first.'
+      'message', 'Cash/Cheque orders cannot be approved without a recorded deposit. Please have the team leader record the deposit first.'
     );
   END IF;
 
@@ -48,9 +48,9 @@ BEGIN
     updated_at = NOW()
   WHERE id = p_order_id;
 
-  -- 4. If payment method is CASH and deposit_id exists, verify the cash_deposit
-  IF v_order_payment_method = 'CASH' AND v_deposit_id IS NOT NULL THEN
-    -- Update cash deposit status to verified
+  -- 4. If payment method is CASH or CHEQUE and deposit_id exists, verify the cash_deposit
+  IF (v_order_payment_method = 'CASH' OR v_order_payment_method = 'CHEQUE') AND v_deposit_id IS NOT NULL THEN
+    -- Update cash/cheque deposit status to verified
     UPDATE cash_deposits
     SET 
       status = 'verified',
@@ -69,7 +69,7 @@ BEGIN
 
     RETURN json_build_object(
       'success', true, 
-      'message', 'Order approved and cash deposit verified',
+      'message', 'Order approved and deposit verified',
       'payment_method', v_order_payment_method,
       'deposit_verified', true
     );
@@ -102,10 +102,9 @@ GRANT EXECUTE ON FUNCTION approve_order_and_verify_deposit(UUID) TO authenticate
 -- - Order status changes to 'approved'
 -- - No deposit verification needed
 --
--- For Cash orders:
+-- For Cash/Cheque orders:
 -- - Order status changes to 'approved'
 -- - Related cash_deposit status changes to 'verified' (if deposit_id exists)
 -- - Related financial_transaction status changes to 'completed'
 --
 -- ============================================================================
-

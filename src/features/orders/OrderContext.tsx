@@ -214,10 +214,11 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         // Get cash deposit info if linked
         const cashDeposit = order.cash_deposit;
 
-        // Only consider deposit "recorded" if bank_account is NOT 'Cash Remittance' (placeholder)
-        // 'Cash Remittance' means the deposit was created during remittance but leader hasn't recorded details yet
+        // Only consider deposit "recorded" if bank_account is NOT 'Cash Remittance' (placeholder) OR 'Cheque Remittance'
+        // 'Cash Remittance' / 'Cheque Remittance' means the deposit was created during remittance but leader hasn't recorded details yet
         const hasBankDetails = cashDeposit?.bank_account &&
-          cashDeposit.bank_account !== 'Cash Remittance' &&
+          !cashDeposit.bank_account.includes('Cash Remittance') &&
+          !cashDeposit.bank_account.includes('Cheque Remittance') &&
           cashDeposit.bank_account.trim() !== '';
 
         return {
