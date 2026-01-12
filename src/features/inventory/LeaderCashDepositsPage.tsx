@@ -20,7 +20,8 @@ import {
   Filter,
   Camera,
   X,
-  Eye
+  Eye,
+  CreditCard
 } from 'lucide-react';
 
 // Interfaces
@@ -33,6 +34,7 @@ interface CashDeposit {
   status: string;
   agentName: string;
   depositSlipUrl?: string;
+  depositType?: 'CASH' | 'CHEQUE';
 }
 
 const BANK_OPTIONS = [
@@ -51,8 +53,10 @@ export default function LeaderCashDepositsPage() {
   const [depositHistory, setDepositHistory] = useState<CashDeposit[]>([]);
 
   // Deposit Modal State
+  const [depositTypeSelectionOpen, setDepositTypeSelectionOpen] = useState(false);
   const [depositDialogOpen, setDepositDialogOpen] = useState(false);
   const [selectedPendingDeposit, setSelectedPendingDeposit] = useState<CashDeposit | null>(null);
+  const [depositType, setDepositType] = useState<'CASH' | 'CHEQUE'>('CASH');
   const [bankAccount, setBankAccount] = useState('');
   const [referenceNumber, setReferenceNumber] = useState('');
   const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
@@ -131,7 +135,7 @@ export default function LeaderCashDepositsPage() {
       let query = supabase
         .from('cash_deposits')
         .select(`
-          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id,
+          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, deposit_type,
           agent:profiles!cash_deposits_agent_id_fkey(full_name)
         `)
         .order('created_at', { ascending: false });
@@ -186,7 +190,8 @@ export default function LeaderCashDepositsPage() {
         referenceNumber: d.reference_number,
         status: d.status,
         agentName: d.agent?.full_name || 'Unknown',
-        depositSlipUrl: d.deposit_slip_url
+        depositSlipUrl: d.deposit_slip_url,
+        depositType: d.deposit_type || 'CASH'
       }));
 
       // Separate pending and verified deposits
@@ -210,6 +215,13 @@ export default function LeaderCashDepositsPage() {
     setReferenceNumber('');
     setDepositSlipFile(null);
     setShowCamera(false);
+    // Open selection first instead of deposit dialog
+    setDepositTypeSelectionOpen(true);
+  };
+
+  const handleSelectDepositType = (type: 'CASH' | 'CHEQUE') => {
+    setDepositType(type);
+    setDepositTypeSelectionOpen(false);
     setDepositDialogOpen(true);
   };
 
@@ -295,14 +307,15 @@ export default function LeaderCashDepositsPage() {
           bank_account: bankAccount,
           reference_number: referenceNumber,
           deposit_slip_url: publicUrl,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
+          deposit_type: depositType // Save the selected deposit type
           // Note: status remains 'pending_verification' - requires super admin/manager verification
         })
         .eq('id', selectedPendingDeposit.id);
 
       if (updateError) throw updateError;
 
-      toast({ title: "Success", description: "Cash deposit details recorded successfully! Awaiting verification." });
+      toast({ title: "Success", description: `${depositType === 'CASH' ? 'Cash' : 'Cheque'} deposit details recorded successfully! Awaiting verification.` });
       setDepositDialogOpen(false);
       stopCamera(); // Clean up camera if it's still running
       fetchData();
@@ -438,6 +451,7 @@ export default function LeaderCashDepositsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Date</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Agent</TableHead>
                   <TableHead>Bank</TableHead>
                   <TableHead>Ref Number</TableHead>
@@ -450,6 +464,16 @@ export default function LeaderCashDepositsPage() {
                 {depositHistory.map((deposit) => (
                   <TableRow key={deposit.id}>
                     <TableCell>{format(new Date(deposit.depositDate), 'MMM dd, yyyy')}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={deposit.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-green-50 text-green-700 border-green-200"}>
+                        {deposit.depositType === 'CHEQUE' ? (
+                          <CreditCard className="h-3 w-3 mr-1" />
+                        ) : (
+                          <BanknoteIcon className="h-3 w-3 mr-1" />
+                        )}
+                        {deposit.depositType || 'CASH'}
+                      </Badge>
+                    </TableCell>
                     <TableCell>{deposit.agentName}</TableCell>
                     <TableCell>{deposit.bankAccount}</TableCell>
                     <TableCell className="font-mono text-xs">{deposit.referenceNumber || '-'}</TableCell>
@@ -479,19 +503,60 @@ export default function LeaderCashDepositsPage() {
         </CardContent>
       </Card>
 
+      {/* Deposit Type Selection Modal */}
+      <Dialog open={depositTypeSelectionOpen} onOpenChange={setDepositTypeSelectionOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Select Deposit Type</DialogTitle>
+            <DialogDescription>
+              Is this a Cash Deposit or a Cheque Deposit?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-6">
+            <Button
+              variant="outline"
+              className="h-32 flex flex-col items-center justify-center gap-4 hover:bg-emerald-50 hover:border-emerald-200 transition-all group"
+              onClick={() => handleSelectDepositType('CASH')}
+            >
+              <div className="p-3 rounded-full bg-emerald-100 group-hover:bg-emerald-200 transition-colors">
+                <BanknoteIcon className="h-8 w-8 text-emerald-700" />
+              </div>
+              <span className="font-semibold text-lg text-emerald-900">Cash Deposit</span>
+            </Button>
+
+            <Button
+              variant="outline"
+              className="h-32 flex flex-col items-center justify-center gap-4 hover:bg-purple-50 hover:border-purple-200 transition-all group"
+              onClick={() => handleSelectDepositType('CHEQUE')}
+            >
+              <div className="p-3 rounded-full bg-purple-100 group-hover:bg-purple-200 transition-colors">
+                <CreditCard className="h-8 w-8 text-purple-700" />
+              </div>
+              <span className="font-semibold text-lg text-purple-900">Cheque Deposit</span>
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDepositTypeSelectionOpen(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+
       {/* Record Deposit Modal */}
       <Dialog open={depositDialogOpen} onOpenChange={setDepositDialogOpen}>
         <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Record Cash Deposit</DialogTitle>
+            <DialogTitle>Record {depositType === 'CHEQUE' ? 'Cheque' : 'Cash'} Deposit</DialogTitle>
             <DialogDescription>
-              Enter bank deposit details for cash received from <strong>{selectedPendingDeposit?.agentName}</strong> during remittance.
+              Enter {depositType?.toLowerCase()} deposit details for remittance from <strong>{selectedPendingDeposit?.agentName}</strong>.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="p-4 bg-emerald-50 rounded-lg flex justify-between items-center border border-emerald-100">
-              <span className="text-emerald-800 font-medium">Amount to Deposit:</span>
-              <span className="text-2xl font-bold text-emerald-700">
+            <div className={`p-4 rounded-lg flex justify-between items-center border ${depositType === 'CHEQUE' ? 'bg-purple-50 border-purple-100' : 'bg-emerald-50 border-emerald-100'}`}>
+              <span className={`${depositType === 'CHEQUE' ? 'text-purple-800' : 'text-emerald-800'} font-medium`}>Amount to Deposit:</span>
+              <span className={`text-2xl font-bold ${depositType === 'CHEQUE' ? 'text-purple-700' : 'text-emerald-700'}`}>
                 ₱{(selectedPendingDeposit?.amount || 0).toLocaleString()}
               </span>
             </div>
@@ -580,8 +645,8 @@ export default function LeaderCashDepositsPage() {
                 </div>
               ) : depositSlipFile ? (
                 <div className="space-y-3">
-                  <div className="border-2 border-emerald-200 bg-emerald-50 rounded-lg p-4">
-                    <div className="text-sm text-emerald-700 font-medium flex items-center justify-center gap-2">
+                  <div className={`border-2 rounded-lg p-4 ${depositType === 'CHEQUE' ? 'border-purple-200 bg-purple-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                    <div className={`text-sm font-medium flex items-center justify-center gap-2 ${depositType === 'CHEQUE' ? 'text-purple-700' : 'text-emerald-700'}`}>
                       <CheckCircle2 className="h-5 w-5" />
                       <span>Photo Captured: {depositSlipFile.name}</span>
                     </div>
@@ -639,7 +704,7 @@ export default function LeaderCashDepositsPage() {
             <Button
               onClick={handleSubmitDeposit}
               disabled={submitting || !bankAccount || !depositSlipFile}
-              className="bg-emerald-600 hover:bg-emerald-700"
+              className={`${depositType === 'CHEQUE' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
             >
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Confirm Deposit
@@ -690,6 +755,20 @@ export default function LeaderCashDepositsPage() {
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                  <span className="text-muted-foreground">Type</span>
+                  <span className="col-span-2 flex items-center gap-2">
+                    <Badge variant="outline" className={selectedDepositToView.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-green-50 text-green-700 border-green-200"}>
+                      {selectedDepositToView.depositType === 'CHEQUE' ? (
+                        <CreditCard className="h-3 w-3 mr-1" />
+                      ) : (
+                        <BanknoteIcon className="h-3 w-3 mr-1" />
+                      )}
+                      {selectedDepositToView.depositType || 'CASH'}
+                    </Badge>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 py-2 border-b">
                   <span className="text-muted-foreground">Date</span>
                   <span className="col-span-2 font-medium">
                     {format(new Date(selectedDepositToView.depositDate), 'MMMM dd, yyyy')}
@@ -728,6 +807,7 @@ export default function LeaderCashDepositsPage() {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs text-blue-600 hover:underline"
+                      title="Open full image in new tab"
                     >
                       View Full Image
                     </a>
