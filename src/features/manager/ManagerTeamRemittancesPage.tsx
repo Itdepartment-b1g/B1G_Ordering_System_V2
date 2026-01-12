@@ -484,8 +484,6 @@ export default function ManagerTeamRemittancesPage() {
                                         <TableRow>
                                             <TableHead className="w-[200px] pl-6">Date</TableHead>
                                             <TableHead>Agent</TableHead>
-                                            <TableHead className="text-right">Items (SKUs)</TableHead>
-
                                             <TableHead className="text-right">Orders</TableHead>
                                             <TableHead className="text-right">Revenue</TableHead>
                                             <TableHead className="w-[100px]"></TableHead>
@@ -510,10 +508,6 @@ export default function ManagerTeamRemittancesPage() {
                                                         <span className="font-medium text-sm">{remittance.agent_name}</span>
                                                     </div>
                                                 </TableCell>
-                                                <TableCell className="text-right text-muted-foreground">
-                                                    {remittance.items_remitted} types
-                                                </TableCell>
-
                                                 <TableCell className="text-right">
                                                     {remittance.orders_count > 0 ? (
                                                         <Badge variant="outline" className="border-green-200 text-green-700 bg-green-50">

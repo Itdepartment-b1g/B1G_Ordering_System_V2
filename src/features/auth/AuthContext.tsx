@@ -108,6 +108,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [toast]);
 
   const initializeAuth = async () => {
+    // Failsafe: When waking from idle (tab discard), network requests might hang
+    // We force initialization completion after 6s to unblock the UI
+    let flowCompleted = false;
+    const safetyTimer = setTimeout(() => {
+      if (!flowCompleted) {
+        console.warn('⚠️ [AuthContext] Init timeout - forcing app load');
+        setIsInitialized(true);
+        if (isLoading) setIsLoading(false);
+      }
+    }, 6000);
+
     try {
       setIsLoading(true);
 
@@ -164,13 +175,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       userRef.current = null;
       setIsLoading(false);
     } finally {
+      flowCompleted = true;
+      clearTimeout(safetyTimer);
       setIsInitialized(true);
     }
   };
 
   const loadUserProfile = async (session: any, forceRefresh = false) => {
     const userId = session.user.id;
-    const { isCacheStale } = await import('@/lib/profileCache'); // Dynamic import to avoid circular dep issues slightly, though static is fine
+    // Using static import to prevent network hangs on wake-up
 
     // 1. MEMORY CACHE CHECK
     if (!forceRefresh && userRef.current?.id === userId) {

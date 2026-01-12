@@ -1,39 +1,25 @@
--- ============================================================================
--- PERFORMANCE OPTIMIZATION INDEXES
--- ============================================================================
--- Adds indexes to foreign keys and frequently queried columns to improve
--- initialization speed and general query performance.
+-- Performance Indexes Migration
+-- Adding indexes to foreign keys and commonly filtered columns to optimize joins and filtering
 
--- 1. Profiles Table Indexes
--- Used in AuthContext for profile fetching and role checks
+-- 1. Client Orders (Critical for Stats View)
+CREATE INDEX IF NOT EXISTS idx_client_orders_company_id ON client_orders(company_id);
+CREATE INDEX IF NOT EXISTS idx_client_orders_client_id ON client_orders(client_id);
+CREATE INDEX IF NOT EXISTS idx_client_orders_agent_id ON client_orders(agent_id);
+CREATE INDEX IF NOT EXISTS idx_client_orders_status ON client_orders(status);
+CREATE INDEX IF NOT EXISTS idx_client_orders_stage ON client_orders(stage);
+
+-- 2. Inventory / Brands / Variants / Main Inventory (Critical for Inventory Loading)
+CREATE INDEX IF NOT EXISTS idx_brands_company_id ON brands(company_id);
+CREATE INDEX IF NOT EXISTS idx_variants_brand_id ON variants(brand_id);
+CREATE INDEX IF NOT EXISTS idx_variants_variant_type ON variants(variant_type);
+CREATE INDEX IF NOT EXISTS idx_main_inventory_variant_id ON main_inventory(variant_id);
+
+-- 3. Clients (Critical for Clients Page)
+CREATE INDEX IF NOT EXISTS idx_clients_company_id ON clients(company_id);
+CREATE INDEX IF NOT EXISTS idx_clients_agent_id ON clients(agent_id);
+CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
+CREATE INDEX IF NOT EXISTS idx_clients_created_at ON clients(created_at);
+
+-- 4. Profiles (Critical for Login & Agent List)
 CREATE INDEX IF NOT EXISTS idx_profiles_company_id ON profiles(company_id);
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
--- Composite index for frequent "active user in company" lookups
-CREATE INDEX IF NOT EXISTS idx_profiles_company_status ON profiles(company_id, status);
-
--- 2. Companies Table Indexes
--- Used in AuthContext for status checks
-CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(status);
-
--- 3. Leader Teams Indexes
--- Used in TeamManagement and hierarchical queries
-CREATE INDEX IF NOT EXISTS idx_leader_teams_agent_id ON leader_teams(agent_id);
-CREATE INDEX IF NOT EXISTS idx_leader_teams_leader_id ON leader_teams(leader_id);
-CREATE INDEX IF NOT EXISTS idx_leader_teams_sub_team_id ON leader_teams(sub_team_id);
-CREATE INDEX IF NOT EXISTS idx_leader_teams_company_id ON leader_teams(company_id);
-
--- 4. Sub Teams Indexes
--- Used in hierarchical queries
-CREATE INDEX IF NOT EXISTS idx_sub_teams_leader_id ON sub_teams(leader_id);
-CREATE INDEX IF NOT EXISTS idx_sub_teams_manager_id ON sub_teams(manager_id);
-CREATE INDEX IF NOT EXISTS idx_sub_teams_company_id ON sub_teams(company_id);
-
--- 5. Inventory Indexes (Bonus for Dashboard speed)
-CREATE INDEX IF NOT EXISTS idx_agent_inventory_agent_id ON agent_inventory(agent_id);
-CREATE INDEX IF NOT EXISTS idx_agent_inventory_variant_id ON agent_inventory(variant_id);
-
--- Optimize RLS Policy Performance
--- Ensure indexes exist for columns frequently used in "using" clauses
--- (already covered by company_id and role above)
-
-COMMENT ON INDEX idx_profiles_company_id IS 'Optimizes profile fetches by company';

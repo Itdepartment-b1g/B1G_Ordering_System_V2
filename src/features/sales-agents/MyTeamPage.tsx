@@ -46,32 +46,38 @@ export default function MyTeamPage() {
     }
   }, [user, toast]);
 
-  // Fetch team members
+  // Fetch team members - OPTIMIZED: Single query with joins (no N+1)
   const fetchTeamMembers = async () => {
     if (!user) return;
 
     try {
       setLoadingTeam(true);
 
-      // Get team members from leader_teams
-        const { data: teamData, error: teamError } = await supabase
-          .from('leader_teams')
-          .select(`
-            agent_id,
-            profiles!leader_teams_agent_id_fkey(
-              id,
-              full_name,
-              email,
-              phone,
-              region,
-              city,
-              status,
-              created_at
-            )
-          `)
-          .eq('leader_id', user.id);
+      // ✅ OPTIMIZED: Single query with nested client_orders join
+      // This replaces the N+1 pattern (1 query + N queries per member)
+      const { data: teamData, error: teamError } = await supabase
+        .from('leader_teams')
+        .select(`
+          agent_id,
+          profiles!leader_teams_agent_id_fkey(
+            id,
+            full_name,
+            email,
+            phone,
+            region,
+            city,
+            status,
+            created_at
+          ),
+          agent_orders:client_orders!client_orders_agent_id_fkey(
+            total_amount,
+            status,
+            created_at
+          )
+        `)
+        .eq('leader_id', user.id);
 
-        if (teamError) throw teamError;
+      if (teamError) throw teamError;
 
       if (!teamData || teamData.length === 0) {
         setTeamMembers([]);
@@ -79,58 +85,54 @@ export default function MyTeamPage() {
         return;
       }
 
-      // Get sales data for each team member
-        const teamMembersWithSales = await Promise.all(
-          teamData.map(async (member: any) => {
-            if (!member.profiles) {
-              console.warn('No profile data for member:', member.agent_id);
-              return null;
-            }
-
-            // Get sales data for this agent
-            const { data: salesData, error: salesError } = await supabase
-              .from('client_orders')
-              .select('total_amount, status, created_at')
-              .eq('agent_id', member.agent_id);
-
-          if (salesError) {
-            console.error(`Error fetching sales data for ${member.profiles.full_name}:`, salesError);
+      // Process aggregations in-memory (FAST - no additional queries)
+      const teamMembersWithSales = teamData
+        .map((member: any) => {
+          if (!member.profiles) {
+            console.warn('No profile data for member:', member.agent_id);
+            return null;
           }
 
-            const totalSales = salesData?.reduce((sum: number, order: any) => sum + (order.total_amount || 0), 0) || 0;
-            const ordersCount = salesData?.length || 0;
-            const approvedOrders = salesData?.filter(order => order.status === 'approved').length || 0;
-            const pendingOrders = salesData?.filter(order => order.status === 'pending').length || 0;
-            const rejectedOrders = salesData?.filter(order => order.status === 'rejected').length || 0;
+          // All order data is already loaded - just aggregate in memory
+          const salesData = member.agent_orders || [];
+
+          const totalSales = salesData.reduce((sum: number, order: any) => sum + (order.total_amount || 0), 0);
+          const ordersCount = salesData.length;
+          const approvedOrders = salesData.filter((order: any) => order.status === 'approved').length;
+          const pendingOrders = salesData.filter((order: any) => order.status === 'pending').length;
+          const rejectedOrders = salesData.filter((order: any) => order.status === 'rejected').length;
 
           // Get the most recent order date
-          const lastOrderDate = salesData && salesData.length > 0
-            ? salesData.sort((a: any, b: any) => 
-                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-              )[0]?.created_at
+          const lastOrderDate = salesData.length > 0
+            ? salesData
+              .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+              ?.created_at
             : null;
 
-            return {
-              id: member.profiles.id,
-              name: member.profiles.full_name,
-              email: member.profiles.email,
-              phone: member.profiles.phone || '',
-              region: member.profiles.region || '',
-              cities: member.profiles.city ? (Array.isArray(member.profiles.city) ? member.profiles.city : member.profiles.city.split(',').map(c => c.trim()).filter(c => c)) : [],
-              status: member.profiles.status || 'active',
-              totalSales,
-              ordersCount,
-              approvedOrders,
-              pendingOrders,
-              rejectedOrders,
+          return {
+            id: member.profiles.id,
+            name: member.profiles.full_name,
+            email: member.profiles.email,
+            phone: member.profiles.phone || '',
+            region: member.profiles.region || '',
+            cities: member.profiles.city
+              ? (Array.isArray(member.profiles.city)
+                ? member.profiles.city
+                : member.profiles.city.split(',').map((c: string) => c.trim()).filter((c: string) => c))
+              : [],
+            status: member.profiles.status || 'active',
+            totalSales,
+            ordersCount,
+            approvedOrders,
+            pendingOrders,
+            rejectedOrders,
             lastOrderDate,
-              joinedDate: member.profiles.created_at
-            };
-          })
-        );
+            joinedDate: member.profiles.created_at
+          };
+        })
+        .filter((member): member is NonNullable<typeof member> => member !== null);
 
-        const validTeamMembers = teamMembersWithSales.filter(member => member !== null);
-        setTeamMembers(validTeamMembers);
+      setTeamMembers(teamMembersWithSales);
 
     } catch (error) {
       console.error('Error fetching team members:', error);
@@ -198,10 +200,10 @@ export default function MyTeamPage() {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="space-y-2">
-          <h1 className="text-3xl font-bold tracking-tight">My Team</h1>
-          <p className="text-muted-foreground">
+        <h1 className="text-3xl font-bold tracking-tight">My Team</h1>
+        <p className="text-muted-foreground">
           Manage and view your team members' performance and details
-          </p>
+        </p>
       </div>
 
       {/* Stats Overview */}
@@ -269,45 +271,45 @@ export default function MyTeamPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <CardTitle>Team Members</CardTitle>
             <div className="flex flex-col sm:flex-row gap-3">
-            {/* Search */}
+              {/* Search */}
               <div className="relative flex-1 sm:max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
                   placeholder="Search team members..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
-              />
-            </div>
+                />
+              </div>
 
               {/* Sort and View Toggle */}
-            <div className="flex gap-2">
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'name' | 'sales' | 'orders')}
+              <div className="flex gap-2">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as 'name' | 'sales' | 'orders')}
                   className="flex h-10 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
+                >
                   <option value="name">Sort: Name</option>
                   <option value="sales">Sort: Sales</option>
                   <option value="orders">Sort: Orders</option>
-              </select>
+                </select>
                 <div className="flex border rounded-md">
-              <Button
+                  <Button
                     variant={viewMode === 'table' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setViewMode('table')}
+                    size="sm"
+                    onClick={() => setViewMode('table')}
                     className="rounded-r-none border-r"
-              >
-                <BarChart3 className="h-4 w-4" />
-              </Button>
-              <Button
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                  </Button>
+                  <Button
                     variant={viewMode === 'cards' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => setViewMode('cards')}
+                    size="sm"
+                    onClick={() => setViewMode('cards')}
                     className="rounded-l-none"
-              >
-                <Users className="h-4 w-4" />
-              </Button>
+                  >
+                    <Users className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
             </div>
@@ -315,15 +317,15 @@ export default function MyTeamPage() {
         </CardHeader>
 
         <CardContent>
-      {/* Team Members Display */}
-      {loadingTeam ? (
+          {/* Team Members Display */}
+          {loadingTeam ? (
             <div className="flex items-center justify-center py-12">
               <div className="flex items-center gap-2">
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span className="text-muted-foreground">Loading team members...</span>
               </div>
             </div>
-      ) : sortedTeamMembers.length === 0 ? (
+          ) : sortedTeamMembers.length === 0 ? (
             <div className="text-center py-12">
               <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
               <h3 className="text-lg font-semibold mb-2">No team members found</h3>
@@ -331,7 +333,7 @@ export default function MyTeamPage() {
                 {searchQuery ? 'Try adjusting your search criteria' : 'No team members have been assigned to you yet'}
               </p>
             </div>
-      ) : viewMode === 'table' ? (
+          ) : viewMode === 'table' ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -424,87 +426,87 @@ export default function MyTeamPage() {
                 </TableBody>
               </Table>
             </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sortedTeamMembers.map((member) => (
-            <Card key={member.id} className="hover:shadow-md transition-shadow">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-lg">{member.name}</CardTitle>
-                    <p className="text-sm text-muted-foreground">{member.email}</p>
-                  </div>
-                  <Badge
-                    variant={member.status === 'active' ? 'default' : 'secondary'}
-                    className={member.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}
-                  >
-                    {member.status}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm">
-                    <MapPin className="h-4 w-4 text-muted-foreground" />
-                    <span>{member.region}</span>
-                  </div>
-                  {member.phone && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <Phone className="h-4 w-4 text-muted-foreground" />
-                      <span>{member.phone}</span>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {sortedTeamMembers.map((member) => (
+                <Card key={member.id} className="hover:shadow-md transition-shadow">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-lg">{member.name}</CardTitle>
+                        <p className="text-sm text-muted-foreground">{member.email}</p>
+                      </div>
+                      <Badge
+                        variant={member.status === 'active' ? 'default' : 'secondary'}
+                        className={member.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}
+                      >
+                        {member.status}
+                      </Badge>
                     </div>
-                  )}
-                  {member.cities.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {member.cities.map((city, index) => (
-                        <Badge key={index} variant="outline" className="text-xs">
-                          {city}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-blue-600">
-                      ₱{member.totalSales.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-muted-foreground">Total Sales</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">
-                      {member.ordersCount}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Orders
-                      {member.approvedOrders > 0 && (
-                        <div className="text-green-600">{member.approvedOrders} approved</div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <MapPin className="h-4 w-4 text-muted-foreground" />
+                        <span>{member.region}</span>
+                      </div>
+                      {member.phone && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Phone className="h-4 w-4 text-muted-foreground" />
+                          <span>{member.phone}</span>
+                        </div>
                       )}
-                      {member.pendingOrders > 0 && (
-                        <div className="text-orange-600">{member.pendingOrders} pending</div>
+                      {member.cities.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {member.cities.map((city, index) => (
+                            <Badge key={index} variant="outline" className="text-xs">
+                              {city}
+                            </Badge>
+                          ))}
+                        </div>
                       )}
                     </div>
-                  </div>
-                </div>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => {
-                    setSelectedMember(member);
-                    setShowMemberDetails(true);
-                  }}
-                >
-                  <Eye className="h-4 w-4 mr-2" />
-                  View Details
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-blue-600">
+                          ₱{member.totalSales.toLocaleString()}
+                        </div>
+                        <div className="text-xs text-muted-foreground">Total Sales</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-green-600">
+                          {member.ordersCount}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Orders
+                          {member.approvedOrders > 0 && (
+                            <div className="text-green-600">{member.approvedOrders} approved</div>
+                          )}
+                          {member.pendingOrders > 0 && (
+                            <div className="text-orange-600">{member.pendingOrders} pending</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        setSelectedMember(member);
+                        setShowMemberDetails(true);
+                      }}
+                    >
+                      <Eye className="h-4 w-4 mr-2" />
+                      View Details
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -572,8 +574,8 @@ export default function MyTeamPage() {
                     <div className="text-sm text-muted-foreground">Total Orders</div>
                   </div>
                   <div className="p-4 border rounded-lg bg-purple-50">
-                  <div className="text-2xl font-bold text-purple-600">{selectedMember.approvedOrders}</div>
-                  <div className="text-sm text-muted-foreground">Approved Orders</div>
+                    <div className="text-2xl font-bold text-purple-600">{selectedMember.approvedOrders}</div>
+                    <div className="text-sm text-muted-foreground">Approved Orders</div>
                   </div>
                 </div>
                 {(selectedMember.pendingOrders > 0 || selectedMember.rejectedOrders > 0) && (

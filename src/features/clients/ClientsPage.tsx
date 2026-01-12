@@ -54,6 +54,9 @@ interface Client {
   status: 'active' | 'inactive';
   has_forge: boolean;
   last_order_date?: string;
+  cor_url?: string;
+  contact_person?: string;
+  tin?: string;
   created_at: string;
   updated_at: string;
   approval_status: 'pending' | 'approved' | 'rejected';
@@ -93,6 +96,8 @@ export default function ClientsPage() {
     phone: '',
     address: '',
     city: '',
+    contact_person: '',
+    tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
     has_forge: false
@@ -115,6 +120,8 @@ export default function ClientsPage() {
     address: '',
     has_forge: false,
     city: '',
+    contact_person: '',
+    tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
   });
@@ -127,6 +134,10 @@ export default function ClientsPage() {
   const [isCameraLoading, setIsCameraLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Add COR Photo States
+  const [newCorPhoto, setNewCorPhoto] = useState<string | null>(null);
+  const corFileInputRef = useRef<HTMLInputElement>(null);
 
   // Add Client Location States
   const [capturedLocation, setCapturedLocation] = useState<{
@@ -529,6 +540,9 @@ export default function ClientsPage() {
         location_accuracy: client.location_accuracy,
         location_captured_at: client.location_captured_at,
         city: client.city,
+        cor_url: client.cor_url,
+        contact_person: client.contact_person,
+        tin: client.tin,
         total_orders: ordersByClient[client.id]?.count || 0,
         total_spent: ordersByClient[client.id]?.total || 0,
         account_type: client.account_type || 'Standard Accounts',
@@ -852,6 +866,8 @@ export default function ClientsPage() {
       phone: phoneWithoutPrefix,
       address: client.address || '',
       city: client.city || '',
+      contact_person: client.contact_person || '',
+      tin: client.tin || '',
       account_type: client.account_type || 'Standard Accounts',
       category: client.category || 'Open',
       has_forge: client.has_forge || false
@@ -882,6 +898,8 @@ export default function ClientsPage() {
           company: editForm.company || null,
           email: editForm.email || null,
           phone: editForm.phone ? `+63 ${editForm.phone}` : null,
+          contact_person: editForm.contact_person || null,
+          tin: editForm.tin || null,
           account_type: editForm.account_type,
           category: editForm.category,
           has_forge: editForm.has_forge,
@@ -1261,6 +1279,11 @@ export default function ClientsPage() {
       return;
     }
 
+    if (!newCorPhoto) {
+      toast({ title: 'Error', description: 'COR (Certificate of Registration) photo is required', variant: 'destructive' });
+      return;
+    }
+
     setAdding(true);
     handleConfirmAdd();
   };
@@ -1319,6 +1342,66 @@ export default function ClientsPage() {
         }
 
         photoUrl = urlData.signedUrl;
+      }
+
+      // Handle COR photo upload if there's a COR photo
+      let corUrl = null;
+
+      if (newCorPhoto) {
+        // Convert base64 to blob
+        const base64Data = newCorPhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+
+        // Determine content type from base64 prefix
+        const isJPG = newCorPhoto.startsWith('data:image/jpeg') || newCorPhoto.startsWith('data:image/jpg');
+        const contentType = isJPG ? 'image/jpeg' : 'image/png';
+        const fileExtension = isJPG ? 'jpg' : 'png';
+
+        const blob = new Blob([byteArray], { type: contentType });
+
+        // Generate unique filename
+        const sanitizeName = (str: string) => {
+          return str
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        };
+
+        const clientName = sanitizeName(addForm.name || 'client');
+        const clientCompany = sanitizeName(addForm.company || 'company');
+        const timestamp = Date.now();
+
+        const corFileName = `${user?.id}/company_${user?.company_id}_client_${clientName}_${clientCompany}_cor_${timestamp}.${fileExtension}`;
+
+        // Upload to Supabase Storage (client-cor bucket)
+        const { data: corUploadData, error: corUploadError } = await supabase.storage
+          .from('client-cor')
+          .upload(corFileName, blob, {
+            contentType: contentType,
+            upsert: false
+          });
+
+        if (corUploadError) {
+          console.error('COR upload error:', corUploadError);
+          throw new Error(`Failed to upload COR: ${corUploadError.message}`);
+        }
+
+        // Get signed URL (required for private buckets)
+        const { data: corUrlData, error: corUrlError } = await supabase.storage
+          .from('client-cor')
+          .createSignedUrl(corFileName, 31536000); // 1 year expiry
+
+        if (corUrlError || !corUrlData?.signedUrl) {
+          throw new Error(`Failed to generate COR signed URL: ${corUrlError?.message || 'Unknown error'}`);
+        }
+
+        corUrl = corUrlData.signedUrl;
       }
 
       let cityMatches = true;
@@ -1391,6 +1474,8 @@ export default function ClientsPage() {
           phone: addForm.phone ? `+63 ${addForm.phone}` : null,
           address: addForm.address || null,
           city: addForm.city || null,
+          contact_person: addForm.contact_person || null,
+          tin: addForm.tin || null,
           agent_id: agentId, // Can be null for super admins, or user id for others
           total_orders: 0,
           total_spent: 0,
@@ -1400,6 +1485,7 @@ export default function ClientsPage() {
           has_forge: addForm.has_forge,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
+          cor_url: corUrl,
           location_latitude: capturedLocation?.latitude || null,
           location_longitude: capturedLocation?.longitude || null,
           location_accuracy: capturedLocation?.accuracy || null,
@@ -1512,6 +1598,41 @@ export default function ClientsPage() {
             });
           }
         }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCorFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      // Validate file size (10MB max for COR documents)
+      if (file.size > 10 * 1024 * 1024) {
+        toast({
+          title: 'Error',
+          description: 'COR image size should be less than 10MB',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      // Validate file type (PNG or JPG only)
+      if (!file.type.match(/^image\/(png|jpeg|jpg)$/)) {
+        toast({
+          title: 'Error',
+          description: 'COR must be a PNG or JPG image',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewCorPhoto(reader.result as string);
+        toast({
+          title: 'COR Uploaded',
+          description: 'Certificate of Registration image has been uploaded successfully'
+        });
       };
       reader.readAsDataURL(file);
     }
@@ -1902,10 +2023,13 @@ export default function ClientsPage() {
       address: '',
       has_forge: false,
       city: '',
+      contact_person: '',
+      tin: '',
       account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
       category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
     });
     setNewClientPhoto(null);
+    setNewCorPhoto(null);
     setCapturedLocation(null);
     setPrewarmPosition(null);
     setIsPrewarmingLocation(false);
@@ -2233,10 +2357,59 @@ export default function ClientsPage() {
                     </div>
                   )}
                 </div>
+                {/* COR Upload Section */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">
+                    COR (Certificate of Registration) *
+                  </Label>
+                  <p className="text-xs text-muted-foreground">Upload PNG or JPG image (max 10MB)</p>
 
+                  {!newCorPhoto && (
+                    <div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => corFileInputRef.current?.click()}
+                        className="w-full"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload COR Image
+                      </Button>
+                      <input
+                        ref={corFileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg"
+                        onChange={handleCorFileUpload}
+                        className="hidden"
+                      />
+                    </div>
+                  )}
+
+                  {newCorPhoto && (
+                    <div className="relative">
+                      <img
+                        src={newCorPhoto}
+                        alt="COR preview"
+                        className="w-full h-48 object-contain rounded-lg border bg-gray-50"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 right-2"
+                        onClick={() => setNewCorPhoto(null)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                      <div className="mt-2 text-xs text-green-600 font-medium">
+                        ✓ COR uploaded successfully
+                      </div>
+                    </div>
+                  )}
+                </div>
                 {/* Client Information Fields */}
                 <div className="space-y-2">
-                  <Label>Client Name *</Label>
+                  <Label>Trade Name *</Label>
                   <Input
                     placeholder="Enter client name"
                     value={addForm.name}
@@ -2250,6 +2423,16 @@ export default function ClientsPage() {
                     value={addForm.company}
                     onChange={(e) => setAddForm({ ...addForm, company: e.target.value })}
                   />
+                </div>
+                {/* Contact Person Field */}
+                <div className="space-y-2">
+                  <Label>Contact Person</Label>
+                  <Input
+                    placeholder="Contact person name"
+                    value={addForm.contact_person}
+                    onChange={(e) => setAddForm({ ...addForm, contact_person: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Name of the contact person for this client</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Email *</Label>
@@ -2278,6 +2461,17 @@ export default function ClientsPage() {
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
+                </div>
+
+                {/* TIN Field */}
+                <div className="space-y-2">
+                  <Label>TIN (Tax Identification Number)</Label>
+                  <Input
+                    placeholder="XXX-XXX-XXX-XXX"
+                    value={addForm.tin}
+                    onChange={(e) => setAddForm({ ...addForm, tin: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Tax Identification Number</p>
                 </div>
                 <div className="space-y-2">
                   <Label className="flex items-center gap-2">
@@ -2402,6 +2596,8 @@ export default function ClientsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+
 
                 {/* Has Forge Field */}
                 <div className="space-y-3">
@@ -2934,6 +3130,22 @@ export default function ClientsPage() {
                   disabled
                   readOnly
                   className="bg-muted cursor-not-allowed"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Contact Person</Label>
+                <Input
+                  placeholder="Contact person name"
+                  value={editForm.contact_person}
+                  onChange={(e) => setEditForm({ ...editForm, contact_person: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>TIN (Tax Identification Number)</Label>
+                <Input
+                  placeholder="XXX-XXX-XXX-XXX"
+                  value={editForm.tin}
+                  onChange={(e) => setEditForm({ ...editForm, tin: e.target.value })}
                 />
               </div>
               <div className="space-y-2">

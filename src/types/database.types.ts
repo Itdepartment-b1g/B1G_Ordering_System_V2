@@ -188,6 +188,9 @@ export interface Client {
   approved_at?: string;
   approved_by?: string;
   last_order_date?: string;
+  cor_url?: string;
+  contact_person?: string;
+  tin?: string;
   created_at: string;
   updated_at: string;
 }
