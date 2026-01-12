@@ -377,6 +377,7 @@ export default function LeaderCashDepositsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Remittance Date</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Agent</TableHead>
                   <TableHead>Source</TableHead>
                   <TableHead>Ref Number</TableHead>
@@ -388,6 +389,16 @@ export default function LeaderCashDepositsPage() {
                 {pendingDeposits.map((deposit) => (
                   <TableRow key={deposit.id} className="bg-orange-50/30">
                     <TableCell>{format(new Date(deposit.depositDate), 'MMM dd, yyyy')}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={deposit.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-green-50 text-green-700 border-green-200"}>
+                        {deposit.depositType === 'CHEQUE' ? (
+                          <CreditCard className="h-3 w-3 mr-1" />
+                        ) : (
+                          <BanknoteIcon className="h-3 w-3 mr-1" />
+                        )}
+                        {deposit.depositType || 'CASH'}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="font-medium">{deposit.agentName}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
@@ -423,10 +434,23 @@ export default function LeaderCashDepositsPage() {
                           Record Deposit
                         </Button>
                       ) : (
-                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-                          <AlertCircle className="h-3 w-3 mr-1" />
-                          Awaiting Verification
-                        </Badge>
+                        <div className="flex items-center gap-2 justify-end">
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Awaiting Verification
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedDepositToView(deposit);
+                              setViewDepositDialogOpen(true);
+                            }}
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            View
+                          </Button>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
