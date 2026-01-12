@@ -36,7 +36,7 @@ export interface Order {
   status: 'pending' | 'approved' | 'rejected';
   stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected' | 'finance_pending';
   signatureUrl?: string;
-  paymentMethod?: 'GCASH' | 'BANK_TRANSFER' | 'CASH';
+  paymentMethod?: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
   bankType?: 'Unionbank' | 'BPI' | 'PBCOM';
   paymentProofUrl?: string;
   pricingStrategy?: 'rsp' | 'dsp' | 'special';

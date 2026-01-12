@@ -352,7 +352,7 @@ export default function MyInventory() {
           agentNotes: order.agent_remittance_notes
         };
 
-        if (order.payment_method === 'CASH') {
+        if (order.payment_method === 'CASH' || order.payment_method === 'CHEQUE') {
           cashOrders.push(formattedOrder);
         } else if (order.payment_method === 'BANK_TRANSFER' || order.payment_method === 'GCASH') {
           bankOrders.push(formattedOrder);
@@ -527,9 +527,9 @@ export default function MyInventory() {
 
       let description = '';
       if (todayCashOrders.length > 0 && todayBankOrders.length > 0) {
-        description = `Remittance complete! ${todayCashOrders.length} cash order(s) (₱${cashTotal.toLocaleString()}) and ${todayBankOrders.length} bank order(s) (₱${bankTotal.toLocaleString()}) processed.`;
+        description = `Remittance complete! ${todayCashOrders.length} cash/cheque order(s) (₱${cashTotal.toLocaleString()}) and ${todayBankOrders.length} bank order(s) (₱${bankTotal.toLocaleString()}) processed.`;
       } else if (todayCashOrders.length > 0) {
-        description = `Cash remittance successful! ₱${cashTotal.toLocaleString()} from ${todayCashOrders.length} order(s) submitted to ${leaderName || 'your leader'}.`;
+        description = `Remittance successful! ₱${cashTotal.toLocaleString()} from ${todayCashOrders.length} cash/cheque order(s) submitted to ${leaderName || 'your leader'}.`;
       } else if (todayBankOrders.length > 0) {
         description = `${todayBankOrders.length} bank transfer order(s) acknowledged (₱${bankTotal.toLocaleString()}).`;
       } else {
@@ -1175,7 +1175,7 @@ export default function MyInventory() {
               <Tabs defaultValue="cash" className="w-full">
                 <TabsList className="grid w-full grid-cols-2 mb-4">
                   <TabsTrigger value="cash" className="text-xs md:text-sm">
-                    Cash Orders ({todayCashOrders.length})
+                    Cash & Cheque ({todayCashOrders.length})
                   </TabsTrigger>
                   <TabsTrigger value="bank" className="text-xs md:text-sm">
                     Bank Transfer ({todayBankOrders.length})
@@ -1186,7 +1186,7 @@ export default function MyInventory() {
                 <TabsContent value="cash" className="space-y-3">
                   <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
                     <p className="text-xs md:text-sm text-green-900">
-                      💵 <strong>Cash Remittance:</strong> Physical cash from these orders must be remitted to your leader.
+                      💵 <strong>Cash & Cheque Remittance:</strong> Physical cash and cheques from these orders must be remitted to your leader.
                     </p>
                   </div>
                   {loadingOrders ? (
@@ -1208,7 +1208,7 @@ export default function MyInventory() {
                               <div className="text-lg md:text-2xl font-bold text-green-600">
                                 ₱{todayCashOrders.reduce((sum, o) => sum + o.totalAmount, 0).toLocaleString()}
                               </div>
-                              <div className="text-[10px] md:text-xs text-muted-foreground">Cash to Remit</div>
+                              <div className="text-[10px] md:text-xs text-muted-foreground">Total to Remit</div>
                             </div>
                           </div>
                         </CardContent>
@@ -1300,7 +1300,7 @@ export default function MyInventory() {
                   ) : (
                     <div className="text-center py-8 text-muted-foreground">
                       <ShoppingCart className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">No cash orders today</p>
+                      <p className="text-sm">No cash or cheque orders today</p>
                     </div>
                   )}
                 </TabsContent>
@@ -1546,7 +1546,7 @@ export default function MyInventory() {
                     <div className="flex items-center justify-between gap-1.5">
                       <div className="flex items-center gap-1.5 min-w-0 flex-1">
                         <ShoppingCart className="h-3.5 w-3.5 md:h-5 md:w-5 flex-shrink-0" />
-                        <h3 className="font-semibold text-[11px] md:text-base truncate">Cash Sales</h3>
+                        <h3 className="font-semibold text-[11px] md:text-base truncate">Cash & Cheque Sales</h3>
                       </div>
                       {soldConfirmed ? (
                         <CheckCircle2 className="h-3.5 w-3.5 md:h-5 md:w-5 text-green-600 flex-shrink-0" />

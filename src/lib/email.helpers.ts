@@ -69,7 +69,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                             <p style="margin: 0 0 16px; color: #374151; font-size: 15px; line-height: 1.6;">Thank you for your order with B1G Corporation. Your order has been received and is pending approval.</p>
                             <div style="padding: 15px; background-color: #f3f4f6; border-radius: 5px; margin-top: 20px;">
                                 <p style="margin: 0; font-size: 14px; color: #4b5563;"><strong>Pricing Strategy:</strong> ${orderData.pricingStrategy === 'special' ? 'Special Pricing (Allocated)' : (orderData.pricingStrategy?.toUpperCase() || 'RSP') + ' Pricing'}</p>
-                                <p style="margin: 5px 0 0 0; font-size: 14px; color: #4b5563;"><strong>Payment Method:</strong> ${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}</p>
+                                <p style="margin: 5px 0 0 0; font-size: 14px; color: #4b5563;"><strong>Payment Method:</strong> ${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}</p>
                             </div>
                         </td>
                     </tr>
@@ -363,7 +363,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                                 <h3 style="margin-top: 0; color: #111827; font-size: 16px;">Order Details</h3>
                                 <p style="margin: 4px 0; color: #4b5563;">Status: <span style="font-weight: 600; color: #2563eb;">Pending Approval</span></p>
                                 <p style="margin: 4px 0; color: #4b5563;">Pricing Strategy: <span style="font-weight: 600; color: #111827;">${orderData.pricingStrategy === 'special' ? 'SPECIAL (ALLOCATED)' : (orderData.pricingStrategy?.toUpperCase() || 'RSP') + ' PRICING'}</span></p>
-                                <p style="margin: 4px 0; color: #4b5563;">Payment Method: <span style="font-weight: 600; color: #111827;">${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}</span></p>
+                                <p style="margin: 4px 0; color: #4b5563;">Payment Method: <span style="font-weight: 600; color: #111827;">${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}</span></p>
                             </div>
                         </td>
                     </tr>

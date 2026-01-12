@@ -87,7 +87,7 @@ export default function MyOrdersPage() {
 
   // Payment method states
   const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null>(null);
   const [showBankSelectionModal, setShowBankSelectionModal] = useState(false);
   const [selectedBank, setSelectedBank] = useState<{ name: string; accountNumber: string } | null>(null);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
@@ -426,7 +426,7 @@ export default function MyOrdersPage() {
   };
 
   // Handle payment method selection
-  const handlePaymentMethodSelected = (method: 'GCASH' | 'BANK_TRANSFER' | 'CASH') => {
+  const handlePaymentMethodSelected = (method: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE') => {
     setPaymentMethod(method);
     setShowPaymentMethodModal(false);
     
@@ -434,7 +434,7 @@ export default function MyOrdersPage() {
     if (method === 'BANK_TRANSFER') {
       setShowBankSelectionModal(true);
     } else {
-      // For GCASH and CASH, go directly to payment proof
+    // For GCASH, CASH, and CHEQUE, go directly to payment proof
     setShowPaymentProofModal(true);
     }
   };
@@ -571,8 +571,15 @@ export default function MyOrdersPage() {
           fileName = `BANK TRANSFER/payment-proof-${Date.now()}.${fileExt}`;
         }
       } else {
-        // For GCASH and CASH, use the original structure with client folder
-        const paymentMethodFolder = paymentMethod === 'GCASH' ? 'GCASH' : 'CASH';
+        // For GCASH, CASH, and CHEQUE, use the original structure with client folder
+        let paymentMethodFolder;
+        if (paymentMethod === 'GCASH') {
+          paymentMethodFolder = 'GCASH';
+        } else if (paymentMethod === 'CHEQUE') {
+          paymentMethodFolder = 'CHEQUE';
+        } else {
+          paymentMethodFolder = 'CASH';
+        }
 
       // Sanitize client name and company for folder name
       // Format: "Client Name _ Company Name" (with underscore separator)
@@ -2057,6 +2064,15 @@ export default function MyOrdersPage() {
                 <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
                 <span className="text-base sm:text-lg font-semibold">Cash</span>
               </Button>
+
+              <Button
+                variant={paymentMethod === 'CHEQUE' ? 'default' : 'outline'}
+                className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                onClick={() => handlePaymentMethodSelected('CHEQUE')}
+              >
+                <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
+                <span className="text-base sm:text-lg font-semibold">Cheque</span>
+              </Button>
             </div>
 
             <div className="flex flex-col sm:flex-row justify-end gap-2 pt-3 sm:pt-4 border-t">
@@ -2150,7 +2166,7 @@ export default function MyOrdersPage() {
           <div className="space-y-2 sm:space-y-4 py-1 sm:py-4">
             <Alert className="py-2 sm:py-3">
               <AlertDescription className="text-xs sm:text-sm">
-                Please take a picture or upload a file showing the payment proof for <strong>{paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}</strong> payment.
+                Please take a picture or upload a file showing the payment proof for <strong>{paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}</strong> payment.
               </AlertDescription>
             </Alert>
 
@@ -2177,8 +2193,8 @@ export default function MyOrdersPage() {
             {/* Payment Method Display (for non-bank transfer) */}
             {paymentMethod && paymentMethod !== 'BANK_TRANSFER' && (
               <div className="flex items-center justify-center">
-                <Badge className="text-base px-4 py-2">
-                  {paymentMethod === 'GCASH' ? 'GCash' : 'Cash'}
+                <Badge className={`text-base px-4 py-2 ${paymentMethod === 'CHEQUE' ? 'bg-purple-600 hover:bg-purple-700' : ''}`}>
+                  {paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}
                 </Badge>
               </div>
             )}
@@ -2391,8 +2407,8 @@ export default function MyOrdersPage() {
               <div className="space-y-2 border rounded-lg p-4">
                 <Label className="font-semibold">Payment Method</Label>
                 <div className="space-y-2">
-                <Badge className="text-base px-3 py-1">
-                  {paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash'}
+                <Badge className={`text-base px-3 py-1 ${paymentMethod === 'CHEQUE' ? 'bg-purple-600 hover:bg-purple-700' : ''}`}>
+                  {paymentMethod === 'GCASH' ? 'GCash' : paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}
                 </Badge>
                   {paymentMethod === 'BANK_TRANSFER' && selectedBank && (
                     <div className="mt-2 space-y-1 text-sm">
@@ -2709,6 +2725,8 @@ export default function MyOrdersPage() {
                                 <span className="ml-2 text-sm text-muted-foreground">({orderToView.bankType})</span>
                               )}
                             </>
+                          ) : orderToView.paymentMethod === 'CHEQUE' ? (
+                            'Cheque'
                           ) :
                             'Cash'}
                       </p>

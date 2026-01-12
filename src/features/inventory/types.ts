@@ -32,7 +32,7 @@ export interface RemittanceOrder {
     orderNumber: string;
     clientName: string;
     totalAmount: number;
-    paymentMethod: 'CASH' | 'GCASH' | 'BANK_TRANSFER';
+    paymentMethod: 'CASH' | 'GCASH' | 'BANK_TRANSFER' | 'CHEQUE';
     bankType?: string;
     items: RemittanceOrderItem[];
     createdAt: string;
