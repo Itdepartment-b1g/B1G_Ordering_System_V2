@@ -1,4 +1,4 @@
-    // ============================================================================
+// ============================================================================
 // SECURITY UTILITIES
 // ============================================================================
 // Token monitoring, input sanitization, and security helpers
@@ -12,7 +12,7 @@ let lastKnownToken: string | null = null;
 
 export function startTokenMonitoring(onTampered: () => void): void {
   // Get the Supabase token key from localStorage
-  const tokenKey = Object.keys(localStorage).find(key => 
+  const tokenKey = Object.keys(localStorage).find(key =>
     key.startsWith('sb-') && key.includes('auth-token')
   );
 
@@ -32,7 +32,7 @@ export function startTokenMonitoring(onTampered: () => void): void {
   // Check every 5 seconds
   tokenMonitorInterval = setInterval(() => {
     const currentToken = localStorage.getItem(tokenKey);
-    
+
     // If token changed (and it's not a legitimate refresh)
     if (currentToken !== lastKnownToken && currentToken !== null) {
       try {
@@ -84,23 +84,23 @@ export function sanitizeHTML(input: string): string {
  */
 export function sanitizeObject<T extends Record<string, any>>(obj: T): T {
   const sanitized = { ...obj };
-  
+
   for (const key in sanitized) {
     const value = sanitized[key];
-    
+
     if (typeof value === 'string') {
       sanitized[key] = sanitizeHTML(value) as any;
     } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       sanitized[key] = sanitizeObject(value);
     } else if (Array.isArray(value)) {
-      sanitized[key] = value.map(item => 
-        typeof item === 'string' ? sanitizeHTML(item) : 
-        typeof item === 'object' && item !== null ? sanitizeObject(item) : 
-        item
+      sanitized[key] = value.map(item =>
+        typeof item === 'string' ? sanitizeHTML(item) :
+          typeof item === 'object' && item !== null ? sanitizeObject(item) :
+            item
       ) as any;
     }
   }
-  
+
   return sanitized;
 }
 
@@ -129,7 +129,7 @@ export function cleanupLocalStorage(): void {
   try {
     // Remove old/deprecated cache keys
     const deprecatedKeys = ['user', 'isAdmin', 'remittanceRemi'];
-    
+
     deprecatedKeys.forEach(key => {
       if (localStorage.getItem(key)) {
         localStorage.removeItem(key);
@@ -153,7 +153,7 @@ export function isSecureContext(): boolean {
  */
 export function logSecurityEvent(event: string, details?: Record<string, any>): void {
   console.warn(`🔒 [Security Event] ${event}`, details || '');
-  
+
   // TODO: Send to monitoring service (e.g., Sentry, LogRocket)
   // Example: sendToMonitoring({ event, details, timestamp: Date.now() });
 }
