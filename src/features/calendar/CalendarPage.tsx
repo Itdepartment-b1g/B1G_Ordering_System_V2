@@ -42,7 +42,7 @@ import L from 'leaflet';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
-let DefaultIcon = L.icon({
+const DefaultIcon = L.icon({
   iconUrl: icon,
   shadowUrl: iconShadow,
   iconSize: [25, 41],
@@ -58,7 +58,17 @@ function ChangeView({ center }: { center: [number, number] }) {
   return null;
 }
 
+import { VisitLog } from '@/types/database.types';
+
 // Types
+type VisitLogWithClient = VisitLog & {
+  client: {
+    name: string;
+    location_latitude?: number;
+    location_longitude?: number;
+  } | null;
+};
+
 interface Task {
   id: string;
   leader_id: string;
@@ -96,8 +106,9 @@ interface CalendarEvent {
   priority: 'low' | 'medium' | 'high';
   location?: string;
   attendees?: string[];
-  status: 'scheduled' | 'completed' | 'cancelled';
+  status: 'scheduled' | 'completed' | 'cancelled' | 'verified' | 'unverified';
   taskData?: Task; // For tasks from database
+  visitData?: VisitLogWithClient; // For visit logs
   attachment_url?: string | null; // For task attachments
 }
 
@@ -124,21 +135,38 @@ export default function CalendarPage() {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [mobileTab, setMobileTab] = useState<'today' | 'all'>('today');
   const [currentTime, setCurrentTime] = useState(new Date());
+
   const [isMobile, setIsMobile] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [visits, setVisits] = useState<VisitLogWithClient[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
 
   // Daily task creation states
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
-  const [dailyTaskPhoto, setDailyTaskPhoto] = useState<string | null>(null);
   const [dailyTaskForm, setDailyTaskForm] = useState({
     title: '',
     description: '',
     date: new Date().toISOString().split('T')[0],
     time: '',
+    notes: '',
+    priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent'
+  });
+
+  // Record Visit states
+  const [showRecordVisitDialog, setShowRecordVisitDialog] = useState(false);
+  const [visitPhoto, setVisitPhoto] = useState<string | null>(null);
+  const [visitForm, setVisitForm] = useState({
     notes: ''
   });
+  const [visitLocation, setVisitLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    address: string;
+    city?: string;
+  } | null>(null);
+
   const [isUploading, setIsUploading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
@@ -170,18 +198,10 @@ export default function CalendarPage() {
     location_longitude?: number;
   } | null>(null);
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
-  const [isPrewarmingLocation, setIsPrewarmingLocation] = useState(false);
-  const [prewarmPosition, setPrewarmPosition] = useState<GeolocationPosition | null>(null);
 
-  // Location capture states for daily task
-  const [taskLocation, setTaskLocation] = useState<{
-    latitude: number;
-    longitude: number;
-    accuracy: number;
-    address: string;
-    city?: string;
-  } | null>(null);
-  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
+
+
+
 
   const { toast } = useToast();
   const { user } = useAuth();
@@ -223,8 +243,35 @@ export default function CalendarPage() {
       };
     });
 
-    return taskEvents; // Only show tasks, no sample events
-  }, [tasks]);
+    const visitEvents: CalendarEvent[] = visits.map(visit => {
+      const visitDate = new Date(visit.visited_at);
+      const hours = visitDate.getHours().toString().padStart(2, '0');
+      const minutes = visitDate.getMinutes().toString().padStart(2, '0');
+      const startTime = `${hours}:${minutes}`;
+
+      const endDate = new Date(visitDate.getTime() + 30 * 60000); // +30 mins
+      const endHours = endDate.getHours().toString().padStart(2, '0');
+      const endMinutes = endDate.getMinutes().toString().padStart(2, '0');
+      const endTime = `${endHours}:${endMinutes}`;
+
+      return {
+        id: `visit-${visit.id}`,
+        title: `Visited ${visit.client?.name || 'Client'}`,
+        description: visit.notes || 'No notes',
+        startTime,
+        endTime,
+        date: visit.visited_at.split('T')[0],
+        type: 'meeting' as const,
+        priority: 'medium',
+        status: visit.is_within_radius ? 'verified' : 'unverified',
+        visitData: visit,
+        location: visit.address,
+        attachment_url: visit.photo_url
+      };
+    });
+
+    return [...taskEvents, ...visitEvents];
+  }, [tasks, visits]);
 
   // Update current time every minute
   useEffect(() => {
@@ -261,6 +308,7 @@ export default function CalendarPage() {
   useEffect(() => {
     if (user?.id) {
       fetchTasks();
+      fetchVisits();
     }
 
     // Cleanup subscriptions on unmount
@@ -301,9 +349,9 @@ export default function CalendarPage() {
               fetchTasks(); // Refresh tasks
               break;
 
-            case 'UPDATE':
+            case 'UPDATE': {
               // Task updated
-              const updatedTask = payload.new as any;
+              const updatedTask = payload.new as Task;
               if (updatedTask.status === 'completed') {
                 toast({
                   title: 'Task Completed',
@@ -319,6 +367,7 @@ export default function CalendarPage() {
               }
               fetchTasks(); // Refresh tasks
               break;
+            }
 
             case 'DELETE':
               // Task deleted
@@ -388,6 +437,28 @@ export default function CalendarPage() {
       });
     } finally {
       setLoadingTasks(false);
+    }
+  };
+
+  const fetchVisits = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('visit_logs')
+        .select(`
+          *,
+          client:clients (
+            name,
+            location_latitude,
+            location_longitude
+          )
+        `)
+        .eq('agent_id', user?.id)
+        .order('visited_at', { ascending: false });
+
+      if (error) throw error;
+      setVisits(data || []);
+    } catch (error) {
+      console.error('Error fetching visits:', error);
     }
   };
 
@@ -496,20 +567,10 @@ export default function CalendarPage() {
     setShowCompletionConfirm(true);
   };
 
-  // Handle daily task creation with photo upload
+  // Handle daily task creation (Simply create a task)
   const handleCreateDailyTask = async () => {
     if (!dailyTaskForm.title.trim()) {
       toast({ title: 'Error', description: 'Task title is required', variant: 'destructive' });
-      return;
-    }
-
-    if (!dailyTaskPhoto) {
-      toast({ title: 'Error', description: 'Photo is required. Please take a photo before creating the task.', variant: 'destructive' });
-      return;
-    }
-
-    if (!selectedClient) {
-      toast({ title: 'Error', description: 'Client selection is required. Please select a client before creating the task.', variant: 'destructive' });
       return;
     }
 
@@ -520,166 +581,29 @@ export default function CalendarPage() {
 
     setIsUploading(true);
     try {
-      let attachmentUrl = null;
-
-      // Photo is required, so we always upload it
-      if (dailyTaskPhoto) {
-        // Convert base64 to blob
-        const base64Data = dailyTaskPhoto.split(',')[1];
-        const byteCharacters = atob(base64Data);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: 'image/jpeg' });
-
-        // Generate unique filename
-        const sanitizeTitle = dailyTaskForm.title
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '_')
-          .replace(/_+/g, '_')
-          .replace(/^_|_$/g, '');
-
-        const timestamp = Date.now();
-        const fileName = `${user.id}/${sanitizeTitle}_${timestamp}.jpg`;
-
-        // Upload to Supabase Storage
-        const { error: uploadError } = await supabase.storage
-          .from('daily-attachments')
-          .upload(fileName, blob, {
-            contentType: 'image/jpeg',
-            upsert: false
-          });
-
-        if (uploadError) {
-          console.error('Upload error:', uploadError);
-          throw new Error(`Failed to upload photo: ${uploadError.message}`);
-        }
-
-        // Get public URL
-        const { data: urlData } = supabase.storage
-          .from('daily-attachments')
-          .getPublicUrl(fileName);
-
-        attachmentUrl = urlData.publicUrl;
-      }
-
-      // Build notes with client and location info
-      let finalNotes = dailyTaskForm.notes || '';
-      if (selectedClient) {
-        finalNotes += `\n\n--- Client Information ---\n`;
-        finalNotes += `Client: ${selectedClient.name}`;
-        if (selectedClient.company) {
-          finalNotes += ` (${selectedClient.company})`;
-        }
-        if (selectedClient.city) {
-          finalNotes += `\nCity: ${selectedClient.city}`;
-        }
-        if (selectedClient.address) {
-          finalNotes += `\nAddress: ${selectedClient.address}`;
-        }
-        if (selectedClient.email) {
-          finalNotes += `\nEmail: ${selectedClient.email}`;
-        }
-        if (selectedClient.phone) {
-          finalNotes += `\nPhone: ${selectedClient.phone}`;
-        }
-      }
-      if (taskLocation) {
-        finalNotes += `\n\n--- Task Location ---\n`;
-        finalNotes += `Location: ${taskLocation.address}${taskLocation.city ? ` (${taskLocation.city})` : ''}\n`;
-        finalNotes += `Coordinates: ${taskLocation.latitude.toFixed(6)}, ${taskLocation.longitude.toFixed(6)}\n`;
-        finalNotes += `Accuracy: ±${Math.round(taskLocation.accuracy)}m`;
-        if (selectedClient && selectedClient.location_latitude && selectedClient.location_longitude) {
-          const distance = calculateDistance(
-            taskLocation.latitude,
-            taskLocation.longitude,
-            selectedClient.location_latitude,
-            selectedClient.location_longitude
-          );
-          finalNotes += `\nDistance from client: ${Math.round(distance)}m`;
-          if (distance > 100) {
-            finalNotes += ` (⚠ Warning: More than 100m away)`;
-          } else {
-            finalNotes += ` (✓ Verified)`;
-          }
-        }
-      }
-
       // Create task in database
-      // Note: For agent-created tasks: leader_id = NULL, agent_id = current user
       const { data: taskData, error: taskError } = await supabase
         .from('tasks')
         .insert({
           agent_id: user.id,
           leader_id: null, // NULL for agent-created tasks
-          client_id: selectedClient.id, // Linked client
+          client_id: selectedClient?.id || null, // Optional client link
           title: dailyTaskForm.title,
           description: dailyTaskForm.description || null,
           due_date: dailyTaskForm.date || null,
           time: dailyTaskForm.time || null,
-          notes: finalNotes.trim() || null,
-          attachment_url: attachmentUrl,
-          status: 'completed', // Auto-complete since they are visiting now? Or 'pending'? Valid visit usually implies done. 
-          // User said "visit log... assigned a task to visit... or own will".
-          // If it's a daily task created ON SITE, it's likely "done" or "in_progress". 
-          // Let's set to 'completed' if they are taking a photo at the location, usually that's the proof of visit.
-          // Or keep 'pending' if it's just a log? 
-          // Previous code set it to 'pending'. I'll keep 'pending' but arguably a "Visit" task created on site is likely completed.
-          // Actually, let's keep 'pending' to be safe, user can mark complete. 
-          // WAIT, if it's a visit log, it implies presence.
-          // Let's stick to 'pending' as per original code, unless user asked to auto-complete. They didn't.
-          priority: 'medium',
-          location_latitude: taskLocation?.latitude,
-          location_longitude: taskLocation?.longitude,
-          location_address: taskLocation?.address
+          notes: dailyTaskForm.notes || null,
+          priority: dailyTaskForm.priority,
+          status: 'pending'
         })
         .select()
         .single();
 
       if (taskError) throw taskError;
 
-      // Create Visit Log
-      if (taskLocation && selectedClient) {
-        let distance = 0;
-        let isWithin = false;
-
-        if (selectedClient.location_latitude && selectedClient.location_longitude) {
-          distance = calculateDistance(
-            taskLocation.latitude,
-            taskLocation.longitude,
-            selectedClient.location_latitude,
-            selectedClient.location_longitude
-          );
-          isWithin = distance <= 100;
-        }
-
-        const { error: visitError } = await supabase
-          .from('visit_logs')
-          .insert({
-            company_id: user.company_id, // We need company_id. Assuming it's on the user object or profile. 
-            // Wait, useAuth user object might not have company_id directly if it's Supabase User.
-            // We have 'clients' which has company_id. Or we can fetch user profile. 
-            agent_id: user.id,
-            client_id: selectedClient.id,
-            task_id: taskData.id,
-            latitude: taskLocation.latitude,
-            longitude: taskLocation.longitude,
-            address: taskLocation.address,
-            is_within_radius: isWithin,
-            distance_meters: distance,
-            radius_limit_meters: 100,
-            photo_url: attachmentUrl,
-            notes: dailyTaskForm.notes
-          });
-
-        if (visitError) console.error('Error logging visit:', visitError); // Non-blocking
-      }
-
       toast({
         title: 'Success',
-        description: 'Daily task created successfully'
+        description: 'Task created successfully'
       });
 
       // Reset form and close dialog
@@ -688,23 +612,20 @@ export default function CalendarPage() {
         description: '',
         date: new Date().toISOString().split('T')[0],
         time: '',
-        notes: ''
+        notes: '',
+        priority: 'medium'
       });
-      setDailyTaskPhoto(null);
-      setTaskLocation(null);
       setSelectedClient(null);
       setClientPopoverOpen(false);
-      setPrewarmPosition(null);
-      setIsPrewarmingLocation(false);
       setShowAddTaskDialog(false);
 
       // Refresh tasks (real-time will also handle this)
       await fetchTasks();
     } catch (error) {
-      console.error('Error creating daily task:', error);
+      console.error('Error creating task:', error);
       toast({
         title: 'Error',
-        description: 'Failed to create daily task. Please try again.',
+        description: 'Failed to create task. Please try again.',
         variant: 'destructive'
       });
     } finally {
@@ -712,9 +633,144 @@ export default function CalendarPage() {
     }
   };
 
-  const removeTaskPhoto = () => {
-    setDailyTaskPhoto(null);
-    setTaskLocation(null);
+  // Handle Record Visit
+  const handleRecordVisit = async () => {
+    if (!visitPhoto) {
+      toast({ title: 'Error', description: 'Photo is required for visit verification.', variant: 'destructive' });
+      return;
+    }
+
+    if (!selectedClient) {
+      toast({ title: 'Error', description: 'Client user is required.', variant: 'destructive' });
+      return;
+    }
+
+    if (!visitLocation) {
+      toast({ title: 'Error', description: 'Location is required for visit verification.', variant: 'destructive' });
+      return;
+    }
+
+    if (!user?.id) {
+      toast({ title: 'Error', description: 'User not authenticated', variant: 'destructive' });
+      return;
+    }
+
+    // Radius Check
+    if (selectedClient.location_latitude && selectedClient.location_longitude) {
+      const distance = calculateDistance(
+        visitLocation.latitude,
+        visitLocation.longitude,
+        selectedClient.location_latitude,
+        selectedClient.location_longitude
+      );
+
+      if (distance > 100) {
+        toast({
+          title: 'Outside Perimeter',
+          description: `You are ${Math.round(distance)}m away from the client. Must be within 100m.`,
+          variant: 'destructive'
+        });
+        return;
+      }
+    } else {
+      toast({ title: 'Warning', description: 'Client has no location set. Visit recorded but unverified.', variant: 'default' });
+    }
+
+    setIsUploading(true);
+    try {
+      let photoUrl = null;
+
+      // Upload Photo
+      if (visitPhoto) {
+        const base64Data = visitPhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+        const sanitizeName = selectedClient.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const timestamp = Date.now();
+        const fileName = `${user.id}/visit_${sanitizeName}_${timestamp}.jpg`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('daily-attachments') // Reuse bucket or create new 'visit-photos'
+          .upload(fileName, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          });
+
+        if (uploadError) throw new Error(`Failed to upload photo: ${uploadError.message}`);
+
+        const { data: urlData } = supabase.storage
+          .from('daily-attachments')
+          .getPublicUrl(fileName);
+
+        photoUrl = urlData.publicUrl;
+      }
+
+      // Calculate distance for log
+      let distance = 0;
+      let isWithin = false;
+      if (selectedClient.location_latitude && selectedClient.location_longitude) {
+        distance = calculateDistance(
+          visitLocation.latitude,
+          visitLocation.longitude,
+          selectedClient.location_latitude,
+          selectedClient.location_longitude
+        );
+        isWithin = distance <= 100;
+      }
+
+      // Create Visit Log
+      const { error: visitError } = await supabase
+        .from('visit_logs')
+        .insert({
+          company_id: user.company_id || '', // Ensure company_id is available
+          agent_id: user.id,
+          client_id: selectedClient.id,
+          task_id: null, // Standalone visit
+          latitude: visitLocation.latitude,
+          longitude: visitLocation.longitude,
+          address: visitLocation.address,
+          is_within_radius: isWithin,
+          distance_meters: distance,
+          radius_limit_meters: 100,
+          photo_url: photoUrl,
+          notes: visitForm.notes
+        });
+
+      if (visitError) throw visitError;
+
+      toast({
+        title: 'Visit Recorded',
+        description: 'Visit logged successfully.'
+      });
+
+      // Reset
+      setVisitPhoto(null);
+      setVisitLocation(null);
+      setVisitForm({ notes: '' });
+      setSelectedClient(null);
+      setShowRecordVisitDialog(false);
+
+    } catch (error) {
+      console.error('Error recording visit:', error);
+      toast({
+        title: 'Error',
+        description: (error as Error).message || 'Failed to record visit.',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const removeVisitPhoto = () => {
+    setVisitPhoto(null);
+    setVisitLocation(null);
   };
 
   // Start camera
@@ -787,137 +843,9 @@ export default function CalendarPage() {
     return R * c; // Distance in meters
   };
 
-  const getAccuracyBadge = (accuracy: number) => {
-    if (accuracy <= 50) {
-      return {
-        label: 'Excellent',
-        color: 'bg-green-50 text-green-700 border-green-200',
-        icon: '🎯'
-      };
-    } else if (accuracy <= 100) {
-      return {
-        label: 'Good',
-        color: 'bg-blue-50 text-blue-700 border-blue-200',
-        icon: '✓'
-      };
-    } else if (accuracy <= 500) {
-      return {
-        label: 'Fair',
-        color: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-        icon: '⚠'
-      };
-    }
 
-    return {
-      label: 'Poor',
-      color: 'bg-red-50 text-red-700 border-red-200',
-      icon: '⚠️'
-    };
-  };
 
-  // Get current location with fallback
-  const getCurrentLocation = async (): Promise<GeolocationPosition> => {
-    if (!navigator.geolocation) {
-      throw new Error('Geolocation is not supported by your browser');
-    }
 
-    // Helper to get position with specific options
-    const getPosition = (options: PositionOptions): Promise<GeolocationPosition> => {
-      return new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, options);
-      });
-    };
-
-    try {
-      // 1. Try High Accuracy first (ideal for geofencing)
-      console.log('📍 Attempting High Accuracy GPS...');
-      return await getPosition({
-        enableHighAccuracy: true,
-        timeout: 10000, // 10s timeout for high accuracy
-        maximumAge: 0
-      });
-    } catch (error: any) {
-      console.warn('⚠️ High Accuracy GPS failed or timed out:', error.message);
-
-      // 2. Fallback to Low Accuracy (Wi-Fi/Cell towers)
-      try {
-        console.log('📍 Falling back to Low Accuracy...');
-        return await getPosition({
-          enableHighAccuracy: false,
-          timeout: 20000, // 20s timeout for low accuracy
-          maximumAge: 30000 // Accept positions up to 30s old
-        });
-      } catch (fallbackError: any) {
-        console.error('❌ Low Accuracy Location also failed:', fallbackError.message);
-        throw fallbackError;
-      }
-    }
-  };
-
-  // Pre-warm GPS when dialog opens
-  const startLocationPrewarm = async () => {
-    setIsPrewarmingLocation(true);
-    try {
-      const position = await getCurrentLocation();
-      setPrewarmPosition(position);
-    } catch (error) {
-      console.error('Pre-warm location error:', error);
-    } finally {
-      setIsPrewarmingLocation(false);
-    }
-  };
-
-  // Reverse geocode location
-  const reverseGeocode = async (latitude: number, longitude: number): Promise<{ address: string; city: string }> => {
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-        {
-          headers: {
-            'Accept-Language': 'en'
-          }
-        }
-      );
-
-      const data = await response.json();
-
-      if (data && data.address) {
-        const addr = data.address;
-        const city = addr.city || addr.town || addr.village || addr.municipality || '';
-        const parts = [
-          addr.house_number,
-          addr.road,
-          addr.suburb || addr.neighbourhood,
-          addr.city || addr.town || addr.village,
-          addr.state,
-          addr.country
-        ].filter(Boolean);
-        return { address: parts.join(', '), city };
-      } else if (data && data.display_name) {
-        return { address: data.display_name, city: '' };
-      }
-
-      return { address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, city: '' };
-    } catch (error) {
-      console.error('Reverse geocoding error:', error);
-      return { address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, city: '' };
-    }
-  };
-
-  const processTaskLocation = async (position: GeolocationPosition) => {
-    const { latitude, longitude, accuracy } = position.coords;
-    const { address, city } = await reverseGeocode(latitude, longitude);
-
-    setTaskLocation({ latitude, longitude, accuracy, address, city });
-
-    const badge = getAccuracyBadge(accuracy);
-    toast({
-      title: 'Location Captured',
-      description: `${badge.icon} ${badge.label} (±${Math.round(accuracy)}m)`
-    });
-
-    return { latitude, longitude, accuracy, address, city };
-  };
 
   // Switch camera (front/back)
   const switchCamera = async () => {
@@ -950,108 +878,7 @@ export default function CalendarPage() {
     }
   };
 
-  // Capture photo from camera
-  const capturePhoto = async () => {
-    if (!videoRef.current) return;
 
-    setCapturingPhoto(true);
-    const video = videoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-
-    if (ctx) {
-      ctx.drawImage(video, 0, 0);
-      const dataUrl = canvas.toDataURL('image/jpeg');
-      setDailyTaskPhoto(dataUrl);
-    }
-
-    stopCamera();
-    setCapturingPhoto(false);
-
-    // Capture location when photo is taken, mirroring add-client logic
-    try {
-      setIsCapturingLocation(true);
-      let position: GeolocationPosition | null = null;
-
-      if (prewarmPosition) {
-        position = prewarmPosition;
-        console.log('Using pre-warmed location');
-      } else {
-        toast({
-          title: 'Getting location...',
-          description: 'Please wait while we capture your current location.'
-        });
-        try {
-          position = await getCurrentLocation();
-        } catch (locationError: any) {
-          console.warn('Failed to get current location:', locationError);
-          toast({
-            title: '⚠️ Location Unavailable',
-            description: locationError.message || 'Could not get your current location. Proceeding without location data.',
-            variant: 'destructive'
-          });
-          // Do not re-throw, allow photo capture to proceed without location data
-          position = null; // Ensure position is null if getCurrentLocation fails
-        }
-      }
-
-      if (position) {
-        const locationData = await processTaskLocation(position);
-        setPrewarmPosition(null);
-
-        if (locationData && selectedClient && selectedClient.location_latitude && selectedClient.location_longitude) {
-          const distance = calculateDistance(
-            locationData.latitude,
-            locationData.longitude,
-            selectedClient.location_latitude,
-            selectedClient.location_longitude
-          );
-
-          const radiusLimit = 100;
-
-          if (distance > radiusLimit) {
-            toast({
-              title: '⚠️ Warning: Outside Perimeter',
-              description: `You are ${Math.round(distance)}m away (Limit: ${radiusLimit}m). The map is now visible for verification.`,
-              variant: 'default', // Changed from destructive to default (blue-ish) to be less aggressive, or generic red
-              className: "bg-orange-50 border-orange-200 text-orange-800"
-            });
-            // Do NOT reject photo
-          } else {
-            toast({
-              title: '✅ Location Verified',
-              description: `You are ${Math.round(distance)}m from the client.`,
-              className: "bg-green-50 border-green-200 text-green-800"
-            });
-          }
-        } else {
-          if (!selectedClient?.location_latitude) {
-            toast({
-              title: '⚠️ Location Check Skipped',
-              description: 'Client has no GPS coordinates set.',
-              variant: 'default'
-            });
-          }
-        }
-      }
-
-      // Prewarm again in case the user needs to retake the photo
-      startLocationPrewarm();
-    } catch (error: any) {
-      console.error('Error capturing location:', error);
-      toast({
-        title: 'Location Error',
-        description: error.message || 'Failed to capture location. Please ensure location permissions are enabled.',
-        variant: 'destructive'
-      });
-      // Even if location fails, we might want to allow the photo (but block submission if strict?)
-      // For now, failure to get location effectively means "unknown location", which might block submission depending on the check.
-    } finally {
-      setIsCapturingLocation(false);
-    }
-  };
 
   // Cleanup camera on unmount
   useEffect(() => {
@@ -1251,472 +1078,463 @@ export default function CalendarPage() {
   const weekDays = getWeekDays();
   const dayEvents = getDayEvents();
 
+  const captureVisitPhoto = async () => {
+    if (!videoRef.current) return;
+
+    try {
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        ctx.drawImage(video, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setVisitPhoto(dataUrl);
+        stopCamera();
+
+        // Start location capture
+        toast({
+          title: 'Acquiring Location...',
+          description: 'Please wait, getting high-accuracy GPS...',
+          duration: 3000
+        });
+
+        // 1. Define getPos helper
+        const getPos = (opts: PositionOptions): Promise<GeolocationPosition> => {
+          return new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, opts);
+          });
+        };
+
+        // 2. Try High Accuracy
+        let position: GeolocationPosition | null = null;
+        try {
+          position = await getPos({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+        } catch (e) {
+          console.warn('High accuracy failed, trying low accuracy...');
+          try {
+            position = await getPos({ enableHighAccuracy: false, timeout: 15000, maximumAge: 20000 });
+          } catch (e2) {
+            console.error('All location attempts failed');
+            throw new Error('Could not acquire location. Please check your GPS settings.');
+          }
+        }
+
+        if (!position) throw new Error('Location capture failed.');
+
+        // 3. Process Location
+        const { latitude, longitude, accuracy } = position.coords;
+
+        // Reverse Geocode
+        let address = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+          const data = await r.json();
+          if (data && data.display_name) address = data.display_name;
+        } catch (e) { console.error('Reverse geocode failed', e); }
+
+        setVisitLocation({
+          latitude, longitude, accuracy, address
+        });
+
+        toast({
+          title: 'Location Captured',
+          description: `Accuracy: ±${Math.round(accuracy)}m`,
+          className: "bg-green-50 border-green-200 text-green-800"
+        });
+      }
+    } catch (error) {
+      console.error('Capture error:', error);
+      toast({
+        title: 'Error',
+        description: (error as Error).message || 'Failed to capture photo/location.',
+        variant: 'destructive'
+      });
+      setVisitPhoto(null);
+    }
+  };
+
   return (
     <div className="p-3 sm:p-4 md:p-6 lg:p-8 space-y-3 sm:space-y-4 md:space-y-6 overflow-x-hidden max-w-full">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:gap-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold">Calendar</h1>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-xs sm:text-sm md:text-base text-muted-foreground">Manage your tasks and schedule</p>
-              {realtimeEnabled && (
-                <div className="flex items-center gap-1 text-green-600 shrink-0">
-                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-[10px] sm:text-xs font-medium">Live</span>
-                </div>
-              )}
-            </div>
+
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Calendar & Visits</h1>
+            <p className="text-muted-foreground">Manage your schedule and record client visits.</p>
           </div>
-        </div>
+          <div className="flex gap-2 w-full sm:w-auto">
+            {/* Record Visit Button */}
+            <Dialog open={showRecordVisitDialog} onOpenChange={(open) => {
+              setShowRecordVisitDialog(open);
+              if (open) {
+                // startLocationPrewarm(); // Optional: prewarm on open
+              } else {
+                setVisitPhoto(null);
+                setVisitLocation(null);
+                setVisitForm({ notes: '' });
+                setSelectedClient(null);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 text-white">
+                  <MapPin className="mr-2 h-4 w-4" />
+                  Record Visit
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Record Client Visit</DialogTitle>
+                </DialogHeader>
 
-        <div className="flex items-center gap-2">
-          {/* Add Daily Task Button - Full width on mobile */}
-          <Dialog open={showAddTaskDialog} onOpenChange={(open) => {
-            setShowAddTaskDialog(open);
-            if (open) {
-              // Fetch clients when dialog opens
-              fetchClients();
-              // Set system time when opening the dialog (only once, won't update when system time changes)
-              const now = new Date();
-              const hours = now.getHours().toString().padStart(2, '0');
-              const minutes = now.getMinutes().toString().padStart(2, '0');
-              setDailyTaskForm(prev => ({
-                ...prev,
-                time: `${hours}:${minutes}`
-              }));
-              startLocationPrewarm();
-            } else {
-              // Reset form when closing dialog
-              setDailyTaskForm({
-                title: '',
-                description: '',
-                date: new Date().toISOString().split('T')[0],
-                time: '',
-                notes: ''
-              });
-              setDailyTaskPhoto(null);
-              setTaskLocation(null);
-              setSelectedClient(null);
-              setClientPopoverOpen(false);
-              setPrewarmPosition(null);
-              setIsPrewarmingLocation(false);
-            }
-          }}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-                <Plus className="h-4 w-4 mr-2" />
-                <span className="text-sm sm:text-base">Add Daily Task</span>
-              </Button>
-            </DialogTrigger>
-            <DialogContent
-              className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto"
-              onInteractOutside={(e) => e.preventDefault()}
-            >
-              <DialogHeader>
-                <DialogTitle className="text-lg sm:text-xl">Create Daily Task</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                {/* Camera View */}
-                {showCamera && (
+                <div className="space-y-4 py-2">
+                  {/* 1. Client Selection (Mandatory) */}
                   <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Camera</Label>
-
-                    <div className="relative bg-black rounded-lg overflow-hidden aspect-[4/3]">
-                      {!stream && (
-                        <div className="flex items-center justify-center h-full text-white">
-                          <div className="text-center">
-                            <Camera className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                            <p>Loading camera...</p>
-                          </div>
-                        </div>
-                      )}
-
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        className="w-full h-full object-cover"
-                        style={{ display: stream ? 'block' : 'none' }}
-                      />
-
-                      <div className="absolute top-2 right-2 flex flex-col gap-2">
+                    <Label>Select Client *</Label>
+                    <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
+                      <PopoverTrigger asChild>
                         <Button
                           variant="outline"
-                          size="icon"
-                          className="bg-white/80 hover:bg-white"
-                          onClick={switchCamera}
-                          title={`Switch to ${facingMode === 'user' ? 'back' : 'front'} camera`}
+                          role="combobox"
+                          aria-expanded={clientPopoverOpen}
+                          className="w-full justify-between"
+                          onClick={() => fetchClients()}
                         >
-                          <Camera className="h-4 w-4" />
+                          {selectedClient ? selectedClient.name : "Select a client..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
-                      </div>
-
-                      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-3">
-                        <Button
-                          variant="destructive"
-                          size="icon"
-                          className="bg-white/80 hover:bg-white"
-                          onClick={stopCamera}
-                        >
-                          <X className="h-5 w-5" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          className="h-14 w-14 rounded-full bg-white shadow-lg"
-                          onClick={capturePhoto}
-                          disabled={capturingPhoto || !stream}
-                        >
-                          <div className="h-12 w-12 rounded-full border-4 border-gray-300"></div>
-                        </Button>
-                        <div className="w-12"></div>
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-muted-foreground text-center">
-                      {facingMode === 'user' ? 'Front Camera' : 'Back Camera'}
-                    </p>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[300px] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search clients..." />
+                          <CommandList>
+                            <CommandEmpty>No client found.</CommandEmpty>
+                            <CommandGroup>
+                              {clients.map((client) => (
+                                <CommandItem
+                                  key={client.id}
+                                  value={client.name}
+                                  onSelect={() => {
+                                    setSelectedClient(client);
+                                    setClientPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${selectedClient?.id === client.id ? "opacity-100" : "opacity-0"
+                                      }`}
+                                  />
+                                  <div className="flex flex-col">
+                                    <span>{client.name}</span>
+                                    {client.company && <span className="text-xs text-muted-foreground">{client.company}</span>}
+                                    {client.city && <span className="text-xs text-muted-foreground">{client.city}</span>}
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
-                )}
 
-                {/* Client Selection - Required */}
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">
-                    Client *
-                    {selectedClient && selectedClient.city && (
-                      <span className="text-xs text-muted-foreground ml-2">📍 {selectedClient.city}</span>
-                    )}
-                  </Label>
-                  <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={clientPopoverOpen}
-                        className="w-full justify-between min-h-[44px]"
-                      >
-                        {selectedClient ? (
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <span className="truncate font-medium">{selectedClient.name}</span>
-                            {selectedClient.company && (
-                              <span className="text-xs text-muted-foreground truncate hidden sm:inline">
-                                ({selectedClient.company})
-                              </span>
-                            )}
-                            {selectedClient.city && (
-                              <span className="text-xs text-muted-foreground hidden md:inline">
-                                📍 {selectedClient.city}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">Select client...</span>
-                        )}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                      <Command>
-                        <CommandInput placeholder="Search clients by name, shop name, or email..." />
-                        <CommandList>
-                          <CommandEmpty>No clients found.</CommandEmpty>
-                          <CommandGroup>
-                            {clients.map((client) => (
-                              <CommandItem
-                                key={client.id}
-                                value={`${client.name} ${client.company || ''} ${client.email || ''} ${client.city || ''}`}
-                                onSelect={() => {
-                                  setSelectedClient(client);
-                                  setClientPopoverOpen(false);
-                                }}
-                                className="cursor-pointer"
-                              >
-                                <Check
-                                  className={`mr-2 h-4 w-4 ${selectedClient?.id === client.id ? 'opacity-100' : 'opacity-0'
-                                    }`}
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-medium truncate">{client.name}</p>
-                                  {client.company && (
-                                    <p className="text-xs text-muted-foreground truncate">{client.company}</p>
-                                  )}
-                                  {client.city && (
-                                    <p className="text-xs text-muted-foreground">📍 {client.city}</p>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-
-                  {/* Selected Client Info */}
-                  {selectedClient && (
-                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
-                      <p className="font-semibold text-sm">{selectedClient.name}</p>
-                      {selectedClient.company && (
-                        <p className="text-xs text-muted-foreground">Shop Name: {selectedClient.company}</p>
-                      )}
-                      {selectedClient.city && (
-                        <p className="text-xs text-muted-foreground">📍 City: <span className="font-medium">{selectedClient.city}</span></p>
-                      )}
-                      {selectedClient.address && (
-                        <p className="text-xs text-muted-foreground">Address: {selectedClient.address}</p>
-                      )}
-                      {selectedClient.email && (
-                        <p className="text-xs text-muted-foreground">Email: {selectedClient.email}</p>
-                      )}
-                      {selectedClient.phone && (
-                        <p className="text-xs text-muted-foreground">Phone: {selectedClient.phone}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Photo Preview */}
-                {!showCamera && (
+                  {/* 2. Camera & Location Section */}
                   <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Photo *</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Take a photo for this task (required)
-                      {selectedClient && ' - Location will be captured and validated against client location'}
-                    </p>
+                    <Label>Verification Photo *</Label>
 
-                    {!dailyTaskPhoto && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={startCamera}
-                        className="w-full min-h-[44px]"
-                        disabled={isCapturingLocation}
-                      >
-                        <Camera className="h-4 w-4 mr-2" />
-                        {isCapturingLocation ? 'Capturing Location...' : 'Take Photo'}
-                      </Button>
+                    {/* Camera Logic Reuse */}
+                    {!visitPhoto && !showCamera && (
+                      <div className="border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" onClick={startCamera}>
+                        <Camera className="h-10 w-10 text-muted-foreground mb-2" />
+                        <p className="font-medium text-sm">Tap to Take Photo</p>
+                        <p className="text-xs text-muted-foreground">Camera & Location required</p>
+                      </div>
                     )}
 
-                    {isPrewarmingLocation && !dailyTaskPhoto && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-2">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Preparing GPS for accurate location...
-                      </p>
+                    {/* Camera View */}
+                    {showCamera && (
+                      <div className="relative rounded-lg overflow-hidden bg-black">
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-64 object-cover"
+                        />
+                        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4 z-20">
+                          <Button
+                            variant="destructive"
+                            onClick={stopCamera}
+                            className="rounded-full w-12 h-12 p-0 flex items-center justify-center"
+                          >
+                            <X className="h-6 w-6" />
+                          </Button>
+                          <Button
+                            onClick={() => captureVisitPhoto()}
+                            className="rounded-full w-16 h-16 p-0 flex items-center justify-center bg-white hover:bg-gray-200 border-4 border-gray-300"
+                          >
+                            <div className="w-12 h-12 rounded-full bg-red-500"></div>
+                          </Button>
+                        </div>
+                      </div>
                     )}
 
-                    {dailyTaskPhoto && (
+                    {/* Photo Preview & Map */}
+                    {visitPhoto && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* 1. Map View (Prominent) */}
+                        {/* Map */}
                         <div className="h-64 rounded-lg overflow-hidden border relative z-0 shadow-sm">
-                          {taskLocation && selectedClient?.location_latitude && selectedClient?.location_longitude ? (
+                          {visitLocation && selectedClient?.location_latitude && selectedClient?.location_longitude ? (
                             <MapContainer
-                              center={[taskLocation.latitude, taskLocation.longitude]}
+                              center={[visitLocation.latitude, visitLocation.longitude]}
                               zoom={18}
-                              scrollWheelZoom={false}
                               style={{ height: '100%', width: '100%' }}
-                              dragging={!isMobile} // Disable dragging on mobile to avoid scroll issues unless intended
+                              dragging={!isMobile}
                             >
-                              <ChangeView center={[taskLocation.latitude, taskLocation.longitude]} />
-                              <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                              />
-
-                              {/* Client Location (Target) */}
+                              <ChangeView center={[visitLocation.latitude, visitLocation.longitude]} />
+                              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                               <Circle
                                 center={[selectedClient.location_latitude, selectedClient.location_longitude]}
                                 pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.8, fillOpacity: 0.2 }}
                                 radius={100}
                               />
-                              <Marker position={[selectedClient.location_latitude, selectedClient.location_longitude]}>
-                                <Popup>Client Location (Target)</Popup>
-                              </Marker>
-
-                              {/* User Location (Current) */}
-                              <Marker position={[taskLocation.latitude, taskLocation.longitude]}>
+                              <Marker position={[selectedClient.location_latitude, selectedClient.location_longitude]} />
+                              <Marker position={[visitLocation.latitude, visitLocation.longitude]}>
                                 <Popup>You are here</Popup>
                               </Marker>
-
-                              {/* Live Status Badge on Map - Floating like in screenshot */}
-                              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-[1000] whitespace-nowrap">
-                                <Badge variant="secondary" className="bg-slate-800 text-white shadow-lg backdrop-blur-md bg-opacity-90 hover:bg-slate-700">
-                                  Location accuracy {Math.round(taskLocation.accuracy)} meters
-                                </Badge>
-                              </div>
                             </MapContainer>
                           ) : (
                             <div className="flex items-center justify-center h-full bg-muted text-muted-foreground p-4 text-center">
-                              <p className="text-sm">Map unavailable (missing locations)</p>
+                              <p>Map unavailable (missing locations)</p>
                             </div>
                           )}
                         </div>
 
-                        {/* 2. Photo Preview (Small) & Details */}
-                        <div className="flex flex-col gap-2">
-                          {/* User Info & Time (Like in screenshot) */}
-                          <div className="text-center md:text-left">
-                            <p className="font-semibold text-lg uppercase">{user?.email?.split('@')[0] || 'User'}</p>
-                            <p className="text-sm text-orange-500 font-medium">
-                              {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
-                            </p>
-                          </div>
+                        {/* Photo */}
+                        <div className="relative h-64 rounded-lg overflow-hidden border bg-black">
+                          <img src={visitPhoto} className="w-full h-full object-contain" />
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="absolute top-2 right-2"
+                            onClick={removeVisitPhoto}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
 
-                          {/* The Photo */}
-                          <div className="relative h-48 md:h-full rounded-lg overflow-hidden border bg-black">
-                            <img
-                              src={dailyTaskPhoto}
-                              alt="Task attachment preview"
-                              className="w-full h-full object-contain"
-                            />
-
-                            <Button
-                              type="button"
-                              variant="destructive"
-                              size="icon"
-                              className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-600"
-                              onClick={() => {
-                                removeTaskPhoto();
-                                setTaskLocation(null);
-                              }}
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
-
-                          {/* Text Status Feedback */}
-                          {taskLocation && selectedClient?.location_latitude && (
-                            <div className={`text-center p-2 rounded text-sm font-medium ${calculateDistance(taskLocation.latitude, taskLocation.longitude, selectedClient.location_latitude!, selectedClient.location_longitude!) <= 100
-                              ? 'text-green-600 bg-green-50'
-                              : 'text-red-500 bg-red-50'
-                              }`}>
-                              {calculateDistance(taskLocation.latitude, taskLocation.longitude, selectedClient.location_latitude!, selectedClient.location_longitude!) <= 100
-                                ? `Inside Radius (${Math.round(calculateDistance(taskLocation.latitude, taskLocation.longitude, selectedClient.location_latitude!, selectedClient.location_longitude!))}m)`
-                                : `Outside Radius (${Math.round(calculateDistance(taskLocation.latitude, taskLocation.longitude, selectedClient.location_latitude!, selectedClient.location_longitude!))}m)`
-                              }
+                          {/* Distance Status */}
+                          {visitLocation && selectedClient?.location_latitude && (
+                            <div className={`absolute bottom-0 left-0 right-0 p-2 text-center text-xs font-bold text-white 
+                                        ${calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude) <= 100 ? 'bg-green-600/90' : 'bg-red-600/90'}
+                                     `}>
+                              Distance: {Math.round(calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude))}m
+                              {calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude) > 100 ? ' (Too Far)' : ' (Verified)'}
                             </div>
                           )}
                         </div>
                       </div>
                     )}
                   </div>
-                )}
 
-                {/* Task Title */}
-                <div className="space-y-2">
-                  <Label>Task Title *</Label>
-                  <Input
-                    placeholder="Enter task title"
-                    value={dailyTaskForm.title}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, title: e.target.value })}
-                  />
-                </div>
-
-                {/* Description */}
-                <div className="space-y-2">
-                  <Label>Description</Label>
-                  <Textarea
-                    placeholder="Task description (optional)"
-                    value={dailyTaskForm.description}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, description: e.target.value })}
-                  />
-                </div>
-
-                {/* Date and Time */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Notes */}
                   <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-sm">
-                      Date
-                      <Badge variant="secondary" className="text-xs">Today Only</Badge>
-                    </Label>
-                    <Input
-                      type="date"
-                      value={dailyTaskForm.date}
-                      readOnly
-                      disabled
-                      className="bg-gray-50 cursor-not-allowed text-sm"
+                    <Label>Visit Notes</Label>
+                    <Textarea
+                      placeholder="Details about the visit..."
+                      value={visitForm.notes}
+                      onChange={(e) => setVisitForm({ ...visitForm, notes: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-sm">
-                      Time
-                      <Badge variant="secondary" className="text-xs">Auto</Badge>
-                    </Label>
-                    <Input
-                      type="time"
-                      value={dailyTaskForm.time}
-                      readOnly
-                      disabled
-                      className="bg-gray-50 cursor-not-allowed text-sm"
-                    />
-                  </div>
-                </div>
 
-                {/* Notes */}
-                <div className="space-y-2">
-                  <Label>Notes</Label>
-                  <Textarea
-                    placeholder="Additional notes (optional)"
-                    value={dailyTaskForm.notes}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, notes: e.target.value })}
-                  />
+                  <Button
+                    className="w-full"
+                    onClick={handleRecordVisit}
+                    disabled={isUploading || !visitPhoto || !visitLocation || !selectedClient}
+                  >
+                    {isUploading ? 'Recording...' : 'Submit Visit Log'}
+                  </Button>
                 </div>
+              </DialogContent>
+            </Dialog>
 
-                <Button
-                  className="w-full"
-                  onClick={handleCreateDailyTask}
-                  disabled={
-                    isUploading ||
-                    !dailyTaskForm.title.trim() ||
-                    !dailyTaskPhoto ||
-                    !selectedClient ||
-                    // Block mobile sales if outside radius
-                    (user?.role === 'mobile_sales' &&
-                      taskLocation &&
-                      selectedClient?.location_latitude &&
-                      calculateDistance(taskLocation.latitude, taskLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude) > 100)
-                  }
-                >
-                  {isUploading ? (
-                    <>
-                      <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-                      Creating...
-                    </>
-                  ) : (
-                    // Show specific warning text if disabled due to location
-                    (user?.role === 'mobile_sales' &&
-                      taskLocation &&
-                      selectedClient?.location_latitude &&
-                      calculateDistance(taskLocation.latitude, taskLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude) > 100)
-                      ? 'Cannot Create: Outside Client Premises'
-                      : 'Create Task'
-                  )}
+            <Dialog open={showAddTaskDialog} onOpenChange={(open) => {
+              setShowAddTaskDialog(open);
+              if (!open) {
+                setDailyTaskForm({
+                  title: '',
+                  description: '',
+                  date: new Date().toISOString().split('T')[0],
+                  time: '',
+                  notes: '',
+                  priority: 'medium'
+                });
+                setSelectedClient(null);
+                setClientPopoverOpen(false);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Task
                 </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Add New Task</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  {/* Task Title */}
+                  <div className="space-y-2">
+                    <Label>Task Title *</Label>
+                    <Input
+                      placeholder="Enter task title"
+                      value={dailyTaskForm.title}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, title: e.target.value })}
+                    />
+                  </div>
 
+                  {/* Optional Client Link */}
+                  <div className="space-y-2">
+                    <Label>Link Client (Optional)</Label>
+                    <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={clientPopoverOpen}
+                          className="w-full justify-between"
+                          onClick={() => fetchClients()}
+                        >
+                          {selectedClient ? selectedClient.name : "Select a client..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[300px] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search clients..." />
+                          <CommandList>
+                            <CommandEmpty>No client found.</CommandEmpty>
+                            <CommandGroup>
+                              {clients.map((client) => (
+                                <CommandItem
+                                  key={client.id}
+                                  value={client.name}
+                                  onSelect={() => {
+                                    setSelectedClient(client);
+                                    setClientPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${selectedClient?.id === client.id ? "opacity-100" : "opacity-0"
+                                      }`}
+                                  />
+                                  <div className="flex flex-col">
+                                    <span>{client.name}</span>
+                                    {client.company && <span className="text-xs text-muted-foreground">{client.company}</span>}
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  {/* Description */}
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Textarea
+                      placeholder="Task description (optional)"
+                      value={dailyTaskForm.description}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, description: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Date and Time */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Date</Label>
+                      <Input
+                        type="date"
+                        value={dailyTaskForm.date}
+                        onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, date: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Time</Label>
+                      <Input
+                        type="time"
+                        value={dailyTaskForm.time}
+                        onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, time: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Priority</Label>
+                    <Select
+                      value={dailyTaskForm.priority}
+                      onValueChange={(val: string) => setDailyTaskForm({ ...dailyTaskForm, priority: val as 'low' | 'medium' | 'high' | 'urgent' })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="urgent">Urgent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Notes */}
+                  <div className="space-y-2">
+                    <Label>Notes</Label>
+                    <Textarea
+                      placeholder="Additional notes (optional)"
+                      value={dailyTaskForm.notes}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, notes: e.target.value })}
+                    />
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    onClick={handleCreateDailyTask}
+                    disabled={isUploading || !dailyTaskForm.title.trim()}
+                  >
+                    {isUploading ? 'Creating...' : 'Create Task'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4">
           {/* Mobile Tab Navigation */}
           {isMobile ? (
             <div className="flex w-full">
-              <div className="flex border rounded-lg w-full min-h-[44px]">
-                <Button
-                  variant={mobileTab === 'today' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setMobileTab('today')}
-                  className="flex-1 text-xs sm:text-sm min-h-[44px]"
-                >
-                  Today
-                </Button>
-                <Button
-                  variant={mobileTab === 'all' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setMobileTab('all')}
-                  className="flex-1 text-xs sm:text-sm min-h-[44px]"
-                >
-                  All
-                </Button>
-              </div>
+              <Button
+                variant={mobileTab === 'today' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setMobileTab('today')}
+                className="flex-1 text-xs sm:text-sm min-h-[44px]"
+              >
+                Today
+              </Button>
+              <Button
+                variant={mobileTab === 'all' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setMobileTab('all')}
+                className="flex-1 text-xs sm:text-sm min-h-[44px]"
+              >
+                All
+              </Button>
             </div>
+
           ) : (
             <>
               {/* Search Bar */}
@@ -3046,6 +2864,88 @@ export default function CalendarPage() {
                   </div>
                 )}
 
+                {/* Visit Details (Photo & Map) */}
+                {selectedEvent.visitData && (
+                  <div className="col-span-1 md:col-span-2 space-y-4">
+                    <h3 className="font-semibold text-lg flex items-center gap-2">
+                      <MapPin className="h-5 w-5" />
+                      Visit Verification
+                    </h3>
+
+                    {/* Status Banner */}
+                    <div className={`p-3 rounded-lg border flex items-center gap-3 ${selectedEvent.visitData.is_within_radius ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'
+                      }`}>
+                      {selectedEvent.visitData.is_within_radius ? (
+                        <CheckCircle className="h-5 w-5" />
+                      ) : (
+                        <AlertCircle className="h-5 w-5" />
+                      )}
+                      <div className="flex-1">
+                        <p className="font-bold">
+                          {selectedEvent.visitData.is_within_radius ? 'Verified Visit' : 'Location Warning'}
+                        </p>
+                        <p className="text-sm">
+                          {selectedEvent.visitData.is_within_radius
+                            ? `Agent was within ${Math.round(selectedEvent.visitData.distance_meters || 0)}m of client location.`
+                            : `Agent was ${Math.round(selectedEvent.visitData.distance_meters || 0)}m away from client (Limit: ${selectedEvent.visitData.radius_limit_meters || 100}m).`
+                          }
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Photo */}
+                      {selectedEvent.visitData.photo_url ? (
+                        <div className="relative rounded-lg overflow-hidden border bg-black h-64">
+                          <img
+                            src={selectedEvent.visitData.photo_url}
+                            alt="Visit verification"
+                            className="w-full h-full object-contain cursor-pointer"
+                            onClick={() => window.open(selectedEvent.visitData!.photo_url, '_blank')}
+                          />
+                        </div>
+                      ) : (
+                        <div className="h-64 rounded-lg border bg-gray-50 flex items-center justify-center text-muted-foreground">
+                          No photo captured
+                        </div>
+                      )}
+
+                      {/* Map */}
+                      <div className="h-64 rounded-lg overflow-hidden border relative z-0">
+                        {selectedEvent.visitData.latitude && selectedEvent.visitData.longitude ? (
+                          <MapContainer
+                            center={[selectedEvent.visitData.latitude, selectedEvent.visitData.longitude]}
+                            zoom={16}
+                            style={{ height: '100%', width: '100%' }}
+                            dragging={!isMobile}
+                          >
+                            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                            {/* Client Location Circle */}
+                            {selectedEvent.visitData.client?.location_latitude && (
+                              <Circle
+                                center={[selectedEvent.visitData.client.location_latitude, selectedEvent.visitData.client.location_longitude]}
+                                pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.8, fillOpacity: 0.2 }}
+                                radius={selectedEvent.visitData.radius_limit_meters || 100}
+                              />
+                            )}
+                            {/* Visit Location */}
+                            <Marker position={[selectedEvent.visitData.latitude, selectedEvent.visitData.longitude]}>
+                              <Popup>
+                                Visit Location<br />
+                                {new Date(selectedEvent.visitData.visited_at).toLocaleTimeString()}
+                              </Popup>
+                            </Marker>
+                          </MapContainer>
+                        ) : (
+                          <div className="flex items-center justify-center h-full bg-muted text-muted-foreground">
+                            Map unavailable
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Location & Attendees */}
                 <div className="space-y-3">
                   {selectedEvent.location && (
@@ -3178,6 +3078,6 @@ export default function CalendarPage() {
         </DialogContent>
       </Dialog>
 
-    </div>
+    </div >
   );
 }

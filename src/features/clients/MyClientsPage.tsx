@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2 } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
@@ -44,12 +44,16 @@ export default function MyClientsPage() {
     phone: '',
     city: '',
     address: '',
+    contact_person: '',
+    tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
     has_forge: false
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const corFileInputRef = useRef<HTMLInputElement>(null);
+  const [newCorPhoto, setNewCorPhoto] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -72,6 +76,8 @@ export default function MyClientsPage() {
     company: '',
     email: '',
     phone: '',
+    contact_person: '',
+    tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
   });
@@ -115,10 +121,10 @@ export default function MyClientsPage() {
         },
         (payload) => {
           console.log('📡 Real-time client change detected:', payload);
-          
+
           // Invalidate and refetch clients data
           queryClient.invalidateQueries({ queryKey: ['my_clients', user.id] });
-          
+
           // Show toast notification based on event type
           if (payload.eventType === 'INSERT') {
             toast({
@@ -183,9 +189,12 @@ export default function MyClientsPage() {
       company: client.company,
       email: client.email,
       phone: phoneWithoutPrefix,
+      contact_person: client.contact_person || '',
+      tin: client.tin || '',
       account_type: client.account_type || 'Standard Accounts',
       category: client.category || 'Open'
     });
+    setNewCorPhoto(null);
     setEditPhoto(client.photo || null);
     setEditDialogOpen(true);
   };
@@ -255,9 +264,39 @@ export default function MyClientsPage() {
         }
 
         photoUrl = urlData.signedUrl;
-      } else if (editPhoto === null) {
-        // Photo was removed
         photoUrl = null;
+      }
+
+      // Handle COR Upload if new photo is selected (reuse logic or add similar block)
+      let corUrl = editingClient.cor_url;
+      if (newCorPhoto) {
+        const base64Data = newCorPhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const isJPG = newCorPhoto.startsWith('data:image/jpeg') || newCorPhoto.startsWith('data:image/jpg');
+        const contentType = isJPG ? 'image/jpeg' : 'image/png';
+        const fileExtension = isJPG ? 'jpg' : 'png';
+        const blob = new Blob([byteArray], { type: contentType });
+
+        const sanitizeName = (str: string) => {
+          return str.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+        };
+        const clientName = sanitizeName(editForm.name || 'client');
+        const clientCompany = sanitizeName(editForm.company || 'company');
+        const timestamp = Date.now();
+        const corFileName = `${user?.id}/company_${user?.company_id}_client_${clientName}_${clientCompany}_cor_${timestamp}.${fileExtension}`;
+
+        const { error: corUploadError } = await supabase.storage.from('client-cor').upload(corFileName, blob, { contentType, upsert: false });
+        if (corUploadError) throw new Error(`Failed to upload COR: ${corUploadError.message}`);
+
+        const { data: corUrlData, error: corUrlError } = await supabase.storage.from('client-cor').createSignedUrl(corFileName, 31536000);
+        if (corUrlError || !corUrlData?.signedUrl) throw new Error(`Failed to generate COR signed URL`);
+
+        corUrl = corUrlData.signedUrl;
       }
 
       const { error } = await supabase
@@ -267,10 +306,13 @@ export default function MyClientsPage() {
           email: editForm.email,
           phone: editForm.phone ? `+63 ${editForm.phone}` : null,
           company: editForm.company || null,
+          contact_person: editForm.contact_person || null,
+          tin: editForm.tin || null,
           account_type: editForm.account_type,
           category: editForm.category,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
+          cor_url: corUrl || null,
         } as any)
         .eq('id', editingClient.id);
 
@@ -443,6 +485,21 @@ export default function MyClientsPage() {
             ) : undefined
           });
         }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCorFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      if (file.size > 10 * 1024 * 1024) {
+        toast({ title: 'Error', description: 'Image size should be less than 10MB', variant: 'destructive' });
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewCorPhoto(reader.result as string);
       };
       reader.readAsDataURL(file);
     }
@@ -1204,6 +1261,38 @@ export default function MyClientsPage() {
         photoUrl = urlData.signedUrl;
       }
 
+      // Upload COR if present
+      let corUrl = null;
+      if (newCorPhoto) {
+        const base64Data = newCorPhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const isJPG = newCorPhoto.startsWith('data:image/jpeg') || newCorPhoto.startsWith('data:image/jpg');
+        const contentType = isJPG ? 'image/jpeg' : 'image/png';
+        const fileExtension = isJPG ? 'jpg' : 'png';
+        const blob = new Blob([byteArray], { type: contentType });
+
+        const sanitizeName = (str: string) => {
+          return str.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+        };
+        const clientName = sanitizeName(formData.name || 'client');
+        const clientCompany = sanitizeName(formData.company || 'company');
+        const timestamp = Date.now();
+        const corFileName = `${user.id}/company_${user.company_id}_client_${clientName}_${clientCompany}_cor_${timestamp}.${fileExtension}`;
+
+        const { error: corUploadError } = await supabase.storage.from('client-cor').upload(corFileName, blob, { contentType, upsert: false });
+        if (corUploadError) throw new Error(`Failed to upload COR: ${corUploadError.message}`);
+
+        const { data: corUrlData, error: corUrlError } = await supabase.storage.from('client-cor').createSignedUrl(corFileName, 31536000);
+        if (corUrlError || !corUrlData?.signedUrl) throw new Error(`Failed to generate COR signed URL`);
+
+        corUrl = corUrlData.signedUrl;
+      }
+
       const nowIso = new Date().toISOString();
       const approvalStatus = cityMatches ? 'approved' : 'pending';
       const approvalRequestedAt = cityMatches ? null : nowIso;
@@ -1227,9 +1316,12 @@ export default function MyClientsPage() {
           company: formData.company || null,
           city: formData.city || null,
           address: formData.address || null,
+          contact_person: formData.contact_person || null,
+          tin: formData.tin || null,
           account_type: formData.account_type,
           category: formData.category,
           has_forge: formData.has_forge,
+          cor_url: corUrl,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           location_latitude: capturedLocation?.latitude || null,
@@ -1445,11 +1537,63 @@ export default function MyClientsPage() {
                 )}
               </div>
 
+
+              {/* COR Upload Section */}
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">
+                  COR (Certificate of Registration) *
+                </Label>
+                <p className="text-xs text-muted-foreground">Upload PNG or JPG image (max 10MB)</p>
+
+                {!newCorPhoto && (
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => corFileInputRef.current?.click()}
+                      className="w-full"
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload COR Image
+                    </Button>
+                    <input
+                      ref={corFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg"
+                      onChange={handleCorFileUpload}
+                      className="hidden"
+                    />
+                  </div>
+                )}
+
+                {newCorPhoto && (
+                  <div className="relative">
+                    <img
+                      src={newCorPhoto}
+                      alt="COR preview"
+                      className="w-full h-48 object-contain rounded-lg border bg-gray-50"
+                    />
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="icon"
+                      className="absolute top-2 right-2"
+                      onClick={() => setNewCorPhoto(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                    <div className="mt-2 text-xs text-green-600 font-medium">
+                      ✓ COR uploaded successfully
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Client Information Fields */}
               <div className="space-y-2">
-                <Label>Client Name *</Label>
+                <Label>Trade Name *</Label>
                 <Input
-                  placeholder="Enter client name"
+                  placeholder="Enter trade name"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 />
@@ -1460,6 +1604,14 @@ export default function MyClientsPage() {
                   placeholder="Shop name"
                   value={formData.company}
                   onChange={(e) => setFormData({ ...formData, company: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Contact Person</Label>
+                <Input
+                  placeholder="Contact person name"
+                  value={formData.contact_person}
+                  onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
@@ -1743,6 +1895,7 @@ export default function MyClientsPage() {
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
                   <TableHead className="text-center">Total Orders</TableHead>
+                  <TableHead className="text-center">Visits</TableHead>
                   <TableHead className="text-center">Last Order</TableHead>
                   <TableHead className="text-center">Approval</TableHead>
                   <TableHead className="text-center">Actions</TableHead>
@@ -1789,6 +1942,12 @@ export default function MyClientsPage() {
                     <TableCell className="text-center">{client.email}</TableCell>
                     <TableCell className="text-center">{client.phone}</TableCell>
                     <TableCell className="text-center">{client.totalOrders}</TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center gap-1 font-medium text-purple-600">
+                        <MapPin className="h-3 w-3" />
+                        {client.visitCount}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-center">{new Date(client.lastOrder).toLocaleDateString()}</TableCell>
                     <TableCell className="text-center">
                       <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approvalStatus).className}`}>
@@ -1891,6 +2050,50 @@ export default function MyClientsPage() {
                 <div className="space-y-2">
                   <Label className="text-muted-foreground">Total Orders</Label>
                   <p className="font-medium">{viewingClient.totalOrders}</p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Total Visits</Label>
+                  <div className="flex items-center gap-1 font-medium text-purple-600">
+                    <MapPin className="h-4 w-4" />
+                    {viewingClient.visitCount}
+                  </div>
+                </div>
+              </div>
+
+              {/* Compliance Checklist */}
+              <div className="space-y-3">
+                <Label className="text-base font-semibold">Compliance Status</Label>
+                <div className="grid grid-cols-1 gap-4">
+                  {/* COR Check */}
+                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.corUrl ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-full ${viewingClient.corUrl ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {viewingClient.corUrl ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                      </div>
+                      <div>
+                        <p className={`font-medium ${viewingClient.corUrl ? 'text-green-900' : 'text-red-900'}`}>COR (Certificate of Registration)</p>
+                        <p className="text-xs text-muted-foreground">{viewingClient.corUrl ? 'Uploaded & Verified' : 'Missing Document'}</p>
+                      </div>
+                    </div>
+                    {viewingClient.corUrl && (
+                      <Button variant="ghost" size="sm" onClick={() => window.open(viewingClient.corUrl, '_blank')}>
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* TIN Check */}
+                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.tin ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-full ${viewingClient.tin ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {viewingClient.tin ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                      </div>
+                      <div>
+                        <p className={`font-medium ${viewingClient.tin ? 'text-green-900' : 'text-red-900'}`}>TIN (Tax ID Number)</p>
+                        <p className="text-xs text-muted-foreground">{viewingClient.tin ? viewingClient.tin : 'Missing TIN'}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -2065,6 +2268,88 @@ export default function MyClientsPage() {
                       >
                         Cancel
                       </Button>
+                      <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
+                    </div>
+
+                    {/* COR Upload Section for Edit */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">
+                        COR (Certificate of Registration)
+                      </Label>
+                      <p className="text-xs text-muted-foreground">Update COR Image (PNG or JPG, max 10MB)</p>
+
+                      {/* Show existing COR if present and no new COR selected */}
+                      {!newCorPhoto && editingClient.cor_url && (
+                        <div className="relative mb-2">
+                          <div className="text-xs text-muted-foreground mb-1">Current COR:</div>
+                          <img
+                            src={editingClient.cor_url}
+                            alt="Current COR"
+                            className="w-full h-32 object-contain rounded-lg border bg-gray-50"
+                          />
+                        </div>
+                      )}
+
+                      {!newCorPhoto && (
+                        <div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => corFileInputRef.current?.click()}
+                            className="w-full"
+                          >
+                            <Upload className="h-4 w-4 mr-2" />
+                            {editingClient.cor_url ? "Replace COR Image" : "Upload COR Image"}
+                          </Button>
+                          <input
+                            ref={corFileInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/jpg"
+                            onChange={handleCorFileUpload}
+                            className="hidden"
+                          />
+                        </div>
+                      )}
+
+                      {newCorPhoto && (
+                        <div className="relative">
+                          <img
+                            src={newCorPhoto}
+                            alt="New COR preview"
+                            className="w-full h-48 object-contain rounded-lg border bg-gray-50"
+                          />
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="icon"
+                            className="absolute top-2 right-2"
+                            onClick={() => setNewCorPhoto(null)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                          <div className="mt-2 text-xs text-green-600 font-medium">
+                            ✓ New COR selected
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Contact Person</Label>
+                      <Input
+                        placeholder="Contact person name"
+                        value={editForm.contact_person}
+                        onChange={(e) => setEditForm({ ...editForm, contact_person: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>TIN (Tax Identification Number)</Label>
+                      <Input
+                        placeholder="XXX-XXX-XXX-XXX"
+                        value={editForm.tin}
+                        onChange={(e) => setEditForm({ ...editForm, tin: e.target.value })}
+                      />
                     </div>
                   </div>
                 )}
@@ -2115,9 +2400,9 @@ export default function MyClientsPage() {
                 )}
               </div>
               <div className="space-y-2">
-                <Label>Client Name</Label>
+                <Label>Trade Name</Label>
                 <Input
-                  placeholder="Enter client name"
+                  placeholder="Enter trade name"
                   value={editForm.name}
                   onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                 />
@@ -2237,7 +2522,7 @@ export default function MyClientsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </div >
   );
 }
 

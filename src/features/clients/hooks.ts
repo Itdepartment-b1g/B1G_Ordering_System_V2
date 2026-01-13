@@ -29,7 +29,12 @@ export interface Client {
     approvedAt?: string;
     approvalNotes?: string;
     approvedBy?: string | null;
+
     status?: 'active' | 'inactive';
+    visitCount: number;
+    corUrl?: string;
+    tin?: string;
+    contactPerson?: string;
 }
 
 const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<string | null> => {
@@ -72,7 +77,7 @@ export function useMyClients() {
 
             const { data, error } = await supabase
                 .from('clients')
-                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status')
+                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status, cor_url, tin, contact_person, visit_logs(count)')
                 .eq('agent_id', user.id)
                 .eq('status', 'active')
                 .order('created_at', { ascending: false });
@@ -109,6 +114,10 @@ export function useMyClients() {
                         lastOrder: statsByClient[c.id]?.lastOrder ?? c.last_order_date ?? new Date().toISOString().split('T')[0],
                         photo: signedPhotoUrl,
                         photoTimestamp: c.photo_timestamp || c.created_at,
+                        visitCount: c.visit_logs?.[0]?.count || 0,
+                        corUrl: c.cor_url,
+                        tin: c.tin,
+                        contactPerson: c.contact_person,
                         location: c.location_latitude && c.location_longitude ? {
                             latitude: c.location_latitude,
                             longitude: c.location_longitude,

@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -64,6 +64,7 @@ interface Client {
   approval_requested_at?: string;
   approved_at?: string;
   approved_by?: string | null;
+  visit_count: number; // Added
 }
 
 interface Agent {
@@ -403,10 +404,8 @@ export default function ClientsPage() {
         .from('clients')
         .select(`
           *,
-          profiles!clients_agent_id_fkey (
-            full_name,
-            email
-          )
+          profiles: agent_id (full_name, email),
+          visit_logs (count)
         `)
         .eq('company_id', user?.company_id)
         .neq('status', 'inactive')
@@ -425,92 +424,71 @@ export default function ClientsPage() {
 
       if (error) throw error;
 
+
       // Prefer aggregated stats from view for accuracy and performance
-      let statsQuery = supabase
-        .from('client_order_stats')
-        .select('client_id, agent_id, total_orders, total_spent, last_order_date')
-        .eq('company_id', user?.company_id);
+      let ordersByClient: Record<string, { count: number; total: number; last?: string }> = {};
+
+      // Calculate order stats manually since view is optional/removed
+      // Grouped aggregation per client from approved orders
+
+      let aggQuery = supabase
+        .from('client_orders')
+        .select('client_id, count:id, sum:total_amount, max:order_date')
+        .eq('company_id', user?.company_id)
+        .or('stage.eq.admin_approved,status.eq.approved');
 
       if (isAgent && user?.id) {
-        statsQuery = statsQuery.eq('agent_id', user.id);
+        aggQuery = aggQuery.eq('agent_id', user.id);
       } else if (isManager && teamAgentIds.length > 0) {
-        statsQuery = statsQuery.in('agent_id', teamAgentIds);
+        aggQuery = aggQuery.in('agent_id', teamAgentIds);
       } else if (isManager) {
-        statsQuery = statsQuery.eq('agent_id', user.id);
+        aggQuery = aggQuery.eq('agent_id', user.id);
       }
 
-      const { data: statsView, error: statsError } = await statsQuery;
+      const { data: aggRows, error: aggError } = await aggQuery as any;
 
-      let ordersByClient: Record<string, { count: number; total: number; last?: string }> = {};
-      if (statsView && statsView.length > 0 && !statsError) {
-        ordersByClient = statsView.reduce((acc: any, r: any) => {
+
+      if (!aggError && aggRows) {
+        ordersByClient = (aggRows as any[]).reduce((acc, r) => {
           acc[r.client_id] = {
-            count: Number(r.total_orders) || 0,
-            total: Number(r.total_spent) || 0,
-            last: r.last_order_date || undefined,
+            count: Number(r.count) || 0,
+            total: Number(r.sum) || 0,
+            last: r.max || undefined,
           };
           return acc;
         }, {} as Record<string, { count: number; total: number; last?: string }>);
       } else {
-        // Grouped aggregation per client from approved orders
-        let aggQuery = supabase
+        // Fallback to row-wise reduce if grouping unsupported
+        let ordersQuery = supabase
           .from('client_orders')
-          .select('client_id, count:id, sum:total_amount, max:order_date')
-          .eq('company_id', user?.company_id)
+          .select('client_id, total_amount, stage, status, order_date, agent_id')
           .or('stage.eq.admin_approved,status.eq.approved');
 
         if (isAgent && user?.id) {
-          aggQuery = aggQuery.eq('agent_id', user.id);
+          ordersQuery = ordersQuery.eq('agent_id', user.id);
         } else if (isManager && teamAgentIds.length > 0) {
-          aggQuery = aggQuery.in('agent_id', teamAgentIds);
+          ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
         } else if (isManager) {
-          aggQuery = aggQuery.eq('agent_id', user.id);
+          ordersQuery = ordersQuery.eq('agent_id', user.id);
         }
 
-        const { data: aggRows, error: aggError } = await aggQuery as any;
-
-        let ordersByClient: Record<string, { count: number; total: number; last?: string }> = {};
-        if (!aggError && aggRows) {
-          ordersByClient = (aggRows as any[]).reduce((acc, r) => {
-            acc[r.client_id] = {
-              count: Number(r.count) || 0,
-              total: Number(r.sum) || 0,
-              last: r.max || undefined,
-            };
-            return acc;
-          }, {} as Record<string, { count: number; total: number; last?: string }>);
-        } else {
-          // Fallback to row-wise reduce if grouping unsupported
-          let ordersQuery = supabase
-            .from('client_orders')
-            .select('client_id, total_amount, stage, status, order_date, agent_id')
-            .or('stage.eq.admin_approved,status.eq.approved');
-
-          if (isAgent && user?.id) {
-            ordersQuery = ordersQuery.eq('agent_id', user.id);
-          } else if (isManager && teamAgentIds.length > 0) {
-            ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
-          } else if (isManager) {
-            ordersQuery = ordersQuery.eq('agent_id', user.id);
+        const { data: approvedOrders } = await ordersQuery;
+        ordersByClient = (approvedOrders || []).reduce((acc: any, o: any) => {
+          const cid = o.client_id;
+          if (!acc[cid]) {
+            acc[cid] = { count: 0, total: 0, last: undefined as string | undefined };
           }
-
-          const { data: approvedOrders } = await ordersQuery;
-          ordersByClient = (approvedOrders || []).reduce((acc: any, o: any) => {
-            const cid = o.client_id;
-            if (!acc[cid]) {
-              acc[cid] = { count: 0, total: 0, last: undefined as string | undefined };
-            }
-            acc[cid].count += 1;
-            acc[cid].total += Number(o.total_amount) || 0;
-            const d = o.order_date || null;
-            if (d) {
-              const prev = acc[cid].last ? new Date(acc[cid].last) : undefined;
-              if (!prev || new Date(d) > prev) acc[cid].last = d as string;
-            }
-            return acc;
-          }, {} as Record<string, { count: number; total: number; last?: string }>);
-        }
+          acc[cid].count += 1;
+          acc[cid].total += Number(o.total_amount) || 0;
+          const d = o.order_date || null;
+          if (d) {
+            const prev = acc[cid].last ? new Date(acc[cid].last) : undefined;
+            if (!prev || new Date(d) > prev) acc[cid].last = d as string;
+          }
+          return acc;
+        }, {} as Record<string, { count: number; total: number; last?: string }>);
       }
+
 
       // Convert photo URLs to signed URLs
       const clientsWithSignedPhotos = await Promise.all(
@@ -557,6 +535,7 @@ export default function ClientsPage() {
         approval_requested_at: client.approval_requested_at || undefined,
         approved_at: client.approved_at || undefined,
         approved_by: client.approved_by || null,
+        visit_count: client.visit_logs?.[0]?.count || 0, // Map count
       }));
 
       setClients(formattedClients);
@@ -897,7 +876,7 @@ export default function ClientsPage() {
           name: editForm.name,
           company: editForm.company || null,
           email: editForm.email || null,
-          phone: editForm.phone ? `+63 ${editForm.phone}` : null,
+          phone: editForm.phone ? `+ 63 ${editForm.phone} ` : null,
           contact_person: editForm.contact_person || null,
           tin: editForm.tin || null,
           account_type: editForm.account_type,
@@ -2815,7 +2794,8 @@ export default function ClientsPage() {
                   <TableHead className="text-center">Category</TableHead>
                   <TableHead className="text-center">Forge</TableHead>
                   <TableHead className="text-center">Orders</TableHead>
-                  <TableHead className="text-center">Total Spent</TableHead>
+                  <TableHead>Total Spent</TableHead>
+                  <TableHead>Visits</TableHead>
                   <TableHead className="text-center">Approval</TableHead>
                   <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
@@ -2903,8 +2883,14 @@ export default function ClientsPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-center">{client.total_orders}</TableCell>
-                    <TableCell className="text-center font-semibold">
+                    <TableCell className="font-medium text-green-600">
                       ₱{client.total_spent.toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1 font-medium text-purple-600">
+                        <MapPin className="h-3 w-3" />
+                        {client.visit_count}
+                      </div>
                     </TableCell>
                     <TableCell className="text-center">
                       <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approval_status).className}`}>
@@ -3021,18 +3007,62 @@ export default function ClientsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-4 bg-background rounded-lg border">
                   <p className="text-xs text-muted-foreground">Orders</p>
                   <p className="text-2xl font-bold">{viewingClient.total_orders}</p>
                 </div>
                 <div className="p-4 bg-background rounded-lg border">
                   <p className="text-xs text-muted-foreground">Total Spent</p>
-                  <p className="text-2xl font-bold">₱{viewingClient.total_spent.toLocaleString()}</p>
+                  <p className="text-1xl font-bold">₱{viewingClient.total_spent.toLocaleString()}</p>
+                </div>
+                <div className="p-4 bg-background rounded-lg border">
+                  <p className="text-xs text-muted-foreground">Total Visits</p>
+                  <div className="flex items-center gap-1 text-purple-600">
+                    <MapPin className="h-5 w-5" />
+                    <p className="text-2xl font-bold">{viewingClient.visit_count}</p>
+                  </div>
                 </div>
                 <div className="p-4 bg-background rounded-lg border">
                   <p className="text-xs text-muted-foreground">Last Order</p>
                   <p className="text-sm font-medium">{viewingClient.last_order_date ? new Date(viewingClient.last_order_date).toLocaleDateString() : '—'}</p>
+                </div>
+              </div>
+
+              {/* Compliance Checklist */}
+              <div className="space-y-3">
+                <h4 className="font-semibold text-sm text-gray-900">Compliance Status</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* COR Check */}
+                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.cor_url ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-full ${viewingClient.cor_url ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {viewingClient.cor_url ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                      </div>
+                      <div>
+                        <p className={`font-medium ${viewingClient.cor_url ? 'text-green-900' : 'text-red-900'}`}>COR (Certificate of Registration)</p>
+                        <p className="text-xs text-muted-foreground">{viewingClient.cor_url ? 'Uploaded & Verified' : 'Missing Document'}</p>
+                      </div>
+                    </div>
+                    {viewingClient.cor_url && (
+                      <Button variant="ghost" size="sm" onClick={() => window.open(viewingClient.cor_url, '_blank')}>
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* TIN Check */}
+                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.tin ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-full ${viewingClient.tin ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {viewingClient.tin ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                      </div>
+                      <div>
+                        <p className={`font-medium ${viewingClient.tin ? 'text-green-900' : 'text-red-900'}`}>TIN (Tax ID Number)</p>
+                        <p className="text-xs text-muted-foreground">{viewingClient.tin ? viewingClient.tin : 'Missing TIN'}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
