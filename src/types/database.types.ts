@@ -361,6 +361,47 @@ export interface StockRequestItem {
   created_at: string;
 }
 
+export interface VisitLog {
+  id: string;
+  company_id: string;
+  agent_id: string;
+  client_id: string;
+  task_id?: string;
+  visited_at: string;
+  latitude: number;
+  longitude: number;
+  address?: string;
+  is_within_radius: boolean;
+  distance_meters?: number;
+  radius_limit_meters?: number;
+  photo_url?: string;
+  notes?: string;
+  created_at: string;
+}
+
+export interface Task {
+  id: string;
+  company_id: string;
+  agent_id: string;
+  leader_id?: string;
+  client_id?: string; // Added
+  title: string;
+  description?: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  due_date?: string;
+  time?: string;
+  notes?: string;
+  attachment_url?: string;
+  location_latitude?: number; // Added
+  location_longitude?: number; // Added
+  location_address?: string; // Added
+  given_at: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // ============================================================================
 // EXTENDED/JOINED TYPES (for frontend use)
 // ============================================================================
