@@ -26,7 +26,8 @@ import {
   Tag,
   Map,
   LayoutGrid,
-  Activity
+  Activity,
+  Settings
 } from 'lucide-react';
 import {
   Sidebar,
@@ -274,7 +275,6 @@ const superAdminMenuItems: MenuItem[] = [
   },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
-  { title: 'System History', url: '/system-history', icon: History },
   {
     title: 'Tasks',
     url: '/tasks',
@@ -287,7 +287,16 @@ const superAdminMenuItems: MenuItem[] = [
   },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'System History', url: '/system-history', icon: History },
-  { title: 'Profile', url: '/profile', icon: UserCircle },
+  {
+    title: 'Settings',
+    url: '/settings',
+    icon: Settings,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Profile', url: '/profile', icon: UserCircle },
+      { title: 'System Settings', url: '/system-settings', icon: Settings },
+    ]
+  },
 ];
 
 export function AppSidebar() {

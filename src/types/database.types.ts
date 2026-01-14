@@ -29,6 +29,10 @@ export type NotificationType =
 
 export type AuditOperation = 'INSERT' | 'UPDATE' | 'DELETE';
 
+// Pricing types for order creation
+export type PricingColumn = 'selling_price' | 'dsp_price' | 'rsp_price';
+export type PricingStrategy = 'custom' | 'dsp' | 'rsp';
+
 // ============================================================================
 // TABLE TYPES
 // ============================================================================
@@ -41,9 +45,44 @@ export interface Company {
   super_admin_email: string;
   role: string; // Default: 'Super Admin'
   status: UserStatus;
+  team_leader_allowed_pricing?: PricingColumn[];
+  mobile_sales_allowed_pricing?: PricingColumn[];
   created_at: string;
   updated_at: string;
 }
+
+// Helper to map pricing strategy to column
+export const PRICING_STRATEGY_MAP: Record<PricingStrategy, PricingColumn> = {
+  rsp: 'rsp_price',
+  dsp: 'dsp_price',
+  custom: 'selling_price'
+};
+
+// Reverse map for UI display
+export const PRICING_COLUMN_MAP: Record<PricingColumn, PricingStrategy> = {
+  rsp_price: 'rsp',
+  dsp_price: 'dsp',
+  selling_price: 'custom'
+};
+
+// Pricing option metadata for UI
+export const PRICING_OPTIONS = {
+  selling_price: {
+    label: 'Special Pricing',
+    description: 'Custom Unit Prices',
+    badge: 'Custom'
+  },
+  dsp_price: {
+    label: 'DSP Pricing',
+    description: 'Distributor Price',
+    badge: 'DSP'
+  },
+  rsp_price: {
+    label: 'RSP Pricing',
+    description: 'Standard Retail Price',
+    badge: 'RSP'
+  }
+} as const;
 
 export interface Profile {
   id: string;

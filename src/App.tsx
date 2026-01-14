@@ -8,6 +8,7 @@ import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/fe
 import { DashboardPage, AdminHistoryPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
+import { SystemSettingsPage } from "@/features/settings";
 import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOrderProvider } from "@/features/orders";
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
@@ -99,6 +100,7 @@ const App = () => (
                     <Route path="/suppliers" element={<ProtectedRoute><SuppliersPage /></ProtectedRoute>} />
                     <Route path="/war-room" element={<ProtectedRoute><WarRoomPage /></ProtectedRoute>} />
                     <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+                    <Route path="/system-settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
                     <Route path="/system-admin" element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
                     <Route path="/system-management" element={<ProtectedRoute><ManagementPortal /></ProtectedRoute>} />
                     <Route path="/sys-admin-dashboard" element={<ProtectedRoute><SysAdDashboardPage /></ProtectedRoute>} />

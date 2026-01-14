@@ -42,6 +42,10 @@ export default function MyOrdersPage() {
   const { agentBrands } = useAgentInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  
+  // Auto-determined pricing based on company configuration
+  const [allowedPricingStrategies, setAllowedPricingStrategies] = useState<string[]>([]);
+  const [loadingPricingConfig, setLoadingPricingConfig] = useState(true);
 
   // Helper function to get display status from stage
   const getDisplayStatus = (order: any) => {
@@ -121,7 +125,7 @@ export default function MyOrdersPage() {
   const [clientName, setClientName] = useState('');
   const [clientCompany, setClientCompany] = useState('');
   const [selectedBrandName, setSelectedBrandName] = useState('');
-  const [pricingType, setPricingType] = useState<'rsp' | 'dsp' | 'special'>('rsp'); // Default to RSP
+  const [pricingType, setPricingType] = useState<'rsp' | 'dsp' | 'special'>('rsp'); // Auto-determined from company config
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [taxRate, setTaxRate] = useState(0);
   const [discount, setDiscount] = useState(0);
@@ -133,6 +137,73 @@ export default function MyOrdersPage() {
   const [showWithInvoiceConfirmModal, setShowWithInvoiceConfirmModal] = useState(false);
 
   const myOrders = user ? getOrdersByAgent(user.id) : [];
+
+  // Fetch company pricing configuration on mount
+  useEffect(() => {
+    const fetchPricingConfig = async () => {
+      if (!user?.company_id) {
+        setLoadingPricingConfig(false);
+        return;
+      }
+
+      try {
+        const { data: company, error } = await supabase
+          .from('companies')
+          .select('team_leader_allowed_pricing, mobile_sales_allowed_pricing')
+          .eq('id', user.company_id)
+          .single();
+
+        if (error) {
+          console.error('Error fetching pricing config:', error);
+          // Default to RSP if error
+          setAllowedPricingStrategies(['rsp_price']);
+          setPricingType('rsp');
+          setLoadingPricingConfig(false);
+          return;
+        }
+
+        // Determine allowed strategies based on user role
+        let allowedStrategies: string[] = [];
+        if (user.role === 'team_leader' || user.role === 'manager' || user.role === 'admin') {
+          allowedStrategies = company?.team_leader_allowed_pricing || ['rsp_price'];
+        } else if (user.role === 'mobile_sales' || user.role === 'sales_agent') {
+          allowedStrategies = company?.mobile_sales_allowed_pricing || ['rsp_price'];
+        } else {
+          // Default to RSP for other roles
+          allowedStrategies = ['rsp_price'];
+        }
+
+        setAllowedPricingStrategies(allowedStrategies);
+
+        // Auto-determine pricing type based on priority: rsp_price > dsp_price > selling_price
+        if (allowedStrategies.includes('rsp_price')) {
+          setPricingType('rsp');
+        } else if (allowedStrategies.includes('dsp_price')) {
+          setPricingType('dsp');
+        } else if (allowedStrategies.includes('selling_price')) {
+          setPricingType('special');
+        } else {
+          // Fallback to RSP
+          setPricingType('rsp');
+        }
+
+        console.log('✅ [Pricing Config] Loaded:', {
+          role: user.role,
+          allowedStrategies,
+          autoDeterminedType: allowedStrategies.includes('rsp_price') ? 'rsp' : allowedStrategies.includes('dsp_price') ? 'dsp' : 'special'
+        });
+
+      } catch (error) {
+        console.error('Error in pricing config fetch:', error);
+        setAllowedPricingStrategies(['rsp_price']);
+        setPricingType('rsp');
+      } finally {
+        setLoadingPricingConfig(false);
+      }
+    };
+
+    fetchPricingConfig();
+  }, [user?.company_id, user?.role]);
 
   // Apply all filters
   const filteredOrders = myOrders.filter(order => {
@@ -1133,46 +1204,18 @@ export default function MyOrdersPage() {
                 </p>
               </div>
 
-              {/* Pricing Type Selection (Leaders/Managers/Admin only) */}
-              {canCustomizePricing && (
-                <div className="space-y-2 pt-2 border-t mt-4">
-                  <Label className="text-base font-semibold text-primary">Pricing Strategy</Label>
-                  <RadioGroup
-                    value={pricingType}
-                    onValueChange={(value) => setPricingType(value as any)}
-                    className="grid grid-cols-1 sm:grid-cols-3 gap-4"
-                  >
-                    <div>
-                      <RadioGroupItem value="rsp" id="rsp" className="peer sr-only" />
-                      <Label
-                        htmlFor="rsp"
-                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer h-full"
-                      >
-                        <span className="text-sm font-semibold">RSP Pricing</span>
-                        <span className="text-xs text-muted-foreground mt-1 text-center">Standard Retail Price</span>
-                      </Label>
-                    </div>
-                    <div>
-                      <RadioGroupItem value="dsp" id="dsp" className="peer sr-only" />
-                      <Label
-                        htmlFor="dsp"
-                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer h-full"
-                      >
-                        <span className="text-sm font-semibold">DSP Pricing</span>
-                        <span className="text-xs text-muted-foreground mt-1 text-center">Distributor Price</span>
-                      </Label>
-                    </div>
-                    <div>
-                      <RadioGroupItem value="special" id="special" className="peer sr-only" />
-                      <Label
-                        htmlFor="special"
-                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer h-full"
-                      >
-                        <span className="text-sm font-semibold">Special Pricing</span>
-                        <span className="text-xs text-muted-foreground mt-1 text-center">Custom Unit Prices</span>
-                      </Label>
-                    </div>
-                  </RadioGroup>
+              {/* Pricing Strategy Indicator (Auto-configured by Super Admin) */}
+              {!loadingPricingConfig && (
+                <div className="flex items-center justify-between pt-2 border-t mt-4 bg-muted/30 p-3 rounded-lg">
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Pricing Strategy</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">Auto-configured by your company</p>
+                  </div>
+                  <Badge variant="secondary" className="text-sm font-medium">
+                    {pricingType === 'rsp' && 'RSP Pricing'}
+                    {pricingType === 'dsp' && 'DSP Pricing'}
+                    {pricingType === 'special' && 'Special Pricing'}
+                  </Badge>
                 </div>
               )}
 
