@@ -125,6 +125,7 @@ const agentMenuItems: MenuItem[] = [
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'My History', url: '/my-history', icon: ClipboardList },
+  { title: 'My Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -162,7 +163,8 @@ const leaderMenuItems: MenuItem[] = [
   },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
-  { title: 'Team History', url: '/my-history', icon: History },
+  { title: 'Team History', url: '/my-history', icon: Activity },
+  { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -170,6 +172,7 @@ const leaderMenuItems: MenuItem[] = [
 const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', icon: LayoutDashboard },
   { title: 'Management Portal', url: '/system-management', icon: LayoutGrid },
+  { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -189,6 +192,7 @@ const managerMenuItems: MenuItem[] = [
     ]
   },
   { title: 'Team Clients', url: '/manager-clients', icon: ShoppingBag },
+  { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -271,6 +275,7 @@ const superAdminMenuItems: MenuItem[] = [
   },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
+  { title: 'System History', url: '/system-history', icon: History },
   {
     title: 'Tasks',
     url: '/tasks',

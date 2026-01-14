@@ -23,7 +23,11 @@ export type NotificationType =
   | 'system_message'
   | 'stock_request_created'
   | 'stock_request_approved'
-  | 'stock_request_rejected';
+  | 'stock_request_rejected'
+  | 'audit_system_change'
+  | 'audit_critical_action';
+
+export type AuditOperation = 'INSERT' | 'UPDATE' | 'DELETE';
 
 // ============================================================================
 // TABLE TYPES
@@ -402,6 +406,25 @@ export interface Task {
   updated_at: string;
 }
 
+export interface SystemAuditLog {
+  id: string;
+  company_id: string;
+  table_name: string;
+  operation: AuditOperation;
+  record_id: string;
+  user_id?: string;
+  user_email?: string;
+  user_name?: string;
+  user_role?: UserRole;
+  old_data?: Record<string, any>;
+  new_data?: Record<string, any>;
+  changed_fields?: string[];
+  description?: string;
+  ip_address?: string;
+  user_agent?: string;
+  created_at: string;
+}
+
 // ============================================================================
 // EXTENDED/JOINED TYPES (for frontend use)
 // ============================================================================
@@ -447,6 +470,33 @@ export interface ClientOrderItemWithVariant extends ClientOrderItem {
 export interface LeaderTeamWithDetails extends LeaderTeam {
   leader: Profile;
   agent: Profile;
+}
+
+export interface SystemAuditLogWithProfile extends SystemAuditLog {
+  user_profile?: Profile;
+}
+
+export interface BusinessAuditLog {
+  id: string;
+  company_id: string;
+  action_type: string;
+  action_category: string;
+  action_description: string;
+  user_id?: string;
+  user_name?: string;
+  user_email?: string;
+  user_role?: UserRole;
+  affected_user_id?: string;
+  affected_user_name?: string;
+  affected_client_id?: string;
+  affected_client_name?: string;
+  details?: Record<string, any>;
+  reference_type?: string;
+  reference_id?: string;
+  reference_number?: string;
+  ip_address?: string;
+  user_agent?: string;
+  created_at: string;
 }
 
 export interface StockRequestWithDetails extends StockRequest {

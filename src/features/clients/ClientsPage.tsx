@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -140,6 +140,14 @@ export default function ClientsPage() {
   const [newCorPhoto, setNewCorPhoto] = useState<string | null>(null);
   const corFileInputRef = useRef<HTMLInputElement>(null);
 
+  // Edit COR Photo States
+  const [editCorPhoto, setEditCorPhoto] = useState<string | null>(null);
+  const editCorFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Edit Client Photo States
+  const [editClientPhoto, setEditClientPhoto] = useState<string | null>(null);
+  const editClientPhotoInputRef = useRef<HTMLInputElement>(null);
+
   // Add Client Location States
   const [capturedLocation, setCapturedLocation] = useState<{
     latitude: number;
@@ -253,6 +261,10 @@ export default function ClientsPage() {
   // Export states
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState({ current: 0, total: 0 });
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   // Resolve role first
   useEffect(() => {
@@ -795,6 +807,17 @@ export default function ClientsPage() {
     return matchesSearch && matchesCity;
   });
 
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedClients = filteredClients.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, cityFilter]);
+
   const getApprovalStatusBadge = (status: Client['approval_status']) => {
     switch (status) {
       case 'approved':
@@ -825,6 +848,8 @@ export default function ClientsPage() {
       category: client.category || 'Open',
       has_forge: client.has_forge || false
     });
+    setEditCorPhoto(null); // Reset COR photo state
+    setEditClientPhoto(null); // Reset client photo state
     setEditDialogOpen(true);
   };
 
@@ -843,41 +868,173 @@ export default function ClientsPage() {
     if (!editingClient) return;
 
     try {
+      let corUrl = editingClient.cor_url; // Keep existing COR URL by default
+      let photoUrl = editingClient.photo_url; // Keep existing photo URL by default
+
+      // Handle client photo upload if admin/super admin uploaded a new one
+      if (editClientPhoto && (isAdmin || isSuperAdmin)) {
+        // Convert base64 to blob
+        const base64Data = editClientPhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+        // Generate unique filename
+        const sanitizeName = (str: string) => {
+          return str
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        };
+
+        const clientName = sanitizeName(editForm.name || 'client');
+        const clientCompany = sanitizeName(editForm.company || 'company');
+        const timestamp = Date.now();
+
+        const fileName = `${user?.id}/${clientName}_${clientCompany}_${timestamp}.jpg`;
+
+        // Upload to Supabase Storage
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('client-photos')
+          .upload(fileName, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          });
+
+        if (uploadError) {
+          console.error('Photo upload error:', uploadError);
+          throw new Error(`Failed to upload photo: ${uploadError.message}`);
+        }
+
+        // Get signed URL (required for private buckets)
+        const { data: urlData, error: urlError } = await supabase.storage
+          .from('client-photos')
+          .createSignedUrl(fileName, 31536000); // 1 year expiry
+
+        if (urlError || !urlData?.signedUrl) {
+          throw new Error(`Failed to generate signed URL: ${urlError?.message || 'Unknown error'}`);
+        }
+
+        photoUrl = urlData.signedUrl;
+      }
+
+      // Handle COR photo upload if admin/super admin uploaded a new one
+      if (editCorPhoto && (isAdmin || isSuperAdmin)) {
+        // Convert base64 to blob
+        const base64Data = editCorPhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+
+        // Determine content type from base64 prefix
+        const isJPG = editCorPhoto.startsWith('data:image/jpeg') || editCorPhoto.startsWith('data:image/jpg');
+        const contentType = isJPG ? 'image/jpeg' : 'image/png';
+        const fileExtension = isJPG ? 'jpg' : 'png';
+
+        const blob = new Blob([byteArray], { type: contentType });
+
+        // Generate unique filename
+        const sanitizeName = (str: string) => {
+          return str
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        };
+
+        const clientName = sanitizeName(editForm.name || 'client');
+        const clientCompany = sanitizeName(editForm.company || 'company');
+        const timestamp = Date.now();
+
+        const corFileName = `${user?.id}/company_${user?.company_id}_client_${clientName}_${clientCompany}_cor_${timestamp}.${fileExtension}`;
+
+        // Upload to Supabase Storage (client-cor bucket)
+        const { data: corUploadData, error: corUploadError } = await supabase.storage
+          .from('client-cor')
+          .upload(corFileName, blob, {
+            contentType: contentType,
+            upsert: false
+          });
+
+        if (corUploadError) {
+          console.error('COR upload error:', corUploadError);
+          throw new Error(`Failed to upload COR: ${corUploadError.message}`);
+        }
+
+        // Get signed URL (required for private buckets)
+        const { data: corUrlData, error: corUrlError } = await supabase.storage
+          .from('client-cor')
+          .createSignedUrl(corFileName, 31536000); // 1 year expiry
+
+        if (corUrlError || !corUrlData?.signedUrl) {
+          throw new Error(`Failed to generate COR signed URL: ${corUrlError?.message || 'Unknown error'}`);
+        }
+
+        corUrl = corUrlData.signedUrl;
+      }
+
       // Update client - exclude address and city (read-only fields)
+      const updateData: any = {
+        name: editForm.name,
+        company: editForm.company || null,
+        email: editForm.email || null,
+        phone: editForm.phone ? `+63 ${editForm.phone}` : null,
+        contact_person: editForm.contact_person || null,
+        tin: editForm.tin || null,
+        account_type: editForm.account_type,
+        category: editForm.category,
+        has_forge: editForm.has_forge,
+        updated_at: new Date().toISOString()
+      };
+
+      // Only update photo_url if a new one was uploaded
+      if (editClientPhoto && photoUrl) {
+        updateData.photo_url = photoUrl;
+        updateData.photo_timestamp = new Date().toISOString();
+      }
+
+      // Only update cor_url if a new one was uploaded
+      if (editCorPhoto && corUrl) {
+        updateData.cor_url = corUrl;
+      }
+
       const { error } = await supabase
         .from('clients')
-        .update({
-          name: editForm.name,
-          company: editForm.company || null,
-          email: editForm.email || null,
-          phone: editForm.phone ? `+ 63 ${editForm.phone} ` : null,
-          contact_person: editForm.contact_person || null,
-          tin: editForm.tin || null,
-          account_type: editForm.account_type,
-          category: editForm.category,
-          has_forge: editForm.has_forge,
-          // address and city are read-only - do not update them
-          updated_at: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('id', editingClient.id);
 
       if (error) throw error;
 
+      const updates = [];
+      if (editClientPhoto) updates.push('photo');
+      if (editCorPhoto) updates.push('COR document');
+      const updateText = updates.length > 0 ? ` with new ${updates.join(' and ')}` : '';
+
       toast({
         title: 'Success',
-        description: `${editForm.name} has been updated successfully`
+        description: `${editForm.name} has been updated successfully${updateText}`
       });
 
       setUpdateConfirmOpen(false);
       setEditDialogOpen(false);
       setEditingClient(null);
+      setEditCorPhoto(null);
+      setEditClientPhoto(null);
 
       // Real-time will handle updating the list
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating client:', error);
       toast({
         title: 'Error',
-        description: 'Failed to update client. Please try again.',
+        description: error.message || 'Failed to update client. Please try again.',
         variant: 'destructive'
       });
     }
@@ -1556,6 +1713,76 @@ export default function ClientsPage() {
     }
   };
 
+  const handleEditClientPhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      // Validate file size (5MB max for photos)
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: 'Error',
+          description: 'Photo size should be less than 5MB',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      // Validate file type
+      if (!file.type.match(/^image\/(png|jpeg|jpg)$/)) {
+        toast({
+          title: 'Error',
+          description: 'Photo must be a PNG or JPG image',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setEditClientPhoto(reader.result as string);
+        toast({
+          title: 'Photo Selected',
+          description: 'New client photo will be uploaded when you save changes'
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleEditCorFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      // Validate file size (10MB max for COR documents)
+      if (file.size > 10 * 1024 * 1024) {
+        toast({
+          title: 'Error',
+          description: 'COR image size should be less than 10MB',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      // Validate file type (PNG or JPG only)
+      if (!file.type.match(/^image\/(png|jpeg|jpg)$/)) {
+        toast({
+          title: 'Error',
+          description: 'COR must be a PNG or JPG image',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setEditCorPhoto(reader.result as string);
+        toast({
+          title: 'COR Uploaded',
+          description: 'New COR document will be uploaded when you save changes'
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleCorFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -2124,12 +2351,15 @@ export default function ClientsPage() {
           </div>
         </DialogContent>
       </Dialog>
-      <div className="flex justify-between items-center">
+      {/* Header Section */}
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Clients Database</h1>
-          <p className="text-muted-foreground">Manage all your business clients</p>
+          <h1 className="text-2xl sm:text-3xl font-bold">Clients Database</h1>
+          <p className="text-sm text-muted-foreground">Manage all your business clients</p>
         </div>
-        <div className="flex gap-2">
+
+        {/* Desktop Actions */}
+        <div className="hidden lg:flex gap-2">
           {isAdmin && (
             <Button
               variant="outline"
@@ -2149,12 +2379,11 @@ export default function ClientsPage() {
               )}
             </Button>
           )}
-          {/* Actions: Only Admins can Add/Import. Managers are read-only. */}
           {(isAdmin || isSuperAdmin) && (
-            <div className="flex gap-2">
+            <>
               <Button variant="outline" className="gap-2" onClick={handleDownloadTemplate}>
                 <Download className="h-4 w-4" />
-                <span className="hidden sm:inline">Template</span>
+                Template
               </Button>
               <div className="relative">
                 <input
@@ -2166,23 +2395,96 @@ export default function ClientsPage() {
                 />
                 <Button variant="outline" className="gap-2" onClick={handleImportClick} disabled={importing}>
                   {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  <span className="hidden sm:inline">Import</span>
+                  Import
                 </Button>
               </div>
+              <Button variant="outline" onClick={handleOpenCityBulkTransfer}>
+                <Users className="h-4 w-4 mr-2" />
+                City Transfer
+              </Button>
               <Button className="gap-2" onClick={() => setAddDialogOpen(true)}>
                 <Plus className="h-4 w-4" />
-                <span className="hidden sm:inline">Add Client</span>
+                Add Client
               </Button>
-            </div>
+            </>
           )}
-          {/* City Bulk Transfer is also an admin-only action */}
+        </div>
+
+        {/* Mobile & Tablet Actions */}
+        <div className="flex lg:hidden gap-2 items-center">
+          {/* Primary Action - Always Visible */}
           {(isAdmin || isSuperAdmin) && (
-            <Button variant="outline" onClick={handleOpenCityBulkTransfer}>
-              <Users className="h-4 w-4 mr-2" />
-              City Bulk Transfer
+            <Button className="flex-1 sm:flex-none" onClick={() => setAddDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Client
             </Button>
           )}
-          <Dialog open={addDialogOpen} onOpenChange={(open) => {
+
+          {/* Dropdown Menu for Other Actions */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="shrink-0">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {isAdmin && (
+                <DropdownMenuItem 
+                  onClick={handleExportToExcel} 
+                  disabled={exporting || clients.length === 0}
+                >
+                  {exporting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4 mr-2" />
+                      Export to Excel
+                    </>
+                  )}
+                </DropdownMenuItem>
+              )}
+              {(isAdmin || isSuperAdmin) && (
+                <>
+                  <DropdownMenuItem onClick={handleDownloadTemplate}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Download Template
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleImportClick} disabled={importing}>
+                    {importing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Importing...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="h-4 w-4 mr-2" />
+                        Import Clients
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                  <input
+                    type="file"
+                    ref={importInputRef}
+                    onChange={handleImportClients}
+                    accept=".csv,.txt"
+                    className="hidden"
+                  />
+                  <DropdownMenuItem onClick={handleOpenCityBulkTransfer}>
+                    <Users className="h-4 w-4 mr-2" />
+                    City Bulk Transfer
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {/* Add Client Dialog */}
+      <Dialog open={addDialogOpen} onOpenChange={(open) => {
             setAddDialogOpen(open);
             if (open) {
               startLocationPrewarm();
@@ -2190,12 +2492,6 @@ export default function ClientsPage() {
               resetAddForm();
             }
           }}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4" />
-                Add Client
-              </Button>
-            </DialogTrigger>
             <DialogContent className="max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Add New Client</DialogTitle>
@@ -2588,8 +2884,6 @@ export default function ClientsPage() {
               </div>
             </DialogContent>
           </Dialog>
-        </div>
-      </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -2670,82 +2964,150 @@ export default function ClientsPage() {
                 )}
               </div>
             )}
+            {/* Pagination Info */}
+            {filteredClients.length > 0 && (
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>
+                  Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
+                </span>
+                <span>Page {currentPage} of {totalPages}</span>
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>
           {/* Mobile: card list */}
           <div className="md:hidden space-y-3">
-            {filteredClients.length === 0 ? (
+            {paginatedClients.length === 0 ? (
               <div className="text-center text-muted-foreground py-6">No clients found</div>
             ) : (
-              filteredClients.map((client) => (
-                <div key={client.id} className="rounded-lg border bg-background p-4 shadow-sm">
-                  <div className="flex items-center gap-3">
-                    {client.photo_url ? (
-                      <img src={client.photo_url} alt={client.name} className="w-12 h-12 rounded-full object-cover border" />
-                    ) : (
-                      <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
-                        <Building className="w-6 h-6 text-muted-foreground" />
+              paginatedClients.map((client) => (
+                <div key={client.id} className="rounded-lg border bg-background overflow-hidden shadow-sm">
+                  {/* Header with Photo and Name */}
+                  <div className="p-3 bg-muted/30 border-b">
+                    <div className="flex items-center gap-3">
+                      {client.photo_url ? (
+                        <img src={client.photo_url} alt={client.name} className="w-14 h-14 rounded-full object-cover border-2 border-primary/20" />
+                      ) : (
+                        <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center border-2 border-primary/20">
+                          <Building className="w-7 h-7 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-base truncate">{client.name}</div>
+                        {client.company && (
+                          <div className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                            <Building className="w-3 h-3" />
+                            {client.company}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1 mt-1">
+                          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${getApprovalStatusBadge(client.approval_status).className}`}>
+                            {getApprovalStatusBadge(client.approval_status).label.replace('Pending Approval', 'Pending')}
+                          </Badge>
+                          {client.city && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                              {client.city}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Stats Row */}
+                  <div className="grid grid-cols-3 divide-x border-b">
+                    <div className="p-2.5 text-center">
+                      <div className="text-lg font-bold text-primary">{client.total_orders}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase">Orders</div>
+                    </div>
+                    <div className="p-2.5 text-center">
+                      <div className="text-lg font-bold text-green-600">₱{(client.total_spent / 1000).toFixed(1)}K</div>
+                      <div className="text-[10px] text-muted-foreground uppercase">Revenue</div>
+                    </div>
+                    <div className="p-2.5 text-center">
+                      <div className="text-lg font-bold text-purple-600 flex items-center justify-center gap-1">
+                        <MapPin className="h-3.5 w-3.5" />
+                        {client.visit_count}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground uppercase">Visits</div>
+                    </div>
+                  </div>
+
+                  {/* Contact Info - Compact */}
+                  <div className="p-3 space-y-1.5 text-xs">
+                    {client.email && (
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <span className="font-medium min-w-[60px]">Email:</span>
+                        <span className="truncate">{client.email}</span>
                       </div>
                     )}
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold truncate">{client.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">{client.company || '—'}</div>
+                    {client.phone && (
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <span className="font-medium min-w-[60px]">Phone:</span>
+                        <span className="truncate">{client.phone}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <span className="font-medium min-w-[60px]">Agent:</span>
+                      <span className="truncate">{isClientUnassigned(client) ? 'No Agent' : (client.agent_name || 'Unassigned')}</span>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approval_status).className}`}>
-                        {getApprovalStatusBadge(client.approval_status).label}
-                      </Badge>
-                      <Badge variant="secondary" className="text-xs">
-                        {isClientUnassigned(client) ? 'No Agent' : (client.agent_name || 'Unassigned')}
-                      </Badge>
-                    </div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Email</div>
-                      <div className="truncate">{client.email || '—'}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Phone</div>
-                      <div>{client.phone || '—'}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-muted-foreground">City</div>
-                      <div>{client.city || '—'}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Forge</div>
-                      <div>
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground">Forge:</span>
                         {client.has_forge ? (
-                          <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-xs">
-                            Yes
-                          </Badge>
+                          <Badge variant="default" className="bg-green-600 text-[10px] px-1.5 py-0 h-4">Yes</Badge>
                         ) : (
-                          <Badge variant="secondary" className="text-xs">
-                            No
-                          </Badge>
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4">No</Badge>
                         )}
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Orders</div>
-                      <div className="font-medium">{client.total_orders}</div>
-                    </div>
-                    <div className="col-span-2 flex items-center justify-between">
-                      <div className="text-xs text-muted-foreground">Total Spent</div>
-                      <div className="font-semibold">₱{client.total_spent.toLocaleString()}</div>
+                      <Badge variant={client.account_type === 'Key Accounts' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0 h-4">
+                        {client.account_type.replace(' Accounts', '')}
+                      </Badge>
                     </div>
                   </div>
-                  <div className="mt-3 flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenView(client)}>
-                      <Eye className="h-4 w-4 mr-1" /> View
+
+                  {/* Actions */}
+                  <div className="border-t bg-muted/20 p-2 flex gap-1.5">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="flex-1 h-8 text-xs" 
+                      onClick={() => handleOpenView(client)}
+                    >
+                      <Eye className="h-3.5 w-3.5 mr-1" />
+                      View
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenTransfer(client)}>
-                      <ArrowRightLeft className="h-4 w-4 mr-1" /> Transfer
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(client)}>Edit</Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenDelete(client)} className="text-red-600">Delete</Button>
+                    {!isManager && (
+                      <>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="flex-1 h-8 text-xs" 
+                          onClick={() => handleOpenEdit(client)}
+                        >
+                          <Edit className="h-3.5 w-3.5 mr-1" />
+                          Edit
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleOpenTransfer(client)}>
+                              <ArrowRightLeft className="h-4 w-4 mr-2" />
+                              Transfer
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleOpenDelete(client)} className="text-destructive">
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Void Client
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </>
+                    )}
                   </div>
                 </div>
               ))
@@ -2775,7 +3137,7 @@ export default function ClientsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredClients.map((client) => (
+                {paginatedClients.map((client) => (
                   <TableRow key={client.id}>
                     <TableCell className="text-center">
                       {client.photo_url ? (
@@ -2883,7 +3245,7 @@ export default function ClientsPage() {
                             <Eye className="h-4 w-4 mr-2" />
                             View Details
                           </DropdownMenuItem>
-                          {!isAdmin && !isManager && (
+                          {!isManager && (
                             <>
                               <DropdownMenuItem onClick={() => handleOpenTransfer(client)}>
                                 <ArrowRightLeft className="h-4 w-4 mr-2" />
@@ -2895,7 +3257,7 @@ export default function ClientsPage() {
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => handleOpenDelete(client)} className="text-destructive focus:text-destructive">
                                 <Trash2 className="h-4 w-4 mr-2" />
-                                Delete Client
+                                Void Client
                               </DropdownMenuItem>
                             </>
                           )}
@@ -2907,6 +3269,67 @@ export default function ClientsPage() {
               </TableBody>
             </Table>
           </div>
+
+          {/* Pagination Controls */}
+          {filteredClients.length > itemsPerPage && (
+            <div className="flex items-center justify-between mt-4 pt-4 border-t">
+              <div className="text-sm text-muted-foreground">
+                Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(page => {
+                      // Show first page, last page, current page, and pages around current
+                      return (
+                        page === 1 ||
+                        page === totalPages ||
+                        (page >= currentPage - 1 && page <= currentPage + 1)
+                      );
+                    })
+                    .map((page, index, array) => {
+                      // Add ellipsis if there's a gap
+                      const prevPage = array[index - 1];
+                      const showEllipsis = prevPage && page - prevPage > 1;
+                      
+                      return (
+                        <div key={page} className="flex items-center gap-1">
+                          {showEllipsis && (
+                            <span className="px-2 text-muted-foreground">...</span>
+                          )}
+                          <Button
+                            variant={currentPage === page ? "default" : "outline"}
+                            size="sm"
+                            className="w-10"
+                            onClick={() => setCurrentPage(page)}
+                          >
+                            {page}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -3057,167 +3480,453 @@ export default function ClientsPage() {
 
       {/* Edit Client Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="w-[92vw] max-w-sm sm:max-w-md md:max-w-xl lg:max-w-2xl max-h-[80vh] overflow-y-auto md:max-h-none md:overflow-visible p-4">
-          <DialogHeader>
-            <DialogTitle>Edit Client</DialogTitle>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="text-xl">Edit Client Information</DialogTitle>
             <DialogDescription>
-              Update client information including contact details and location.
+              Update client details, contact information, and business classification.
             </DialogDescription>
           </DialogHeader>
           {editingClient && (
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>Client Name *</Label>
-                <Input
-                  placeholder="Enter client name"
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Shop Name</Label>
-                <Input
-                  placeholder="Shop name"
-                  value={editForm.company}
-                  onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Email</Label>
-                <Input
-                  type="email"
-                  placeholder="client@company.com"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Phone Number</Label>
-                <div className="flex gap-2">
-                  <div className="w-16">
-                    <Input
-                      value="+63"
-                      disabled
-                      className="bg-muted text-center font-semibold"
-                    />
+            <div className="flex-1 overflow-y-auto px-1">
+              <div className="space-y-6 py-4">
+                {/* Client Photo Section for Admin/Super Admin */}
+                {(isAdmin || isSuperAdmin) && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-semibold text-primary border-b pb-2">
+                      Client Photo
+                      <Badge variant="secondary" className="ml-2 text-xs">Admin Only</Badge>
+                    </h3>
+                    
+                    {/* Current Photo Display */}
+                    <div className="space-y-3">
+                      <Label className="text-sm">Current Photo</Label>
+                      <div className="flex flex-col items-center">
+                        {/* Photo Display */}
+                        {editClientPhoto ? (
+                          <div className="relative w-full max-w-md border-2 border-blue-300 rounded-lg overflow-hidden">
+                            <img
+                              src={editClientPhoto}
+                              alt="New photo preview"
+                              className="w-full h-64 object-cover"
+                            />
+                            <div className="absolute top-2 right-2">
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => setEditClientPhoto(null)}
+                              >
+                                <X className="h-4 w-4 mr-1" />
+                                Remove New Photo
+                              </Button>
+                            </div>
+                            <div className="absolute bottom-0 left-0 right-0 bg-blue-600/95 p-2">
+                              <p className="text-xs text-white font-medium text-center">
+                                ✓ New photo ready to upload - will replace current photo
+                              </p>
+                            </div>
+                          </div>
+                        ) : editingClient.photo_url ? (
+                          <div className="relative w-full max-w-md border rounded-lg overflow-hidden">
+                            <img
+                              src={editingClient.photo_url}
+                              alt={editingClient.name}
+                              className="w-full h-64 object-cover"
+                            />
+                            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
+                              <p className="text-xs text-white">
+                                {editingClient.photo_timestamp 
+                                  ? `Captured: ${new Date(editingClient.photo_timestamp).toLocaleDateString()}`
+                                  : 'Photo on file'
+                                }
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-full max-w-md border-2 border-dashed rounded-lg h-64 flex items-center justify-center bg-muted/30">
+                            <div className="text-center text-muted-foreground">
+                              <Camera className="h-16 w-16 mx-auto mb-3 opacity-40" />
+                              <p className="text-sm font-medium">No photo available</p>
+                              <p className="text-xs mt-1">Upload a photo below</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Upload Button */}
+                        <div className="mt-4 w-full max-w-md">
+                          <Button
+                            type="button"
+                            variant={editClientPhoto ? "secondary" : "outline"}
+                            onClick={() => editClientPhotoInputRef.current?.click()}
+                            className="w-full h-12"
+                          >
+                            <Upload className="h-5 w-5 mr-2" />
+                            {editClientPhoto ? 'Choose Different Photo' : 'Upload New Photo'}
+                          </Button>
+                          <input
+                            ref={editClientPhotoInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/jpg"
+                            onChange={handleEditClientPhotoUpload}
+                            className="hidden"
+                          />
+                          <p className="text-xs text-muted-foreground text-center mt-2">
+                            PNG or JPG format • Maximum 5MB
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Warning Note */}
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <div className="flex gap-2">
+                        <span className="text-amber-600 text-lg flex-shrink-0">⚠️</span>
+                        <div className="text-xs text-amber-900">
+                          <p className="font-medium">Note about location:</p>
+                          <p>Photos uploaded from the edit dialog do not capture GPS location. Location data is only recorded during initial client registration at the physical location.</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <Input
-                    placeholder="9XX-XXX-XXXX"
-                    value={editForm.phone}
-                    onChange={(e) => handlePhoneChange(e.target.value, 'edit')}
-                    maxLength={12}
-                  />
+                )}
+
+                {/* Basic Information Section */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold text-primary border-b pb-2">Basic Information</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Trade Name *</Label>
+                      <Input
+                        placeholder="Enter client name"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Shop Name</Label>
+                      <Input
+                        placeholder="Shop name"
+                        value={editForm.company}
+                        onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
+                      />
+                    </div>
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
-              </div>
-              <div className="space-y-2">
-                <Label>
-                  Address
-                  <span className="text-xs text-muted-foreground ml-2">(Read-only)</span>
-                </Label>
-                <Input
-                  placeholder="Business address"
-                  value={editForm.address}
-                  disabled
-                  readOnly
-                  className="bg-muted cursor-not-allowed"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>
-                  City
-                  <span className="text-xs text-muted-foreground ml-2">(Read-only)</span>
-                </Label>
-                <Input
-                  placeholder="City"
-                  value={editForm.city}
-                  disabled
-                  readOnly
-                  className="bg-muted cursor-not-allowed"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Contact Person</Label>
-                <Input
-                  placeholder="Contact person name"
-                  value={editForm.contact_person}
-                  onChange={(e) => setEditForm({ ...editForm, contact_person: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>TIN (Tax Identification Number)</Label>
-                <Input
-                  placeholder="XXX-XXX-XXX-XXX"
-                  value={editForm.tin}
-                  onChange={(e) => setEditForm({ ...editForm, tin: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Type Of Account</Label>
-                <Select
-                  value={editForm.account_type}
-                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                    setEditForm({ ...editForm, account_type: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                    <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <Select
-                  value={editForm.category}
-                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
-                    setEditForm({ ...editForm, category: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Open">Open</SelectItem>
-                    <SelectItem value="Renovating">Renovating</SelectItem>
-                    <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-3">
-                <Label>Has Forge?</Label>
-                <RadioGroup
-                  value={editForm.has_forge ? 'yes' : 'no'}
-                  onValueChange={(value) => setEditForm({ ...editForm, has_forge: value === 'yes' })}
-                  className="flex gap-4"
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="yes" id="edit-has-forge-yes" />
-                    <Label htmlFor="edit-has-forge-yes" className="font-normal cursor-pointer">
-                      Yes
-                    </Label>
+
+                {/* Contact Information Section */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold text-primary border-b pb-2">Contact Information</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Email</Label>
+                      <Input
+                        type="email"
+                        placeholder="client@company.com"
+                        value={editForm.email}
+                        onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Phone Number</Label>
+                      <div className="flex gap-2">
+                        <div className="w-16">
+                          <Input
+                            value="+63"
+                            disabled
+                            className="bg-muted text-center font-semibold"
+                          />
+                        </div>
+                        <Input
+                          placeholder="9XX-XXX-XXXX"
+                          value={editForm.phone}
+                          onChange={(e) => handlePhoneChange(e.target.value, 'edit')}
+                          maxLength={12}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Contact Person</Label>
+                      <Input
+                        placeholder="Contact person name"
+                        value={editForm.contact_person}
+                        onChange={(e) => setEditForm({ ...editForm, contact_person: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>TIN (Tax Identification Number)</Label>
+                      <Input
+                        placeholder="XXX-XXX-XXX-XXX"
+                        value={editForm.tin}
+                        onChange={(e) => setEditForm({ ...editForm, tin: e.target.value })}
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="no" id="edit-has-forge-no" />
-                    <Label htmlFor="edit-has-forge-no" className="font-normal cursor-pointer">
-                      No
-                    </Label>
+                </div>
+
+                {/* Location Information Section */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold text-primary border-b pb-2">
+                    Location Information
+                    <span className="text-xs text-muted-foreground font-normal ml-2">(Read-only)</span>
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>
+                        Address
+                        <Badge variant="secondary" className="ml-2 text-xs">Read-only</Badge>
+                      </Label>
+                      <Input
+                        placeholder="Business address"
+                        value={editForm.address}
+                        disabled
+                        readOnly
+                        className="bg-muted/50 cursor-not-allowed"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        📍 Captured during client registration
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>
+                        City
+                        <Badge variant="secondary" className="ml-2 text-xs">Read-only</Badge>
+                      </Label>
+                      <Input
+                        placeholder="City"
+                        value={editForm.city}
+                        disabled
+                        readOnly
+                        className="bg-muted/50 cursor-not-allowed"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        🌍 Auto-detected from location
+                      </p>
+                    </div>
                   </div>
-                </RadioGroup>
-              </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
-                <p className="font-medium">ℹ️ Note:</p>
-                <p>Address and city are read-only and cannot be edited. They can only be set when a client is first created with location verification. Photos and location data can only be updated by sales agents when they visit clients.</p>
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-                <Button onClick={handleSaveEdit}>Save Changes</Button>
+                </div>
+
+                {/* Business Classification Section */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold text-primary border-b pb-2">Business Classification</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Type Of Account</Label>
+                      <Select
+                        value={editForm.account_type}
+                        onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                          setEditForm({ ...editForm, account_type: value })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                          <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Category</Label>
+                      <Select
+                        value={editForm.category}
+                        onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
+                          setEditForm({ ...editForm, category: value })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Open">Open</SelectItem>
+                          <SelectItem value="Renovating">Renovating</SelectItem>
+                          <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Has Forge?</Label>
+                      <RadioGroup
+                        value={editForm.has_forge ? 'yes' : 'no'}
+                        onValueChange={(value) => setEditForm({ ...editForm, has_forge: value === 'yes' })}
+                        className="flex gap-6 pt-2"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="yes" id="edit-has-forge-yes" />
+                          <Label htmlFor="edit-has-forge-yes" className="font-normal cursor-pointer">
+                            Yes
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="no" id="edit-has-forge-no" />
+                          <Label htmlFor="edit-has-forge-no" className="font-normal cursor-pointer">
+                            No
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </div>
+                  </div>
+                </div>
+
+                {/* COR Upload Section for Admin/Super Admin */}
+                {(isAdmin || isSuperAdmin) && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-semibold text-primary border-b pb-2">
+                      Compliance Documents
+                      <Badge variant="secondary" className="ml-2 text-xs">Admin Only</Badge>
+                    </h3>
+                    
+                    {/* COR Display */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm">COR (Certificate of Registration)</Label>
+                        {!editingClient?.cor_url && !editCorPhoto && (
+                          <Badge variant="destructive" className="text-xs">Missing</Badge>
+                        )}
+                        {editingClient?.cor_url && !editCorPhoto && (
+                          <Badge variant="default" className="text-xs bg-green-600">Available</Badge>
+                        )}
+                        {editCorPhoto && (
+                          <Badge variant="default" className="text-xs bg-blue-600">New Document Ready</Badge>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col items-center">
+                        {/* Document Display */}
+                        {editCorPhoto ? (
+                          <div className="relative w-full max-w-md border-2 border-blue-300 rounded-lg overflow-hidden bg-blue-50">
+                            <img
+                              src={editCorPhoto}
+                              alt="New COR preview"
+                              className="w-full h-64 object-contain bg-white"
+                            />
+                            <div className="absolute top-2 right-2">
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => setEditCorPhoto(null)}
+                              >
+                                <X className="h-4 w-4 mr-1" />
+                                Remove
+                              </Button>
+                            </div>
+                            <div className="absolute bottom-0 left-0 right-0 bg-blue-600/95 p-2">
+                              <p className="text-xs text-white font-medium text-center">
+                                ✓ New COR document ready - will replace current document
+                              </p>
+                            </div>
+                          </div>
+                        ) : editingClient?.cor_url ? (
+                          <div className="w-full max-w-md">
+                            <div className="flex items-center gap-3 p-4 bg-green-50 border-2 border-green-200 rounded-lg">
+                              <div className="flex-shrink-0 w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                                <CheckCircle className="h-6 w-6 text-green-600" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-green-900">COR Document Available</p>
+                                <p className="text-xs text-green-700 mt-0.5">Certificate of Registration is on file</p>
+                              </div>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                onClick={() => window.open(editingClient.cor_url, '_blank')}
+                                className="flex-shrink-0 h-9 bg-white hover:bg-green-100"
+                              >
+                                <Eye className="h-4 w-4 mr-1" />
+                                View
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-full max-w-md border-2 border-dashed rounded-lg h-48 flex items-center justify-center bg-muted/30">
+                            <div className="text-center text-muted-foreground">
+                              <Upload className="h-16 w-16 mx-auto mb-3 opacity-40" />
+                              <p className="text-sm font-medium">No COR document</p>
+                              <p className="text-xs mt-1">Upload certificate below</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Upload Button */}
+                        <div className="mt-4 w-full max-w-md">
+                          <Button
+                            type="button"
+                            variant={editCorPhoto ? "secondary" : "outline"}
+                            onClick={() => editCorFileInputRef.current?.click()}
+                            className="w-full h-12"
+                          >
+                            <Upload className="h-5 w-5 mr-2" />
+                            {editCorPhoto 
+                              ? 'Choose Different Document'
+                              : editingClient?.cor_url 
+                                ? 'Replace COR Document' 
+                                : 'Upload COR Document'
+                            }
+                          </Button>
+                          <input
+                            ref={editCorFileInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/jpg"
+                            onChange={handleEditCorFileUpload}
+                            className="hidden"
+                          />
+                          <p className="text-xs text-muted-foreground text-center mt-2">
+                            PNG or JPG format • Maximum 10MB
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Information Note */}
+                <div className="bg-blue-50/50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex gap-3">
+                    <div className="flex-shrink-0">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                        <span className="text-blue-600 text-lg">ℹ️</span>
+                      </div>
+                    </div>
+                    <div className="text-sm text-blue-900">
+                      <p className="font-medium mb-1">Important Notes:</p>
+                      <ul className="space-y-1 text-xs text-blue-800">
+                        <li>• Address and city cannot be edited (set during registration with GPS)</li>
+                        <li>• Client photos can only be updated by visiting the client location</li>
+                        {(isAdmin || isSuperAdmin) && (
+                          <li>• As an admin, you can upload or replace compliance documents</li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
+
+          {/* Fixed Footer with Actions */}
+          <div className="flex-shrink-0 border-t pt-4 mt-2 flex justify-between items-center gap-3">
+            <div className="text-xs text-muted-foreground">
+              Last updated: {editingClient && new Date(editingClient.updated_at).toLocaleString()}
+            </div>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setEditDialogOpen(false);
+                  setEditCorPhoto(null);
+                  setEditClientPhoto(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleSaveEdit}>
+                Save Changes
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
