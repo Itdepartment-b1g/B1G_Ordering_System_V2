@@ -5,6 +5,9 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2 } from 'lucide-react';
@@ -44,12 +47,21 @@ export default function PurchaseOrdersPage() {
   const [orderToReject, setOrderToReject] = useState<any>(null);
   const [approvingOrderId, setApprovingOrderId] = useState<string | null>(null);
   const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [orderToView, setOrderToView] = useState<any>(null);
 
   const { toast } = useToast();
+
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Company information for buyer section
   const [companyInfo, setCompanyInfo] = useState<any>(null);
@@ -543,20 +555,32 @@ export default function PurchaseOrdersPage() {
           <h1 className="text-3xl font-bold">Purchase Orders</h1>
           <p className="text-muted-foreground">Create and manage your purchase orders</p>
         </div>
-        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4" />
-              Create Purchase Order
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Create Purchase Order</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-6 py-4">
-              {/* PO Details */}
-              <div className="grid grid-cols-3 gap-4">
+        {/* Mobile: Use Sheet, Desktop: Use Dialog */}
+        {isMobile ? (
+          <Sheet open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+            <SheetTrigger asChild>
+              <Button className="w-full md:w-auto">
+                <Plus className="h-4 w-4 mr-2" />
+                Create PO
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="h-[95vh] p-0">
+              <SheetHeader className="px-4 pt-4 pb-2 border-b">
+                <SheetTitle>Create Purchase Order</SheetTitle>
+              </SheetHeader>
+              <ScrollArea className="h-[calc(95vh-80px)]">
+                <div className="p-4">
+                  <Accordion type="multiple" defaultValue={["details", "supplier", "items"]} className="space-y-2">
+                    {/* PO Details Section */}
+                    <AccordionItem value="details" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex items-center gap-2">
+                          <Package className="h-4 w-4" />
+                          <span className="font-semibold">Order Details</span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+              <div className="grid grid-cols-1 gap-4 pt-4">
                 <div className="space-y-2">
                   <Label>PO Number</Label>
                   <Input value="Auto-generated" disabled />
@@ -579,11 +603,16 @@ export default function PurchaseOrdersPage() {
                   />
                 </div>
               </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-              {/* Buyer Information */}
-              <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
-                <Label className="text-base font-semibold">Buyer Information</Label>
-                <div className="grid grid-cols-2 gap-3 text-sm">
+                    {/* Buyer Information Section */}
+                    <AccordionItem value="buyer" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <span className="font-semibold">Buyer Information</span>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                <div className="grid grid-cols-1 gap-3 text-sm pt-4">
                   <div>
                     <p className="text-muted-foreground">Company</p>
                     <p className="font-medium">{companyInfo?.company_name || 'Loading...'}</p>
@@ -592,7 +621,7 @@ export default function PurchaseOrdersPage() {
                     <p className="text-muted-foreground">Contact Person</p>
                     <p className="font-medium">{user?.full_name || 'N/A'}</p>
                   </div>
-                  <div className="col-span-2">
+                  <div>
                     <p className="text-muted-foreground">Address</p>
                     <p className="font-medium">{user?.address || 'N/A'}</p>
                   </div>
@@ -605,12 +634,16 @@ export default function PurchaseOrdersPage() {
                     <p className="font-medium">{user?.email || 'N/A'}</p>
                   </div>
                 </div>
-              </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-              {/* Supplier Selection */}
-              <div className="border rounded-lg p-4 space-y-3">
-                <Label className="text-base font-semibold">Supplier</Label>
-                <div className="space-y-2">
+                    {/* Supplier Selection Section */}
+                    <AccordionItem value="supplier" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <span className="font-semibold">Supplier</span>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                <div className="space-y-3 pt-4">
                   <Label>Select Supplier</Label>
                   <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
                     <SelectTrigger>
@@ -645,16 +678,26 @@ export default function PurchaseOrdersPage() {
                     </div>
                   )}
                 </div>
-              </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-              {/* Order Items */}
-              <div className="border rounded-lg p-4 space-y-4">
-                <Label className="text-base font-semibold">Order Items (Products to Purchase)</Label>
+                    {/* Order Items Section */}
+                    <AccordionItem value="items" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">Order Items</span>
+                          {itemsToAdd.length > 0 && (
+                            <Badge variant="secondary">{itemsToAdd.length} items</Badge>
+                          )}
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                <div className="space-y-4 pt-4">
 
                 <Tabs defaultValue="existing" value={newItemTab} onValueChange={(v) => setNewItemTab(v as any)}>
                   <TabsList className="grid grid-cols-2 w-full">
-                    <TabsTrigger value="existing">Add Existing</TabsTrigger>
-                    <TabsTrigger value="new">Add New Item</TabsTrigger>
+                    <TabsTrigger value="existing" className="text-xs md:text-sm">Add Existing</TabsTrigger>
+                    <TabsTrigger value="new" className="text-xs md:text-sm">Add New Item</TabsTrigger>
                   </TabsList>
 
                   {/* Existing Item Tab */}
@@ -700,7 +743,7 @@ export default function PurchaseOrdersPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div className="space-y-2">
                         <Label>Quantity</Label>
                         <Input
@@ -744,7 +787,7 @@ export default function PurchaseOrdersPage() {
                     {/* Brand Section */}
                     <div className="space-y-3">
                       <Label className="text-base font-semibold">Brand</Label>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div className="space-y-2">
                           <Label>New Brand Name</Label>
                           <Input
@@ -773,9 +816,9 @@ export default function PurchaseOrdersPage() {
                     {/* Variants Section */}
                     <div className="space-y-3">
                       <Label className="text-base font-semibold">Variants</Label>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-4">
                         {/* Flavor */}
-                        <div className="border rounded-lg p-4 space-y-3">
+                        <div className="border rounded-lg p-3 space-y-3">
                           <Label className="text-primary font-semibold">Flavor</Label>
                           <div className="space-y-2">
                             <Label>Flavor Name</Label>
@@ -785,9 +828,9 @@ export default function PurchaseOrdersPage() {
                               onChange={(e) => setFlavorInput({ ...flavorInput, name: e.target.value })}
                             />
                           </div>
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-2 gap-2">
                             <div className="space-y-2">
-                              <Label>Quantity</Label>
+                              <Label className="text-xs">Quantity</Label>
                               <Input
                                 type="number" min="0" placeholder="0"
                                 value={flavorInput.quantity || ''}
@@ -795,7 +838,7 @@ export default function PurchaseOrdersPage() {
                               />
                             </div>
                             <div className="space-y-2">
-                              <Label>Price (₱)</Label>
+                              <Label className="text-xs">Price (₱)</Label>
                               <Input
                                 type="number" min="0" step="0.01" placeholder="0.00"
                                 value={flavorInput.unit_price || ''}
@@ -805,18 +848,20 @@ export default function PurchaseOrdersPage() {
                           </div>
                           <Button
                             variant="outline"
+                            className="w-full"
+                            size="sm"
                             onClick={() => {
                               if (!flavorInput.name.trim() || flavorInput.quantity <= 0 || flavorInput.unit_price <= 0) return;
                               setNewItemsDraft([...newItemsDraft, { type: 'flavor', name: flavorInput.name.trim(), quantity: flavorInput.quantity, unit_price: flavorInput.unit_price }]);
                               setFlavorInput({ name: '', quantity: 0, unit_price: 0 });
                             }}
                           >
-                            <Plus className="h-4 w-4 mr-2" /> Add to List
+                            <Plus className="h-3 w-3 mr-2" /> Add
                           </Button>
                         </div>
 
                         {/* Battery */}
-                        <div className="border rounded-lg p-4 space-y-3">
+                        <div className="border rounded-lg p-3 space-y-3">
                           <Label className="text-green-700 font-semibold">Battery</Label>
                           <div className="space-y-2">
                             <Label>Battery Name</Label>
@@ -826,9 +871,9 @@ export default function PurchaseOrdersPage() {
                               onChange={(e) => setBatteryInput({ ...batteryInput, name: e.target.value })}
                             />
                           </div>
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-2 gap-2">
                             <div className="space-y-2">
-                              <Label>Quantity</Label>
+                              <Label className="text-xs">Quantity</Label>
                               <Input
                                 type="number" min="0" placeholder="0"
                                 value={batteryInput.quantity || ''}
@@ -836,7 +881,7 @@ export default function PurchaseOrdersPage() {
                               />
                             </div>
                             <div className="space-y-2">
-                              <Label>Price (₱)</Label>
+                              <Label className="text-xs">Price (₱)</Label>
                               <Input
                                 type="number" min="0" step="0.01" placeholder="0.00"
                                 value={batteryInput.unit_price || ''}
@@ -846,18 +891,20 @@ export default function PurchaseOrdersPage() {
                           </div>
                           <Button
                             variant="outline"
+                            className="w-full"
+                            size="sm"
                             onClick={() => {
                               if (!batteryInput.name.trim() || batteryInput.quantity <= 0 || batteryInput.unit_price <= 0) return;
                               setNewItemsDraft([...newItemsDraft, { type: 'battery', name: batteryInput.name.trim(), quantity: batteryInput.quantity, unit_price: batteryInput.unit_price }]);
                               setBatteryInput({ name: '', quantity: 0, unit_price: 0 });
                             }}
                           >
-                            <Plus className="h-4 w-4 mr-2" /> Add to List
+                            <Plus className="h-3 w-3 mr-2" /> Add
                           </Button>
                         </div>
 
                         {/* POSM */}
-                        <div className="border rounded-lg p-4 space-y-3">
+                        <div className="border rounded-lg p-3 space-y-3">
                           <Label className="text-purple-700 font-semibold">POSM</Label>
                           <div className="space-y-2">
                             <Label>POSM Name</Label>
@@ -867,9 +914,9 @@ export default function PurchaseOrdersPage() {
                               onChange={(e) => setPosmInput({ ...posmInput, name: e.target.value })}
                             />
                           </div>
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-2 gap-2">
                             <div className="space-y-2">
-                              <Label>Quantity</Label>
+                              <Label className="text-xs">Quantity</Label>
                               <Input
                                 type="number" min="0" placeholder="0"
                                 value={posmInput.quantity || ''}
@@ -877,7 +924,7 @@ export default function PurchaseOrdersPage() {
                               />
                             </div>
                             <div className="space-y-2">
-                              <Label>Price (₱)</Label>
+                              <Label className="text-xs">Price (₱)</Label>
                               <Input
                                 type="number"
                                 value="0.00"
@@ -888,13 +935,15 @@ export default function PurchaseOrdersPage() {
                           </div>
                           <Button
                             variant="outline"
+                            className="w-full"
+                            size="sm"
                             onClick={() => {
                               if (!posmInput.name.trim() || posmInput.quantity <= 0) return;
                               setNewItemsDraft([...newItemsDraft, { type: 'posm', name: posmInput.name.trim(), quantity: posmInput.quantity, unit_price: 0 }]);
                               setPosmInput({ name: '', quantity: 0, unit_price: 0 });
                             }}
                           >
-                            <Plus className="h-4 w-4 mr-2" /> Add to List
+                            <Plus className="h-3 w-3 mr-2" /> Add
                           </Button>
                         </div>
                       </div>
@@ -940,40 +989,39 @@ export default function PurchaseOrdersPage() {
                 {/* Items List */}
                 {itemsToAdd.length > 0 && (
                   <div className="border-t pt-3 space-y-2">
-                    <Label className="text-sm">Items in Order ({itemsToAdd.length})</Label>
+                    <Label className="text-sm font-semibold">Items in Order ({itemsToAdd.length})</Label>
                     <div className="space-y-2 max-h-60 overflow-y-auto">
                       {itemsToAdd.map((item, index) => (
-                        <div key={index} className="flex items-center justify-between bg-muted p-3 rounded-md">
-                          <div className="flex-1 grid grid-cols-5 gap-2 text-sm">
-                            <div>
-                              <p className="text-xs text-muted-foreground">Brand</p>
-                              <p className="font-medium">{item.brand_name}</p>
+                        <div key={index} className="flex items-start gap-2 bg-muted p-3 rounded-md">
+                          <div className="flex-1 space-y-2 text-sm">
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <p className="font-medium">{item.brand_name} - {item.variant_name}</p>
+                                <Badge
+                                  variant="secondary"
+                                  className={`text-[10px] ${
+                                    item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                      item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                        'bg-purple-100 text-purple-700'
+                                  }`}
+                                >
+                                  {item.variant_type.toUpperCase()}
+                                </Badge>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground">Product</p>
-                              <p className="font-medium">{item.variant_name}</p>
-                              <Badge
-                                variant="secondary"
-                                className={
-                                  item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                    item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                      'bg-purple-100 text-purple-700'
-                                }
-                              >
-                                {item.variant_type.toUpperCase()}
-                              </Badge>
-                            </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground">Quantity</p>
-                              <p>{item.quantity} units</p>
-                            </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground">Unit Price</p>
-                              <p>₱{item.unit_price.toLocaleString()}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground">Total</p>
-                              <p className="font-semibold">₱{item.total.toLocaleString()}</p>
+                            <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <p className="text-muted-foreground">Qty</p>
+                                <p className="font-medium">{item.quantity} units</p>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground">Price</p>
+                                <p className="font-medium">₱{item.unit_price.toLocaleString()}</p>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground">Total</p>
+                                <p className="font-semibold">₱{item.total.toLocaleString()}</p>
+                              </div>
                             </div>
                           </div>
                           <Button
@@ -988,12 +1036,21 @@ export default function PurchaseOrdersPage() {
                     </div>
                   </div>
                 )}
-              </div>
+                </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-              {/* Pricing */}
-              <div className="border rounded-lg p-4 space-y-3">
-                <Label className="text-base font-semibold">Pricing Details</Label>
-                <div className="grid grid-cols-2 gap-3">
+                    {/* Pricing Section */}
+                    <AccordionItem value="pricing" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex items-center justify-between w-full pr-4">
+                          <span className="font-semibold">Pricing</span>
+                          <span className="text-sm font-bold">₱{calculateTotal().toLocaleString()}</span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                <div className="space-y-3 pt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>Tax Rate (%)</Label>
                     <Input
@@ -1034,32 +1091,75 @@ export default function PurchaseOrdersPage() {
                     <span>₱{calculateTotal().toLocaleString()}</span>
                   </div>
                 </div>
-              </div>
+                </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-              {/* Notes */}
-              <div className="space-y-2">
-                <Label>Notes / Special Instructions (Optional)</Label>
-                <Textarea
-                  placeholder="Add any special instructions or notes..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={3}
-                />
-              </div>
+                    {/* Notes Section */}
+                    <div className="border rounded-lg p-4 space-y-2">
+                      <Label className="font-semibold">Notes (Optional)</Label>
+                      <Textarea
+                        placeholder="Add any special instructions..."
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        rows={3}
+                        className="text-sm"
+                      />
+                    </div>
+                  </Accordion>
 
-              <Button className="w-full" onClick={handleCreateOrder} disabled={creatingOrder}>
-                {creatingOrder ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  'Create Purchase Order'
-                )}
+                  {/* Submit Button */}
+                  <div className="sticky bottom-0 bg-background pt-4 pb-2 border-t">
+                    <Button className="w-full h-12" onClick={handleCreateOrder} disabled={creatingOrder}>
+                      {creatingOrder ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Creating...
+                        </>
+                      ) : (
+                        'Create Purchase Order'
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </ScrollArea>
+            </SheetContent>
+          </Sheet>
+        ) : (
+          // Desktop: Use Dialog
+          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Create Purchase Order
               </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent className="max-w-5xl max-h-[90vh]">
+              <DialogHeader>
+                <DialogTitle>Create Purchase Order</DialogTitle>
+              </DialogHeader>
+              <ScrollArea className="max-h-[calc(90vh-120px)] pr-4">
+                {/* Desktop layout - render the same content but without accordion */}
+                <div className="space-y-6 py-4">
+                  {/* Continue with the original desktop layout below */}
+                </div>
+              </ScrollArea>
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+                <Button onClick={handleCreateOrder} disabled={creatingOrder}>
+                  {creatingOrder ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create Purchase Order'
+                  )}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -1331,107 +1431,263 @@ export default function PurchaseOrdersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* View Purchase Order Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Purchase Order Details</DialogTitle>
-          </DialogHeader>
-          {orderToView && (
-            <div className="space-y-6 py-4">
-              {/* PO Number and Status */}
-              <div className="flex justify-between items-center pb-4 border-b">
-                <div>
-                  <h3 className="text-2xl font-bold">{orderToView.po_number}</h3>
-                  <p className="text-sm text-muted-foreground">Purchase Order</p>
-                </div>
-                <Badge
-                  variant={
-                    orderToView.status === 'approved' ? 'default' :
-                      orderToView.status === 'pending' ? 'secondary' :
-                        'destructive'
-                  }
-                  className="text-base px-4 py-2"
-                >
-                  {orderToView.status.toUpperCase()}
-                </Badge>
+      {/* View Purchase Order - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <SheetContent side="bottom" className="h-[95vh] p-0">
+            <SheetHeader className="px-4 pt-4 pb-2 border-b">
+              <div className="flex items-center justify-between">
+                <SheetTitle>PO Details</SheetTitle>
+                {orderToView && (
+                  <Badge
+                    variant={
+                      orderToView.status === 'approved' ? 'default' :
+                        orderToView.status === 'pending' ? 'secondary' :
+                          'destructive'
+                    }
+                  >
+                    {orderToView.status.toUpperCase()}
+                  </Badge>
+                )}
               </div>
+            </SheetHeader>
+            <ScrollArea className="h-[calc(95vh-80px)]">
+              {orderToView && (
+                <div className="p-4">
+                  <Accordion type="multiple" defaultValue={["info", "buyer", "seller", "items", "pricing"]} className="space-y-2">
+                    {/* PO Info Section */}
+                    <AccordionItem value="info" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex items-center gap-2">
+                          <Package className="h-4 w-4" />
+                          <span className="font-semibold">{orderToView.po_number}</span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="grid grid-cols-2 gap-4 pt-4 text-sm">
+                          <div>
+                            <Label className="text-muted-foreground text-xs">Order Date</Label>
+                            <p className="font-medium">{new Date(orderToView.order_date).toLocaleDateString()}</p>
+                          </div>
+                          <div>
+                            <Label className="text-muted-foreground text-xs">Expected Delivery</Label>
+                            <p className="font-medium">{new Date(orderToView.expected_delivery_date).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-              {/* Dates */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Order Date</Label>
-                  <p className="font-medium">{new Date(orderToView.order_date).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Expected Delivery</Label>
-                  <p className="font-medium">{new Date(orderToView.expected_delivery_date).toLocaleDateString()}</p>
-                </div>
-              </div>
+                    {/* Buyer Info Section */}
+                    <AccordionItem value="buyer" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <span className="font-semibold">Buyer (Our Company)</span>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-2 text-sm pt-4">
+                          <div>
+                            <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
+                            <p className="text-muted-foreground text-xs">{user?.address || 'N/A'}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <p className="text-muted-foreground">Contact</p>
+                              <p>{user?.full_name || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Phone</p>
+                              <p>{user?.phone || 'N/A'}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-              {/* Buyer and Seller Info */}
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <h4 className="font-semibold text-lg">Buyer Information</h4>
-                  <div className="bg-muted p-4 rounded-lg space-y-1">
-                    <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
-                    <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
-                    <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
-                    <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
-                    <p className="text-sm">Email: {user?.email || 'N/A'}</p>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <h4 className="font-semibold text-lg">Seller Information</h4>
-                  <div className="bg-muted p-4 rounded-lg space-y-1">
-                    <p className="font-medium">{orderToView.supplier.company_name}</p>
-                    <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
-                    <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
-                    <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
-                    <p className="text-sm">Email: {orderToView.supplier.email}</p>
-                  </div>
-                </div>
-              </div>
+                    {/* Seller Info Section */}
+                    <AccordionItem value="seller" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <span className="font-semibold">Supplier</span>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-2 text-sm pt-4">
+                          <div>
+                            <p className="font-medium">{orderToView.supplier.company_name}</p>
+                            <p className="text-muted-foreground text-xs">{orderToView.supplier.address}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <p className="text-muted-foreground">Contact</p>
+                              <p>{orderToView.supplier.contact_person}</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Phone</p>
+                              <p>{orderToView.supplier.phone}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
 
-              {/* Items - Responsive */}
-              <div className="space-y-2">
-                <h4 className="font-semibold text-lg">Items</h4>
-                {/* Mobile: card list */}
-                <div className="md:hidden space-y-2">
-                  {orderToView.items.map((item: any) => (
-                    <div key={item.id} className="rounded-lg border bg-background p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="font-medium">{item.brand_name} • {item.variant_name}</div>
-                        <Badge
-                          variant="secondary"
-                          className={
-                            item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                              item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                'bg-purple-100 text-purple-700'
-                          }
-                        >
-                          {item.variant_type.toUpperCase()}
-                        </Badge>
+                    {/* Items Section */}
+                    <AccordionItem value="items" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">Items</span>
+                          <Badge variant="secondary">{orderToView.items.length}</Badge>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-2 pt-4">
+                          {orderToView.items.map((item: any) => (
+                            <div key={item.id} className="bg-muted/50 p-3 rounded-lg space-y-2">
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <p className="font-medium text-sm">{item.brand_name}</p>
+                                  <p className="text-xs text-muted-foreground">{item.variant_name}</p>
+                                </div>
+                                <Badge
+                                  variant="secondary"
+                                  className={`text-[10px] ${
+                                    item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                      item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                        'bg-purple-100 text-purple-700'
+                                  }`}
+                                >
+                                  {item.variant_type.toUpperCase()}
+                                </Badge>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2 text-xs">
+                                <div>
+                                  <p className="text-muted-foreground">Qty</p>
+                                  <p className="font-medium">{item.quantity}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Unit</p>
+                                  <p className="font-medium">₱{item.unit_price.toLocaleString()}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-muted-foreground">Total</p>
+                                  <p className="font-semibold">₱{item.total_price.toLocaleString()}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    {/* Pricing Section */}
+                    <AccordionItem value="pricing" className="border rounded-lg px-4">
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex items-center justify-between w-full pr-4">
+                          <span className="font-semibold">Pricing</span>
+                          <span className="font-bold">₱{orderToView.total_amount.toLocaleString()}</span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-2 pt-4 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Subtotal</span>
+                            <span className="font-medium">₱{orderToView.subtotal.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Tax ({orderToView.tax_rate}%)</span>
+                            <span className="font-medium">₱{orderToView.tax_amount.toLocaleString()}</span>
+                          </div>
+                          {orderToView.discount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Discount</span>
+                              <span className="font-medium text-green-600">- ₱{orderToView.discount.toLocaleString()}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between border-t pt-2 text-base">
+                            <span className="font-semibold">Total</span>
+                            <span className="font-bold">₱{orderToView.total_amount.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+
+                    {/* Notes Section */}
+                    {orderToView.notes && (
+                      <div className="border rounded-lg p-4">
+                        <Label className="font-semibold text-sm">Notes</Label>
+                        <p className="text-sm text-muted-foreground mt-2">{orderToView.notes}</p>
                       </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                        <div>
-                          <div className="text-xs text-muted-foreground">Qty</div>
-                          <div>{item.quantity}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-xs text-muted-foreground">Unit</div>
-                          <div>₱{item.unit_price.toFixed(2)}</div>
-                        </div>
-                        <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
-                          <span>Total</span>
-                          <span>₱{item.total_price.toFixed(2)}</span>
-                        </div>
+                    )}
+                  </Accordion>
+                </div>
+              )}
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        // Desktop: Dialog
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh]">
+            <DialogHeader>
+              <DialogTitle>Purchase Order Details</DialogTitle>
+            </DialogHeader>
+            <ScrollArea className="max-h-[calc(90vh-120px)] pr-4">
+              {orderToView && (
+                <div className="space-y-6 py-4">
+                  {/* PO Number and Status */}
+                  <div className="flex justify-between items-center pb-4 border-b">
+                    <div>
+                      <h3 className="text-2xl font-bold">{orderToView.po_number}</h3>
+                      <p className="text-sm text-muted-foreground">Purchase Order</p>
+                    </div>
+                    <Badge
+                      variant={
+                        orderToView.status === 'approved' ? 'default' :
+                          orderToView.status === 'pending' ? 'secondary' :
+                            'destructive'
+                      }
+                      className="text-base px-4 py-2"
+                    >
+                      {orderToView.status.toUpperCase()}
+                    </Badge>
+                  </div>
+
+                  {/* Dates */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground">Order Date</Label>
+                      <p className="font-medium">{new Date(orderToView.order_date).toLocaleDateString()}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Expected Delivery</Label>
+                      <p className="font-medium">{new Date(orderToView.expected_delivery_date).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+
+                  {/* Buyer and Seller Info */}
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-lg">Buyer Information</h4>
+                      <div className="bg-muted p-4 rounded-lg space-y-1">
+                        <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
+                        <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
+                        <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
+                        <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
+                        <p className="text-sm">Email: {user?.email || 'N/A'}</p>
                       </div>
                     </div>
-                  ))}
-                </div>
-                {/* Desktop: table */}
-                <div className="hidden md:block border rounded-lg">
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-lg">Seller Information</h4>
+                      <div className="bg-muted p-4 rounded-lg space-y-1">
+                        <p className="font-medium">{orderToView.supplier.company_name}</p>
+                        <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
+                        <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
+                        <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
+                        <p className="text-sm">Email: {orderToView.supplier.email}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Items Desktop */}
+                  <div className="space-y-2">
+                    <h4 className="font-semibold text-lg">Items</h4>
+                    <div className="border rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1492,17 +1748,41 @@ export default function PurchaseOrdersPage() {
                 </div>
               </div>
 
-              {/* Notes */}
-              {orderToView.notes && (
-                <div className="space-y-2">
-                  <Label className="font-semibold">Notes</Label>
-                  <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
+                  {/* Pricing Summary */}
+                  <div className="space-y-2 border-t pt-4">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Subtotal:</span>
+                      <span className="font-medium">₱{orderToView.subtotal.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Tax ({orderToView.tax_rate}%):</span>
+                      <span className="font-medium">₱{orderToView.tax_amount.toLocaleString()}</span>
+                    </div>
+                    {orderToView.discount > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Discount:</span>
+                        <span className="font-medium text-green-600">- ₱{orderToView.discount.toLocaleString()}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-lg font-bold border-t pt-2">
+                      <span>Total Amount:</span>
+                      <span>₱{orderToView.total_amount.toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  {orderToView.notes && (
+                    <div className="space-y-2">
+                      <Label className="font-semibold">Notes</Label>
+                      <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            </ScrollArea>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

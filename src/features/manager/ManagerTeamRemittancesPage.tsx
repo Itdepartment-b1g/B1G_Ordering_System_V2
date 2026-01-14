@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -64,6 +66,18 @@ export default function ManagerTeamRemittancesPage() {
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [remittanceOrders, setRemittanceOrders] = useState<any[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
+    const [isMobile, setIsMobile] = useState(false);
+    const [signatureError, setSignatureError] = useState(false);
+    const [signedSignatureUrl, setSignedSignatureUrl] = useState<string | null>(null);
+    const [loadingSignature, setLoadingSignature] = useState(false);
+
+    // Detect mobile
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
 
     // Stats
     const [stats, setStats] = useState({
@@ -291,14 +305,56 @@ export default function ManagerTeamRemittancesPage() {
         }
     };
 
+    const fetchSignedSignatureUrl = async (remittanceId: string) => {
+        setLoadingSignature(true);
+        try {
+            const { data, error } = await supabase.rpc('get_remittance_signature_url', {
+                remittance_id: remittanceId
+            });
+
+            if (error) throw error;
+
+            if (data) {
+                setSignedSignatureUrl(data);
+                setSignatureError(false);
+            } else {
+                setSignedSignatureUrl(null);
+                setSignatureError(true);
+            }
+        } catch (error: any) {
+            console.error('Error fetching signed signature URL:', error);
+            toast({
+                title: 'Error',
+                description: 'Failed to load signature',
+                variant: 'destructive'
+            });
+            setSignatureError(true);
+            setSignedSignatureUrl(null);
+        } finally {
+            setLoadingSignature(false);
+        }
+    };
+
     const handleViewDetails = async (remittance: RemittanceLog) => {
         setSelectedRemittance(remittance);
         setViewDialogOpen(true);
+        setSignatureError(false);
+        setSignedSignatureUrl(null);
 
+        // Fetch orders
         if (remittance.order_ids && remittance.order_ids.length > 0) {
             await fetchOrderDetails(remittance.order_ids);
         } else {
             setRemittanceOrders([]);
+        }
+
+        // Use direct signature URL if bucket is public, otherwise fetch signed URL
+        if (remittance.signature_url) {
+            // Bucket is public, use direct URL
+            setSignedSignatureUrl(remittance.signature_url);
+        } else if (remittance.signature_path) {
+            // Bucket is private, fetch signed URL
+            await fetchSignedSignatureUrl(remittance.id);
         }
     };
 
@@ -327,34 +383,34 @@ export default function ManagerTeamRemittancesPage() {
     }
 
     return (
-        <div className="container mx-auto p-6 space-y-8">
+        <div className="container mx-auto p-4 md:p-6 space-y-4 md:space-y-8">
             {/* Header */}
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Team Remittances</h1>
-                    <p className="text-muted-foreground mt-1">
-                        Track inventory returns and cash collections across your team
+                    <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Team Remittances</h1>
+                    <p className="text-sm md:text-base text-muted-foreground mt-1">
+                        Track cash collections across your team
                     </p>
                 </div>
 
-                <div className="flex items-center gap-2 w-full md:w-auto">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
                     {/* Search */}
-                    <div className="relative w-full md:w-[300px]">
-                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <div className="relative w-full sm:w-[250px] md:w-[300px]">
+                        <Search className="absolute left-2.5 top-2.5 h-3 w-3 md:h-4 md:w-4 text-muted-foreground" />
                         <Input
-                            placeholder="Search agent, leader, or ID..."
-                            className="pl-8 bg-background"
+                            placeholder="Search agent..."
+                            className="pl-8 bg-background h-9 md:h-10 text-sm"
                             value={searchQuery}
-                            onChange={(e) => { setSearchQuery(e.target.value); fetchTeamRemittances(); }} // Trigger re-render/filter logic
+                            onChange={(e) => { setSearchQuery(e.target.value); fetchTeamRemittances(); }}
                         />
                     </div>
 
                     {/* Date Filter */}
                     <Popover>
                         <PopoverTrigger asChild>
-                            <Button variant="outline" className="w-[180px] justify-start text-left font-normal border-dashed">
-                                <CalendarIcon className="mr-2 h-4 w-4" />
-                                {selectedDate ? format(selectedDate, 'PPP') : <span>Filter by date</span>}
+                            <Button variant="outline" className="w-full sm:w-[160px] md:w-[180px] h-9 md:h-10 justify-start text-left font-normal border-dashed text-xs md:text-sm">
+                                <CalendarIcon className="mr-1 md:mr-2 h-3 w-3 md:h-4 md:w-4" />
+                                {selectedDate ? format(selectedDate, 'MMM dd') : <span>Filter date</span>}
                             </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0" align="end">
@@ -381,44 +437,42 @@ export default function ManagerTeamRemittancesPage() {
             </div>
 
             {/* Stats Overview */}
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-3 md:gap-4 grid-cols-2 md:grid-cols-3">
                 <Card className="bg-gradient-to-br from-white to-gray-50 border-l-4 border-l-primary shadow-sm">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">Total Remittances</CardTitle>
-                        <FileSignature className="h-4 w-4 text-primary opacity-70" />
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+                        <CardTitle className="text-[10px] md:text-sm font-medium text-muted-foreground">Remittances</CardTitle>
+                        <FileSignature className="h-3 w-3 md:h-4 md:w-4 text-primary opacity-70" />
                     </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{stats.totalRemittances}</div>
-                        <p className="text-xs text-muted-foreground">
-                            Processed records
+                    <CardContent className="p-3 md:p-6 pt-0">
+                        <div className="text-lg md:text-2xl font-bold">{stats.totalRemittances}</div>
+                        <p className="text-[10px] md:text-xs text-muted-foreground">
+                            Records
                         </p>
                     </CardContent>
                 </Card>
-
-
 
                 <Card className="bg-gradient-to-br from-white to-gray-50 border-l-4 border-l-gray-400 shadow-sm">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-muted-foreground">Items (SKUs)</CardTitle>
-                        <Package className="h-4 w-4 text-muted-foreground opacity-70" />
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+                        <CardTitle className="text-[10px] md:text-sm font-medium text-muted-foreground">Items</CardTitle>
+                        <Package className="h-3 w-3 md:h-4 md:w-4 text-muted-foreground opacity-70" />
                     </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{stats.totalItems}</div>
-                        <p className="text-xs text-muted-foreground">
-                            Unique variants
+                    <CardContent className="p-3 md:p-6 pt-0">
+                        <div className="text-lg md:text-2xl font-bold">{stats.totalItems}</div>
+                        <p className="text-[10px] md:text-xs text-muted-foreground">
+                            Variants
                         </p>
                     </CardContent>
                 </Card>
 
-                <Card className="bg-gradient-to-br from-emerald-50 to-white border-l-4 border-l-emerald-500 shadow-sm">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-emerald-700">Total Revenue</CardTitle>
-                        <ShoppingCart className="h-4 w-4 text-emerald-600 opacity-70" />
+                <Card className="bg-gradient-to-br from-emerald-50 to-white border-l-4 border-l-emerald-500 shadow-sm col-span-2 md:col-span-1">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+                        <CardTitle className="text-[10px] md:text-sm font-medium text-emerald-700">Revenue</CardTitle>
+                        <ShoppingCart className="h-3 w-3 md:h-4 md:w-4 text-emerald-600 opacity-70" />
                     </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-emerald-700">₱{stats.totalRevenue.toLocaleString()}</div>
-                        <p className="text-xs text-emerald-600">
-                            Cash collected
+                    <CardContent className="p-3 md:p-6 pt-0">
+                        <div className="text-lg md:text-2xl font-bold text-emerald-700">₱{stats.totalRevenue.toLocaleString()}</div>
+                        <p className="text-[10px] md:text-xs text-emerald-600">
+                            Collected
                         </p>
                     </CardContent>
                 </Card>
@@ -447,39 +501,81 @@ export default function ManagerTeamRemittancesPage() {
                     </CardContent>
                 </Card>
             ) : (
-                <div className="space-y-6">
+                <div className="space-y-4 md:space-y-6">
                     {groupedData.map((group) => (
                         <Card key={group.leaderId} className="overflow-hidden border shadow-sm">
-                            <CardHeader className={`py-4 px-6 ${group.isDirect ? 'bg-primary/5' : 'bg-muted/30'} border-b flex flex-row items-center justify-between`}>
-                                <div className="flex items-center gap-3">
+                            <CardHeader className={`py-3 md:py-4 px-3 md:px-6 ${group.isDirect ? 'bg-primary/5' : 'bg-muted/30'} border-b flex flex-row items-center justify-between`}>
+                                <div className="flex items-center gap-2 md:gap-3">
                                     {group.isDirect ? (
-                                        <div className="p-2 bg-primary/10 rounded-full">
-                                            <Users className="h-5 w-5 text-primary" />
+                                        <div className="p-1.5 md:p-2 bg-primary/10 rounded-full">
+                                            <Users className="h-4 w-4 md:h-5 md:w-5 text-primary" />
                                         </div>
                                     ) : (
-                                        <div className="p-2 bg-amber-100 rounded-full">
-                                            <Crown className="h-5 w-5 text-amber-700" />
+                                        <div className="p-1.5 md:p-2 bg-amber-100 rounded-full">
+                                            <Crown className="h-4 w-4 md:h-5 md:w-5 text-amber-700" />
                                         </div>
                                     )}
                                     <div>
-                                        <CardTitle className="text-base font-bold">
+                                        <CardTitle className="text-sm md:text-base font-bold">
                                             {group.leaderName}
                                         </CardTitle>
-                                        <CardDescription>
-                                            {group.isDirect ? 'Your Direct Reports' : 'Sub-Team Leader'}
+                                        <CardDescription className="text-[10px] md:text-sm">
+                                            {group.isDirect ? 'Direct Reports' : 'Sub-Team'}
                                         </CardDescription>
                                     </div>
                                 </div>
-                                <div className="flex gap-4 text-sm">
-                                    <div className="flex flex-col items-end">
-                                        <span className="text-muted-foreground text-xs uppercase tracking-wider">Revenue</span>
-                                        <span className="font-bold text-emerald-600">₱{group.totalRevenue.toLocaleString()}</span>
-                                    </div>
-
+                                <div className="flex flex-col items-end">
+                                    <span className="text-muted-foreground text-[9px] md:text-xs uppercase tracking-wider">Revenue</span>
+                                    <span className="font-bold text-emerald-600 text-xs md:text-sm">₱{group.totalRevenue.toLocaleString()}</span>
                                 </div>
                             </CardHeader>
                             <CardContent className="p-0">
-                                <Table>
+                                {/* Mobile Card View */}
+                                <div className="md:hidden space-y-2 p-3">
+                                    {group.remittances.map((remittance) => (
+                                        <div key={remittance.id} className="border rounded-lg p-3 space-y-2">
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex items-center gap-2">
+                                                    <Avatar className="h-7 w-7">
+                                                        <AvatarFallback className="text-[9px] bg-slate-100">
+                                                            {getInitials(remittance.agent_name || '')}
+                                                        </AvatarFallback>
+                                                    </Avatar>
+                                                    <div>
+                                                        <p className="font-medium text-xs">{remittance.agent_name}</p>
+                                                        <p className="text-[10px] text-muted-foreground">
+                                                            {format(new Date(remittance.remitted_at), 'MMM dd, yyyy')}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className="font-bold text-emerald-600 text-xs">₱{remittance.total_revenue.toLocaleString()}</span>
+                                            </div>
+
+                                            <div className="flex justify-between items-center pt-2 border-t text-xs">
+                                                {remittance.orders_count > 0 ? (
+                                                    <Badge variant="outline" className="border-green-200 text-green-700 bg-green-50 h-5 text-[10px]">
+                                                        {remittance.orders_count} orders
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-muted-foreground text-[10px]">No orders</span>
+                                                )}
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-7 px-2 text-[10px]"
+                                                    onClick={() => handleViewDetails(remittance)}
+                                                >
+                                                    <Eye className="h-3 w-3 mr-1" />
+                                                    View
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Desktop Table View */}
+                                <div className="hidden md:block">
+                                    <Table>
                                     <TableHeader className="bg-muted/10">
                                         <TableRow>
                                             <TableHead className="w-[200px] pl-6">Date</TableHead>
@@ -530,27 +626,147 @@ export default function ManagerTeamRemittancesPage() {
                                                         <Eye className="h-4 w-4 text-muted-foreground" />
                                                     </Button>
                                                 </TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            </CardContent>
-                        </Card>
-                    ))}
+                                                        </TableRow>
+                                                    ))}
+                                                </TableBody>
+                                            </Table>
+                                        </div>
+                                    </CardContent>
+                                </Card>
+                            ))}
                 </div>
             )}
 
-            {/* View Details Dialog */}
-            <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
-                        <DialogTitle>Remittance Details</DialogTitle>
-                        <DialogDescription>
-                            Showing CASH deposit details and orders remitted by {selectedRemittance?.agent_name}
-                        </DialogDescription>
-                    </DialogHeader>
+            {/* View Details Dialog - Mobile: Sheet, Desktop: Dialog */}
+            {isMobile ? (
+                <Sheet open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+                    <SheetContent side="bottom" className="h-[90vh]">
+                        <SheetHeader className="pb-3">
+                            <SheetTitle className="text-base">Remittance Details</SheetTitle>
+                            <SheetDescription className="text-xs">
+                                Cash deposit by {selectedRemittance?.agent_name}
+                            </SheetDescription>
+                        </SheetHeader>
 
-                    {selectedRemittance && (
+                        {selectedRemittance && (
+                            <ScrollArea className="h-[calc(90vh-100px)]">
+                                <div className="space-y-3 pr-4">
+                                    {/* Header Info - Mobile */}
+                                    <div className="grid grid-cols-2 gap-2 p-3 bg-muted/40 rounded-lg border text-xs">
+                                        <div>
+                                            <p className="text-[10px] font-medium text-muted-foreground uppercase">Agent</p>
+                                            <p className="font-semibold mt-0.5 text-xs">{selectedRemittance.agent_name}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-medium text-muted-foreground uppercase">Revenue</p>
+                                            <p className="font-bold text-emerald-600 mt-0.5">₱{selectedRemittance.total_revenue.toLocaleString()}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-medium text-muted-foreground uppercase">Orders</p>
+                                            <p className="font-semibold mt-0.5">{selectedRemittance.orders_count}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-medium text-muted-foreground uppercase">Items</p>
+                                            <p className="font-semibold mt-0.5">{selectedRemittance.items_remitted}</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Orders - Mobile */}
+                                    {selectedRemittance.orders_count > 0 && (
+                                        <div className="space-y-2">
+                                            <h4 className="font-semibold text-sm">Orders ({selectedRemittance.orders_count})</h4>
+                                            {loadingDetails ? (
+                                                <div className="flex items-center justify-center py-8">
+                                                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                                                </div>
+                                            ) : remittanceOrders.length > 0 ? (
+                                                <div className="space-y-2">
+                                                    {remittanceOrders.map((order, index) => (
+                                                        <div key={`${order.orderId}-${index}`} className="border rounded-lg p-2 space-y-1 text-xs">
+                                                            <div className="flex justify-between items-start">
+                                                                <div>
+                                                                    <p className="font-mono text-[10px] text-muted-foreground">{order.orderNumber}</p>
+                                                                    <p className="font-medium text-xs">{order.clientName}</p>
+                                                                </div>
+                                                                {(index === 0 || remittanceOrders[index - 1].orderId !== order.orderId) && (
+                                                                    <span className="font-bold text-emerald-600 text-xs">₱{order.totalAmount.toLocaleString()}</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="text-[10px]">
+                                                                <span className="text-muted-foreground">{order.brandName}</span>
+                                                                <span className="mx-1">•</span>
+                                                                <span>{order.variantName}</span>
+                                                                <span className="mx-1">•</span>
+                                                                <span className="font-semibold">Qty: {order.quantity}</span>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="text-center py-6 text-muted-foreground text-xs border border-dashed rounded-lg">No order details</p>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Signature - Mobile */}
+                                    <div className="space-y-2">
+                                        <h4 className="font-semibold text-sm">Signature</h4>
+                                        {loadingSignature ? (
+                                            <div className="border rounded-lg p-8 text-center">
+                                                <Loader2 className="h-8 w-8 mx-auto mb-2 animate-spin text-primary" />
+                                                <p className="text-xs text-muted-foreground">Loading signature...</p>
+                                            </div>
+                                        ) : signedSignatureUrl && !signatureError ? (
+                                            <div className="border rounded-lg overflow-hidden">
+                                                <div className="flex items-center justify-center p-4 bg-slate-50 min-h-[120px]">
+                                                    <img
+                                                        src={signedSignatureUrl}
+                                                        alt="Agent Signature"
+                                                        className="max-h-32 max-w-full object-contain mix-blend-multiply"
+                                                        onError={(e) => {
+                                                            console.error('Failed to load signature image:', signedSignatureUrl);
+                                                            setSignatureError(true);
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div className="bg-emerald-50 border-t p-2 flex items-center gap-2">
+                                                    <FileSignature className="h-3 w-3 text-emerald-700" />
+                                                    <p className="text-[10px] font-bold text-emerald-800">Verified</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="border border-dashed rounded-lg p-6 text-center">
+                                                <FileSignature className="h-8 w-8 mx-auto mb-2 text-muted-foreground opacity-30" />
+                                                <p className="text-xs text-muted-foreground">
+                                                    {signatureError 
+                                                        ? 'Signature failed to load' 
+                                                        : 'No signature available'}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </ScrollArea>
+                        )}
+
+                        <div className="pt-3 border-t mt-3">
+                            <Button onClick={() => setViewDialogOpen(false)} className="w-full h-10">
+                                Close
+                            </Button>
+                        </div>
+                    </SheetContent>
+                </Sheet>
+            ) : (
+                <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+                    <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                        <DialogHeader>
+                            <DialogTitle>Remittance Details</DialogTitle>
+                            <DialogDescription>
+                                Showing CASH deposit details and orders remitted by {selectedRemittance?.agent_name}
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        {selectedRemittance && (
                         <div className="space-y-4">
                             {/* Header Info */}
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 p-4 bg-muted/40 rounded-lg border">
@@ -701,14 +917,23 @@ export default function ManagerTeamRemittancesPage() {
 
                                 {/* Signature Tab */}
                                 <TabsContent value="signature" className="space-y-4 pt-4">
-                                    {selectedRemittance.signature_url ? (
+                                    {loadingSignature ? (
+                                        <div className="text-center py-12">
+                                            <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin text-primary" />
+                                            <p className="text-muted-foreground">Loading signature...</p>
+                                        </div>
+                                    ) : signedSignatureUrl && !signatureError ? (
                                         <div className="space-y-4">
                                             <Card className="overflow-hidden">
                                                 <CardContent className="flex flex-col items-center justify-center p-8 bg-slate-50 min-h-[200px]">
                                                     <img
-                                                        src={selectedRemittance.signature_url}
+                                                        src={signedSignatureUrl}
                                                         alt="Agent Signature"
                                                         className="max-h-48 max-w-full object-contain mix-blend-multiply"
+                                                        onError={(e) => {
+                                                            console.error('Failed to load signature image');
+                                                            setSignatureError(true);
+                                                        }}
                                                     />
                                                 </CardContent>
                                                 <div className="bg-emerald-50 border-t border-emerald-100 p-4 flex items-center gap-3">
@@ -725,15 +950,18 @@ export default function ManagerTeamRemittancesPage() {
                                     ) : (
                                         <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
                                             <FileSignature className="h-12 w-12 mx-auto mb-2 opacity-20" />
-                                            <p>No signature available</p>
+                                            <p>{signatureError 
+                                                ? 'Signature image failed to load or you do not have permission to view it.' 
+                                                : 'No signature available'}</p>
                                         </div>
                                     )}
                                 </TabsContent>
                             </Tabs>
-                        </div>
-                    )}
-                </DialogContent>
-            </Dialog>
+                            </div>
+                        )}
+                    </DialogContent>
+                </Dialog>
+            )}
         </div>
     );
 }

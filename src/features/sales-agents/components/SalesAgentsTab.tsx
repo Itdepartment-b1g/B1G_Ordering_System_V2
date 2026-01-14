@@ -5,6 +5,9 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Label } from '@/components/ui/label';
 import { Plus, Search, Edit, Trash2, UserPlus, Loader2, Package, Eye, Rewind, MoreHorizontal } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -58,6 +61,15 @@ export function SalesAgentsTab() {
   const [agents, setAgents] = useState<SalesAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -696,8 +708,50 @@ export function SalesAgentsTab() {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <div className="flex items-center gap-4">
+        <CardHeader className="p-4 md:p-6">
+          {/* Mobile Layout */}
+          <div className="md:hidden space-y-3">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+              <Input
+                placeholder="Search users..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 h-9 text-sm"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as 'all' | 'active' | 'inactive')}>
+                <SelectTrigger className="flex-1 h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Users</SelectItem>
+                  <SelectItem value="active">Active Only</SelectItem>
+                  <SelectItem value="inactive">Inactive Only</SelectItem>
+                </SelectContent>
+              </Select>
+              <UserImportExport
+                users={agents.map(agent => ({
+                  id: agent.id,
+                  name: agent.name,
+                  email: agent.email,
+                  phone: agent.phone,
+                  region: agent.region,
+                  cities: agent.cities,
+                  role: agent.role || 'mobile_sales',
+                  status: agent.status
+                }))}
+                onRefresh={fetchAgents}
+              />
+              <Button onClick={() => setAddDialogOpen(true)} className="h-9" size="sm">
+                <UserPlus className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Desktop Layout */}
+          <div className="hidden md:flex items-center gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -736,83 +790,90 @@ export function SalesAgentsTab() {
             </Button>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 md:p-6">
           {/* Mobile: card list */}
-          <div className="md:hidden space-y-3">
+          <div className="md:hidden space-y-2">
             {filteredAgents.length === 0 ? (
               <div className="text-center text-muted-foreground py-6">No users found</div>
             ) : (
               filteredAgents.map((agent) => (
-                <div key={agent.id} className="rounded-lg border bg-background p-4 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate">{agent.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">{agent.email}</div>
+                <div key={agent.id} className="rounded-lg border bg-background p-3 shadow-sm">
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm truncate">{agent.name}</div>
+                      <div className="text-[10px] text-muted-foreground truncate mt-0.5">{agent.email}</div>
                     </div>
-                    <Badge variant={agent.status === 'active' ? 'default' : 'secondary'}>
+                    <Badge variant={agent.status === 'active' ? 'default' : 'secondary'} className="text-[10px] flex-shrink-0">
                       {agent.status}
                     </Badge>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Phone</div>
-                      <div>{agent.phone || '—'}</div>
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Phone</div>
+                        <div className="text-xs font-medium truncate">{agent.phone || '—'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Region</div>
+                        <div className="text-xs font-medium truncate">{agent.region || '—'}</div>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Region</div>
-                      <div>{agent.region || '—'}</div>
-                    </div>
                     <div>
-                      <div className="text-xs text-muted-foreground">Cities</div>
-                      <div className="flex flex-wrap gap-1 mt-1">
+                      <div className="text-[10px] text-muted-foreground mb-1">Cities</div>
+                      <div className="flex flex-wrap gap-1">
                         {agent.cities.length > 0 ? (
                           agent.cities.map((city, index) => (
-                            <Badge key={index} variant="outline" className="text-xs">
+                            <Badge key={index} variant="outline" className="text-[10px] h-5">
                               {city}
                             </Badge>
                           ))
                         ) : (
-                          <span className="text-muted-foreground text-xs">No cities</span>
+                          <span className="text-muted-foreground text-[10px]">No cities</span>
                         )}
                       </div>
                     </div>
-                    <div className="col-span-2">
-                      <div className="text-xs text-muted-foreground">Role</div>
-                      <Badge variant="outline">{getRoleLabel(agent.role)}</Badge>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground mb-1">Role</div>
+                      <Badge variant="outline" className="text-[10px] h-5">{getRoleLabel(agent.role)}</Badge>
                     </div>
-                    <div className="col-span-2">
-                      <div className="text-xs text-muted-foreground">Total Sales</div>
-                      <div className="font-semibold">₱{agent.totalSales.toLocaleString()}</div>
-                    </div>
-                    <div className="col-span-2">
-                      <div className="text-xs text-muted-foreground">Orders</div>
-                      <div>{agent.ordersCount}</div>
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t">
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Total Sales</div>
+                        <div className="text-xs font-semibold">₱{agent.totalSales.toLocaleString()}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Orders</div>
+                        <div className="text-xs font-semibold">{agent.ordersCount}</div>
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm text-muted-foreground">
-                      <span className="mr-2">Active:</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={agent.status === 'active' ? 'text-green-700' : 'text-gray-600'}
-                        onClick={() => handleStatusToggle(agent, agent.status !== 'active')}
-                      >
-                        {agent.status === 'active' ? 'Yes' : 'No'}
+                  <div className="mt-3 border-t pt-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs text-muted-foreground flex items-center gap-2">
+                        <span>Status:</span>
+                        <Switch
+                          checked={agent.status === 'active'}
+                          onCheckedChange={(checked) => handleStatusToggle(agent, checked)}
+                        />
+                        <span className={agent.status === 'active' ? 'text-green-600 font-medium' : 'text-gray-600'}>
+                          {agent.status === 'active' ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenView(agent)}>
+                        <Eye className="h-3 w-3 mr-1" /> View
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenEdit(agent)}>
+                        <Edit className="h-3 w-3 mr-1" /> Edit
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleResetPassword(agent)}>
+                        <Rewind className="h-3 w-3 mr-1" /> Reset
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-xs h-8 text-red-600 hover:text-red-700" onClick={() => handleOpenDelete(agent)}>
+                        <Trash2 className="h-3 w-3 mr-1" /> Delete
                       </Button>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenView(agent)}>
-                      <Eye className="h-4 w-4 mr-1" /> View
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(agent)}>
-                      Edit
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleResetPassword(agent)}>
-                      Reset
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleOpenDelete(agent)}>
-                      Delete
-                    </Button>
                   </div>
                 </div>
               ))
@@ -932,12 +993,167 @@ export function SalesAgentsTab() {
       </Card>
 
       {/* Edit Dialog */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Edit User</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
+      {/* Edit Dialog - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <SheetContent side="bottom" className="h-[90vh]">
+            <SheetHeader className="pb-4">
+              <SheetTitle>Edit User</SheetTitle>
+              <SheetDescription>Update user information and settings</SheetDescription>
+            </SheetHeader>
+            <ScrollArea className="h-[calc(90vh-160px)] pr-4">
+              <Accordion type="multiple" defaultValue={["basic", "role", "territory", "status"]} className="space-y-2">
+                <AccordionItem value="basic" className="border rounded-lg px-4">
+                  <AccordionTrigger className="text-sm font-medium">Basic Information</AccordionTrigger>
+                  <AccordionContent className="space-y-3 pt-2">
+                    <div>
+                      <Label htmlFor="name" className="text-xs">Name</Label>
+                      <Input
+                        id="name"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        className="h-10 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="email" className="text-xs">Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={editForm.email}
+                        onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                        className="h-10 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="phone" className="text-xs">Phone</Label>
+                      <Input
+                        id="phone"
+                        value={editForm.phone}
+                        onChange={(e) => {
+                          const formatted = formatPhoneNumber(e.target.value);
+                          setEditForm({ ...editForm, phone: formatted });
+                        }}
+                        placeholder="+63 917 555 0101"
+                        maxLength={17}
+                        className="h-10 mt-1"
+                      />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="role" className="border rounded-lg px-4">
+                  <AccordionTrigger className="text-sm font-medium">Role</AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <Label htmlFor="role" className="text-xs">User Role</Label>
+                    <Select
+                      value={editForm.role}
+                      onValueChange={(value) => setEditForm({ ...editForm, role: value as UserRole })}
+                    >
+                      <SelectTrigger className="h-10 mt-1">
+                        <SelectValue placeholder="Select role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="finance">Finance</SelectItem>
+                        <SelectItem value="manager">Manager</SelectItem>
+                        <SelectItem value="team_leader">Team Leader</SelectItem>
+                        <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </AccordionContent>
+                </AccordionItem>
+
+                {editDialogRequiresTerritory ? (
+                  <AccordionItem value="territory" className="border rounded-lg px-4">
+                    <AccordionTrigger className="text-sm font-medium">Territory & Cities</AccordionTrigger>
+                    <AccordionContent className="space-y-3 pt-2">
+                      <div>
+                        <Label htmlFor="region" className="text-xs">Region</Label>
+                        <Input
+                          id="region"
+                          value={editForm.region}
+                          onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
+                          className="h-10 mt-1"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="city" className="text-xs">Cities</Label>
+                        <div className="flex gap-2 mt-1">
+                          <Input
+                            id="city"
+                            placeholder="Enter city name"
+                            value={editCityInput}
+                            onChange={(e) => setEditCityInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                addCityToEditForm();
+                              }
+                            }}
+                            className="h-10"
+                          />
+                          <Button type="button" onClick={addCityToEditForm} variant="outline" className="h-10">
+                            Add
+                          </Button>
+                        </div>
+                        {editForm.cities.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {editForm.cities.map((city, index) => (
+                              <Badge key={index} variant="outline" className="text-xs">
+                                {city}
+                                <button
+                                  type="button"
+                                  onClick={() => removeCityFromEditForm(city)}
+                                  className="ml-1 hover:text-red-500"
+                                >
+                                  ×
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                ) : (
+                  <div className="rounded-md border border-dashed bg-muted/40 p-3 text-xs text-muted-foreground">
+                    Region and cities are not required for {getRoleLabel(editingAgent?.role)} users.
+                  </div>
+                )}
+
+                <AccordionItem value="status" className="border rounded-lg px-4">
+                  <AccordionTrigger className="text-sm font-medium">Status</AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        id="status"
+                        checked={editForm.status === 'active'}
+                        onCheckedChange={(checked) => setEditForm({ ...editForm, status: checked ? 'active' : 'inactive' })}
+                      />
+                      <Label htmlFor="status" className="text-sm">Active</Label>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </ScrollArea>
+            <div className="pt-4 border-t flex gap-2">
+              <Button variant="outline" onClick={() => setEditDialogOpen(false)} className="flex-1 h-11">
+                Cancel
+              </Button>
+              <Button onClick={handleConfirmEdit} className="flex-1 h-11">
+                Save Changes
+              </Button>
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Edit User</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="name">Name</Label>
@@ -1055,29 +1271,129 @@ export function SalesAgentsTab() {
               />
               <Label htmlFor="status">Active</Label>
             </div>
-            <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleConfirmEdit}>
-                Save Changes
+              <div className="flex justify-end space-x-2">
+                <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleConfirmEdit}>
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* View Dialog - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <SheetContent side="bottom" className="h-[85vh]">
+            <SheetHeader className="pb-4">
+              <SheetTitle>User Information</SheetTitle>
+              <SheetDescription>View user profile details</SheetDescription>
+            </SheetHeader>
+            {viewingAgent && (
+              <ScrollArea className="h-[calc(85vh-120px)] pr-4">
+                <div className="space-y-3">
+                  {/* Contact Information */}
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">Contact Information</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <span className="text-xs text-muted-foreground">Name</span>
+                        <span className="text-sm font-medium text-right">{viewingAgent.name}</span>
+                      </div>
+                      <div className="flex justify-between items-start border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Email</span>
+                        <span className="text-xs text-right break-all ml-2">{viewingAgent.email}</span>
+                      </div>
+                      <div className="flex justify-between items-start border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Phone</span>
+                        <span className="text-sm text-right">{viewingAgent.phone || '—'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Location */}
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">Location</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <span className="text-xs text-muted-foreground">Region</span>
+                        <span className="text-sm text-right">{viewingAgent.region || '—'}</span>
+                      </div>
+                      <div className="border-t pt-2">
+                        <span className="text-xs text-muted-foreground block mb-2">Cities</span>
+                        <div className="flex flex-wrap gap-1">
+                          {viewingAgent.cities.length > 0 ? (
+                            viewingAgent.cities.map((city, index) => (
+                              <Badge key={index} variant="outline" className="text-[10px] h-5">
+                                {city}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Role & Status */}
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">Role & Status</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-muted-foreground">Role</span>
+                        <Badge variant="outline" className="text-xs">{getRoleLabel(viewingAgent.role)}</Badge>
+                      </div>
+                      <div className="flex justify-between items-center border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Status</span>
+                        <Badge
+                          variant={viewingAgent.status === 'active' ? 'default' : 'secondary'}
+                          className={viewingAgent.status === 'active' ? 'bg-green-100 text-green-700 text-xs' : 'bg-gray-100 text-gray-600 text-xs'}
+                        >
+                          {viewingAgent.status}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Performance */}
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">Performance</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-muted-foreground">Total Sales</span>
+                        <span className="text-sm font-semibold">₱{viewingAgent.totalSales.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Total Orders</span>
+                        <span className="text-sm font-semibold">{viewingAgent.ordersCount}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </ScrollArea>
+            )}
+            <div className="pt-4 border-t">
+              <Button onClick={() => setViewDialogOpen(false)} className="w-full h-11">
+                Close
               </Button>
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* View Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Agent Information</DialogTitle>
-            <DialogDescription className="text-sm text-muted-foreground">
-              View agent profile details
-            </DialogDescription>
-          </DialogHeader>
-          {viewingAgent && (
-            <div className="space-y-6 py-4">
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-semibold">Agent Information</DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                View agent profile details
+              </DialogDescription>
+            </DialogHeader>
+            {viewingAgent && (
+              <div className="space-y-6 py-4">
               {/* Basic Info */}
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase">Contact Information</h3>
@@ -1137,11 +1453,12 @@ export function SalesAgentsTab() {
                     </Badge>
                   </div>
                 </div>
+                </div>
               </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

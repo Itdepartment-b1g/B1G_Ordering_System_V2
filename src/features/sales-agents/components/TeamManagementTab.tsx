@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
@@ -104,6 +106,15 @@ export function TeamManagementTab({
   const [subTeams, setSubTeams] = useState<any[]>([]); // New State for SubTeams
 
   const [manageTeamDialogOpen, setManageTeamDialogOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Derived state for dialog control to support both controlled and uncontrolled modes
   const isCreateTeamDialogOpen = externalCreateTeamDialogOpen ?? internalCreateTeamDialogOpen;
@@ -595,63 +606,146 @@ export function TeamManagementTab({
 
   return (
     <div className="space-y-8">
-      {/* Create Team Dialog */}
-      <Dialog open={isCreateTeamDialogOpen} onOpenChange={setCreateTeamDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Create New Manager Team</DialogTitle>
-            <DialogDescription>
-              Select a Manager to lead this new team. This will assign the Manager to you.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Team Name</Label>
-              <Input
-                placeholder="e.g. Alpha Sqaudron"
-                value={newTeamName}
-                onChange={(e) => setNewTeamName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Select Manager</Label>
-              <Select value={selectedLeader} onValueChange={setSelectedLeader}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a Manager" />
-                </SelectTrigger>
-                <SelectContent>
-                  {/* Show only Unassigned Managers (not yet connected to Admin) */}
-                  {leaders
-                    .filter(l => l.role === 'manager' && !l.leaderId)
-                    .map(l => (
-                      <SelectItem key={l.id} value={l.id}>
-                        {l.name} ({l.region})
-                      </SelectItem>
-                    ))}
-                  {leaders.filter(l => l.role === 'manager' && !l.leaderId).length === 0 && (
-                    <div className="p-2 text-sm text-muted-foreground text-center">No unassigned managers available</div>
+      {/* Create Team Dialog - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={isCreateTeamDialogOpen} onOpenChange={setCreateTeamDialogOpen}>
+          <SheetContent side="bottom" className="h-[70vh]">
+            <SheetHeader className="pb-4">
+              <SheetTitle>Create Manager Team</SheetTitle>
+              <SheetDescription>
+                Select a Manager to lead this team
+              </SheetDescription>
+            </SheetHeader>
+            <ScrollArea className="h-[calc(70vh-180px)]">
+              <div className="space-y-4 pr-4">
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Team Name</Label>
+                  <Input
+                    placeholder="e.g. Alpha Squadron"
+                    value={newTeamName}
+                    onChange={(e) => setNewTeamName(e.target.value)}
+                    className="h-11"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">Select Manager</Label>
+                  <p className="text-xs text-muted-foreground mb-2">Choose who will lead this team</p>
+                  {leaders.filter(l => l.role === 'manager' && !l.leaderId).length > 0 ? (
+                    <div className="space-y-2">
+                      {leaders
+                        .filter(l => l.role === 'manager' && !l.leaderId)
+                        .map(leader => (
+                          <div
+                            key={leader.id}
+                            onClick={() => setSelectedLeader(leader.id)}
+                            className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                              selectedLeader === leader.id
+                                ? 'border-purple-500 bg-purple-50'
+                                : 'border-border hover:border-purple-300'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                                selectedLeader === leader.id ? 'bg-purple-500' : 'bg-muted'
+                              }`}>
+                                <Crown className={`h-5 w-5 ${
+                                  selectedLeader === leader.id ? 'text-white' : 'text-muted-foreground'
+                                }`} />
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-medium text-sm">{leader.name}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <MapPin className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground">{leader.region}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-4">No unassigned managers available</p>
                   )}
-                </SelectContent>
-              </Select>
+                </div>
+              </div>
+            </ScrollArea>
+            <div className="pt-4 border-t">
+              <Button
+                onClick={handleCreateTeam}
+                disabled={creatingTeam || !selectedLeader}
+                className="w-full h-12"
+              >
+                {creatingTeam ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="mr-2 h-4 w-4" /> Create Team
+                  </>
+                )}
+              </Button>
             </div>
-            <Button
-              onClick={handleCreateTeam}
-              disabled={creatingTeam || !selectedLeader}
-              className="w-full"
-            >
-              {creatingTeam ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...
-                </>
-              ) : (
-                <>
-                  <Plus className="mr-2 h-4 w-4" /> Create Team
-                </>
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={isCreateTeamDialogOpen} onOpenChange={setCreateTeamDialogOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Create New Manager Team</DialogTitle>
+              <DialogDescription>
+                Select a Manager to lead this new team. This will assign the Manager to you.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Team Name</Label>
+                <Input
+                  placeholder="e.g. Alpha Squadron"
+                  value={newTeamName}
+                  onChange={(e) => setNewTeamName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Select Manager</Label>
+                <Select value={selectedLeader} onValueChange={setSelectedLeader}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a Manager" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Show only Unassigned Managers (not yet connected to Admin) */}
+                    {leaders
+                      .filter(l => l.role === 'manager' && !l.leaderId)
+                      .map(l => (
+                        <SelectItem key={l.id} value={l.id}>
+                          {l.name} ({l.region})
+                        </SelectItem>
+                      ))}
+                    {leaders.filter(l => l.role === 'manager' && !l.leaderId).length === 0 && (
+                      <div className="p-2 text-sm text-muted-foreground text-center">No unassigned managers available</div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                onClick={handleCreateTeam}
+                disabled={creatingTeam || !selectedLeader}
+                className="w-full"
+              >
+                {creatingTeam ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="mr-2 h-4 w-4" /> Create Team
+                  </>
+                )}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {!isManager && showCreateButton && (
         <div className="flex justify-end">
@@ -664,212 +758,420 @@ export function TeamManagementTab({
         </div>
       )}
 
-      {/* 1. Assign Team Leader to Manager Dialog */}
-      <Dialog open={assignManagerDialogOpen} onOpenChange={setAssignManagerDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Assign Team Leader to Manager</DialogTitle>
-            <DialogDescription>
-              Select an unassigned Team Leader to report to this Manager.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Select Team Leader</Label>
-              <Select value={selectedAgent} onValueChange={setSelectedAgent}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a Team Leader" />
-                </SelectTrigger>
-                <SelectContent>
-                  {unassignedTeamLeaders
-                    .map(agent => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name} ({agent.region})
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              {unassignedTeamLeaders.length === 0 && (
-                <p className="text-sm text-muted-foreground">No unassigned Team Leaders available</p>
-              )}
-            </div>
+      {/* 1. Assign Team Leader to Manager - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={assignManagerDialogOpen} onOpenChange={setAssignManagerDialogOpen}>
+          <SheetContent side="bottom" className="h-[85vh]">
+            <SheetHeader className="pb-4">
+              <SheetTitle>Assign Team Leader</SheetTitle>
+              <SheetDescription>
+                Select a Team Leader to report to Manager
+              </SheetDescription>
+            </SheetHeader>
+            <ScrollArea className="h-[calc(85vh-120px)]">
+              <div className="space-y-4 pr-4">
+                <div className="space-y-3">
+                  <div>
+                    <Label className="text-sm font-medium">Select Team Leader</Label>
+                    <p className="text-xs text-muted-foreground mb-2">Choose who will report to the manager</p>
+                    {unassignedTeamLeaders.length > 0 ? (
+                      <div className="space-y-2">
+                        {unassignedTeamLeaders.map(agent => (
+                          <div
+                            key={agent.id}
+                            onClick={() => setSelectedAgent(agent.id)}
+                            className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                              selectedAgent === agent.id
+                                ? 'border-blue-500 bg-blue-50'
+                                : 'border-border hover:border-blue-300'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                                selectedAgent === agent.id ? 'bg-blue-500' : 'bg-muted'
+                              }`}>
+                                <Crown className={`h-5 w-5 ${
+                                  selectedAgent === agent.id ? 'text-white' : 'text-muted-foreground'
+                                }`} />
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-medium text-sm">{agent.name}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <MapPin className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground">{agent.region}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-4">No unassigned Team Leaders available</p>
+                    )}
+                  </div>
 
-            {/* Manager Selection or Display */}
-            <div className="space-y-2">
-              <Label>Manager</Label>
-              {isPreselectedManager ? (
-                <div className="flex items-center justify-between p-3 border rounded-md bg-muted/50">
-                  <span className="text-sm font-medium">
-                    {leaders.find(l => l.id === selectedLeader)?.name || 'Selected Manager'}
-                  </span>
-                  <Badge variant="secondary" className="text-xs">Fixed</Badge>
+                  {/* Manager Selection */}
+                  <div>
+                    <Label className="text-sm font-medium">Manager</Label>
+                    {isPreselectedManager ? (
+                      <div className="flex items-center justify-between p-3 border rounded-md bg-muted/50 mt-2">
+                        <span className="text-sm font-medium">
+                          {leaders.find(l => l.id === selectedLeader)?.name || 'Selected Manager'}
+                        </span>
+                        <Badge variant="secondary" className="text-xs">Fixed</Badge>
+                      </div>
+                    ) : (
+                      <Select value={selectedLeader} onValueChange={setSelectedLeader}>
+                        <SelectTrigger className="mt-2">
+                          <SelectValue placeholder="Choose a Manager" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {leaders
+                            .filter(l => l.role === 'manager')
+                            .map(leader => (
+                              <SelectItem key={leader.id} value={leader.id}>
+                                {leader.name} ({leader.region})
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
                 </div>
-              ) : (
-                <Select value={selectedLeader} onValueChange={setSelectedLeader}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose a Manager" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {leaders
-                      .filter(l => l.role === 'manager')
-                      .map(leader => (
-                        <SelectItem key={leader.id} value={leader.id}>
-                          {leader.name} ({leader.region})
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              )}
+              </div>
+            </ScrollArea>
+            <div className="pt-4 border-t">
+              <Button
+                className="w-full h-12"
+                onClick={handleAssignAgent}
+                disabled={!selectedAgent || !selectedLeader || assigning}
+              >
+                {assigning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Assigning...
+                  </>
+                ) : (
+                  <>
+                    <Crown className="h-4 w-4 mr-2" />
+                    Assign Team Leader
+                  </>
+                )}
+              </Button>
             </div>
-
-            <Button
-              className="w-full"
-              onClick={handleAssignAgent}
-              disabled={!selectedAgent || !selectedLeader || assigning}
-            >
-              {assigning ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Assigning...
-                </>
-              ) : (
-                <>
-                  <Crown className="h-4 w-4 mr-2" />
-                  Assign Team Leader
-                </>
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* 2. Assign Mobile Sales to Team Leader Dialog */}
-      <Dialog open={assignLeaderDialogOpen} onOpenChange={setAssignLeaderDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Assign Mobile Sales to Team Leader</DialogTitle>
-            <DialogDescription>
-              Select an unassigned Mobile Sales agent to join this team.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Select Mobile Sales Agent</Label>
-              <Select value={selectedAgent} onValueChange={setSelectedAgent}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose an agent" />
-                </SelectTrigger>
-                <SelectContent>
-                  {unassignedMobileSales
-                    .map(agent => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name} ({agent.region})
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              {unassignedMobileSales.length === 0 && (
-                <p className="text-sm text-muted-foreground">No unassigned Mobile Sales agents available</p>
-              )}
-            </div>
-
-            {/* Team Leader Selection or Display */}
-            <div className="space-y-2">
-              <Label>Team Leader</Label>
-              {isPreselectedManager ? (
-                <div className="flex items-center justify-between p-3 border rounded-md bg-muted/50">
-                  <span className="text-sm font-medium">
-                    {leaders.find(l => l.id === selectedLeader)?.name || 'Selected Team Leader'}
-                  </span>
-                  <Badge variant="secondary" className="text-xs">Fixed</Badge>
-                </div>
-              ) : (
-                <Select value={selectedLeader} onValueChange={setSelectedLeader}>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={assignManagerDialogOpen} onOpenChange={setAssignManagerDialogOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Assign Team Leader to Manager</DialogTitle>
+              <DialogDescription>
+                Select an unassigned Team Leader to report to this Manager.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Select Team Leader</Label>
+                <Select value={selectedAgent} onValueChange={setSelectedAgent}>
                   <SelectTrigger>
                     <SelectValue placeholder="Choose a Team Leader" />
                   </SelectTrigger>
                   <SelectContent>
-                    {leaders
-                      .filter(l => l.role === 'team_leader')
-                      .map(leader => (
-                        <SelectItem key={leader.id} value={leader.id}>
-                          {leader.name} ({leader.region})
+                    {unassignedTeamLeaders
+                      .map(agent => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name} ({agent.region})
                         </SelectItem>
                       ))}
                   </SelectContent>
                 </Select>
-              )}
-            </div>
+                {unassignedTeamLeaders.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No unassigned Team Leaders available</p>
+                )}
+              </div>
 
-            <Button
-              className="w-full"
-              onClick={handleAssignAgent}
-              disabled={!selectedAgent || !selectedLeader || assigning}
-            >
-              {assigning ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Assigning...
-                </>
-              ) : (
-                <>
-                  <Users className="h-4 w-4 mr-2" />
-                  Assign Agent
-                </>
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Manager Selection or Display */}
+              <div className="space-y-2">
+                <Label>Manager</Label>
+                {isPreselectedManager ? (
+                  <div className="flex items-center justify-between p-3 border rounded-md bg-muted/50">
+                    <span className="text-sm font-medium">
+                      {leaders.find(l => l.id === selectedLeader)?.name || 'Selected Manager'}
+                    </span>
+                    <Badge variant="secondary" className="text-xs">Fixed</Badge>
+                  </div>
+                ) : (
+                  <Select value={selectedLeader} onValueChange={setSelectedLeader}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a Manager" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {leaders
+                        .filter(l => l.role === 'manager')
+                        .map(leader => (
+                          <SelectItem key={leader.id} value={leader.id}>
+                            {leader.name} ({leader.region})
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <Button
+                className="w-full"
+                onClick={handleAssignAgent}
+                disabled={!selectedAgent || !selectedLeader || assigning}
+              >
+                {assigning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Assigning...
+                  </>
+                ) : (
+                  <>
+                    <Crown className="h-4 w-4 mr-2" />
+                    Assign Team Leader
+                  </>
+                )}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* 2. Assign Mobile Sales to Team Leader - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={assignLeaderDialogOpen} onOpenChange={setAssignLeaderDialogOpen}>
+          <SheetContent side="bottom" className="h-[85vh]">
+            <SheetHeader className="pb-4">
+              <SheetTitle>Assign Mobile Sales</SheetTitle>
+              <SheetDescription>
+                Select a Mobile Sales agent to join the team
+              </SheetDescription>
+            </SheetHeader>
+            <ScrollArea className="h-[calc(85vh-120px)]">
+              <div className="space-y-4 pr-4">
+                <div className="space-y-3">
+                  <div>
+                    <Label className="text-sm font-medium">Select Mobile Sales Agent</Label>
+                    <p className="text-xs text-muted-foreground mb-2">Choose who will join the team</p>
+                    {unassignedMobileSales.length > 0 ? (
+                      <div className="space-y-2">
+                        {unassignedMobileSales.map(agent => (
+                          <div
+                            key={agent.id}
+                            onClick={() => setSelectedAgent(agent.id)}
+                            className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                              selectedAgent === agent.id
+                                ? 'border-green-500 bg-green-50'
+                                : 'border-border hover:border-green-300'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                                selectedAgent === agent.id ? 'bg-green-500' : 'bg-muted'
+                              }`}>
+                                <Users className={`h-5 w-5 ${
+                                  selectedAgent === agent.id ? 'text-white' : 'text-muted-foreground'
+                                }`} />
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-medium text-sm">{agent.name}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <MapPin className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground">{agent.region}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-4">No unassigned Mobile Sales agents available</p>
+                    )}
+                  </div>
+
+                  {/* Team Leader Selection */}
+                  <div>
+                    <Label className="text-sm font-medium">Team Leader</Label>
+                    {isPreselectedManager ? (
+                      <div className="flex items-center justify-between p-3 border rounded-md bg-muted/50 mt-2">
+                        <span className="text-sm font-medium">
+                          {leaders.find(l => l.id === selectedLeader)?.name || 'Selected Team Leader'}
+                        </span>
+                        <Badge variant="secondary" className="text-xs">Fixed</Badge>
+                      </div>
+                    ) : (
+                      <Select value={selectedLeader} onValueChange={setSelectedLeader}>
+                        <SelectTrigger className="mt-2">
+                          <SelectValue placeholder="Choose a Team Leader" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {leaders
+                            .filter(l => l.role === 'team_leader')
+                            .map(leader => (
+                              <SelectItem key={leader.id} value={leader.id}>
+                                {leader.name} ({leader.region})
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </ScrollArea>
+            <div className="pt-4 border-t">
+              <Button
+                className="w-full h-12"
+                onClick={handleAssignAgent}
+                disabled={!selectedAgent || !selectedLeader || assigning}
+              >
+                {assigning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Assigning...
+                  </>
+                ) : (
+                  <>
+                    <Users className="h-4 w-4 mr-2" />
+                    Assign Agent
+                  </>
+                )}
+              </Button>
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={assignLeaderDialogOpen} onOpenChange={setAssignLeaderDialogOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Assign Mobile Sales to Team Leader</DialogTitle>
+              <DialogDescription>
+                Select an unassigned Mobile Sales agent to join this team.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Select Mobile Sales Agent</Label>
+                <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose an agent" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {unassignedMobileSales
+                      .map(agent => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name} ({agent.region})
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {unassignedMobileSales.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No unassigned Mobile Sales agents available</p>
+                )}
+              </div>
+
+              {/* Team Leader Selection or Display */}
+              <div className="space-y-2">
+                <Label>Team Leader</Label>
+                {isPreselectedManager ? (
+                  <div className="flex items-center justify-between p-3 border rounded-md bg-muted/50">
+                    <span className="text-sm font-medium">
+                      {leaders.find(l => l.id === selectedLeader)?.name || 'Selected Team Leader'}
+                    </span>
+                    <Badge variant="secondary" className="text-xs">Fixed</Badge>
+                  </div>
+                ) : (
+                  <Select value={selectedLeader} onValueChange={setSelectedLeader}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a Team Leader" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {leaders
+                        .filter(l => l.role === 'team_leader')
+                        .map(leader => (
+                          <SelectItem key={leader.id} value={leader.id}>
+                            {leader.name} ({leader.region})
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <Button
+                className="w-full"
+                onClick={handleAssignAgent}
+                disabled={!selectedAgent || !selectedLeader || assigning}
+              >
+                {assigning ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Assigning...
+                  </>
+                ) : (
+                  <>
+                    <Users className="h-4 w-4 mr-2" />
+                    Assign Agent
+                  </>
+                )}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-4">
-              <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-100">
-                <Crown className="h-5 w-5 text-blue-600" />
+          <CardContent className="p-4 md:p-5">
+            <div className="flex items-center gap-3">
+              <div className="p-2 md:p-2.5 rounded-lg bg-blue-50 border border-blue-100">
+                <Crown className="h-4 w-4 md:h-5 md:w-5 text-blue-600" />
               </div>
               <div>
-                <p className="text-2xl font-semibold tracking-tight">{leaders.length}</p>
-                <p className="text-xs font-medium text-muted-foreground mt-0.5">Leaders & Managers</p>
+                <p className="text-xl md:text-2xl font-semibold tracking-tight">{leaders.length}</p>
+                <p className="text-[10px] md:text-xs font-medium text-muted-foreground mt-0.5">Leaders & Managers</p>
               </div>
             </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-4">
-              <div className="p-2.5 rounded-lg bg-green-50 border border-green-100">
-                <UserCheck className="h-5 w-5 text-green-600" />
+          <CardContent className="p-4 md:p-5">
+            <div className="flex items-center gap-3">
+              <div className="p-2 md:p-2.5 rounded-lg bg-green-50 border border-green-100">
+                <UserCheck className="h-4 w-4 md:h-5 md:w-5 text-green-600" />
               </div>
               <div>
-                <p className="text-2xl font-semibold tracking-tight">{assignedAgents.length}</p>
-                <p className="text-xs font-medium text-muted-foreground mt-0.5">Assigned</p>
+                <p className="text-xl md:text-2xl font-semibold tracking-tight">{assignedAgents.length}</p>
+                <p className="text-[10px] md:text-xs font-medium text-muted-foreground mt-0.5">Assigned</p>
               </div>
             </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-4">
-              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-100">
-                <UserX className="h-5 w-5 text-amber-600" />
+          <CardContent className="p-4 md:p-5">
+            <div className="flex items-center gap-3">
+              <div className="p-2 md:p-2.5 rounded-lg bg-amber-50 border border-amber-100">
+                <UserX className="h-4 w-4 md:h-5 md:w-5 text-amber-600" />
               </div>
               <div>
-                <p className="text-2xl font-semibold tracking-tight">{unassignedAgents.length}</p>
-                <p className="text-xs font-medium text-muted-foreground mt-0.5">Unassigned</p>
+                <p className="text-xl md:text-2xl font-semibold tracking-tight">{unassignedAgents.length}</p>
+                <p className="text-[10px] md:text-xs font-medium text-muted-foreground mt-0.5">Unassigned</p>
               </div>
             </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-4">
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100">
-                <Users className="h-5 w-5 text-slate-600" />
+          <CardContent className="p-4 md:p-5">
+            <div className="flex items-center gap-3">
+              <div className="p-2 md:p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+                <Users className="h-4 w-4 md:h-5 md:w-5 text-slate-600" />
               </div>
               <div>
-                <p className="text-2xl font-semibold tracking-tight">{totalAgents}</p>
-                <p className="text-xs font-medium text-muted-foreground mt-0.5">Total Agents</p>
+                <p className="text-xl md:text-2xl font-semibold tracking-tight">{totalAgents}</p>
+                <p className="text-[10px] md:text-xs font-medium text-muted-foreground mt-0.5">Total Agents</p>
               </div>
             </div>
           </CardContent>
@@ -879,11 +1181,11 @@ export function TeamManagementTab({
       {/* Main Content Tabs */}
       <Tabs defaultValue="teams" className="w-full">
         <TabsList className="grid w-full grid-cols-2 bg-muted/50">
-          <TabsTrigger value="teams" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">Teams</TabsTrigger>
-          <TabsTrigger value="unassigned" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
+          <TabsTrigger value="teams" className="data-[state=active]:bg-background data-[state=active]:shadow-sm text-sm md:text-base">Teams</TabsTrigger>
+          <TabsTrigger value="unassigned" className="data-[state=active]:bg-background data-[state=active]:shadow-sm text-sm md:text-base">
             Unassigned
             {unassignedAgents.length > 0 && (
-              <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
+              <Badge variant="secondary" className="ml-1 md:ml-2 h-4 md:h-5 px-1 md:px-1.5 text-[10px] md:text-xs">
                 {unassignedAgents.length}
               </Badge>
             )}
@@ -928,40 +1230,40 @@ export function TeamManagementTab({
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
               {topLevelLeaders.map(leader => {
                 const teamAgents = agents.filter(agent => agent.leaderId === leader.id);
                 return (
                   <Card key={leader.id} className="hover:shadow-md transition-all duration-200 border-border/50">
-                    <CardHeader className="pb-3">
+                    <CardHeader className="pb-3 p-4 md:p-6">
                       <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center flex-shrink-0 shadow-sm ring-2 ring-blue-100">
-                            <Crown className="h-6 w-6 text-white" />
+                        <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
+                          <div className="h-10 w-10 md:h-12 md:w-12 rounded-full bg-gradient-to-br from-blue-600 to-blue-700 flex items-center justify-center flex-shrink-0 shadow-sm ring-2 ring-blue-100">
+                            <Crown className="h-5 w-5 md:h-6 md:w-6 text-white" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <CardTitle className="text-base font-semibold truncate">{leader.name}</CardTitle>
+                              <CardTitle className="text-sm md:text-base font-semibold truncate">{leader.name}</CardTitle>
                               {leader.role === 'manager' ? (
-                                <Badge variant="default" className="text-xs bg-purple-600">
+                                <Badge variant="default" className="text-[10px] md:text-xs bg-purple-600">
                                   Manager
                                 </Badge>
                               ) : (
-                                <Badge variant="outline" className="text-xs border-blue-500 text-blue-700">
+                                <Badge variant="outline" className="text-[10px] md:text-xs border-blue-500 text-blue-700">
                                   {leader.role?.replace('_', ' ')}
                                 </Badge>
                               )}
                             </div>
-                            <div className="flex items-center gap-1.5 mt-1">
+                            <div className="flex items-center gap-1 md:gap-1.5 mt-1">
                               <MapPin className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                              <p className="text-sm text-muted-foreground truncate">{leader.region}</p>
+                              <p className="text-xs md:text-sm text-muted-foreground truncate">{leader.region}</p>
                             </div>
                           </div>
                         </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0">
-                              <MoreHorizontal className="h-4 w-4" />
+                            <Button variant="ghost" size="icon" className="h-7 w-7 md:h-8 md:w-8 flex-shrink-0">
+                              <MoreHorizontal className="h-3.5 w-3.5 md:h-4 md:w-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-44">
@@ -987,17 +1289,17 @@ export function TeamManagementTab({
                         </DropdownMenu>
                       </div>
                     </CardHeader>
-                    <CardContent className="pt-0">
-                      <div className="space-y-4">
+                    <CardContent className="pt-0 p-4 md:p-6">
+                      <div className="space-y-3 md:space-y-4">
                         <div className="flex items-center justify-between py-2">
-                          <span className="text-sm font-medium text-muted-foreground">Team Size</span>
+                          <span className="text-xs md:text-sm font-medium text-muted-foreground">Team Size</span>
                           {/* Total Size Calculation */}
                           {(() => {
                             const mySubTeams = subTeams.filter(st => st.manager_id === leader.id);
                             const totalSubTeamMembers = mySubTeams.reduce((acc, st) => acc + (st.member_ids?.length || 0), 0);
                             const totalSize = teamAgents.length + totalSubTeamMembers;
                             return (
-                              <Badge variant="secondary" className="font-medium">
+                              <Badge variant="secondary" className="font-medium text-xs md:text-sm">
                                 {totalSize} {totalSize === 1 ? 'member' : 'members'}
                               </Badge>
                             );
@@ -1006,31 +1308,31 @@ export function TeamManagementTab({
 
                         {/* DIRECT REPORTS (Team Leaders) */}
                         {teamAgents.length > 0 ? (
-                          <div className="pt-3 border-t border-border/50">
-                            <p className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wide">
+                          <div className="pt-2 md:pt-3 border-t border-border/50">
+                            <p className="text-[10px] md:text-xs font-semibold text-muted-foreground mb-2 md:mb-3 uppercase tracking-wide">
                               {leader.role === 'manager' ? 'Team Leaders' : 'Team Members'}
                             </p>
-                            <div className="space-y-2.5">
+                            <div className="space-y-2">
                               {teamAgents.slice(0, 3).map(agent => (
-                                <div key={agent.id} className="flex items-center gap-2.5 text-sm">
-                                  <div className="h-7 w-7 rounded-full bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center flex-shrink-0 shadow-sm ring-1 ring-green-100">
-                                    <Users className="h-3.5 w-3.5 text-white" />
+                                <div key={agent.id} className="flex items-center gap-2 text-xs md:text-sm">
+                                  <div className="h-6 w-6 md:h-7 md:w-7 rounded-full bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center flex-shrink-0 shadow-sm ring-1 ring-green-100">
+                                    <Users className="h-3 w-3 md:h-3.5 md:w-3.5 text-white" />
                                   </div>
                                   <span className="font-medium truncate">{agent.name}</span>
                                 </div>
                               ))}
                               {teamAgents.length > 3 && (
-                                <p className="text-xs text-muted-foreground pl-10 font-medium">
+                                <p className="text-[10px] md:text-xs text-muted-foreground pl-8 md:pl-10 font-medium">
                                   +{teamAgents.length - 3} more {teamAgents.length - 3 === 1 ? 'member' : 'members'}
                                 </p>
                               )}
                             </div>
                           </div>
                         ) : (
-                          <div className="pt-3 border-t border-border/50">
+                          <div className="pt-2 md:pt-3 border-t border-border/50">
                             {/* Only show "No members" if also no sub-teams */}
                             {(!subTeams.some(st => st.manager_id === leader.id)) && (
-                              <p className="text-xs text-muted-foreground text-center py-2">No team members assigned</p>
+                              <p className="text-[10px] md:text-xs text-muted-foreground text-center py-2">No team members assigned</p>
                             )}
                           </div>
                         )}
@@ -1068,10 +1370,10 @@ export function TeamManagementTab({
                           <Button
                             variant="outline"
                             size="sm"
-                            className="w-full mt-2"
+                            className="w-full mt-2 text-xs md:text-sm"
                             onClick={() => openAssignmentDialog(leader.id, leader.role as string)}
                           >
-                            <UserPlus className="h-3.5 w-3.5 mr-2" />
+                            <UserPlus className="h-3 w-3 md:h-3.5 md:w-3.5 mr-2" />
                             Assign Agent
                           </Button>
                         )}
@@ -1101,59 +1403,59 @@ export function TeamManagementTab({
               </Card>
             ) : (
               <Card className="border-border/50 shadow-sm">
-                <CardHeader className="pb-4">
+                <CardHeader className="pb-3 md:pb-4 p-4 md:p-6">
                   <div>
-                    <CardTitle className="text-lg font-semibold">Unassigned Agents</CardTitle>
-                    <CardDescription className="mt-1.5">
+                    <CardTitle className="text-base md:text-lg font-semibold">Unassigned Agents</CardTitle>
+                    <CardDescription className="mt-1 md:mt-1.5 text-xs md:text-sm">
                       {unassignedAgents.length} agent{unassignedAgents.length !== 1 ? 's' : ''} waiting for team assignment
                     </CardDescription>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="p-4 md:p-6">
                   <div className="space-y-2">
                     {unassignedAgents.map(agent => (
                       <div
                         key={agent.id}
-                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/30 hover:border-border transition-all duration-150 group"
+                        className="flex flex-col md:flex-row md:items-center justify-between p-3 md:p-4 border rounded-lg hover:bg-muted/30 hover:border-border transition-all duration-150 group gap-3"
                       >
-                        <div className="flex items-center gap-4 flex-1 min-w-0">
-                          <div className="h-11 w-11 rounded-full bg-gradient-to-br from-amber-400 to-amber-500 flex items-center justify-center flex-shrink-0 shadow-sm ring-1 ring-amber-100">
+                        <div className="flex items-center gap-3 md:gap-4 flex-1 min-w-0">
+                          <div className="h-10 w-10 md:h-11 md:w-11 rounded-full bg-gradient-to-br from-amber-400 to-amber-500 flex items-center justify-center flex-shrink-0 shadow-sm ring-1 ring-amber-100">
                             {agent.role === 'team_leader' ? (
-                              <Crown className="h-5 w-5 text-white" />
+                              <Crown className="h-4 w-4 md:h-5 md:w-5 text-white" />
                             ) : (
-                              <Users className="h-5 w-5 text-white" />
+                              <Users className="h-4 w-4 md:h-5 md:w-5 text-white" />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-semibold text-sm text-foreground">{agent.name}</p>
                               {agent.role === 'team_leader' && (
-                                <Badge variant="outline" className="text-xs border-blue-500 text-blue-700 px-1.5 py-0 h-5">
+                                <Badge variant="outline" className="text-[10px] md:text-xs border-blue-500 text-blue-700 px-1.5 py-0 h-4 md:h-5">
                                   Team Leader
                                 </Badge>
                               )}
                             </div>
-                            <div className="flex items-center gap-4 mt-1.5">
-                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <Mail className="h-3 w-3" />
-                                <span className="truncate max-w-[200px]">{agent.email}</span>
+                            <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-4 mt-1 md:mt-1.5">
+                              <div className="flex items-center gap-1 md:gap-1.5 text-[10px] md:text-xs text-muted-foreground">
+                                <Mail className="h-3 w-3 flex-shrink-0" />
+                                <span className="truncate max-w-[250px] md:max-w-[200px]">{agent.email}</span>
                               </div>
-                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <MapPin className="h-3 w-3" />
+                              <div className="flex items-center gap-1 md:gap-1.5 text-[10px] md:text-xs text-muted-foreground">
+                                <MapPin className="h-3 w-3 flex-shrink-0" />
                                 <span>{agent.region}</span>
                               </div>
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 font-medium">
+                        <div className="flex items-center gap-2 md:gap-3 ml-13 md:ml-0">
+                          <Badge variant="outline" className="text-[10px] md:text-xs text-amber-600 border-amber-300 bg-amber-50 font-medium">
                             Unassigned
                           </Badge>
                           {!isManager && (
                             <Button
                               variant="outline"
                               size="sm"
-                              className="shadow-sm"
+                              className="shadow-sm flex-1 md:flex-none text-xs md:text-sm h-8 md:h-9"
                               onClick={() => {
                                 setIsPreselectedManager(false);
                                 setSelectedAgent(agent.id);
@@ -1166,7 +1468,7 @@ export function TeamManagementTab({
                                 }
                               }}
                             >
-                              <UserPlus className="h-3.5 w-3.5 mr-2" />
+                              <UserPlus className="h-3 w-3 md:h-3.5 md:w-3.5 mr-2" />
                               Assign
                             </Button>
                           )}
@@ -1299,59 +1601,117 @@ export function TeamManagementTab({
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={manageTeamDialogOpen} onOpenChange={setManageTeamDialogOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>
-              Manage Team: {leaders.find(l => l.id === selectedTeamLeaderId)?.name}
-            </DialogTitle>
-            <DialogDescription>
-              View and manage all members assigned to this team.
-            </DialogDescription>
-          </DialogHeader>
+      {/* Manage Team Dialog - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={manageTeamDialogOpen} onOpenChange={setManageTeamDialogOpen}>
+          <SheetContent side="bottom" className="h-[90vh]">
+            <SheetHeader className="pb-4">
+              <SheetTitle className="text-left">
+                Manage Team
+              </SheetTitle>
+              <SheetDescription className="text-left">
+                {leaders.find(l => l.id === selectedTeamLeaderId)?.name}'s Team
+              </SheetDescription>
+            </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto py-4">
-            {selectedTeamLeaderId && (
-              <HierarchicalTeamList
-                managerId={selectedTeamLeaderId}
-                agents={agents}
-                onRemoveFromTeam={handleUnassignClick}
-                isManagerView={isManager}
-                onAssignToLeader={(leaderId) => {
-                  setManageTeamDialogOpen(false);
-                  setIsPreselectedManager(true);
-                  // Find role to determine correct dialog
-                  const role = leaders.find(l => l.id === leaderId)?.role || agents.find(a => a.id === leaderId)?.role || 'team_leader';
-                  openAssignmentDialog(leaderId, role);
-                }}
-              />
-            )}
-          </div>
+            <ScrollArea className="h-[calc(90vh-160px)] pr-4">
+              {selectedTeamLeaderId && (
+                <HierarchicalTeamList
+                  managerId={selectedTeamLeaderId}
+                  agents={agents}
+                  onRemoveFromTeam={handleUnassignClick}
+                  isManagerView={isManager}
+                  onAssignToLeader={(leaderId) => {
+                    setManageTeamDialogOpen(false);
+                    setIsPreselectedManager(true);
+                    // Find role to determine correct dialog
+                    const role = leaders.find(l => l.id === leaderId)?.role || agents.find(a => a.id === leaderId)?.role || 'team_leader';
+                    openAssignmentDialog(leaderId, role);
+                  }}
+                />
+              )}
+            </ScrollArea>
 
-          <div className="pt-4 border-t flex justify-end gap-3">
-            <Button
-              variant="outline"
-              onClick={() => setManageTeamDialogOpen(false)}
-            >
-              Close
-            </Button>
-            {/* Global Add Member (Assign to Main Manager) - Optional, keeping for flexibility */}
-            {!isManager && selectedTeamLeaderId && (
+            <div className="pt-4 border-t flex flex-col gap-2">
+              {!isManager && selectedTeamLeaderId && (
+                <Button
+                  className="w-full h-11"
+                  onClick={() => {
+                    setManageTeamDialogOpen(false);
+                    setIsPreselectedManager(true);
+                    const role = leaders.find(l => l.id === selectedTeamLeaderId)?.role || 'manager';
+                    openAssignmentDialog(selectedTeamLeaderId, role);
+                  }}
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Assign to Manager
+                </Button>
+              )}
               <Button
-                onClick={() => {
-                  setManageTeamDialogOpen(false);
-                  setIsPreselectedManager(true);
-                  const role = leaders.find(l => l.id === selectedTeamLeaderId)?.role || 'manager';
-                  openAssignmentDialog(selectedTeamLeaderId, role);
-                }}
+                variant="outline"
+                className="w-full h-11"
+                onClick={() => setManageTeamDialogOpen(false)}
               >
-                <UserPlus className="h-4 w-4 mr-2" />
-                Assign to Manager
+                Close
               </Button>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={manageTeamDialogOpen} onOpenChange={setManageTeamDialogOpen}>
+          <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle>
+                Manage Team: {leaders.find(l => l.id === selectedTeamLeaderId)?.name}
+              </DialogTitle>
+              <DialogDescription>
+                View and manage all members assigned to this team.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex-1 overflow-y-auto py-4">
+              {selectedTeamLeaderId && (
+                <HierarchicalTeamList
+                  managerId={selectedTeamLeaderId}
+                  agents={agents}
+                  onRemoveFromTeam={handleUnassignClick}
+                  isManagerView={isManager}
+                  onAssignToLeader={(leaderId) => {
+                    setManageTeamDialogOpen(false);
+                    setIsPreselectedManager(true);
+                    // Find role to determine correct dialog
+                    const role = leaders.find(l => l.id === leaderId)?.role || agents.find(a => a.id === leaderId)?.role || 'team_leader';
+                    openAssignmentDialog(leaderId, role);
+                  }}
+                />
+              )}
+            </div>
+
+            <div className="pt-4 border-t flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setManageTeamDialogOpen(false)}
+              >
+                Close
+              </Button>
+              {/* Global Add Member (Assign to Main Manager) - Optional, keeping for flexibility */}
+              {!isManager && selectedTeamLeaderId && (
+                <Button
+                  onClick={() => {
+                    setManageTeamDialogOpen(false);
+                    setIsPreselectedManager(true);
+                    const role = leaders.find(l => l.id === selectedTeamLeaderId)?.role || 'manager';
+                    openAssignmentDialog(selectedTeamLeaderId, role);
+                  }}
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Assign to Manager
+                </Button>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div >
   );
 }

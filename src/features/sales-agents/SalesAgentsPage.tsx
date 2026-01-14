@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Plus, Search, Edit, Trash2, UserPlus, Loader2, Package, Eye, Rewind, MoreHorizontal } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -78,6 +80,15 @@ export default function SalesAgentsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [allocationOpen, setAllocationOpen] = useState(false);
   const [allocating, setAllocating] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
   const [allocation, setAllocation] = useState({
     agentId: '',
     brandId: ''
@@ -775,11 +786,11 @@ export default function SalesAgentsPage() {
   const selectedBrand = brands.find(b => b.id === allocation.brandId);
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex justify-between items-center">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:justify-between md:items-center">
         <div>
-          <h1 className="text-3xl font-bold">Sales Agents</h1>
-          <p className="text-muted-foreground">Manage your sales team and their performance</p>
+          <h1 className="text-2xl md:text-3xl font-bold">Sales Agents</h1>
+          <p className="text-sm md:text-base text-muted-foreground">Manage your sales team and their performance</p>
         </div>
         <div className="hidden md:flex gap-2">
           {canAllocateFromMain(user?.role) && (
@@ -947,16 +958,16 @@ export default function SalesAgentsPage() {
       </div >
 
       {/* Mobile quick actions under title */}
-      <div className="md:hidden flex gap-2">
+      <div className="md:hidden flex flex-col sm:flex-row gap-2">
         {canAllocateFromMain(user?.role) && (
-          <Button variant="outline" className="flex-1" onClick={() => setAllocationOpen(true)}>
+          <Button variant="outline" className="flex-1 h-10" onClick={() => setAllocationOpen(true)}>
             <UserPlus className="h-4 w-4 mr-2" /> Allocate Stock
           </Button>
         )}
         {isAdmin(user?.role) && (
           <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="flex-1">
+              <Button className="flex-1 h-10">
                 <Plus className="h-4 w-4 mr-2" /> Add Agent
               </Button>
             </DialogTrigger>
@@ -968,125 +979,138 @@ export default function SalesAgentsPage() {
       {/* Tabs for different views */}
       <Tabs defaultValue="agents" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="agents">Sales Agents</TabsTrigger>
-          <TabsTrigger value="teams">Team Management</TabsTrigger>
+          <TabsTrigger value="agents" className="text-sm md:text-base">Sales Agents</TabsTrigger>
+          <TabsTrigger value="teams" className="text-sm md:text-base">Team Management</TabsTrigger>
         </TabsList>
 
         <TabsContent value="agents" className="space-y-6">
           <Card>
-            <CardHeader>
-              <div className="flex items-center gap-4">
+            <CardHeader className="p-4 md:p-6">
+              <div className="flex items-center gap-2 md:gap-4">
                 <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="absolute left-2 md:left-3 top-1/2 -translate-y-1/2 h-3 w-3 md:h-4 md:w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Search agents by name, email, region, or cities..."
+                    placeholder="Search agents..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
+                    className="pl-8 md:pl-10 h-9 md:h-10 text-sm"
                   />
                 </div>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-4 md:p-6">
               {/* Mobile: card list */}
-              <div className="md:hidden space-y-3">
+              <div className="md:hidden space-y-2">
                 {filteredAgents.length === 0 ? (
                   <div className="text-center text-muted-foreground py-6">No agents found</div>
                 ) : (
                   filteredAgents.map((agent) => (
-                    <div key={agent.id} className="rounded-lg border bg-background p-4 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <div className="min-w-0">
-                          <div className="font-semibold truncate">{agent.name}</div>
-                          <div className="text-xs text-muted-foreground truncate">{agent.email}</div>
+                    <div key={agent.id} className="rounded-lg border bg-background p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-sm truncate">{agent.name}</div>
+                          <div className="text-[10px] text-muted-foreground truncate mt-0.5">{agent.email}</div>
                         </div>
-                        <Badge variant={agent.status === 'active' ? 'default' : 'secondary'}>
+                        <Badge variant={agent.status === 'active' ? 'default' : 'secondary'} className="text-[10px] flex-shrink-0">
                           {agent.status}
                         </Badge>
                       </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                        <div>
-                          <div className="text-xs text-muted-foreground">Phone</div>
-                          <div>{agent.phone || '—'}</div>
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">Phone</div>
+                            <div className="text-xs font-medium truncate">{agent.phone || '—'}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">Region</div>
+                            <div className="text-xs font-medium truncate">{agent.region || '—'}</div>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-xs text-muted-foreground">Region</div>
-                          <div>{agent.region || '—'}</div>
-                        </div>
                         <div>
-                          <div className="text-xs text-muted-foreground">Cities</div>
-                          <div className="flex flex-wrap gap-1 mt-1">
+                          <div className="text-[10px] text-muted-foreground mb-1">Cities</div>
+                          <div className="flex flex-wrap gap-1">
                             {agent.cities.length > 0 ? (
                               agent.cities.map((city, index) => (
-                                <Badge key={index} variant="outline" className="text-xs">
+                                <Badge key={index} variant="outline" className="text-[10px] h-5">
                                   {city}
                                 </Badge>
                               ))
                             ) : (
-                              <span className="text-muted-foreground text-xs">No cities</span>
+                              <span className="text-muted-foreground text-[10px]">No cities</span>
                             )}
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-xs text-muted-foreground">Position</div>
+                        <div>
+                          <div className="text-[10px] text-muted-foreground mb-1">Position</div>
                           <div>
                             {agent.position ? (
                               (() => {
                                 const badge = getPositionBadgeStyles(agent.position);
                                 return (
-                                  <Badge variant={badge.variant} className={`text-xs ${badge.className}`}>
+                                  <Badge variant={badge.variant} className={`text-[10px] h-5 ${badge.className}`}>
                                     {agent.position}
                                   </Badge>
                                 );
                               })()
                             ) : (
-                              <span className="text-muted-foreground text-xs">Not set</span>
+                              <span className="text-muted-foreground text-[10px]">Not set</span>
                             )}
                           </div>
                         </div>
-                        <div className="col-span-2">
-                          <div className="text-xs text-muted-foreground">Total Sales</div>
-                          <div className="font-semibold">₱{(((agent as any).totalSales ?? agent.totalSales) || 0).toLocaleString()}</div>
-                        </div>
-                        <div className="col-span-2">
-                          <div className="text-xs text-muted-foreground">Orders</div>
-                          <div>{(agent as any).ordersCount ?? agent.ordersCount ?? 0}</div>
+                        <div className="grid grid-cols-2 gap-2 pt-1 border-t">
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">Total Sales</div>
+                            <div className="text-xs font-semibold">₱{(((agent as any).totalSales ?? agent.totalSales) || 0).toLocaleString()}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">Orders</div>
+                            <div className="text-xs font-semibold">{(agent as any).ordersCount ?? agent.ordersCount ?? 0}</div>
+                          </div>
                         </div>
                       </div>
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-sm text-muted-foreground">
-                          <span className="mr-2">Active:</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={agent.status === 'active' ? 'text-green-700' : 'text-gray-600'}
-                            onClick={() => handleStatusToggle(agent, agent.status !== 'active')}
-                          >
-                            {agent.status === 'active' ? 'Yes' : 'No'}
+                      <div className="mt-3 border-t pt-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-xs text-muted-foreground flex items-center gap-2">
+                            <span>Status:</span>
+                            <Switch
+                              checked={agent.status === 'active'}
+                              onCheckedChange={(checked) => handleStatusToggle(agent, checked)}
+                            />
+                            <span className={agent.status === 'active' ? 'text-green-600 font-medium' : 'text-gray-600'}>
+                              {agent.status === 'active' ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenView(agent)}>
+                            <Eye className="h-3 w-3 mr-1" /> View
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => {
+                            setEditingAgent(agent);
+                            setEditForm({
+                              name: agent.name,
+                              email: agent.email,
+                              phone: agent.phone || '',
+                              region: agent.region || '',
+                              cities: agent.cities || [],
+                              status: (agent as any).status || 'active',
+                              position: agent.position || '',
+                              role: agent.role || 'sales_agent'
+                            });
+                            setEditDialogOpen(true);
+                          }}>
+                            <Edit className="h-3 w-3 mr-1" /> Edit
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleResetPassword(agent)}>
+                            <Rewind className="h-3 w-3 mr-1" /> Reset
+                          </Button>
+                          <Button variant="outline" size="sm" className="text-xs h-8 text-red-600 hover:text-red-700" onClick={() => {
+                            setAgentToDelete(agent);
+                            setDeleteDialogOpen(true);
+                          }}>
+                            <Trash2 className="h-3 w-3 mr-1" /> Delete
                           </Button>
                         </div>
-                        <Button variant="ghost" size="sm" onClick={() => handleOpenView(agent)}>
-                          <Eye className="h-4 w-4 mr-1" /> View
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => {
-                          setEditingAgent(agent);
-                          setEditForm({
-                            name: agent.name,
-                            email: agent.email,
-                            phone: agent.phone || '',
-                            region: agent.region || '',
-                            cities: agent.cities || [],
-                            status: (agent as any).status || 'active',
-                            position: agent.position || '',
-                            role: agent.role || 'sales_agent'
-                          });
-                          setEditDialogOpen(true);
-                        }}>Edit</Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleResetPassword(agent)}>Reset</Button>
-                        <Button variant="ghost" size="sm" className="text-red-600" onClick={() => {
-                          setAgentToDelete(agent);
-                          setDeleteDialogOpen(true);
-                        }}>Delete</Button>
                       </div>
                     </div>
                   ))

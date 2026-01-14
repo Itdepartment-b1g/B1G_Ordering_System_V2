@@ -1,10 +1,11 @@
 import React, { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Download, Upload, FileSpreadsheet, Loader2, FileUp, FileDown } from 'lucide-react';
+import { Download, Upload, FileSpreadsheet, Loader2, FileUp, FileDown, MoreVertical } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 interface UserProfile {
     id: string;
@@ -197,7 +198,7 @@ export function UserImportExport({ users, onRefresh }: UserImportExportProps) {
     };
 
     return (
-        <div className="flex gap-2">
+        <>
             <input
                 type="file"
                 ref={fileInputRef}
@@ -205,18 +206,55 @@ export function UserImportExport({ users, onRefresh }: UserImportExportProps) {
                 accept=".xlsx, .xls"
                 className="hidden"
             />
-            <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
-                <FileSpreadsheet className="mr-2 h-4 w-4" />
-                Template
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting}>
-                {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
-                Export
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleImportClick} disabled={isImporting}>
-                {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
-                Import
-            </Button>
-        </div>
+            
+            {/* Mobile: Dropdown Menu */}
+            <div className="md:hidden">
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-9">
+                            <MoreVertical className="h-4 w-4" />
+                        </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuItem onClick={handleDownloadTemplate}>
+                            <FileSpreadsheet className="mr-2 h-4 w-4" />
+                            Download Template
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={handleExport} disabled={isExporting}>
+                            {isExporting ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <FileDown className="mr-2 h-4 w-4" />
+                            )}
+                            Export Users
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={handleImportClick} disabled={isImporting}>
+                            {isImporting ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <FileUp className="mr-2 h-4 w-4" />
+                            )}
+                            Import Users
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            </div>
+
+            {/* Desktop: All Buttons */}
+            <div className="hidden md:flex gap-2">
+                <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
+                    <FileSpreadsheet className="mr-2 h-4 w-4" />
+                    Template
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting}>
+                    {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
+                    Export
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleImportClick} disabled={isImporting}>
+                    {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
+                    Import
+                </Button>
+            </div>
+        </>
     );
 }

@@ -1,10 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useManagerTeamInventory } from './hooks/useManagerData';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
     Search,
     Package,
@@ -65,6 +67,15 @@ export default function ManagerTeamInventoryPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedAgent, setSelectedAgent] = useState<AgentInventorySummary | null>(null);
     const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
+    const [isMobile, setIsMobile] = useState(false);
+
+    // Detect mobile
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
 
     // Process Data for Grouping
     const { directReports, subTeams, stats } = useMemo(() => {
@@ -119,97 +130,164 @@ export default function ManagerTeamInventoryPage() {
     };
 
     const InventoryTable = ({ agents }: { agents: AgentInventorySummary[] }) => (
-        <Table>
-            <TableHeader className="bg-muted/30">
-                <TableRow>
-                    <TableHead className="w-[30%]">Agent Details</TableHead>
-                    <TableHead>Region</TableHead>
-                    <TableHead className="text-right">Product Types</TableHead>
-                    <TableHead className="text-right">Total Value</TableHead>
-                    <TableHead className="text-right">Total DSP</TableHead>
-                    <TableHead className="text-right">Total RSP</TableHead>
-                    <TableHead className="text-right">Total Stock</TableHead>
-                    <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-            </TableHeader>
-            <TableBody>
+        <>
+            {/* Mobile Card View */}
+            <div className="md:hidden space-y-3 p-3">
                 {agents.map((agent) => (
-                    <TableRow key={agent.agentId} className="hover:bg-muted/30 transition-colors">
-                        <TableCell>
-                            <div className="flex items-center gap-3">
+                    <div key={agent.agentId} className="border rounded-lg p-3 space-y-3 hover:border-primary/50 transition-colors">
+                        <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-2">
                                 <Avatar className={`h-9 w-9 border ${agent.agentRole === 'team_leader' ? 'ring-2 ring-amber-100' : ''}`}>
                                     <AvatarFallback className={agent.agentRole === 'team_leader' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}>
                                         {getInitials(agent.agentName)}
                                     </AvatarFallback>
                                 </Avatar>
-                                <div className="flex flex-col">
-                                    <span className="font-medium text-sm">{agent.agentName}</span>
+                                <div>
+                                    <p className="font-medium text-sm">{agent.agentName}</p>
                                     {agent.agentRole === 'team_leader' && (
-                                        <span className="text-[10px] text-amber-600 flex items-center gap-1 font-medium">
-                                            <Crown className="h-3 w-3" /> Team Leader
+                                        <span className="text-[9px] text-amber-600 flex items-center gap-1 font-medium">
+                                            <Crown className="h-2.5 w-2.5" /> Team Leader
                                         </span>
                                     )}
                                 </div>
                             </div>
-                        </TableCell>
-                        <TableCell>
-                            <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                                <MapPin className="h-3 w-3" />
-                                {agent.agentRegion}
-                            </div>
-                        </TableCell>
-                        <TableCell className="text-right text-sm">
-                            <span className="font-medium text-foreground">{agent.variantCount}</span> <span className="text-muted-foreground text-xs">variants</span>
-                        </TableCell>
-                        <TableCell className="text-right">
-                            {agent.totalValue ? (
-                                <span className="font-mono text-sm text-emerald-600">₱{agent.totalValue.toLocaleString()}</span>
-                            ) : <span className="text-muted-foreground text-xs">-</span>}
-                        </TableCell>
-                        <TableCell className="text-right">
-                            {agent.totalDspValue ? (
-                                <span className="font-mono text-sm text-indigo-600">₱{agent.totalDspValue.toLocaleString()}</span>
-                            ) : <span className="text-muted-foreground text-xs">-</span>}
-                        </TableCell>
-                        <TableCell className="text-right">
-                            {agent.totalRspValue ? (
-                                <span className="font-mono text-sm text-purple-600">₱{agent.totalRspValue.toLocaleString()}</span>
-                            ) : <span className="text-muted-foreground text-xs">-</span>}
-                        </TableCell>
-                        <TableCell className="text-right">
-                            <Badge variant="outline" className={`font-mono ${agent.totalStock < 50 ? 'border-red-200 bg-red-50 text-red-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>
+                            <Badge variant="outline" className={`font-mono text-xs ${agent.totalStock < 50 ? 'border-red-200 bg-red-50 text-red-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>
                                 {agent.totalStock.toLocaleString()}
                             </Badge>
-                        </TableCell>
-                        <TableCell>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setSelectedAgent(agent)}
-                                className="h-8 w-8 p-0 hover:bg-muted"
-                            >
-                                <Eye className="h-4 w-4 text-muted-foreground" />
-                            </Button>
-                        </TableCell>
-                    </TableRow>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <MapPin className="h-3 w-3" />
+                            {agent.agentRegion}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t">
+                            <div>
+                                <span className="text-muted-foreground">Variants:</span>
+                                <p className="font-semibold">{agent.variantCount}</p>
+                            </div>
+                            <div>
+                                <span className="text-muted-foreground">Allocated:</span>
+                                <p className="font-mono text-emerald-600 font-semibold">₱{agent.totalValue?.toLocaleString() || '-'}</p>
+                            </div>
+                            <div>
+                                <span className="text-muted-foreground">DSP:</span>
+                                <p className="font-mono text-indigo-600 font-semibold">₱{agent.totalDspValue?.toLocaleString() || '-'}</p>
+                            </div>
+                            <div>
+                                <span className="text-muted-foreground">RSP:</span>
+                                <p className="font-mono text-purple-600 font-semibold">₱{agent.totalRspValue?.toLocaleString() || '-'}</p>
+                            </div>
+                        </div>
+
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedAgent(agent)}
+                            className="w-full h-8 text-xs"
+                        >
+                            <Eye className="h-3 w-3 mr-1" />
+                            View Details
+                        </Button>
+                    </div>
                 ))}
-            </TableBody>
-        </Table>
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block">
+                <Table>
+                    <TableHeader className="bg-muted/30">
+                        <TableRow>
+                            <TableHead className="w-[30%]">Agent Details</TableHead>
+                            <TableHead>Region</TableHead>
+                            <TableHead className="text-right">Product Types</TableHead>
+                            <TableHead className="text-right">Total Value</TableHead>
+                            <TableHead className="text-right">Total DSP</TableHead>
+                            <TableHead className="text-right">Total RSP</TableHead>
+                            <TableHead className="text-right">Total Stock</TableHead>
+                            <TableHead className="w-[50px]"></TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {agents.map((agent) => (
+                            <TableRow key={agent.agentId} className="hover:bg-muted/30 transition-colors">
+                                <TableCell>
+                                    <div className="flex items-center gap-3">
+                                        <Avatar className={`h-9 w-9 border ${agent.agentRole === 'team_leader' ? 'ring-2 ring-amber-100' : ''}`}>
+                                            <AvatarFallback className={agent.agentRole === 'team_leader' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}>
+                                                {getInitials(agent.agentName)}
+                                            </AvatarFallback>
+                                        </Avatar>
+                                        <div className="flex flex-col">
+                                            <span className="font-medium text-sm">{agent.agentName}</span>
+                                            {agent.agentRole === 'team_leader' && (
+                                                <span className="text-[10px] text-amber-600 flex items-center gap-1 font-medium">
+                                                    <Crown className="h-3 w-3" /> Team Leader
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </TableCell>
+                                <TableCell>
+                                    <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                                        <MapPin className="h-3 w-3" />
+                                        {agent.agentRegion}
+                                    </div>
+                                </TableCell>
+                                <TableCell className="text-right text-sm">
+                                    <span className="font-medium text-foreground">{agent.variantCount}</span> <span className="text-muted-foreground text-xs">variants</span>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                    {agent.totalValue ? (
+                                        <span className="font-mono text-sm text-emerald-600">₱{agent.totalValue.toLocaleString()}</span>
+                                    ) : <span className="text-muted-foreground text-xs">-</span>}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                    {agent.totalDspValue ? (
+                                        <span className="font-mono text-sm text-indigo-600">₱{agent.totalDspValue.toLocaleString()}</span>
+                                    ) : <span className="text-muted-foreground text-xs">-</span>}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                    {agent.totalRspValue ? (
+                                        <span className="font-mono text-sm text-purple-600">₱{agent.totalRspValue.toLocaleString()}</span>
+                                    ) : <span className="text-muted-foreground text-xs">-</span>}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                    <Badge variant="outline" className={`font-mono ${agent.totalStock < 50 ? 'border-red-200 bg-red-50 text-red-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>
+                                        {agent.totalStock.toLocaleString()}
+                                    </Badge>
+                                </TableCell>
+                                <TableCell>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setSelectedAgent(agent)}
+                                        className="h-8 w-8 p-0 hover:bg-muted"
+                                    >
+                                        <Eye className="h-4 w-4 text-muted-foreground" />
+                                    </Button>
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </div>
+        </>
     );
 
     return (
-        <div className="space-y-6 p-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="space-y-4 md:space-y-6 p-4 md:p-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 md:gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Team Inventory</h1>
-                    <p className="text-muted-foreground">Overview of stock distribution across your team hierarchy</p>
+                    <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Team Inventory</h1>
+                    <p className="text-sm md:text-base text-muted-foreground">Stock distribution across your team</p>
                 </div>
                 {/* Search */}
                 <div className="relative w-full md:w-auto">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Search className="absolute left-2.5 top-2.5 h-3 w-3 md:h-4 md:w-4 text-muted-foreground" />
                     <Input
                         placeholder="Search agent or leader..."
-                        className="pl-8 bg-background w-full md:w-[300px]"
+                        className="pl-8 bg-background w-full md:w-[300px] h-9 md:h-10 text-sm"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                     />
@@ -217,55 +295,55 @@ export default function ManagerTeamInventoryPage() {
             </div>
 
             {/* Summary Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
                 <Card className="items-start shadow-sm border-l-4 border-l-blue-500">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Total Team Stock</CardTitle>
-                        <Box className="h-4 w-4 text-blue-500" />
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+                        <CardTitle className="text-[10px] md:text-sm font-medium">Total Stock</CardTitle>
+                        <Box className="h-3 w-3 md:h-4 md:w-4 text-blue-500" />
                     </CardHeader>
-                    <CardContent className="p-4 pt-0">
-                        <div className="text-2xl font-bold">{stats.totalStock.toLocaleString()}</div>
-                        <p className="text-xs text-muted-foreground">Units across all sub-teams</p>
+                    <CardContent className="p-3 md:p-4 pt-0">
+                        <div className="text-lg md:text-2xl font-bold">{stats.totalStock.toLocaleString()}</div>
+                        <p className="text-[10px] md:text-xs text-muted-foreground">All units</p>
                     </CardContent>
                 </Card>
                 <Card className="items-start shadow-sm border-l-4 border-l-emerald-500">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Total Allocated Value</CardTitle>
-                        <TrendingUp className="h-4 w-4 text-emerald-500" />
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+                        <CardTitle className="text-[10px] md:text-sm font-medium">Allocated</CardTitle>
+                        <TrendingUp className="h-3 w-3 md:h-4 md:w-4 text-emerald-500" />
                     </CardHeader>
-                    <CardContent className="p-4 pt-0">
-                        <div className="text-2xl font-bold text-green-600">₱{stats.totalValue.toLocaleString()}</div>
-                        <p className="text-xs text-muted-foreground">Total Allocated Value</p>
+                    <CardContent className="p-3 md:p-4 pt-0">
+                        <div className="text-lg md:text-2xl font-bold text-green-600">₱{stats.totalValue.toLocaleString()}</div>
+                        <p className="text-[10px] md:text-xs text-muted-foreground">Total Value</p>
                     </CardContent>
                 </Card>
                 <Card className="items-start shadow-sm border-l-4 border-l-indigo-500">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Total DSP Value</CardTitle>
-                        <TrendingUp className="h-4 w-4 text-indigo-500" />
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+                        <CardTitle className="text-[10px] md:text-sm font-medium">DSP Value</CardTitle>
+                        <TrendingUp className="h-3 w-3 md:h-4 md:w-4 text-indigo-500" />
                     </CardHeader>
-                    <CardContent className="p-4 pt-0">
-                        <div className="text-2xl font-bold text-indigo-600">₱{stats.totalDspValue.toLocaleString()}</div>
-                        <p className="text-xs text-muted-foreground">Based on DSP Pricing</p>
+                    <CardContent className="p-3 md:p-4 pt-0">
+                        <div className="text-lg md:text-2xl font-bold text-indigo-600">₱{stats.totalDspValue.toLocaleString()}</div>
+                        <p className="text-[10px] md:text-xs text-muted-foreground">DSP Pricing</p>
                     </CardContent>
                 </Card>
                 <Card className="items-start shadow-sm border-l-4 border-l-purple-500">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Total RSP Value</CardTitle>
-                        <TrendingUp className="h-4 w-4 text-purple-500" />
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+                        <CardTitle className="text-[10px] md:text-sm font-medium">RSP Value</CardTitle>
+                        <TrendingUp className="h-3 w-3 md:h-4 md:w-4 text-purple-500" />
                     </CardHeader>
-                    <CardContent className="p-4 pt-0">
-                        <div className="text-2xl font-bold text-purple-600">₱{stats.totalRspValue.toLocaleString()}</div>
-                        <p className="text-xs text-muted-foreground">Based on RSP Pricing</p>
+                    <CardContent className="p-3 md:p-4 pt-0">
+                        <div className="text-lg md:text-2xl font-bold text-purple-600">₱{stats.totalRspValue.toLocaleString()}</div>
+                        <p className="text-[10px] md:text-xs text-muted-foreground">RSP Pricing</p>
                     </CardContent>
                 </Card>
-                <Card className="items-start shadow-sm border-l-4 border-l-amber-500">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Low Stock Agents</CardTitle>
-                        <AlertTriangle className="h-4 w-4 text-amber-500" />
+                <Card className="items-start shadow-sm border-l-4 border-l-amber-500 col-span-2 lg:col-span-1">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+                        <CardTitle className="text-[10px] md:text-sm font-medium">Low Stock</CardTitle>
+                        <AlertTriangle className="h-3 w-3 md:h-4 md:w-4 text-amber-500" />
                     </CardHeader>
-                    <CardContent className="p-4 pt-0">
-                        <div className="text-2xl font-bold">{stats.lowStockAgents}</div>
-                        <p className="text-xs text-muted-foreground">Agents with &lt; 100 units</p>
+                    <CardContent className="p-3 md:p-4 pt-0">
+                        <div className="text-lg md:text-2xl font-bold">{stats.lowStockAgents}</div>
+                        <p className="text-[10px] md:text-xs text-muted-foreground">&lt; 100 units</p>
                     </CardContent>
                 </Card>
             </div>
@@ -279,11 +357,11 @@ export default function ManagerTeamInventoryPage() {
                 <div className="space-y-8">
                     {/* Direct Team Section */}
                     <Card className="border shadow-sm overflow-hidden">
-                        <CardHeader className="bg-muted/40 py-3 px-4 border-b">
+                        <CardHeader className="bg-muted/40 py-2 md:py-3 px-3 md:px-4 border-b">
                             <div className="flex items-center gap-2">
-                                <Users className="h-4 w-4 text-primary" />
-                                <CardTitle className="text-base font-semibold">My Direct Team</CardTitle>
-                                <Badge variant="secondary" className="ml-2 text-xs rounded-full px-2">
+                                <Users className="h-3 w-3 md:h-4 md:w-4 text-primary" />
+                                <CardTitle className="text-sm md:text-base font-semibold">My Direct Team</CardTitle>
+                                <Badge variant="secondary" className="ml-2 text-[10px] md:text-xs rounded-full px-1.5 md:px-2 h-4 md:h-5">
                                     {directReports.length}
                                 </Badge>
                             </div>
@@ -292,7 +370,7 @@ export default function ManagerTeamInventoryPage() {
                             {directReports.length > 0 ? (
                                 <InventoryTable agents={directReports} />
                             ) : (
-                                <div className="p-8 text-center text-muted-foreground text-sm">No direct reports found.</div>
+                                <div className="p-6 md:p-8 text-center text-muted-foreground text-xs md:text-sm">No direct reports found.</div>
                             )}
                         </CardContent>
                     </Card>
@@ -301,26 +379,26 @@ export default function ManagerTeamInventoryPage() {
                     {Object.entries(subTeams).map(([leaderId, group]) => (
                         <Card key={leaderId} className="border shadow-sm overflow-hidden">
                             <Collapsible defaultOpen>
-                                <div className="bg-muted/20 border-b flex items-center justify-between py-2 px-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-xs font-bold ring-2 ring-white">
+                                <div className="bg-muted/20 border-b flex items-center justify-between py-2 px-3 md:px-4">
+                                    <div className="flex items-center gap-2 md:gap-3">
+                                        <div className="h-7 w-7 md:h-8 md:w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-[10px] md:text-xs font-bold ring-2 ring-white">
                                             {getInitials(group.leaderName)}
                                         </div>
                                         <div>
-                                            <h3 className="text-sm font-semibold">{group.leaderName}'s Team</h3>
-                                            <p className="text-[10px] text-muted-foreground">Sub-Team Leader</p>
+                                            <h3 className="text-xs md:text-sm font-semibold">{group.leaderName}'s Team</h3>
+                                            <p className="text-[9px] md:text-[10px] text-muted-foreground">Sub-Team Leader</p>
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-4">
+                                    <div className="flex items-center gap-2 md:gap-4">
                                         <div className="text-right hidden sm:block">
-                                            <div className="text-xs font-medium">{group.agents.length} Agents</div>
-                                            <div className="text-[10px] text-muted-foreground">
-                                                {group.agents.reduce((acc, a) => acc + a.totalStock, 0).toLocaleString()} Total Units
+                                            <div className="text-[10px] md:text-xs font-medium">{group.agents.length} Agents</div>
+                                            <div className="text-[9px] md:text-[10px] text-muted-foreground">
+                                                {group.agents.reduce((acc, a) => acc + a.totalStock, 0).toLocaleString()} Units
                                             </div>
                                         </div>
                                         <CollapsibleTrigger asChild>
-                                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                                <ChevronDown className="h-4 w-4" />
+                                            <Button variant="ghost" size="sm" className="h-7 w-7 md:h-8 md:w-8 p-0">
+                                                <ChevronDown className="h-3 w-3 md:h-4 md:w-4" />
                                             </Button>
                                         </CollapsibleTrigger>
                                     </div>
@@ -342,22 +420,138 @@ export default function ManagerTeamInventoryPage() {
                 </div>
             )}
 
-            {/* Detailed Inventory Dialog */}
-            <Dialog open={!!selectedAgent} onOpenChange={(open) => !open && setSelectedAgent(null)}>
-                <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-3 text-2xl">
-                            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                                <Box className="h-5 w-5 text-primary" />
-                            </div>
-                            {selectedAgent?.agentName}'s Inventory
-                        </DialogTitle>
-                        <p className="text-sm text-muted-foreground mt-1">
-                            View detailed stock allocation and inventory value
-                        </p>
-                    </DialogHeader>
+            {/* Detailed Inventory Dialog - Mobile: Sheet, Desktop: Dialog */}
+            {isMobile ? (
+                <Sheet open={!!selectedAgent} onOpenChange={(open) => !open && setSelectedAgent(null)}>
+                    <SheetContent side="bottom" className="h-[90vh]">
+                        <SheetHeader className="pb-3">
+                            <SheetTitle className="flex items-center gap-2 text-lg">
+                                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                    <Box className="h-4 w-4 text-primary" />
+                                </div>
+                                {selectedAgent?.agentName}'s Inventory
+                            </SheetTitle>
+                            <SheetDescription className="text-xs">
+                                Detailed stock allocation and values
+                            </SheetDescription>
+                        </SheetHeader>
 
-                    {selectedAgent && (
+                        {selectedAgent && (
+                            <ScrollArea className="h-[calc(90vh-100px)]">
+                                <div className="space-y-4 pr-4">
+                                    {/* Summary Cards - Mobile */}
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <Card className="border-blue-200 bg-blue-50/50">
+                                            <CardContent className="pt-3 p-2">
+                                                <div className="text-center">
+                                                    <Package className="h-4 w-4 text-blue-600 mx-auto mb-1" />
+                                                    <div className="text-lg font-bold text-blue-900">{selectedAgent.totalStock.toLocaleString()}</div>
+                                                    <div className="text-[9px] text-blue-700">Units</div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                        <Card className="border-green-200 bg-green-50/50">
+                                            <CardContent className="pt-3 p-2">
+                                                <div className="text-center">
+                                                    <TrendingUp className="h-4 w-4 text-green-600 mx-auto mb-1" />
+                                                    <div className="text-lg font-bold text-green-900">
+                                                        ₱{Math.round((selectedAgent.totalValue || 0) / 1000)}k
+                                                    </div>
+                                                    <div className="text-[9px] text-green-700">Value</div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+
+                                        <Card className="border-purple-200 bg-purple-50/50">
+                                            <CardContent className="pt-3 p-2">
+                                                <div className="text-center">
+                                                    <BarChart3 className="h-4 w-4 text-purple-600 mx-auto mb-1" />
+                                                    <div className="text-lg font-bold text-purple-900">{selectedAgent.variantCount}</div>
+                                                    <div className="text-[9px] text-purple-700">Types</div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    </div>
+
+                                    {/* Inventory Breakdown - Mobile */}
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-sm font-semibold">Inventory Breakdown</h3>
+                                            <Badge variant="outline" className="text-[10px]">{selectedAgent.inventory.length} items</Badge>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            {selectedAgent.inventory.map((item, index) => {
+                                                const unitPrice = item.allocatedPrice || 0;
+                                                const dspPrice = item.dspPrice || 0;
+                                                const rspPrice = item.rspPrice || 0;
+                                                const unitTotal = unitPrice * item.stock;
+                                                const dspTotal = dspPrice * item.stock;
+                                                const rspTotal = rspPrice * item.stock;
+
+                                                return (
+                                                    <div key={index} className="border rounded-lg p-2 space-y-2 bg-card">
+                                                        <div className="flex justify-between items-start">
+                                                            <div>
+                                                                <p className="font-medium text-xs">{item.brandName}</p>
+                                                                <p className="text-[10px] text-muted-foreground">{item.variantName}</p>
+                                                            </div>
+                                                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">
+                                                                {item.variantType}
+                                                            </Badge>
+                                                        </div>
+
+                                                        <div className="grid grid-cols-2 gap-2 text-[10px] pt-1 border-t">
+                                                            <div>
+                                                                <span className="text-muted-foreground">Stock:</span>
+                                                                <p className="font-bold">{item.stock.toLocaleString()} units</p>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-muted-foreground">Total:</span>
+                                                                <p className="font-mono font-bold text-primary">₱{unitTotal.toLocaleString()}</p>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-muted-foreground">Unit Price:</span>
+                                                                <p className="font-mono">₱{unitPrice.toFixed(2)}</p>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-muted-foreground">DSP:</span>
+                                                                <p className="font-mono text-indigo-600">₱{dspTotal.toLocaleString()}</p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            </ScrollArea>
+                        )}
+
+                        <div className="pt-3 border-t mt-3">
+                            <Button onClick={() => setSelectedAgent(null)} className="w-full h-10">
+                                Close
+                            </Button>
+                        </div>
+                    </SheetContent>
+                </Sheet>
+            ) : (
+                <Dialog open={!!selectedAgent} onOpenChange={(open) => !open && setSelectedAgent(null)}>
+                    <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+                        <DialogHeader>
+                            <DialogTitle className="flex items-center gap-3 text-2xl">
+                                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                                    <Box className="h-5 w-5 text-primary" />
+                                </div>
+                                {selectedAgent?.agentName}'s Inventory
+                            </DialogTitle>
+                            <p className="text-sm text-muted-foreground mt-1">
+                                View detailed stock allocation and inventory value
+                            </p>
+                        </DialogHeader>
+
+                        {selectedAgent && (
                         <div className="space-y-6 pt-4">
                             {/* Summary Cards */}
                             <div className="grid grid-cols-3 gap-4">
@@ -504,10 +698,11 @@ export default function ManagerTeamInventoryPage() {
                                     </Table>
                                 </div>
                             </div>
-                        </div>
-                    )}
-                </DialogContent>
-            </Dialog>
+                            </div>
+                        )}
+                    </DialogContent>
+                </Dialog>
+            )}
         </div>
     );
 }
