@@ -247,18 +247,74 @@ export function useAgentStats() {
 
     const query = useQuery({
         queryKey: ['agent_stats', user?.id],
-        enabled: !!user?.id && user?.role === 'sales_agent',
+        enabled: !!user?.id && (user?.role === 'sales_agent' || user?.role === 'mobile_sales'),
         queryFn: async () => {
-            if (!user?.id) return null;
+            if (!user?.id) {
+                console.log('❌ No user ID available');
+                return null;
+            }
 
-            const [{ data: orders }, { data: clients }] = await Promise.all([
-                supabase.from('client_orders').select('id').eq('agent_id', user.id),
+            console.log('📊 Fetching agent stats for user:', user.id);
+
+            const [ordersResult, clientsResult] = await Promise.all([
+                supabase.from('client_orders').select('id, total_amount, status, stage').eq('agent_id', user.id),
                 supabase.from('clients').select('id').eq('agent_id', user.id)
             ]);
+
+            // Check for errors
+            if (ordersResult.error) {
+                console.error('❌ Error fetching orders:', ordersResult.error);
+            }
+            if (clientsResult.error) {
+                console.error('❌ Error fetching clients:', clientsResult.error);
+            }
+
+            const orders = ordersResult.data;
+            const clients = clientsResult.data;
+
+            console.log('📦 Orders fetched:', orders?.length || 0, orders);
+            console.log('👥 Clients fetched:', clients?.length || 0);
+
+            // Calculate overall sales (all orders regardless of status/stage)
+            const overallSales = (orders || []).reduce((sum, order) => {
+                const amount = Number(order.total_amount) || 0;
+                return sum + amount;
+            }, 0);
+
+            // Calculate approved sales only (stage = admin_approved is the final approval)
+            const approvedOrders = (orders || []).filter(order => order.stage === 'admin_approved');
+            const approvedSales = approvedOrders.reduce((sum, order) => {
+                const amount = Number(order.total_amount) || 0;
+                return sum + amount;
+            }, 0);
+
+            // Calculate pending sales (orders awaiting approval - not rejected or fully approved)
+            const pendingOrders = (orders || []).filter(order => {
+                const stage = order.stage;
+                // Include agent_pending, finance_pending, leader_approved (waiting for admin)
+                // Exclude admin_approved, leader_rejected, admin_rejected
+                return stage === 'agent_pending' || 
+                       stage === 'finance_pending' || 
+                       stage === 'leader_approved' ||
+                       (!stage && order.status === 'pending'); // Fallback for orders without stage
+            });
+            const pendingSales = pendingOrders.reduce((sum, order) => {
+                const amount = Number(order.total_amount) || 0;
+                return sum + amount;
+            }, 0);
+
+            console.log('💰 Sales calculated:', {
+                overallSales,
+                approvedSales: approvedSales + ' (from ' + approvedOrders.length + ' orders)',
+                pendingSales: pendingSales + ' (from ' + pendingOrders.length + ' orders)'
+            });
 
             return {
                 myOrders: orders?.length || 0,
                 myClients: clients?.length || 0,
+                overallSales,
+                approvedSales,
+                pendingSales,
                 myCommission: 0 // Logic not implemented yet as per current code
             };
         },
@@ -266,7 +322,7 @@ export function useAgentStats() {
     });
 
     useEffect(() => {
-        if (!user?.id || user.role !== 'sales_agent') return;
+        if (!user?.id || (user.role !== 'sales_agent' && user.role !== 'mobile_sales')) return;
 
         const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id] }));
         const channel2 = subscribeToTable('clients', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id] }));

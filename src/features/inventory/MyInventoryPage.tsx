@@ -569,200 +569,168 @@ export default function MyInventory() {
   const canRemit = !!leaderId;
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 space-y-4 md:space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+    <div className="w-full p-4 md:p-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">My Inventory</h1>
-          <p className="text-sm md:text-base text-muted-foreground">Products allocated to you by admin</p>
+          <h1 className="text-2xl font-bold">My Inventory</h1>
+          <p className="text-sm text-muted-foreground mt-1">Manage your stock and remittance</p>
         </div>
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+        <div className="flex gap-2 w-full sm:w-auto">
           <Button
             onClick={() => setRemitDialogOpen(true)}
-            variant="outline"
-            className="gap-2 w-full sm:w-auto"
-            size="sm"
+            variant="default"
+            className="gap-2 flex-1 sm:flex-initial"
             disabled={!canRemit}
           >
-            <ArrowLeft className="h-4 w-4" />
-            End of Day Remittance
-            {!leaderId && (
-              <span className="ml-2 text-xs text-muted-foreground">(No leader assigned)</span>
-            )}
+            <ClipboardCheck className="h-4 w-4" />
+            Remit
           </Button>
           <Button
             onClick={() => setReturnDialogOpen(true)}
-            variant="destructive"
-            className="gap-2 w-full sm:w-auto"
-            size="sm"
+            variant="outline"
+            className="gap-2 flex-1 sm:flex-initial"
             disabled={!leaderId}
           >
             <PackageMinus className="h-4 w-4" />
-            Return Inventory
+            Return
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
-        <Card className="border-l-4 border-l-primary">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium text-muted-foreground">Total Brands</p>
-            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-              <Package className="h-5 w-5 text-primary" />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl md:text-3xl font-bold">{activeBrands.length}</div>
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-sm text-muted-foreground">Brands</div>
+            <div className="text-2xl font-bold mt-1">{activeBrands.length}</div>
           </CardContent>
         </Card>
-        <Card className="border-l-4 border-l-blue-500">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium text-muted-foreground">Total Variants</p>
-            <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
-              <Package className="h-5 w-5 text-blue-500" />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl md:text-3xl font-bold">{getTotalVariants()}</div>
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-sm text-muted-foreground">Items</div>
+            <div className="text-2xl font-bold mt-1">{getTotalVariants()}</div>
           </CardContent>
         </Card>
-        <Card className="border-l-4 border-l-yellow-500">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium text-muted-foreground">Low Stock Items</p>
-            <div className="h-10 w-10 rounded-full bg-yellow-500/10 flex items-center justify-center">
-              <Package className="h-5 w-5 text-yellow-600" />
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-sm text-muted-foreground">Low Stock</div>
+            <div className={`text-2xl font-bold mt-1 ${getLowStockCount() > 0 ? 'text-yellow-600' : 'text-green-600'}`}>
+              {getLowStockCount() > 0 ? getLowStockCount() : '0'}
             </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl md:text-3xl font-bold text-yellow-600">{getLowStockCount()}</div>
           </CardContent>
         </Card>
       </div>
 
+      {/* Inventory List */}
       <Card>
-        <CardHeader className="space-y-4">
-          <div>
-            <h2 className="text-lg font-semibold">Inventory Details</h2>
-            <p className="text-sm text-muted-foreground">Browse and manage your allocated inventory</p>
-          </div>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search brands, products, or variants..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
+        <CardHeader className="pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="font-semibold">Inventory</h2>
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          {/* Mobile: card list */}
-          <div className="md:hidden space-y-3">
+          {/* Mobile List */}
+          <div className="md:hidden space-y-2">
             {filteredBrands.length === 0 ? (
-              <div className="text-center text-muted-foreground py-6">No inventory yet</div>
+              <div className="text-center py-12 text-muted-foreground">
+                <p>{searchQuery ? 'No results found' : 'No inventory'}</p>
+              </div>
             ) : (
               filteredBrands.map((brand) => (
-                <div key={brand.id} className="rounded-lg border bg-background p-4 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex-1">
-                      <div className="font-semibold text-base">{brand.name}</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {brand.flavors.length} {brand.flavors.length === 1 ? 'Flavor' : 'Flavors'}
-                        {brand.batteries.length > 0 && ` • ${brand.batteries.length} ${brand.batteries.length === 1 ? 'Battery' : 'Batteries'}`}
-                        {(brand.posms || []).length > 0 && ` • ${(brand.posms || []).length} POSM${(brand.posms || []).length === 1 ? '' : 's'}`}
+                <Card key={brand.id}>
+                  <div className="p-3">
+                    {/* Brand Header */}
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold truncate">{brand.name}</h3>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {brand.flavors.length + brand.batteries.length + (brand.posms || []).length} items
+                        </div>
+                      </div>
+                      <div className="text-right ml-3">
+                        <div className="text-xl font-bold">{getTotalStock(brand)}</div>
+                        {(() => {
+                          const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low') || (brand.posms || []).some((p: any) => p.status === 'low');
+                          const total = getTotalStock(brand);
+                          if (total === 0) return <div className="text-xs text-red-600">Out</div>;
+                          if (hasLow) return <div className="text-xs text-yellow-600">Low</div>;
+                          return <div className="text-xs text-green-600">OK</div>;
+                        })()}
                       </div>
                     </div>
-                    <div className="text-right ml-4">
-                      <div className="text-xs text-muted-foreground mb-1">Total Stock</div>
-                      <div className="text-xl font-bold">{getTotalStock(brand)}</div>
-                      {(() => {
-                        const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low') || (brand.posms || []).some((p: any) => p.status === 'low');
-                        const total = getTotalStock(brand);
-                        const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700';
-                        const label = total === 0 ? 'Out of stock' : hasLow ? 'Low stock' : 'In stock';
-                        return <span className={`mt-1.5 inline-block px-2 py-0.5 rounded-full text-xs font-medium ${pillClass}`}>{label}</span>;
-                      })()}
-                    </div>
+                    {/* Details */}
+                    {expandedBrands.includes(brand.id) && (
+                      <div className="space-y-2 pt-2 border-t mt-2">
+                        {brand.flavors.length > 0 && (
+                          <div>
+                            <div className="text-xs font-semibold text-muted-foreground mb-1">Flavors</div>
+                            <div className="space-y-1">
+                              {brand.flavors.map((f: any) => (
+                                <div key={f.id} className="flex items-center justify-between text-sm py-1">
+                                  <span className="truncate">{f.name}</span>
+                                  <div className="text-right ml-2 flex-shrink-0">
+                                    <span className="font-semibold">{f.stock}</span>
+                                    <span className="text-xs text-muted-foreground ml-1">₱{f.price.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {brand.batteries.length > 0 && (
+                          <div>
+                            <div className="text-xs font-semibold text-muted-foreground mb-1">Batteries</div>
+                            <div className="space-y-1">
+                              {brand.batteries.map((b: any) => (
+                                <div key={b.id} className="flex items-center justify-between text-sm py-1">
+                                  <span className="truncate">{b.name}</span>
+                                  <div className="text-right ml-2 flex-shrink-0">
+                                    <span className="font-semibold">{b.stock}</span>
+                                    <span className="text-xs text-muted-foreground ml-1">₱{b.price.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {(brand.posms || []).length > 0 && (
+                          <div>
+                            <div className="text-xs font-semibold text-muted-foreground mb-1">POSM</div>
+                            <div className="space-y-1">
+                              {(brand.posms || []).map((p: any) => (
+                                <div key={p.id} className="flex items-center justify-between text-sm py-1">
+                                  <span className="truncate">{p.name}</span>
+                                  <div className="text-right ml-2 flex-shrink-0">
+                                    <span className="font-semibold">{p.stock}</span>
+                                    <span className="text-xs text-muted-foreground ml-1">₱{p.price.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Toggle Button */}
+                    <button 
+                      onClick={() => toggleBrandExpand(brand.id)}
+                      className="w-full mt-2 pt-2 border-t text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {expandedBrands.includes(brand.id) ? 'Hide' : 'Show'} Details
+                    </button>
                   </div>
-                  {/* Details */}
-                  {expandedBrands.includes(brand.id) && (
-                    <div className="mt-3 space-y-2">
-                      {brand.flavors.length > 0 && (
-                        <div>
-                          <div className="text-xs font-semibold text-blue-600 mb-1">Flavors</div>
-                          <div className="space-y-1">
-                            {brand.flavors.map((f: any) => (
-                              <div key={f.id} className="flex justify-between items-center text-sm bg-muted/30 rounded px-2 py-1">
-                                <span>{f.name}</span>
-                                <div className="text-right">
-                                  <div className="font-medium">{f.stock} • ₱{f.price.toFixed(2)}</div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {f.dspPrice && `DSP: ₱${f.dspPrice.toFixed(2)}`}
-                                    {f.dspPrice && f.rspPrice && ' • '}
-                                    {f.rspPrice && `RSP: ₱${f.rspPrice.toFixed(2)}`}
-                                  </div>
-                                  <span className={`text-xs ${f.stock === 0 ? 'text-red-600' : (f as any).status === 'low' ? 'text-orange-600' : 'text-blue-700'}`}>
-                                    {(f as any).status === 'low' ? 'low' : f.stock === 0 ? 'out' : 'in'}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {brand.batteries.length > 0 && (
-                        <div>
-                          <div className="text-xs font-semibold text-green-600 mb-1">Batteries</div>
-                          <div className="space-y-1">
-                            {brand.batteries.map((b: any) => (
-                              <div key={b.id} className="flex justify-between items-center text-sm bg-muted/30 rounded px-2 py-1">
-                                <span>{b.name}</span>
-                                <div className="text-right">
-                                  <div className="font-medium">{b.stock} • ₱{b.price.toFixed(2)}</div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {b.dspPrice && `DSP: ₱${b.dspPrice.toFixed(2)}`}
-                                    {b.dspPrice && b.rspPrice && ' • '}
-                                    {b.rspPrice && `RSP: ₱${b.rspPrice.toFixed(2)}`}
-                                  </div>
-                                  <span className={`text-xs ${b.stock === 0 ? 'text-red-600' : (b as any).status === 'low' ? 'text-orange-600' : 'text-blue-700'}`}>
-                                    {(b as any).status === 'low' ? 'low' : b.stock === 0 ? 'out' : 'in'}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {(brand.posms || []).length > 0 && (
-                        <div>
-                          <div className="text-xs font-semibold text-purple-600 mb-1">POSM</div>
-                          <div className="space-y-1">
-                            {(brand.posms || []).map((p: any) => (
-                              <div key={p.id} className="flex justify-between items-center text-sm bg-muted/30 rounded px-2 py-1">
-                                <span>{p.name}</span>
-                                <div className="text-right">
-                                  <div className="font-medium">{p.stock} • ₱{p.price.toFixed(2)}</div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {p.dspPrice && `DSP: ₱${p.dspPrice.toFixed(2)}`}
-                                    {p.dspPrice && p.rspPrice && ' • '}
-                                    {p.rspPrice && `RSP: ₱${p.rspPrice.toFixed(2)}`}
-                                  </div>
-                                  <span className={`text-xs ${p.stock === 0 ? 'text-red-600' : (p as any).status === 'low' ? 'text-orange-600' : 'text-purple-700'}`}>
-                                    {(p as any).status === 'low' ? 'low' : p.stock === 0 ? 'out' : 'in'}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div className="mt-3 flex justify-end">
-                    <Button variant="ghost" size="sm" onClick={() => toggleBrandExpand(brand.id)}>
-                      {expandedBrands.includes(brand.id) ? 'Hide Details' : 'Show Details'}
-                    </Button>
-                  </div>
-                </div>
+                </Card>
               ))
             )}
           </div>

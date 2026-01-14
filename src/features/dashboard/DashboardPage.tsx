@@ -30,7 +30,7 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
   const isLeader = user?.role === 'team_leader';
-  const isAgent = user?.role === 'sales_agent';
+  const isAgent = user?.role === 'sales_agent' || user?.role === 'mobile_sales';
   const isFinance = user?.role === 'finance';
 
   // Redirect logic
@@ -85,6 +85,9 @@ export default function DashboardPage() {
   const {
     myOrders = 0,
     myClients = 0,
+    overallSales = 0,
+    approvedSales = 0,
+    pendingSales = 0,
     myCommission = 0
   } = agentStats || {};
 
@@ -562,18 +565,17 @@ export default function DashboardPage() {
       ) : (
         <>
           {/* Agent Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 md:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">My Orders</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                <ShoppingCart className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <div className="text-xl md:text-2xl font-bold">{myOrders}</div>
                 <p className="text-xs text-muted-foreground mt-1">Total orders placed</p>
               </CardContent>
             </Card>
-            {/* Commission card hidden for agents */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">My Clients</CardTitle>
@@ -584,7 +586,39 @@ export default function DashboardPage() {
                 <p className="text-xs text-muted-foreground mt-1">Total clients</p>
               </CardContent>
             </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Overall Sales</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">₱{overallSales.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground mt-1">All orders (pending & approved)</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Approved Sales</CardTitle>
+                <CheckCircle className="h-4 w-4 text-green-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold text-green-600">₱{approvedSales.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground mt-1">Approved orders only</p>
+              </CardContent>
+            </Card>
           </div>
+
+          {/* Sales Breakdown Card */}
+          <Card className="border-l-4 border-l-yellow-500">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
+              <Clock className="h-4 w-4 text-yellow-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl md:text-2xl font-bold text-yellow-600">₱{pendingSales.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
+            </CardContent>
+          </Card>
 
           {/* Recent Activity Table */}
           <Card>
