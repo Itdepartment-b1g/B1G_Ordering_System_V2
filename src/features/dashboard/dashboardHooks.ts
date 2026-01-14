@@ -140,7 +140,7 @@ export function useLeaderStats() {
                     pendingLeaderOrders: 0,
                     approvedOrdersCount: 0,
                     pendingStockRequests: [],
-                    pendingOrderApprovals: []
+                    recentRemittances: []
                 };
             }
 
@@ -200,10 +200,26 @@ export function useLeaderStats() {
 
             const pendingStockRequests = requests || [];
 
-            // Get pending order approvals
-            const pendingOrderApprovals = (orders || []).filter((o: any) =>
-                o.status === 'pending' && o.stage !== 'leader_approved' && o.stage !== 'admin_approved'
-            ).slice(0, 5);
+            // Get recent remittances from sub-team (mobile sales)
+            const { data: remittances } = await supabase
+                .from('remittances_log')
+                .select(`
+                    id,
+                    remittance_id,
+                    agent_id,
+                    leader_id,
+                    total_revenue,
+                    total_orders,
+                    remittance_date,
+                    status,
+                    profiles!remittances_log_agent_id_fkey(full_name)
+                `)
+                .eq('leader_id', user.id)
+                .in('agent_id', teamMemberIds)
+                .order('remittance_date', { ascending: false })
+                .limit(10);
+
+            const recentRemittances = remittances || [];
 
             return {
                 teamMembers: teamMemberIds.length,
@@ -218,7 +234,7 @@ export function useLeaderStats() {
                 pendingLeaderOrders,
                 approvedOrdersCount,
                 pendingStockRequests,
-                pendingOrderApprovals
+                recentRemittances
             };
         },
         staleTime: 1000 * 60 * 5,
@@ -230,11 +246,13 @@ export function useLeaderStats() {
         const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] }));
         const channel2 = subscribeToTable('stock_requests', () => queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] }));
         const channel3 = subscribeToTable('leader_teams', () => queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] }));
+        const channel4 = subscribeToTable('remittances_log', () => queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] }));
 
         return () => {
             unsubscribe(channel1);
             unsubscribe(channel2);
             unsubscribe(channel3);
+            unsubscribe(channel4);
         };
     }, [user?.id, user?.role, queryClient]);
 

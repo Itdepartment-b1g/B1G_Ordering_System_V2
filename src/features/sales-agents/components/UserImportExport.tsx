@@ -242,19 +242,19 @@ export function UserImportExport({ users, onRefresh }: UserImportExportProps) {
 
             {/* Desktop: All Buttons */}
             <div className="hidden md:flex gap-2">
-                <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
-                    <FileSpreadsheet className="mr-2 h-4 w-4" />
-                    Template
-                </Button>
-                <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting}>
-                    {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
-                    Export
-                </Button>
-                <Button variant="outline" size="sm" onClick={handleImportClick} disabled={isImporting}>
-                    {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
-                    Import
-                </Button>
-            </div>
+            <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
+                <FileSpreadsheet className="mr-2 h-4 w-4" />
+                Template
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting}>
+                {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
+                Export
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleImportClick} disabled={isImporting}>
+                {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileUp className="mr-2 h-4 w-4" />}
+                Import
+            </Button>
+        </div>
         </>
     );
 }

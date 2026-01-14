@@ -1017,10 +1017,10 @@ export default function SalesAgentsPage() {
                       </div>
                       <div className="space-y-2">
                         <div className="grid grid-cols-2 gap-2">
-                          <div>
+                        <div>
                             <div className="text-[10px] text-muted-foreground">Phone</div>
                             <div className="text-xs font-medium truncate">{agent.phone || '—'}</div>
-                          </div>
+                        </div>
                           <div>
                             <div className="text-[10px] text-muted-foreground">Region</div>
                             <div className="text-xs font-medium truncate">{agent.region || '—'}</div>
@@ -1061,13 +1061,13 @@ export default function SalesAgentsPage() {
                           <div>
                             <div className="text-[10px] text-muted-foreground">Total Sales</div>
                             <div className="text-xs font-semibold">₱{(((agent as any).totalSales ?? agent.totalSales) || 0).toLocaleString()}</div>
-                          </div>
+                        </div>
                           <div>
                             <div className="text-[10px] text-muted-foreground">Orders</div>
                             <div className="text-xs font-semibold">{(agent as any).ordersCount ?? agent.ordersCount ?? 0}</div>
-                          </div>
                         </div>
                       </div>
+                        </div>
                       <div className="mt-3 border-t pt-3">
                         <div className="flex items-center justify-between mb-2">
                           <div className="text-xs text-muted-foreground flex items-center gap-2">
@@ -1084,20 +1084,20 @@ export default function SalesAgentsPage() {
                         <div className="grid grid-cols-2 gap-2">
                           <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenView(agent)}>
                             <Eye className="h-3 w-3 mr-1" /> View
-                          </Button>
+                        </Button>
                           <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => {
-                            setEditingAgent(agent);
-                            setEditForm({
-                              name: agent.name,
-                              email: agent.email,
-                              phone: agent.phone || '',
-                              region: agent.region || '',
-                              cities: agent.cities || [],
-                              status: (agent as any).status || 'active',
-                              position: agent.position || '',
-                              role: agent.role || 'sales_agent'
-                            });
-                            setEditDialogOpen(true);
+                          setEditingAgent(agent);
+                          setEditForm({
+                            name: agent.name,
+                            email: agent.email,
+                            phone: agent.phone || '',
+                            region: agent.region || '',
+                            cities: agent.cities || [],
+                            status: (agent as any).status || 'active',
+                            position: agent.position || '',
+                            role: agent.role || 'sales_agent'
+                          });
+                          setEditDialogOpen(true);
                           }}>
                             <Edit className="h-3 w-3 mr-1" /> Edit
                           </Button>
@@ -1105,8 +1105,8 @@ export default function SalesAgentsPage() {
                             <Rewind className="h-3 w-3 mr-1" /> Reset
                           </Button>
                           <Button variant="outline" size="sm" className="text-xs h-8 text-red-600 hover:text-red-700" onClick={() => {
-                            setAgentToDelete(agent);
-                            setDeleteDialogOpen(true);
+                          setAgentToDelete(agent);
+                          setDeleteDialogOpen(true);
                           }}>
                             <Trash2 className="h-3 w-3 mr-1" /> Delete
                           </Button>

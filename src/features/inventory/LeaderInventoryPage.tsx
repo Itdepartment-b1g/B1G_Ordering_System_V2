@@ -6,6 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -47,6 +49,7 @@ export default function LeaderInventoryPage() {
   const [sortBy, setSortBy] = useState<'name' | 'stock' | 'value'>('name');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
+  const [isMobile, setIsMobile] = useState(false);
 
   // Inventory pagination and filtering
   const [inventoryCurrentPage, setInventoryCurrentPage] = useState(1);
@@ -66,6 +69,14 @@ export default function LeaderInventoryPage() {
   const [variantQuantities, setVariantQuantities] = useState<Record<string, number>>({});
 
   const { toast } = useToast();
+
+  // Mobile detection
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Check if user is a leader or admin
   useEffect(() => {
@@ -931,79 +942,79 @@ export default function LeaderInventoryPage() {
   }
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-4 md:p-8 space-y-4 md:space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            {user.role === 'admin' ? 'All Leader Inventory' : 'Team Inventory Management'}
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+            {user.role === 'admin' ? 'All Leader Inventory' : 'Team Inventory'}
           </h1>
-          <p className="text-muted-foreground">
+          <p className="text-sm md:text-base text-muted-foreground">
             {user.role === 'admin'
-              ? 'View and manage inventory allocated to all leaders'
-              : 'Manage your allocated inventory and distribute to team members'
+              ? 'View all leader inventory'
+              : 'Manage and distribute inventory'
             }
           </p>
         </div>
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2">
-              <Package className="h-4 w-4 text-blue-600" />
-              <div>
-                <div className="text-2xl font-bold">{leaderTotalStock.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Your Stock</div>
+              <Package className="h-3 w-3 md:h-4 md:w-4 text-blue-600 flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-lg md:text-2xl font-bold truncate">{leaderTotalStock.toLocaleString()}</div>
+                <div className="text-[10px] md:text-xs text-muted-foreground truncate">Your Stock</div>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-green-600" />
-              <div>
-                <div className="text-2xl font-bold">₱{leaderTotalValue.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Your Value</div>
+              <TrendingUp className="h-3 w-3 md:h-4 md:w-4 text-green-600 flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-lg md:text-2xl font-bold truncate">₱{(leaderTotalValue / 1000).toFixed(0)}k</div>
+                <div className="text-[10px] md:text-xs text-muted-foreground truncate">Your Value</div>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-purple-600" />
-              <div>
-                <div className="text-2xl font-bold">{totalTeamMembers}</div>
-                <div className="text-xs text-muted-foreground">Team Members</div>
+              <Users className="h-3 w-3 md:h-4 md:w-4 text-purple-600 flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-lg md:text-2xl font-bold truncate">{totalTeamMembers}</div>
+                <div className="text-[10px] md:text-xs text-muted-foreground truncate">Members</div>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-orange-600" />
-              <div>
-                <div className="text-2xl font-bold">{totalTeamStock.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Team Stock</div>
+              <BarChart3 className="h-3 w-3 md:h-4 md:w-4 text-orange-600 flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-lg md:text-2xl font-bold truncate">{totalTeamStock.toLocaleString()}</div>
+                <div className="text-[10px] md:text-xs text-muted-foreground truncate">Team Stock</div>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3 md:p-4">
             <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-indigo-600" />
-              <div>
-                <div className="text-2xl font-bold">₱{totalTeamValue.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Team Value</div>
+              <TrendingUp className="h-3 w-3 md:h-4 md:w-4 text-indigo-600 flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-lg md:text-2xl font-bold truncate">₱{(totalTeamValue / 1000).toFixed(0)}k</div>
+                <div className="text-[10px] md:text-xs text-muted-foreground truncate">Team Value</div>
               </div>
             </div>
           </CardContent>
@@ -1012,64 +1023,66 @@ export default function LeaderInventoryPage() {
 
       {/* Your Allocated Inventory Section */}
       <Card>
-        <CardHeader>
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <CardTitle className="flex items-center gap-2">
-                <Crown className="h-5 w-5 text-yellow-600" />
-                Your Allocated Inventory
+        <CardHeader className="p-4 md:p-6">
+          <div className="space-y-3 md:space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <CardTitle className="flex items-center gap-2 text-base md:text-lg">
+                <Crown className="h-4 w-4 md:h-5 md:w-5 text-yellow-600 flex-shrink-0" />
+                <span className="truncate">Your Inventory</span>
               </CardTitle>
               {user.role !== 'admin' && user.role !== 'manager' && (
                 <Button
                   onClick={() => setAllocationOpen(true)}
                   disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
                   size="sm"
+                  className="w-full sm:w-auto h-9 text-xs"
                 >
-                  <ArrowRight className="mr-2 h-4 w-4" />
-                  Allocate to Team
+                  <ArrowRight className="mr-2 h-3 w-3" />
+                  Allocate
                 </Button>
               )}
             </div>
 
             {/* Filters and Controls */}
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col gap-2">
               {/* Search Bar */}
-              <div className="relative flex-1 sm:max-w-xs">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <div className="relative w-full">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 md:h-4 md:w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search by brand, variant, or type..."
+                  placeholder="Search inventory..."
                   value={inventorySearchQuery}
                   onChange={(e) => setInventorySearchQuery(e.target.value)}
-                  className="pl-10"
+                  className="pl-9 md:pl-10 h-9 md:h-10 text-sm"
                 />
               </div>
 
-              {/* Type Filter */}
-              <select
-                value={inventoryTypeFilter}
-                onChange={(e) => setInventoryTypeFilter(e.target.value)}
-                className="flex h-10 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="all">All Types</option>
-                <option value="flavor">Flavors</option>
-                <option value="battery">Battery</option>
-                <option value="posm">POSM</option>
-              </select>
-
-              {/* Sort Dropdown */}
-              <select
-                value={inventorySortBy}
-                onChange={(e) => setInventorySortBy(e.target.value as 'name' | 'stock' | 'value' | 'available')}
-                className="flex h-10 w-40 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="name">Sort: Name</option>
-                <option value="stock">Sort: Total Stock</option>
-                <option value="value">Sort: Total Value</option>
-                <option value="available">Sort: Available</option>
-              </select>
-
-              {/* Expand/Collapse All */}
+              {/* Filters Row */}
               <div className="flex gap-2">
+                {/* Type Filter */}
+                <select
+                  value={inventoryTypeFilter}
+                  onChange={(e) => setInventoryTypeFilter(e.target.value)}
+                  className="flex h-9 md:h-10 flex-1 rounded-md border border-input bg-background px-2 md:px-3 py-2 text-xs md:text-sm"
+                >
+                  <option value="all">All Types</option>
+                  <option value="flavor">Flavors</option>
+                  <option value="battery">Battery</option>
+                  <option value="posm">POSM</option>
+                </select>
+
+                {/* Sort Dropdown */}
+                <select
+                  value={inventorySortBy}
+                  onChange={(e) => setInventorySortBy(e.target.value as 'name' | 'stock' | 'value' | 'available')}
+                  className="flex h-9 md:h-10 flex-1 rounded-md border border-input bg-background px-2 md:px-3 py-2 text-xs md:text-sm"
+                >
+                  <option value="name">Name</option>
+                  <option value="stock">Stock</option>
+                  <option value="value">Value</option>
+                  <option value="available">Available</option>
+                </select>
+
+                {/* Expand/Collapse All */}
                 <Button
                   variant="outline"
                   size="sm"
@@ -1080,32 +1093,33 @@ export default function LeaderInventoryPage() {
                       setExpandedBrands(paginatedBrands.map(b => b.brand));
                     }
                   }}
+                  className="h-9 md:h-10 text-xs px-2 md:px-4"
                 >
-                  {expandedBrands.length === paginatedBrands.length ? 'Collapse All' : 'Expand All'}
+                  {expandedBrands.length === paginatedBrands.length ? 'Collapse' : 'Expand'}
                 </Button>
               </div>
             </div>
 
             {/* Summary Stats */}
             {filteredInventory.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2 border-t">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 pt-2 border-t">
                 <div>
-                  <div className="text-sm text-muted-foreground">Total Brands</div>
-                  <div className="text-lg font-semibold">{sortedBrandsWithStats.length}</div>
+                  <div className="text-[10px] md:text-sm text-muted-foreground">Brands</div>
+                  <div className="text-sm md:text-lg font-semibold">{sortedBrandsWithStats.length}</div>
                 </div>
                 <div>
-                  <div className="text-sm text-muted-foreground">Total Variants</div>
-                  <div className="text-lg font-semibold">{filteredInventory.length}</div>
+                  <div className="text-[10px] md:text-sm text-muted-foreground">Variants</div>
+                  <div className="text-sm md:text-lg font-semibold">{filteredInventory.length}</div>
                 </div>
                 <div>
-                  <div className="text-sm text-muted-foreground">Total Stock</div>
-                  <div className="text-lg font-semibold">
+                  <div className="text-[10px] md:text-sm text-muted-foreground">Stock</div>
+                  <div className="text-sm md:text-lg font-semibold">
                     {sortedBrandsWithStats.reduce((sum, b) => sum + b.totalStock, 0).toLocaleString()}
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm text-muted-foreground">Available Stock</div>
-                  <div className="text-lg font-semibold text-green-600">
+                  <div className="text-[10px] md:text-sm text-muted-foreground">Available</div>
+                  <div className="text-sm md:text-lg font-semibold text-green-600">
                     {sortedBrandsWithStats.reduce((sum, b) => sum + b.totalAvailable, 0).toLocaleString()}
                   </div>
                 </div>
@@ -1148,33 +1162,33 @@ export default function LeaderInventoryPage() {
                     const lowStockItems = items.filter(item => item.availableStock < 10).length;
 
                     return (
-                      <AccordionItem key={brand} value={brand} className="border rounded-lg px-4 bg-card">
-                        <AccordionTrigger className="hover:no-underline py-3">
-                          <div className="flex items-center justify-between w-full pr-4">
-                            <div className="flex items-center gap-3 flex-1 min-w-0">
-                              <Package className="h-5 w-5 text-blue-600 shrink-0" />
+                      <AccordionItem key={brand} value={brand} className="border rounded-lg bg-card">
+                        <AccordionTrigger className="hover:no-underline px-3 md:px-4 py-3">
+                          <div className="flex items-center justify-between w-full pr-2 md:pr-4 gap-2">
+                            <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
+                              <Package className="h-4 w-4 md:h-5 md:w-5 text-blue-600 shrink-0" />
                               <div className="text-left min-w-0 flex-1">
-                                <div className="flex items-center gap-2">
-                                  <h3 className="text-base font-semibold truncate">{brand}</h3>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="text-sm md:text-base font-semibold truncate">{brand}</h3>
                                   {lowStockItems > 0 && (
-                                    <Badge variant="destructive" className="text-xs">
-                                      {lowStockItems} low stock
+                                    <Badge variant="destructive" className="text-[9px] md:text-xs h-5 md:h-auto whitespace-nowrap">
+                                      {lowStockItems} low
                                     </Badge>
                                   )}
                                 </div>
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-[10px] md:text-xs text-muted-foreground">
                                   {itemCount} {itemCount === 1 ? 'variant' : 'variants'}
                                 </p>
                               </div>
                             </div>
-                            <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm shrink-0">
+                            <div className="flex items-center gap-3 md:gap-6 text-xs shrink-0">
                               <div className="text-right hidden sm:block">
-                                <div className="text-muted-foreground text-xs">Stock</div>
-                                <div className="font-semibold">{totalStock.toLocaleString()}</div>
+                                <div className="text-muted-foreground text-[10px] md:text-xs">Stock</div>
+                                <div className="font-semibold text-xs md:text-sm">{totalStock.toLocaleString()}</div>
                               </div>
                               <div className="text-right">
-                                <div className="text-muted-foreground text-xs">Available</div>
-                                <div className="font-semibold text-green-600">{totalAvailable.toLocaleString()}</div>
+                                <div className="text-muted-foreground text-[10px] md:text-xs">Available</div>
+                                <div className="font-semibold text-xs md:text-sm text-green-600">{totalAvailable.toLocaleString()}</div>
                               </div>
                               <div className="text-right hidden md:block">
                                 <div className="text-muted-foreground text-xs">Value</div>
@@ -1184,8 +1198,77 @@ export default function LeaderInventoryPage() {
                           </div>
                         </AccordionTrigger>
                         <AccordionContent>
-                          <div className="overflow-x-auto pt-2 pb-2">
-                            <Table className="table-fixed w-full">
+                          <div className="pt-2 pb-2">
+                            {isMobile ? (
+                              // Mobile Cards View
+                              <div className="space-y-2">
+                                {items.map((item) => (
+                                  <div
+                                    key={item.id}
+                                    className={`border rounded-lg p-3 space-y-2 ${item.availableStock < 10 ? 'bg-orange-50 border-orange-200' : 'bg-background'}`}
+                                  >
+                                    {/* Header */}
+                                    <div className="flex justify-between items-start">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="font-medium text-sm truncate">{item.variantName}</div>
+                                        <Badge variant="outline" className="text-[9px] h-5 mt-1 uppercase">
+                                          {item.variantType}
+                                        </Badge>
+                                      </div>
+                                    </div>
+
+                                    {/* Stock Info */}
+                                    <div className="grid grid-cols-3 gap-2 text-center text-xs border-t pt-2">
+                                      <div>
+                                        <div className="text-[10px] text-muted-foreground">Total</div>
+                                        <div className="font-semibold">{item.stock.toLocaleString()}</div>
+                                      </div>
+                                      <div>
+                                        <div className="text-[10px] text-muted-foreground">Allocated</div>
+                                        <div className="font-semibold text-orange-600">{item.allocatedStock.toLocaleString()}</div>
+                                      </div>
+                                      <div>
+                                        <div className="text-[10px] text-muted-foreground">Available</div>
+                                        <div className={`font-semibold ${item.availableStock < 10 ? 'text-red-600' : 'text-green-600'}`}>
+                                          {item.availableStock.toLocaleString()}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Prices */}
+                                    <div className="grid grid-cols-3 gap-2 text-[10px] border-t pt-2">
+                                      <div>
+                                        <div className="text-muted-foreground">Unit</div>
+                                        <div className="font-semibold">₱{item.allocatedPrice.toFixed(2)}</div>
+                                      </div>
+                                      {item.dspPrice && (
+                                        <div>
+                                          <div className="text-muted-foreground">DSP</div>
+                                          <div className="font-semibold">₱{item.dspPrice.toFixed(2)}</div>
+                                        </div>
+                                      )}
+                                      {item.rspPrice && (
+                                        <div>
+                                          <div className="text-muted-foreground">RSP</div>
+                                          <div className="font-semibold">₱{item.rspPrice.toFixed(2)}</div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Total Value */}
+                                    <div className="border-t pt-2">
+                                      <div className="flex justify-between items-center text-xs">
+                                        <span className="text-muted-foreground">Total Value:</span>
+                                        <span className="font-bold text-primary">₱{item.totalValue.toFixed(2)}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              // Desktop Table View
+                              <div className="overflow-x-auto">
+                                <Table className="table-fixed w-full">
                               <colgroup>
                                 <col style={{ width: '200px' }} />
                                 <col style={{ width: '100px' }} />
@@ -1238,6 +1321,8 @@ export default function LeaderInventoryPage() {
                                 ))}
                               </TableBody>
                             </Table>
+                              </div>
+                            )}
                           </div>
                         </AccordionContent>
                       </AccordionItem>
@@ -1284,72 +1369,75 @@ export default function LeaderInventoryPage() {
 
       {/* Team Members Inventory Section */}
       <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-blue-600" />
-              Team Members Inventory
+        <CardHeader className="p-4 md:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <CardTitle className="flex items-center gap-2 text-base md:text-lg">
+              <Users className="h-4 w-4 md:h-5 md:w-5 text-blue-600 flex-shrink-0" />
+              <span className="truncate">Team Members</span>
             </CardTitle>
             {user.role !== 'admin' && user.role !== 'manager' && (
               <Button
                 onClick={() => setAllocationOpen(true)}
                 disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
                 size="sm"
+                className="w-full sm:w-auto h-9 text-xs"
               >
-                <ArrowRight className="mr-2 h-4 w-4" />
-                Allocate Stock
+                <ArrowRight className="mr-2 h-3 w-3" />
+                Allocate
               </Button>
             )}
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 md:p-6">
           {/* Controls */}
-          <div className="flex flex-col lg:flex-row gap-4 items-center mb-6">
+          <div className="flex flex-col gap-3 mb-4">
             {/* Search */}
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 md:h-4 md:w-4 text-muted-foreground" />
               <Input
-                placeholder="Search team members..."
+                placeholder="Search members..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 h-11"
+                className="pl-9 md:pl-10 h-9 md:h-10 text-sm"
               />
             </div>
 
-            {/* Sort Dropdown */}
+            {/* Sort and View Toggle Row */}
             <div className="flex gap-2">
-              <Label className="text-sm font-medium text-muted-foreground self-center">Sort by:</Label>
+              {/* Sort Dropdown */}
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as 'name' | 'stock' | 'value')}
-                className="flex h-11 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="flex h-9 md:h-10 flex-1 rounded-md border border-input bg-background px-2 md:px-3 py-2 text-xs md:text-sm"
               >
                 <option value="name">Name</option>
                 <option value="stock">Stock</option>
                 <option value="value">Value</option>
               </select>
-            </div>
 
-            {/* View Toggle */}
-            <div className="flex gap-2">
-              <Button
-                variant={viewMode === 'table' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('table')}
-                className="gap-2"
-              >
-                <BarChart3 className="h-4 w-4" />
-                Table
-              </Button>
-              <Button
-                variant={viewMode === 'cards' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('cards')}
-                className="gap-2"
-              >
-                <Package className="h-4 w-4" />
-                Cards
-              </Button>
+              {/* View Toggle - Hidden on mobile */}
+              {!isMobile && (
+                <div className="flex gap-2">
+                  <Button
+                    variant={viewMode === 'table' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setViewMode('table')}
+                    className="gap-2 h-9 md:h-10 text-xs"
+                  >
+                    <BarChart3 className="h-3 w-3 md:h-4 md:w-4" />
+                    Table
+                  </Button>
+                  <Button
+                    variant={viewMode === 'cards' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setViewMode('cards')}
+                    className="gap-2 h-9 md:h-10 text-xs"
+                  >
+                    <Package className="h-3 w-3 md:h-4 md:w-4" />
+                    Cards
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1357,15 +1445,116 @@ export default function LeaderInventoryPage() {
           {loadingTeam ? (
             <div className="flex items-center justify-center py-8">
               <div className="flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Loading team members...</span>
+                <Loader2 className="h-4 w-4 md:h-5 md:w-5 animate-spin" />
+                <span className="text-sm md:text-base">Loading...</span>
               </div>
             </div>
           ) : sortedTeamMembers.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <Users className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p>No team members found</p>
-              <p className="text-sm">Team members will appear here once they are assigned to you</p>
+              <Users className="h-6 w-6 md:h-8 md:w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm md:text-base">No team members found</p>
+              <p className="text-xs md:text-sm">Team members will appear here once assigned</p>
+            </div>
+          ) : (isMobile || viewMode === 'cards') ? (
+            // Mobile Cards View
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3">
+                {paginatedTeamMembers.map((member) => (
+                  <Card key={member.id} className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-3">
+                      {/* Header */}
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm truncate">{member.name}</div>
+                          <div className="text-xs text-muted-foreground truncate">{member.email}</div>
+                        </div>
+                        <Badge variant="secondary" className="ml-2 text-[10px] h-5 flex-shrink-0">
+                          {member.items.length} items
+                        </Badge>
+                      </div>
+
+                      {/* Stats */}
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div className="text-center p-2 rounded-lg bg-blue-50/50 border border-blue-100">
+                          <div className="text-lg font-bold text-blue-600">
+                            {member.totalStock.toLocaleString()}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">Stock</div>
+                        </div>
+                        <div className="text-center p-2 rounded-lg bg-green-50/50 border border-green-100">
+                          <div className="text-lg font-bold text-green-600">
+                            ₱{(member.totalValue / 1000).toFixed(0)}k
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">Value</div>
+                        </div>
+                      </div>
+
+                      {/* Top Items */}
+                      {member.items.length > 0 && (
+                        <div className="space-y-1 mb-3 pb-3 border-b">
+                          <div className="text-xs font-medium text-muted-foreground">Top Items:</div>
+                          {member.items.slice(0, 2).map((item: any) => (
+                            <div key={item.id} className="flex justify-between text-xs">
+                              <span className="truncate flex-1 mr-2">{item.brandName}</span>
+                              <span className="font-medium flex-shrink-0">{item.stock}</span>
+                            </div>
+                          ))}
+                          {member.items.length > 2 && (
+                            <div className="text-[10px] text-muted-foreground">
+                              +{member.items.length - 2} more
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* View Button */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full h-8 text-xs"
+                        onClick={() => {
+                          setSelectedMember(member);
+                          setShowMemberDetails(true);
+                        }}
+                      >
+                        <Eye className="h-3 w-3 mr-2" />
+                        View Details
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4 border-t">
+                  <div className="text-xs md:text-sm text-muted-foreground">
+                    {startIndex + 1}-{Math.min(endIndex, sortedTeamMembers.length)} of {sortedTeamMembers.length}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      className="h-8 md:h-9"
+                    >
+                      <ChevronLeft className="h-3 w-3 md:h-4 md:w-4" />
+                    </Button>
+                    <div className="text-xs md:text-sm">
+                      {currentPage}/{totalPages}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      className="h-8 md:h-9"
+                    >
+                      <ChevronRight className="h-3 w-3 md:h-4 md:w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : viewMode === 'table' ? (
             <div className="space-y-4">
@@ -1547,68 +1736,149 @@ export default function LeaderInventoryPage() {
       </Card>
 
       {/* Team Member Details Dialog */}
-      <Dialog open={showMemberDetails} onOpenChange={setShowMemberDetails}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {selectedMember?.name}'s Inventory Details
-            </DialogTitle>
-          </DialogHeader>
-          {selectedMember && (
-            <div className="space-y-6">
-              {/* Member Summary */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
-                <div className="text-center">
-                  <div className="text-2xl font-bold">{selectedMember.totalStock.toLocaleString()}</div>
-                  <div className="text-sm text-muted-foreground">Total Stock</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold">₱{selectedMember.totalValue.toFixed(2)}</div>
-                  <div className="text-sm text-muted-foreground">Total Value</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold">{selectedMember.items.length}</div>
-                  <div className="text-sm text-muted-foreground">Total Categories</div>
-                </div>
-              </div>
+      {isMobile ? (
+        <Sheet open={showMemberDetails} onOpenChange={setShowMemberDetails}>
+          <SheetContent side="bottom" className="h-[85vh] p-0">
+            <ScrollArea className="h-full">
+              <div className="p-6 space-y-4">
+                <SheetHeader>
+                  <SheetTitle className="text-base">
+                    {selectedMember?.name}'s Inventory
+                  </SheetTitle>
+                  <SheetDescription className="text-xs">
+                    View member inventory details
+                  </SheetDescription>
+                </SheetHeader>
 
-              {/* Inventory Items Table */}
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Brand</TableHead>
-                      <TableHead>Variant</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead className="text-right">Stock</TableHead>
-                      <TableHead className="text-right">Price</TableHead>
-                      <TableHead className="text-right">Value</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {selectedMember.items.map((item: any) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="font-medium">{item.brandName}</TableCell>
-                        <TableCell>{item.variantName}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">
-                            {item.variantType}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">{item.stock.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">₱{item.allocatedPrice.toFixed(2)}</TableCell>
-                        <TableCell className="text-right font-semibold">
-                          ₱{item.totalValue.toFixed(2)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                {selectedMember && (
+                  <>
+                    {/* Member Summary */}
+                    <div className="grid grid-cols-3 gap-2 p-3 bg-muted rounded-lg">
+                      <div className="text-center">
+                        <div className="text-lg font-bold">{selectedMember.totalStock.toLocaleString()}</div>
+                        <div className="text-[10px] text-muted-foreground">Stock</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-bold">₱{(selectedMember.totalValue / 1000).toFixed(0)}k</div>
+                        <div className="text-[10px] text-muted-foreground">Value</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-bold">{selectedMember.items.length}</div>
+                        <div className="text-[10px] text-muted-foreground">Items</div>
+                      </div>
+                    </div>
+
+                    {/* Inventory Items Cards */}
+                    <div className="space-y-2">
+                      <h3 className="text-sm font-semibold">Inventory Items</h3>
+                      {selectedMember.items.map((item: any) => (
+                        <div key={item.id} className="border rounded-lg p-3 space-y-2 bg-background">
+                          {/* Header */}
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm truncate">{item.brandName}</div>
+                              <div className="text-xs text-muted-foreground truncate">{item.variantName}</div>
+                            </div>
+                            <Badge variant="outline" className="ml-2 text-[9px] h-5 flex-shrink-0 uppercase">
+                              {item.variantType}
+                            </Badge>
+                          </div>
+
+                          {/* Details Grid */}
+                          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                            <div>
+                              <div className="text-muted-foreground text-[10px]">Stock</div>
+                              <div className="font-semibold">{item.stock.toLocaleString()}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground text-[10px]">Price</div>
+                              <div className="font-semibold">₱{item.allocatedPrice.toFixed(2)}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground text-[10px]">Value</div>
+                              <div className="font-semibold text-primary">₱{item.totalValue.toFixed(2)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Close Button */}
+                    <div className="sticky bottom-0 bg-background pt-4 pb-2 border-t">
+                      <Button variant="outline" onClick={() => setShowMemberDetails(false)} className="w-full h-10 text-xs">
+                        Close
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={showMemberDetails} onOpenChange={setShowMemberDetails}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {selectedMember?.name}'s Inventory Details
+              </DialogTitle>
+            </DialogHeader>
+            {selectedMember && (
+              <div className="space-y-6">
+                {/* Member Summary */}
+                <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold">{selectedMember.totalStock.toLocaleString()}</div>
+                    <div className="text-sm text-muted-foreground">Total Stock</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold">₱{selectedMember.totalValue.toFixed(2)}</div>
+                    <div className="text-sm text-muted-foreground">Total Value</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold">{selectedMember.items.length}</div>
+                    <div className="text-sm text-muted-foreground">Total Categories</div>
+                  </div>
+                </div>
+
+                {/* Inventory Items Table */}
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Brand</TableHead>
+                        <TableHead>Variant</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead className="text-right">Stock</TableHead>
+                        <TableHead className="text-right">Price</TableHead>
+                        <TableHead className="text-right">Value</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedMember.items.map((item: any) => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-medium">{item.brandName}</TableCell>
+                          <TableCell>{item.variantName}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {item.variantType}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">{item.stock.toLocaleString()}</TableCell>
+                          <TableCell className="text-right">₱{item.allocatedPrice.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-semibold">
+                            ₱{item.totalValue.toFixed(2)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Stock Allocation Dialog */}
       <Dialog open={allocationOpen} onOpenChange={setAllocationOpen}>

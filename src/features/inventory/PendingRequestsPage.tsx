@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Package, CheckCircle2, XCircle, ArrowUp, AlertCircle, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
@@ -83,6 +85,7 @@ export default function PendingRequestsPage() {
   const [readyRequests, setReadyRequests] = useState<AgentRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   // Simple filters/search for scalability
   const [teamSearch, setTeamSearch] = useState('');
@@ -97,6 +100,14 @@ export default function PendingRequestsPage() {
   const [notes, setNotes] = useState('');
   const [denialReason, setDenialReason] = useState('');
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
+
+  // Mobile detection
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -794,32 +805,32 @@ export default function PendingRequestsPage() {
   });
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="container mx-auto p-4 md:p-6 space-y-4 md:space-y-6">
       {/* Header + high-level stats */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <div className="flex flex-col gap-3 md:gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Team Stock Requests</h1>
-          <p className="text-muted-foreground mt-1">
-            Review and manage inventory requests from your mobile sales team.
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Team Stock Requests</h1>
+          <p className="text-sm md:text-base text-muted-foreground mt-1">
+            Review inventory requests
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-3 text-sm">
+        <div className="grid grid-cols-3 gap-2 md:gap-3 text-sm">
           <Card className="shadow-none border-dashed">
-            <CardContent className="py-3 px-4">
-              <p className="text-xs text-muted-foreground">From My Team</p>
-              <p className="text-xl font-semibold">{groupedRequests.length}</p>
+            <CardContent className="py-2 md:py-3 px-2 md:px-4">
+              <p className="text-[10px] md:text-xs text-muted-foreground truncate">From Team</p>
+              <p className="text-lg md:text-xl font-semibold">{groupedRequests.length}</p>
             </CardContent>
           </Card>
           <Card className="shadow-none border-dashed">
-            <CardContent className="py-3 px-4">
-              <p className="text-xs text-muted-foreground">Ready to Allocate</p>
-              <p className="text-xl font-semibold text-green-600">{readyRequests.length}</p>
+            <CardContent className="py-2 md:py-3 px-2 md:px-4">
+              <p className="text-[10px] md:text-xs text-muted-foreground truncate">Ready</p>
+              <p className="text-lg md:text-xl font-semibold text-green-600">{readyRequests.length}</p>
             </CardContent>
           </Card>
           <Card className="shadow-none border-dashed">
-            <CardContent className="py-3 px-4">
-              <p className="text-xs text-muted-foreground">My Requests to Admin</p>
-              <p className="text-xl font-semibold">{forwardedRequests.length}</p>
+            <CardContent className="py-2 md:py-3 px-2 md:px-4">
+              <p className="text-[10px] md:text-xs text-muted-foreground truncate">To Admin</p>
+              <p className="text-lg md:text-xl font-semibold">{forwardedRequests.length}</p>
             </CardContent>
           </Card>
         </div>
@@ -827,34 +838,95 @@ export default function PendingRequestsPage() {
 
       {/* Main partitions via tabs */}
       <Card>
-        <CardHeader>
-          <CardTitle>Inventory Request Queue</CardTitle>
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-base md:text-lg">Request Queue</CardTitle>
         </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="team" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="team">From My Team</TabsTrigger>
-              <TabsTrigger value="ready">Ready to Allocate</TabsTrigger>
-              <TabsTrigger value="forwarded">My Requests to Admin</TabsTrigger>
+        <CardContent className="p-4 md:p-6">
+          <Tabs defaultValue="team" className="space-y-3 md:space-y-4">
+            <TabsList className="grid w-full grid-cols-3 h-auto">
+              <TabsTrigger value="team" className="text-[10px] md:text-sm py-2 md:py-2.5 px-1 md:px-3">My Team</TabsTrigger>
+              <TabsTrigger value="ready" className="text-[10px] md:text-sm py-2 md:py-2.5 px-1 md:px-3">Ready</TabsTrigger>
+              <TabsTrigger value="forwarded" className="text-[10px] md:text-sm py-2 md:py-2.5 px-1 md:px-3">To Admin</TabsTrigger>
             </TabsList>
 
             {/* Team Requests */}
             <TabsContent value="team">
               {/* Controls */}
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-3">
-                <p className="text-sm text-muted-foreground">
+              <div className="flex flex-col gap-2 md:gap-3 mb-3">
+                <p className="text-xs md:text-sm text-muted-foreground hidden md:block">
                   Pending requests grouped by agent and request time.
                 </p>
                 <Input
-                  placeholder="Search by agent or product..."
+                  placeholder="Search..."
                   value={teamSearch}
                   onChange={(e) => setTeamSearch(e.target.value)}
-                  className="max-w-sm"
+                  className="h-9 md:h-10 text-sm"
                 />
               </div>
 
-              <div className="border rounded-lg overflow-hidden bg-card">
-                <Table>
+              {isMobile ? (
+                // Mobile Cards View
+                <div className="space-y-3">
+                  {filteredGroupedRequests.map(group => (
+                    <Card key={group.id} className="hover:shadow-md transition-shadow">
+                      <CardContent className="p-3">
+                        {/* Header */}
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate">{group.agentName}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {format(new Date(group.requested_at), 'MMM dd, yyyy')}
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="ml-2 text-[10px] h-5 flex-shrink-0">
+                            {group.totalQuantity} units
+                          </Badge>
+                        </div>
+
+                        {/* Products */}
+                        <div className="space-y-1 mb-3 pb-3 border-b">
+                          <div className="text-[10px] font-medium text-muted-foreground">Products:</div>
+                          <div className="flex flex-wrap gap-1">
+                            {group.requests.slice(0, 2).map((req, idx) => (
+                              <Badge key={idx} variant="outline" className="text-[9px] h-5">
+                                {formatProductName(req)} ({req.requested_quantity})
+                              </Badge>
+                            ))}
+                            {group.requests.length > 2 && (
+                              <Badge variant="secondary" className="text-[9px] h-5">
+                                +{group.requests.length - 2}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Review Button */}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full h-8 text-xs"
+                          onClick={() => {
+                            setSelectedGroup(group);
+                            setSelectedRequest(group.requests[0]);
+                            setReviewDialogOpen(true);
+                          }}
+                        >
+                          Review Request
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                  {filteredGroupedRequests.length === 0 && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Package className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No pending requests</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                // Desktop Table View
+                <div className="border rounded-lg overflow-hidden bg-card">
+                  <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Agent</TableHead>
@@ -909,25 +981,96 @@ export default function PendingRequestsPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
+                </div>
+              )}
             </TabsContent>
 
             {/* Ready to Allocate (Admin Approved) */}
             <TabsContent value="ready">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-3">
-                <p className="text-sm text-muted-foreground">
+              <div className="flex flex-col gap-2 md:gap-3 mb-3">
+                <p className="text-xs md:text-sm text-muted-foreground hidden md:block">
                   Requests approved by admin and ready to allocate from your inventory.
                 </p>
                 <Input
-                  placeholder="Search by agent or product..."
+                  placeholder="Search..."
                   value={readySearch}
                   onChange={(e) => setReadySearch(e.target.value)}
-                  className="max-w-sm"
+                  className="h-9 md:h-10 text-sm"
                 />
               </div>
 
-              <div className="border rounded-lg overflow-hidden bg-card">
-                <Table>
+              {isMobile ? (
+                // Mobile Cards View
+                <div className="space-y-3">
+                  {filteredReadyRequests.map(req => (
+                    <Card key={req.id} className="hover:shadow-md transition-shadow">
+                      <CardContent className="p-3">
+                        {/* Header */}
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate">
+                              {req.requester?.full_name || 'Unknown Agent'}
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {formatProductName(req)}
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="ml-2 text-[10px] h-5 flex-shrink-0">
+                            {req.requested_quantity} units
+                          </Badge>
+                        </div>
+
+                        {/* Stock Info */}
+                        <div className="grid grid-cols-2 gap-2 mb-3 pb-3 border-b text-xs">
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">Your Stock</div>
+                            <div className="font-semibold">{req.leader_stock || 0} units</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-muted-foreground">Requested</div>
+                            <div className="font-semibold text-primary">{format(new Date(req.requested_at), 'MMM dd')}</div>
+                          </div>
+                        </div>
+
+                        {/* Allocate Button */}
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="w-full h-8 text-xs"
+                          onClick={() => handleAllocate(req.id)}
+                          disabled={allocatingId === req.id || (req.leader_stock || 0) < req.requested_quantity}
+                        >
+                          {allocatingId === req.id ? (
+                            <>
+                              <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                              Allocating...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="mr-2 h-3 w-3" />
+                              Allocate Stock
+                            </>
+                          )}
+                        </Button>
+                        {(req.leader_stock || 0) < req.requested_quantity && (
+                          <p className="text-[10px] text-red-600 mt-1 text-center">
+                            Insufficient stock
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                  {filteredReadyRequests.length === 0 && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Package className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No ready requests</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                // Desktop Table View
+                <div className="border rounded-lg overflow-hidden bg-card">
+                  <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Agent</TableHead>
@@ -991,25 +1134,97 @@ export default function PendingRequestsPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
+                </div>
+              )}
             </TabsContent>
 
             {/* Forwarded Requests */}
             <TabsContent value="forwarded">
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-3">
-                <p className="text-sm text-muted-foreground">
+              <div className="flex flex-col gap-2 md:gap-3 mb-3">
+                <p className="text-xs md:text-sm text-muted-foreground hidden md:block">
                   Track the status of the requests you escalated to admin.
                 </p>
                 <Input
-                  placeholder="Search by product or status..."
+                  placeholder="Search..."
                   value={forwardSearch}
                   onChange={(e) => setForwardSearch(e.target.value)}
-                  className="max-w-sm"
+                  className="h-9 md:h-10 text-sm"
                 />
               </div>
 
-              <div className="border rounded-lg overflow-hidden bg-card">
-                <Table>
+              {isMobile ? (
+                // Mobile Cards View
+                <div className="space-y-3">
+                  {filteredForwardedRequests.map(req => {
+                    const statusColor = 
+                      req.status === 'approved_by_admin' ? 'bg-green-50 border-green-200' :
+                      req.status === 'rejected' ? 'bg-red-50 border-red-200' :
+                      'bg-background';
+                    
+                    return (
+                      <Card key={req.id} className={`hover:shadow-md transition-shadow ${statusColor}`}>
+                        <CardContent className="p-3">
+                          {/* Header */}
+                          <div className="flex justify-between items-start mb-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm truncate">
+                                {formatProductName(req)}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {format(new Date(req.requested_at), 'MMM dd, yyyy')}
+                              </div>
+                            </div>
+                            {req.status === 'approved_by_admin' && (
+                              <Badge variant="default" className="ml-2 text-[10px] h-5 flex-shrink-0 bg-green-600">
+                                Approved
+                              </Badge>
+                            )}
+                            {req.status === 'rejected' && (
+                              <Badge variant="destructive" className="ml-2 text-[10px] h-5 flex-shrink-0">
+                                Rejected
+                              </Badge>
+                            )}
+                            {req.status === 'forwarded_to_admin' && (
+                              <Badge variant="secondary" className="ml-2 text-[10px] h-5 flex-shrink-0">
+                                Pending
+                              </Badge>
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div className="space-y-2 text-xs">
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Quantity:</span>
+                              <span className="font-semibold">{req.requested_quantity} units</span>
+                            </div>
+                            {req.approver_notes && (
+                              <div className="pt-2 border-t">
+                                <div className="text-[10px] text-muted-foreground mb-1">Admin Notes:</div>
+                                <div className="text-xs">{req.approver_notes}</div>
+                              </div>
+                            )}
+                            {req.denial_reason && (
+                              <div className="pt-2 border-t">
+                                <div className="text-[10px] text-muted-foreground mb-1">Denial Reason:</div>
+                                <div className="text-xs text-red-600">{req.denial_reason}</div>
+                              </div>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                  {filteredForwardedRequests.length === 0 && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Package className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No forwarded requests</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                // Desktop Table View
+                <div className="border rounded-lg overflow-hidden bg-card">
+                  <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Product</TableHead>
@@ -1049,7 +1264,8 @@ export default function PendingRequestsPage() {
                     )}
                   </TableBody>
                 </Table>
-              </div>
+                </div>
+              )}
             </TabsContent>
           </Tabs>
         </CardContent>

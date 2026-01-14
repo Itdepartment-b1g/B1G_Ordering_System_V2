@@ -12,14 +12,18 @@ let lastKnownToken: string | null = null;
 
 export function startTokenMonitoring(onTampered: () => void): void {
   // Get the Supabase token key from localStorage
+  // Check for our custom key first, then fall back to default Supabase keys
   const tokenKey = Object.keys(localStorage).find(key =>
-    key.startsWith('sb-') && key.includes('auth-token')
+    key === 'supabase.auth.token' || 
+    (key.startsWith('sb-') && key.includes('auth-token'))
   );
 
   if (!tokenKey) {
     console.warn('⚠️ [Security] No auth token found in localStorage');
     return;
   }
+
+  console.log(`🔒 [Security] Monitoring token key: ${tokenKey}`);
 
   // Store initial token
   lastKnownToken = localStorage.getItem(tokenKey);
@@ -189,3 +193,57 @@ export function clearRateLimit(key: string): void {
   rateLimitMap.delete(key);
 }
 
+/**
+ * Get the Supabase auth token key from localStorage
+ */
+export function getAuthTokenKey(): string | null {
+  const tokenKey = Object.keys(localStorage).find(key =>
+    key === 'supabase.auth.token' || 
+    (key.startsWith('sb-') && key.includes('auth-token'))
+  );
+  return tokenKey || null;
+}
+
+/**
+ * Check if auth token exists in localStorage
+ */
+export function hasAuthToken(): boolean {
+  const tokenKey = getAuthTokenKey();
+  if (!tokenKey) return false;
+  
+  const token = localStorage.getItem(tokenKey);
+  if (!token) return false;
+  
+  try {
+    const parsed = JSON.parse(token);
+    return !!parsed?.access_token;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get auth token info (for debugging)
+ */
+export function getAuthTokenInfo(): { key: string | null; hasToken: boolean; expiresAt?: number } {
+  const tokenKey = getAuthTokenKey();
+  if (!tokenKey) {
+    return { key: null, hasToken: false };
+  }
+  
+  const token = localStorage.getItem(tokenKey);
+  if (!token) {
+    return { key: tokenKey, hasToken: false };
+  }
+  
+  try {
+    const parsed = JSON.parse(token);
+    return {
+      key: tokenKey,
+      hasToken: !!parsed?.access_token,
+      expiresAt: parsed?.expires_at
+    };
+  } catch {
+    return { key: tokenKey, hasToken: false };
+  }
+}
