@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { getCachedProfile, setCachedProfile, clearProfileCache, isCacheStale } from '@/lib/profileCache';
-import { startTokenMonitoring, stopTokenMonitoring, cleanupLocalStorage, logSecurityEvent } from '@/lib/security';
+import { startTokenMonitoring, stopTokenMonitoring, cleanupLocalStorage, logSecurityEvent, getAuthTokenInfo } from '@/lib/security';
 import { AuthContext } from './hooks';
 import type { User, LoginResult } from './types';
 import { Loader2 } from 'lucide-react';
@@ -96,6 +96,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const companyStatusCheckInterval = setInterval(async () => {
       const currentUser = userRef.current;
       if (currentUser?.company_id && currentUser.role !== 'system_administrator') {
+        // First, verify the session is still valid
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError || !session) {
+          console.warn('⚠️ [AuthContext] Session expired or invalid during periodic check');
+          await logout();
+          toast({
+            title: 'Session Expired',
+            description: 'Your session has expired. Please log in again.',
+            variant: 'destructive',
+          });
+          return;
+        }
+
         const { data: company } = await supabase
           .from('companies')
           .select('status')
@@ -104,9 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (company && company.status === 'inactive') {
           console.warn('❌ [AuthContext] Company status check: Company is inactive, logging out');
-          await supabase.auth.signOut();
-          setUser(null);
-          userRef.current = null;
+          await logout();
           toast({
             title: "Access Denied",
             description: "Your company account has been deactivated. Please contact your system administrator.",
@@ -116,10 +128,74 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }, 60000);
 
+    // Handle page visibility change (laptop sleep/wake)
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && userRef.current) {
+        console.log('👁️ [AuthContext] Page became visible, verifying session...');
+        
+        // Verify session is still valid after wake
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError || !session) {
+          console.warn('⚠️ [AuthContext] Session expired after wake from sleep');
+          toast({
+            title: 'Session Expired',
+            description: 'Your session expired while your device was asleep. Please log in again.',
+            variant: 'destructive',
+          });
+          await logout();
+          return;
+        }
+
+        // Check if token is about to expire (within 5 minutes)
+        const expiresAt = session.expires_at;
+        if (expiresAt) {
+          const expiresIn = expiresAt - Math.floor(Date.now() / 1000);
+          if (expiresIn < 300) { // Less than 5 minutes
+            console.log('🔄 [AuthContext] Token expiring soon, refreshing...');
+            const { error: refreshError } = await supabase.auth.refreshSession();
+            if (refreshError) {
+              console.error('❌ [AuthContext] Failed to refresh session:', refreshError);
+              toast({
+                title: 'Session Expired',
+                description: 'Unable to refresh your session. Please log in again.',
+                variant: 'destructive',
+              });
+              await logout();
+            } else {
+              console.log('✅ [AuthContext] Session refreshed successfully');
+            }
+          }
+        }
+      }
+    };
+
+    // Handle window focus (laptop wake, browser tab switch)
+    const handleFocus = async () => {
+      if (userRef.current) {
+        console.log('🎯 [AuthContext] Window focused, checking session...');
+        
+        const tokenInfo = getAuthTokenInfo();
+        console.log('🔑 [AuthContext] Current token info:', tokenInfo);
+        
+        // Quick session check
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session) {
+          console.warn('⚠️ [AuthContext] Invalid session on focus');
+          await logout();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
     return () => {
       subscription.unsubscribe();
       clearInterval(companyStatusCheckInterval);
       stopTokenMonitoring();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
     };
   }, [toast]);
 
@@ -182,6 +258,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // No cache or stale cache - need to fetch
       setIsLoading(true);
+
+      // Log token status for debugging
+      const tokenInfo = getAuthTokenInfo();
+      console.log('🔑 [AuthContext] Token info:', tokenInfo);
 
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
@@ -448,6 +528,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.group('🚪 [AuthContext] Logout initiated');
     console.trace('Logout caller trace');
     console.groupEnd();
+    
     try {
       // Set flag FIRST to prevent any auth state changes from restoring session
       localStorage.setItem('just_logged_out', 'true');
@@ -469,34 +550,84 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       userRef.current = null;
       setIsLoading(false);
 
-      // Perform signOut to clear Supabase session
-      await supabase.auth.signOut();
-
-      // Clear Supabase auth storage explicitly
-      try {
-        // Clear all Supabase-related localStorage items
-        const keysToRemove: string[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && (key.startsWith('sb-') || key.includes('supabase'))) {
-            keysToRemove.push(key);
-          }
+      // CRITICAL: Clear localStorage BEFORE signOut to prevent race conditions
+      console.log('🗑️ [AuthContext] Clearing localStorage before signOut...');
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (
+          key === 'supabase.auth.token' || // Our custom key
+          key.startsWith('sb-') || 
+          key.includes('supabase') ||
+          key.includes('auth-token')
+        )) {
+          keysToRemove.push(key);
         }
-        keysToRemove.forEach(key => localStorage.removeItem(key));
-      } catch (e) {
-        console.warn('Could not clear Supabase storage:', e);
+      }
+      
+      console.log('🗑️ [AuthContext] Keys to remove:', keysToRemove);
+      keysToRemove.forEach(key => {
+        localStorage.removeItem(key);
+        console.log(`✅ [AuthContext] Removed: ${key}`);
+      });
+
+      // Perform signOut with scope: 'local' to ensure complete cleanup
+      console.log('🚪 [AuthContext] Calling supabase.auth.signOut()...');
+      await supabase.auth.signOut({ scope: 'local' });
+      console.log('✅ [AuthContext] SignOut complete');
+
+      // Double-check and clear again (in case Supabase recreated the token)
+      console.log('🔍 [AuthContext] Verifying token removal...');
+      const remainingKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (
+          key === 'supabase.auth.token' || 
+          key.startsWith('sb-') || 
+          key.includes('supabase') ||
+          key.includes('auth-token')
+        )) {
+          remainingKeys.push(key);
+          localStorage.removeItem(key);
+          console.warn(`⚠️ [AuthContext] Found and removed lingering key: ${key}`);
+        }
       }
 
+      if (remainingKeys.length === 0) {
+        console.log('✅ [AuthContext] All tokens successfully removed');
+      }
+
+      // Small delay to ensure cleanup completes before redirect
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      console.log('👋 [AuthContext] Logout complete, redirecting...');
+      
       // Redirect to login
       window.location.href = '/login';
-
-      console.log('👋 [AuthContext] Logged out and cleared cache');
     } catch (error) {
-      console.error('Logout error:', error);
-      // Even on error, ensure we clear state and redirect
+      console.error('❌ [AuthContext] Logout error:', error);
+      
+      // Even on error, force cleanup
       setUser(null);
       userRef.current = null;
-      setIsLoading(false);
+      clearProfileCache();
+      
+      // Nuclear option: Clear ALL localStorage if logout fails
+      console.warn('⚠️ [AuthContext] Forcing complete localStorage clear due to error');
+      try {
+        const allKeys = Object.keys(localStorage);
+        allKeys.forEach(key => {
+          if (key === 'supabase.auth.token' || 
+              key.startsWith('sb-') || 
+              key.includes('supabase') ||
+              key.includes('auth')) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (clearError) {
+        console.error('Failed to clear localStorage:', clearError);
+      }
+      
       localStorage.setItem('just_logged_out', 'true');
       window.location.href = '/login';
     }
