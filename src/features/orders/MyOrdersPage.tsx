@@ -66,6 +66,23 @@ export default function MyOrdersPage() {
     }
   };
 
+  // Helper function to format payment method
+  const formatPaymentMethod = (method: string | undefined, bankType?: string) => {
+    if (!method) return 'N/A';
+    switch (method) {
+      case 'GCASH':
+        return 'GCash';
+      case 'BANK_TRANSFER':
+        return bankType ? `Bank Transfer (${bankType})` : 'Bank Transfer';
+      case 'CASH':
+        return 'Cash';
+      case 'CHEQUE':
+        return 'Cheque';
+      default:
+        return method;
+    }
+  };
+
   // Date filter state
   const [dateFilterStart, setDateFilterStart] = useState('');
   const [dateFilterEnd, setDateFilterEnd] = useState('');
@@ -1019,17 +1036,17 @@ export default function MyOrdersPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 space-y-4 md:space-y-6">
+    <div className="w-full p-4 md:p-6 space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">My Orders</h1>
-          <p className="text-sm md:text-base text-muted-foreground">Create and manage your client orders</p>
+          <h1 className="text-2xl font-bold">My Orders</h1>
+          <p className="text-sm text-muted-foreground">Manage your client orders</p>
         </div>
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="w-full sm:w-auto" size="sm">
+            <Button className="w-full sm:w-auto">
               <Plus className="h-4 w-4 mr-2" />
-              Create New Order
+              New Order
             </Button>
           </DialogTrigger>
           <DialogContent
@@ -1789,190 +1806,162 @@ export default function MyOrdersPage() {
         </Dialog>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">My Total Orders</p>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl md:text-2xl font-bold">{myOrders.length}</div>
+          <CardContent className="p-4">
+            <div className="text-sm text-muted-foreground">Total</div>
+            <div className="text-2xl font-bold mt-1">{myOrders.length}</div>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">Pending Approval</p>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl md:text-2xl font-bold text-yellow-600">
+          <CardContent className="p-4">
+            <div className="text-sm text-muted-foreground">Pending</div>
+            <div className="text-2xl font-bold mt-1 text-yellow-600">
               {myOrders.filter(o => (o.stage || o.status) === 'agent_pending').length}
             </div>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">Approved Orders</p>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl md:text-2xl font-bold text-green-600">
+          <CardContent className="p-4">
+            <div className="text-sm text-muted-foreground">Approved</div>
+            <div className="text-2xl font-bold mt-1 text-green-600">
               {myOrders.filter(o => o.status === 'approved').length}
             </div>
           </CardContent>
         </Card>
       </div>
 
+      {/* Orders List */}
       <Card>
-        <CardHeader className="space-y-4">
-          {/* Search and Filters */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <CardHeader className="pb-4">
+          <div className="flex flex-col gap-3">
             {/* Search */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search orders..."
+                placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
               />
             </div>
 
-            {/* Start Date Filter */}
-            <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            {/* Date Filters */}
+            <div className="grid grid-cols-2 gap-2">
               <Input
                 type="date"
-                placeholder="Start Date"
                 value={dateFilterStart}
                 onChange={(e) => setDateFilterStart(e.target.value)}
-                className="pl-10"
+                className="w-full"
+                placeholder="From"
               />
-            </div>
-
-            {/* End Date Filter */}
-            <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 type="date"
-                placeholder="End Date"
                 value={dateFilterEnd}
                 onChange={(e) => setDateFilterEnd(e.target.value)}
-                className="pl-10"
+                className="w-full"
                 min={dateFilterStart}
+                placeholder="To"
               />
             </div>
-          </div>
 
-          {/* Clear Filters Button */}
-          {(dateFilterStart || dateFilterEnd || searchQuery) && (
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
+            {/* Results and Actions */}
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-muted-foreground">
+                {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
+              </span>
+              {(dateFilterStart || dateFilterEnd || searchQuery) && (
+                <Button variant="ghost" size="sm" onClick={() => {
                   setDateFilterStart('');
                   setDateFilterEnd('');
                   setSearchQuery('');
-                }}
-              >
-                <X className="h-4 w-4 mr-1" />
-                Clear Filters
-              </Button>
-            </div>
-          )}
-
-          {/* Results Count */}
-          <div className="flex justify-between items-center text-sm text-muted-foreground">
-            <div>
-              Showing {paginatedOrders.length} of {filteredOrders.length} orders
-              {(dateFilterStart || dateFilterEnd) && (
-                <span className="ml-2">
-                  {dateFilterStart && dateFilterEnd
-                    ? `from ${new Date(dateFilterStart).toLocaleDateString()} to ${new Date(dateFilterEnd).toLocaleDateString()}`
-                    : ''}
-                </span>
+                }}>
+                  <X className="h-3 w-3 mr-1" />
+                  Clear
+                </Button>
               )}
             </div>
-            {totalPages > 1 && (
-              <div className="text-sm text-muted-foreground">
-                Page {currentPage} of {totalPages}
-              </div>
-            )}
           </div>
         </CardHeader>
         <CardContent>
-          {/* Mobile: card list */}
-          <div className="md:hidden space-y-3">
+          {/* Mobile List */}
+          <div className="md:hidden space-y-2">
             {paginatedOrders.length === 0 ? (
-              <div className="text-center text-muted-foreground py-6">No orders found</div>
+              <div className="text-center text-muted-foreground py-12">No orders</div>
             ) : (
               paginatedOrders.map((order) => (
-                <div key={order.id} className="rounded-lg border bg-background p-4 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Order #</div>
-                      <div className="font-mono font-semibold">{order.orderNumber}</div>
+                  <Card key={order.id}>
+                  <div className="p-3">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-mono font-semibold text-sm truncate">{order.orderNumber}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5 truncate">{order.clientName}</div>
+                      </div>
+                      <Badge variant={getDisplayStatus(order).variant} className="ml-2 flex-shrink-0 text-xs">
+                        {getDisplayStatus(order).text}
+                      </Badge>
                     </div>
-                    <Badge variant={getDisplayStatus(order).variant}>
-                      {getDisplayStatus(order).text}
-                    </Badge>
+                    <div className="space-y-1 text-xs pt-2 border-t">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Payment:</span>
+                        <span className="font-medium">{formatPaymentMethod(order.paymentMethod, order.bankType)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-muted-foreground">{order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)} items</span>
+                          <span className="text-muted-foreground mx-2">•</span>
+                          <span className="text-muted-foreground">{new Date(order.date).toLocaleDateString()}</span>
+                        </div>
+                        <div className="font-semibold text-sm">₱{order.total.toLocaleString()}</div>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handleViewOrder(order)}
+                      className="w-full mt-2 pt-2 border-t text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      View Details
+                    </button>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Client</div>
-                      <div className="font-medium truncate">{order.clientName}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Date</div>
-                      <div>{new Date(order.date).toLocaleDateString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-muted-foreground">Items</div>
-                      <div>{order.items.length}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Total</div>
-                      <div className="font-semibold">₱{order.total.toLocaleString()}</div>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex justify-end">
-                    <Button variant="ghost" size="sm" onClick={() => handleViewOrder(order)}>
-                      <Eye className="h-4 w-4 mr-1" /> View
-                    </Button>
-                  </div>
-                </div>
+                </Card>
               ))
             )}
           </div>
 
           {/* Desktop/Tablet: table */}
           <div className="hidden md:block w-full overflow-x-auto">
-            <Table className="min-w-[720px]">
+            <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Order #</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Items</TableHead>
-                  <TableHead className="text-right">Total Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                <TableRow className="border-b">
+                  <TableHead className="font-semibold whitespace-nowrap align-middle">Order #</TableHead>
+                  <TableHead className="font-semibold min-w-[150px] align-middle">Client</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap align-middle">Date</TableHead>
+                  <TableHead className="text-center font-semibold whitespace-nowrap align-middle">Qty</TableHead>
+                  <TableHead className="text-right font-semibold whitespace-nowrap align-middle">Amount</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap align-middle">Payment</TableHead>
+                  <TableHead className="font-semibold whitespace-nowrap align-middle">Status</TableHead>
+                  <TableHead className="text-center font-semibold whitespace-nowrap align-middle">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paginatedOrders.map((order) => (
-                  <TableRow key={order.id}>
-                    <TableCell className="font-mono font-medium">{order.orderNumber}</TableCell>
-                    <TableCell>{order.clientName}</TableCell>
-                    <TableCell>{new Date(order.date).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-right">{order.items.length}</TableCell>
-                    <TableCell className="text-right font-semibold">
+                  <TableRow key={order.id} className="hover:bg-muted/50">
+                    <TableCell className="font-mono text-sm font-medium whitespace-nowrap align-middle">{order.orderNumber}</TableCell>
+                    <TableCell className="font-medium align-middle">{order.clientName}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap align-middle">{new Date(order.date).toLocaleDateString()}</TableCell>
+                    <TableCell className="text-center tabular-nums align-middle">{order.items.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0)}</TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap align-middle">
                       ₱{order.total.toLocaleString()}
                     </TableCell>
-                    <TableCell>
-                      <Badge variant={getDisplayStatus(order).variant}>
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap align-middle">
+                      {formatPaymentMethod(order.paymentMethod, order.bankType)}
+                    </TableCell>
+                    <TableCell className="align-middle">
+                      <Badge variant={getDisplayStatus(order).variant} className="font-normal whitespace-nowrap">
                         {getDisplayStatus(order).text}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-center align-middle">
                       <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
                         <Eye className="h-4 w-4" />
                       </Button>
@@ -1983,46 +1972,28 @@ export default function MyOrdersPage() {
             </Table>
           </div>
 
-          {/* Pagination Controls */}
+          {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t">
-              <div className="text-sm text-muted-foreground">
-                Showing {(currentPage - 1) * ordersPerPage + 1} to {Math.min(currentPage * ordersPerPage, filteredOrders.length)} of {filteredOrders.length} orders
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                    <Button
-                      key={page}
-                      variant={page === currentPage ? 'default' : 'outline'}
-                      size="icon"
-                      className="w-10"
-                      onClick={() => setCurrentPage(page)}
-                    >
-                      {page}
-                    </Button>
-                  ))}
-                </div>
-
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                  disabled={currentPage === totalPages}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
+            <div className="flex justify-between items-center pt-4 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                {currentPage} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
           )}
         </CardContent>

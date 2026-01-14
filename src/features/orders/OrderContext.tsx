@@ -71,7 +71,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     try {
       setLoading(true);
 
-      const { data: ordersData, error } = await supabase
+      // Build the query
+      let query = supabase
         .from('client_orders')
         .select(`
           id,
@@ -115,8 +116,14 @@ export function OrderProvider({ children }: { children: ReactNode }) {
               brand:brands(name)
             )
           )
-        `)
-        .order('created_at', { ascending: false });
+        `);
+
+      // For mobile sales agents, only fetch their own orders
+      if (user && (user.role === 'mobile_sales' || user.role === 'sales_agent')) {
+        query = query.eq('agent_id', user.id);
+      }
+
+      const { data: ordersData, error } = await query.order('created_at', { ascending: false });
 
       if (error) throw error;
 
@@ -257,7 +264,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, []); // Empty deps - fetchOrders doesn't depend on any props/state that change
+  }, [user]); // Include user since we now filter based on user role and id
 
   useEffect(() => {
     // Only fetch orders if we have a user (deferred until after auth)

@@ -461,20 +461,21 @@ export default function RequestInventoryPage() {
   }
 
   return (
-    <div className="container mx-auto max-w-6xl p-6 space-y-6">
+    <div className="w-full p-4 md:p-6 space-y-4 md:space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Inventory Requests</h1>
-          <p className="text-muted-foreground mt-1">
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Inventory Requests</h1>
+          <p className="text-sm md:text-base text-muted-foreground mt-1">
             Create new stock requests and track their status with your leader and admin.
           </p>
         </div>
         <Dialog open={formOpen} onOpenChange={setFormOpen}>
           <DialogTrigger asChild>
-            <Button size="lg" className="shadow-sm gap-2">
+            <Button size="lg" className="shadow-sm gap-2 w-full sm:w-auto">
               <Plus className="h-4 w-4" />
-              New Inventory Request
+              <span className="hidden sm:inline">New Inventory Request</span>
+              <span className="sm:hidden">New Request</span>
             </Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
@@ -576,68 +577,68 @@ export default function RequestInventoryPage() {
         </Dialog>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      {/* Stats Cards - Better Mobile Layout */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow bg-gradient-to-br from-slate-50 to-white">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
+          <CardContent className="p-3 md:p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
               <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
                 <Package className="h-4 w-4 text-slate-600" />
               </div>
               <div>
-                <p className="text-xl font-semibold">{stats.total}</p>
+                <p className="text-lg md:text-xl font-semibold">{stats.total}</p>
                 <p className="text-xs text-muted-foreground">Total</p>
               </div>
             </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
+          <CardContent className="p-3 md:p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
               <div className="p-2 rounded-lg bg-amber-50 border border-amber-100">
                 <Clock className="h-4 w-4 text-amber-600" />
               </div>
               <div>
-                <p className="text-xl font-semibold">{stats.pending}</p>
+                <p className="text-lg md:text-xl font-semibold">{stats.pending}</p>
                 <p className="text-xs text-muted-foreground">Pending</p>
               </div>
             </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
+          <CardContent className="p-3 md:p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
               <div className="p-2 rounded-lg bg-blue-50 border border-blue-100">
                 <ArrowUp className="h-4 w-4 text-blue-600" />
               </div>
               <div>
-                <p className="text-xl font-semibold">{stats.forwarded}</p>
-                <p className="text-xs text-muted-foreground">With Admin</p>
+                <p className="text-lg md:text-xl font-semibold">{stats.forwarded}</p>
+                <p className="text-xs text-muted-foreground">Admin</p>
               </div>
             </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
+          <CardContent className="p-3 md:p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
               <div className="p-2 rounded-lg bg-green-50 border border-green-100">
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
               </div>
               <div>
-                <p className="text-xl font-semibold">{stats.approved}</p>
+                <p className="text-lg md:text-xl font-semibold">{stats.approved}</p>
                 <p className="text-xs text-muted-foreground">Approved</p>
               </div>
             </div>
           </CardContent>
         </Card>
         <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
+          <CardContent className="p-3 md:p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
               <div className="p-2 rounded-lg bg-red-50 border border-red-100">
                 <XCircle className="h-4 w-4 text-red-600" />
               </div>
               <div>
-                <p className="text-xl font-semibold">{stats.denied}</p>
+                <p className="text-lg md:text-xl font-semibold">{stats.denied}</p>
                 <p className="text-xs text-muted-foreground">Denied</p>
               </div>
             </div>
@@ -670,43 +671,74 @@ export default function RequestInventoryPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={(value: any) => setActiveTab(value)} className="w-full">
-            <TabsList className="grid w-full grid-cols-5 bg-muted/50 rounded-lg">
-              <TabsTrigger value="all" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
+            {/* Mobile: Dropdown Select, Desktop: Tab List */}
+            <div className="block sm:hidden mb-4">
+              <Select value={activeTab} onValueChange={(value: any) => setActiveTab(value)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    All ({stats.total})
+                  </SelectItem>
+                  <SelectItem value="pending">
+                    Pending ({stats.pending})
+                  </SelectItem>
+                  <SelectItem value="forwarded">
+                    With Admin ({stats.forwarded})
+                  </SelectItem>
+                  <SelectItem value="approved">
+                    Approved ({stats.approved})
+                  </SelectItem>
+                  <SelectItem value="denied">
+                    Denied ({stats.denied})
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Desktop: Tab List */}
+            <TabsList className="hidden sm:grid w-full grid-cols-5 bg-muted/50 rounded-lg">
+              <TabsTrigger value="all" className="data-[state=active]:bg-background data-[state=active]:shadow-sm text-xs md:text-sm">
                 All
                 {stats.total > 0 && (
-                  <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
+                  <Badge variant="secondary" className="ml-1 md:ml-2 h-5 px-1.5 text-xs">
                     {stats.total}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="pending" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                Pending
+              <TabsTrigger value="pending" className="data-[state=active]:bg-background data-[state=active]:shadow-sm text-xs md:text-sm">
+                <span className="hidden md:inline">Pending</span>
+                <Clock className="h-4 w-4 md:hidden" />
                 {stats.pending > 0 && (
-                  <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs bg-amber-100 text-amber-700">
+                  <Badge variant="secondary" className="ml-1 md:ml-2 h-5 px-1.5 text-xs bg-amber-100 text-amber-700">
                     {stats.pending}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="forwarded" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                With Admin
+              <TabsTrigger value="forwarded" className="data-[state=active]:bg-background data-[state=active]:shadow-sm text-xs md:text-sm">
+                <span className="hidden md:inline">Admin</span>
+                <ArrowUp className="h-4 w-4 md:hidden" />
                 {stats.forwarded > 0 && (
-                  <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs bg-blue-100 text-blue-700">
+                  <Badge variant="secondary" className="ml-1 md:ml-2 h-5 px-1.5 text-xs bg-blue-100 text-blue-700">
                     {stats.forwarded}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="approved" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                Approved
+              <TabsTrigger value="approved" className="data-[state=active]:bg-background data-[state=active]:shadow-sm text-xs md:text-sm">
+                <span className="hidden md:inline">Approved</span>
+                <CheckCircle2 className="h-4 w-4 md:hidden" />
                 {stats.approved > 0 && (
-                  <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs bg-green-100 text-green-700">
+                  <Badge variant="secondary" className="ml-1 md:ml-2 h-5 px-1.5 text-xs bg-green-100 text-green-700">
                     {stats.approved}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="denied" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                Denied
+              <TabsTrigger value="denied" className="data-[state=active]:bg-background data-[state=active]:shadow-sm text-xs md:text-sm">
+                <span className="hidden md:inline">Denied</span>
+                <XCircle className="h-4 w-4 md:hidden" />
                 {stats.denied > 0 && (
-                  <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs bg-red-100 text-red-700">
+                  <Badge variant="secondary" className="ml-1 md:ml-2 h-5 px-1.5 text-xs bg-red-100 text-red-700">
                     {stats.denied}
                   </Badge>
                 )}
@@ -749,63 +781,70 @@ export default function RequestInventoryPage() {
                       setDetailsOpen(true);
                     }}
                   >
-                    <CardContent className="p-5">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-4 flex-1 min-w-0">
-                          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center flex-shrink-0 shadow-sm">
-                            <Package className="h-5 w-5 text-white" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-3 mb-1">
-                              <h3 className="font-semibold text-base truncate">
-                                {getBrandName(groupedRequest)}
-                              </h3>
-                              <span className="hidden sm:inline-flex">{getStatusBadge(groupedRequest.status)}</span>
-                            </div>
-                            <div className="flex items-center flex-wrap gap-3 text-xs sm:text-sm text-muted-foreground mb-1.5">
-                              <div className="flex items-center gap-1.5">
-                                <Package className="h-3.5 w-3.5" />
-                                <span>
-                                  {groupedRequest.productCount}{' '}
-                                  {groupedRequest.productCount === 1 ? 'product' : 'products'}
-                                </span>
-                              </div>
-                              <span className="hidden sm:inline">•</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-medium">{groupedRequest.totalQuantity} units</span>
-                              </div>
-                              <span className="hidden sm:inline">•</span>
-                              <div className="flex items-center gap-1.5">
-                                <Calendar className="h-3.5 w-3.5" />
-                                <span>{format(new Date(groupedRequest.requested_at), 'MMM dd, yyyy')}</span>
-                              </div>
-                            </div>
-                            <div className="sm:hidden mb-1">{getStatusBadge(groupedRequest.status)}</div>
-                            {groupedRequest.requester_notes && (
-                              <div className="flex items-start gap-2 mt-2 p-2 bg-muted/50 rounded text-xs sm:text-sm">
-                                <FileText className="h-3.5 w-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
-                                <p className="text-muted-foreground line-clamp-2">
-                                  {groupedRequest.requester_notes}
-                                </p>
-                              </div>
-                            )}
-                          </div>
+                    <CardContent className="p-4 md:p-5">
+                      <div className="flex items-start gap-3">
+                        {/* Icon - Hidden on mobile for space */}
+                        <div className="hidden sm:flex h-10 w-10 rounded-lg bg-gradient-to-br from-primary to-primary/80 items-center justify-center flex-shrink-0 shadow-sm">
+                          <Package className="h-5 w-5 text-white" />
                         </div>
-                        <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                        
+                        {/* Main Content */}
+                        <div className="flex-1 min-w-0">
+                          {/* Header with Brand and Status */}
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <h3 className="font-semibold text-sm md:text-base truncate flex-1">
+                              {getBrandName(groupedRequest)}
+                            </h3>
+                            <div className="flex-shrink-0">
+                              {getStatusBadge(groupedRequest.status)}
+                            </div>
+                          </div>
+
+                          {/* Info Grid */}
+                          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 text-xs text-muted-foreground mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <Package className="h-3.5 w-3.5 flex-shrink-0" />
+                              <span>
+                                {groupedRequest.productCount}{' '}
+                                {groupedRequest.productCount === 1 ? 'item' : 'items'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-medium">{groupedRequest.totalQuantity} units</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 col-span-2 sm:col-span-1">
+                              <Calendar className="h-3.5 w-3.5 flex-shrink-0" />
+                              <span>{format(new Date(groupedRequest.requested_at), 'MMM dd, yyyy')}</span>
+                            </div>
+                          </div>
+
+                          {/* Notes */}
+                          {groupedRequest.requester_notes && (
+                            <div className="flex items-start gap-2 mt-2 p-2 bg-muted/50 rounded text-xs">
+                              <FileText className="h-3.5 w-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                              <p className="text-muted-foreground line-clamp-2">
+                                {groupedRequest.requester_notes}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex flex-col items-center gap-1 flex-shrink-0">
                           {groupedRequest.status === 'pending' && (
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              className="h-7 w-7 md:h-8 md:w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleCancelBatch(groupedRequest);
                               }}
                             >
-                              <X className="h-4 w-4" />
+                              <X className="h-3.5 w-3.5 md:h-4 md:w-4" />
                             </Button>
                           )}
-                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                          <ChevronRight className="h-4 w-4 md:h-5 md:w-5 text-muted-foreground" />
                         </div>
                       </div>
                     </CardContent>
@@ -819,10 +858,10 @@ export default function RequestInventoryPage() {
 
       {/* Request Details Dialog */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-4 md:p-6">
           <DialogHeader>
-            <DialogTitle>Request Details</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-lg md:text-xl">Request Details</DialogTitle>
+            <DialogDescription className="text-sm">
               View complete information about this inventory request
             </DialogDescription>
           </DialogHeader>
@@ -851,70 +890,70 @@ export default function RequestInventoryPage() {
               </div>
 
               {/* Summary Stats */}
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-3 gap-2 md:gap-4">
                 <Card className="border-border/50">
-                  <CardContent className="p-4 text-center">
-                    <p className="text-2xl font-semibold text-blue-600">{selectedGroupedRequest.productCount}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Products</p>
+                  <CardContent className="p-3 md:p-4 text-center">
+                    <p className="text-xl md:text-2xl font-semibold text-blue-600">{selectedGroupedRequest.productCount}</p>
+                    <p className="text-[10px] md:text-xs text-muted-foreground mt-1">Products</p>
                   </CardContent>
                 </Card>
                 <Card className="border-border/50">
-                  <CardContent className="p-4 text-center">
-                    <p className="text-2xl font-semibold text-green-600">{selectedGroupedRequest.totalQuantity}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Total Stocks</p>
+                  <CardContent className="p-3 md:p-4 text-center">
+                    <p className="text-xl md:text-2xl font-semibold text-green-600">{selectedGroupedRequest.totalQuantity}</p>
+                    <p className="text-[10px] md:text-xs text-muted-foreground mt-1">Total Units</p>
                   </CardContent>
                 </Card>
                 <Card className="border-border/50">
-                  <CardContent className="p-4 text-center">
-                    <p className="text-2xl font-semibold text-purple-600">
+                  <CardContent className="p-3 md:p-4 text-center">
+                    <p className="text-xl md:text-2xl font-semibold text-purple-600">
                       {selectedGroupedRequest.requests.filter(r => r.status === 'approved').length}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1">Approved</p>
+                    <p className="text-[10px] md:text-xs text-muted-foreground mt-1">Approved</p>
                   </CardContent>
                 </Card>
               </div>
 
               {/* Products List */}
               <div>
-                <h4 className="text-sm font-semibold mb-3">Products Requested</h4>
+                <h4 className="text-sm md:text-base font-semibold mb-3">Products Requested</h4>
                 <div className="space-y-2">
                   {selectedGroupedRequest.requests.map((request) => (
                     <Card key={request.id} className="border-border/50">
-                      <CardContent className="p-4">
-                        <div className="flex items-center justify-between">
+                      <CardContent className="p-3 md:p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium text-sm">{formatProductName(request)}</p>
+                            <p className="font-medium text-sm md:text-base">{formatProductName(request)}</p>
                             <p className="text-xs text-muted-foreground mt-0.5">{request.variant?.variant_type}</p>
                           </div>
-                          <div className="flex items-center gap-4">
-                            <div className="text-right">
-                              <p className="text-sm font-semibold">{request.requested_quantity} Stocks</p>
+                          <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4">
+                            <div className="text-left sm:text-right">
+                              <p className="text-sm md:text-base font-semibold">{request.requested_quantity} Units</p>
                             </div>
-                            <div className="w-28 flex justify-end">
+                            <div className="flex items-center gap-2">
                               {getStatusBadge(request.status)}
+                              {request.status === 'pending' && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 md:h-8 md:w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                  onClick={() => handleCancelRequest(request.id)}
+                                >
+                                  <X className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                                </Button>
+                              )}
                             </div>
-                            {request.status === 'pending' && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => handleCancelRequest(request.id)}
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            )}
                           </div>
                         </div>
                         {request.approver_notes && (
                           <div className="mt-3 pt-3 border-t">
                             <p className="text-xs font-medium text-blue-900 mb-1">Leader's Response</p>
-                            <p className="text-sm text-blue-800">{request.approver_notes}</p>
+                            <p className="text-xs md:text-sm text-blue-800">{request.approver_notes}</p>
                           </div>
                         )}
                         {request.denial_reason && (
                           <div className="mt-3 pt-3 border-t">
                             <p className="text-xs font-medium text-red-900 mb-1">Denial Reason</p>
-                            <p className="text-sm text-red-800">{request.denial_reason}</p>
+                            <p className="text-xs md:text-sm text-red-800">{request.denial_reason}</p>
                           </div>
                         )}
                       </CardContent>
