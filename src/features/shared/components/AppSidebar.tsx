@@ -94,8 +94,8 @@ const adminMenuItems: MenuItem[] = [
     icon: DollarSign,
     hasSubmenu: true,
     submenu: [
-      { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
+      { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
     ]
   },
@@ -200,8 +200,8 @@ const financeMenuItems: MenuItem[] = [
     icon: DollarSign,
     hasSubmenu: true,
     submenu: [
-      { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
+      { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
     ]
   },
@@ -252,8 +252,8 @@ const superAdminMenuItems: MenuItem[] = [
     icon: DollarSign,
     hasSubmenu: true,
     submenu: [
-      { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
+      { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
     ]
   },

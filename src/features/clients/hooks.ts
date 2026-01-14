@@ -12,6 +12,7 @@ export interface Client {
     company: string;
     city?: string;
     totalOrders: number;
+    totalSpent: number;
     lastOrder: string;
     photo?: string;
     photoTimestamp?: string;
@@ -84,18 +85,32 @@ export function useMyClients() {
 
             if (error) throw error;
 
-            const { data: statsView } = await supabase
-                .from('client_order_stats')
-                .select('client_id, total_orders, last_order_date')
-                .eq('agent_id', user.id);
+            let ordersByClient: Record<string, { totalOrders: number; totalSpent: number; lastOrder?: string }> = {};
 
-            const statsByClient = (statsView || []).reduce((acc: any, r: any) => {
-                acc[r.client_id] = {
-                    totalOrders: Number(r.total_orders) || 0,
-                    lastOrder: r.last_order_date || null,
-                };
-                return acc;
-            }, {});
+            const { data: orders } = await supabase
+                .from('client_orders')
+                .select('id, client_id, order_date, total_amount')
+                .eq('agent_id', user.id)
+                .or('stage.eq.admin_approved,status.eq.approved');
+
+            if (orders) {
+                ordersByClient = orders.reduce((acc: any, order: any) => {
+                    const cid = order.client_id;
+                    if (!acc[cid]) {
+                        acc[cid] = { totalOrders: 0, totalSpent: 0, lastOrder: undefined };
+                    }
+                    acc[cid].totalOrders += 1;
+                    acc[cid].totalSpent += Number(order.total_amount) || 0;
+
+                    const d = order.order_date;
+                    if (d) {
+                        const prev = acc[cid].lastOrder ? new Date(acc[cid].lastOrder) : undefined;
+                        if (!prev || new Date(d) > prev) acc[cid].lastOrder = d;
+                    }
+                    return acc;
+                }, {});
+            }
+
 
             const formattedClients = await Promise.all(
                 (data || []).map(async (c: any) => {
@@ -110,8 +125,9 @@ export function useMyClients() {
                         account_type: c.account_type || 'Standard Accounts',
                         category: c.category || 'Open',
                         address: c.address || '',
-                        totalOrders: statsByClient[c.id]?.totalOrders ?? c.total_orders ?? 0,
-                        lastOrder: statsByClient[c.id]?.lastOrder ?? c.last_order_date ?? new Date().toISOString().split('T')[0],
+                        totalOrders: ordersByClient[c.id]?.totalOrders ?? 0,
+                        totalSpent: ordersByClient[c.id]?.totalSpent ?? 0,
+                        lastOrder: ordersByClient[c.id]?.lastOrder ?? c.last_order_date ?? null,
                         photo: signedPhotoUrl,
                         photoTimestamp: c.photo_timestamp || c.created_at,
                         visitCount: c.visit_logs?.[0]?.count || 0,

@@ -48,21 +48,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
       // Check if we just logged out - ignore auth state changes if so
+      // BUT: Allow SIGNED_IN events to clear the logout flag (user is logging back in)
       const justLoggedOut = localStorage.getItem('just_logged_out');
-      if (justLoggedOut === 'true' && event !== 'SIGNED_OUT') {
-        console.log('🚫 [AuthContext] Ignoring auth event after logout:', event);
-        return;
+      if (justLoggedOut === 'true') {
+        if (event === 'SIGNED_IN') {
+          // User is logging back in, clear the flag
+          console.log('✅ [AuthContext] New login detected, clearing logout flag');
+          localStorage.removeItem('just_logged_out');
+        } else if (event !== 'SIGNED_OUT') {
+          console.log('🚫 [AuthContext] Ignoring auth event after logout:', event);
+          return;
+        }
       }
 
       if (session?.user) {
-        // Optimization: If we already have the user loaded, don't re-fetch on every event
-        // unless it's a different user
-        if (userRef.current?.id === session.user.id) {
-          console.log('🔄 [AuthContext] Session refreshed for same user, skipping profile reload');
+        // Optimization: Skip profile reload for token refresh events
+        if (event === 'TOKEN_REFRESHED' && userRef.current?.id === session.user.id) {
+          console.log('🔄 [AuthContext] Token refreshed, skipping profile reload');
           return;
         }
 
-        await loadUserProfile(session);
+        // Optimization: If we already have the user loaded, don't re-fetch
+        // unless it's a new sign-in or different user
+        if (userRef.current?.id === session.user.id && event !== 'SIGNED_IN') {
+          console.log('🔄 [AuthContext] Session updated for same user, skipping profile reload');
+          return;
+        }
+
+        // Only load profile for SIGNED_IN events or new users
+        if (event === 'SIGNED_IN' || !userRef.current) {
+          await loadUserProfile(session);
+        }
       } else if (event === 'SIGNED_OUT') {
         console.log('👋 [AuthContext] User signed out, clearing user');
         if ((window as any).companyStatusChannel) {
@@ -108,8 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [toast]);
 
   const initializeAuth = async () => {
-    // Failsafe: When waking from idle (tab discard), network requests might hang
-    // We force initialization completion after 6s to unblock the UI
+    // Reduced timeout for faster initial load
     let flowCompleted = false;
     const safetyTimer = setTimeout(() => {
       if (!flowCompleted) {
@@ -117,12 +132,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsInitialized(true);
         if (isLoading) setIsLoading(false);
       }
-    }, 6000);
+    }, 3000); // Reduced from 6s to 3s
 
     try {
-      setIsLoading(true);
-
-      // Check if we just logged out - if so, skip session restoration
+      // Check if we just logged out first (before setting loading state)
       const justLoggedOut = localStorage.getItem('just_logged_out');
       if (justLoggedOut === 'true') {
         console.log('🚫 [AuthContext] Just logged out, skipping session restoration');
@@ -130,11 +143,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         userRef.current = null;
         setIsLoading(false);
         localStorage.removeItem('just_logged_out');
-
-        // Even if logged out, we are "initialized"
         setIsInitialized(true);
         return;
       }
+
+      // Try to use cached profile first for instant load
+      const cachedProfile = getCachedProfile();
+      if (cachedProfile && !isCacheStale()) {
+        console.log('⚡ [AuthContext] Using fresh cached profile - instant load!');
+        setUser(cachedProfile);
+        userRef.current = cachedProfile;
+        setIsLoading(false);
+        setIsInitialized(true);
+
+        // Start security monitoring for cached session
+        startTokenMonitoring(() => {
+          logSecurityEvent('Token tampering detected');
+          toast({
+            title: 'Security Alert',
+            description: 'Suspicious activity detected. Please log in again.',
+            variant: 'destructive'
+          });
+          logout();
+        });
+
+        // Verify session in background (don't block UI)
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (!session?.user) {
+            console.warn('⚠️ [AuthContext] Cached profile exists but no valid session - clearing');
+            clearProfileCache();
+            setUser(null);
+            userRef.current = null;
+          }
+        });
+
+        return;
+      }
+
+      // No cache or stale cache - need to fetch
+      setIsLoading(true);
 
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
@@ -158,7 +205,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await loadUserProfile(session);
 
       // Start security monitoring ONLY after we have a valid session/initialization
-      // This prevents the "No auth token" warning during initial load
       startTokenMonitoring(() => {
         logSecurityEvent('Token tampering detected');
         toast({
@@ -340,6 +386,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string): Promise<LoginResult> => {
     try {
       setIsLoading(true);
+      
+      // CRITICAL: Clear the logout flag to allow session restoration
+      // This must be done BEFORE any auth operations
+      localStorage.removeItem('just_logged_out');
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -347,15 +398,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         console.error('Login error:', error);
+        setIsLoading(false);
         return { success: false, error: 'invalid_credentials' };
       }
 
       // After successful auth, check company status before allowing login
       if (data?.user?.id) {
-        // Fetch profile to get company_id
+        // Fetch profile with company data in a single query (optimization)
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('company_id, role, status')
+          .select('company_id, role, status, companies(status)')
           .eq('id', data.user.id)
           .single();
 
@@ -366,22 +418,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Check user status
           if (profile.status !== 'active') {
             await supabase.auth.signOut();
+            setIsLoading(false);
             return { success: false, error: 'account_restricted' };
           }
 
           // Check company status (skip for system_administrator)
           if (profile.company_id && profile.role !== 'system_administrator') {
-            const { data: company, error: companyError } = await supabase
-              .from('companies')
-              .select('status')
-              .eq('id', profile.company_id)
-              .single();
-
-            if (companyError) {
-              console.error('Error checking company status during login:', companyError);
-              // Continue with login, will be checked in loadUserProfile
-            } else if (company && company.status === 'inactive') {
+            const companyStatus = (profile.companies as any)?.status;
+            if (companyStatus === 'inactive') {
               await supabase.auth.signOut();
+              setIsLoading(false);
               return { success: false, error: 'company_inactive' };
             }
           }
@@ -389,13 +435,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       // Profile loading is handled by onAuthStateChange
+      // The loading state will be cleared when profile loads
       return { success: true };
     } catch (error) {
       console.error('Login exception:', error);
+      setIsLoading(false);
       return { success: false, error: 'invalid_credentials' };
-    } finally {
-      // Don't set isLoading(false) here, let loadUserProfile handle it
-      // unless there was an error
     }
   };
 

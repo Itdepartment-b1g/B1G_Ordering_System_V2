@@ -431,63 +431,37 @@ export default function ClientsPage() {
       // Calculate order stats manually since view is optional/removed
       // Grouped aggregation per client from approved orders
 
-      let aggQuery = supabase
+      // Calculate order stats manually
+      let ordersQuery = supabase
         .from('client_orders')
-        .select('client_id, count:id, sum:total_amount, max:order_date')
-        .eq('company_id', user?.company_id)
+        .select('client_id, total_amount, stage, status, order_date, agent_id')
         .or('stage.eq.admin_approved,status.eq.approved');
 
       if (isAgent && user?.id) {
-        aggQuery = aggQuery.eq('agent_id', user.id);
+        ordersQuery = ordersQuery.eq('agent_id', user.id);
       } else if (isManager && teamAgentIds.length > 0) {
-        aggQuery = aggQuery.in('agent_id', teamAgentIds);
+        ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
       } else if (isManager) {
-        aggQuery = aggQuery.eq('agent_id', user.id);
+        ordersQuery = ordersQuery.eq('agent_id', user.id);
       }
 
-      const { data: aggRows, error: aggError } = await aggQuery as any;
-
-
-      if (!aggError && aggRows) {
-        ordersByClient = (aggRows as any[]).reduce((acc, r) => {
-          acc[r.client_id] = {
-            count: Number(r.count) || 0,
-            total: Number(r.sum) || 0,
-            last: r.max || undefined,
-          };
-          return acc;
-        }, {} as Record<string, { count: number; total: number; last?: string }>);
-      } else {
-        // Fallback to row-wise reduce if grouping unsupported
-        let ordersQuery = supabase
-          .from('client_orders')
-          .select('client_id, total_amount, stage, status, order_date, agent_id')
-          .or('stage.eq.admin_approved,status.eq.approved');
-
-        if (isAgent && user?.id) {
-          ordersQuery = ordersQuery.eq('agent_id', user.id);
-        } else if (isManager && teamAgentIds.length > 0) {
-          ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
-        } else if (isManager) {
-          ordersQuery = ordersQuery.eq('agent_id', user.id);
+      const { data: approvedOrders } = await ordersQuery;
+      ordersByClient = (approvedOrders || []).reduce((acc: any, o: any) => {
+        const cid = o.client_id;
+        if (!acc[cid]) {
+          acc[cid] = { count: 0, total: 0, last: undefined as string | undefined };
         }
+        acc[cid].count += 1;
+        acc[cid].total += Number(o.total_amount) || 0;
+        const d = o.order_date || null;
+        if (d) {
+          const prev = acc[cid].last ? new Date(acc[cid].last) : undefined;
+          if (!prev || new Date(d) > prev) acc[cid].last = d as string;
+        }
+        return acc;
+      }, {} as Record<string, { count: number; total: number; last?: string }>);
 
-        const { data: approvedOrders } = await ordersQuery;
-        ordersByClient = (approvedOrders || []).reduce((acc: any, o: any) => {
-          const cid = o.client_id;
-          if (!acc[cid]) {
-            acc[cid] = { count: 0, total: 0, last: undefined as string | undefined };
-          }
-          acc[cid].count += 1;
-          acc[cid].total += Number(o.total_amount) || 0;
-          const d = o.order_date || null;
-          if (d) {
-            const prev = acc[cid].last ? new Date(acc[cid].last) : undefined;
-            if (!prev || new Date(d) > prev) acc[cid].last = d as string;
-          }
-          return acc;
-        }, {} as Record<string, { count: number; total: number; last?: string }>);
-      }
+
 
 
       // Convert photo URLs to signed URLs

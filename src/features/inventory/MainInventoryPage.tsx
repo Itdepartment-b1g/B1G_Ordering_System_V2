@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,7 @@ import { InventoryImportExport } from './components/InventoryImportExport';
 
 export default function MainInventoryPage() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const { brands, setBrands, updateBrandName, updateVariant, addOrUpdateInventory, refreshInventory } = useInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
@@ -121,7 +123,7 @@ export default function MainInventoryPage() {
       if (error) throw error;
       toast({ title: "Product Deleted", description: "All related records have been removed." });
       refreshInventory();
-      qc.invalidateQueries({ queryKey: ['inventory'] }); // Invalidate react-query cache
+      queryClient.invalidateQueries({ queryKey: ['inventory'] }); // Invalidate react-query cache
     } catch (err: any) {
       console.error('Error deleting variant:', err);
       toast({ title: "Delete Failed", description: err.message, variant: "destructive" });

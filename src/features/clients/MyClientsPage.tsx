@@ -189,7 +189,7 @@ export default function MyClientsPage() {
       company: client.company,
       email: client.email,
       phone: phoneWithoutPrefix,
-      contact_person: client.contact_person || '',
+      contact_person: client.contactPerson || '',
       tin: client.tin || '',
       account_type: client.account_type || 'Standard Accounts',
       category: client.category || 'Open'
@@ -268,7 +268,7 @@ export default function MyClientsPage() {
       }
 
       // Handle COR Upload if new photo is selected (reuse logic or add similar block)
-      let corUrl = editingClient.cor_url;
+      let corUrl = editingClient.corUrl;
       if (newCorPhoto) {
         const base64Data = newCorPhoto.split(',')[1];
         const byteCharacters = atob(base64Data);
@@ -1101,6 +1101,8 @@ export default function MyClientsPage() {
       phone: '',
       city: '',
       address: '',
+      contact_person: '',
+      tin: '',
       account_type: 'Standard Accounts',
       category: 'Open',
       has_forge: false
@@ -1890,7 +1892,7 @@ export default function MyClientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
-                  <TableHead className="text-center">Name</TableHead>
+                  <TableHead className="text-center">Trade Name</TableHead>
                   <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
@@ -2279,11 +2281,11 @@ export default function MyClientsPage() {
                       <p className="text-xs text-muted-foreground">Update COR Image (PNG or JPG, max 10MB)</p>
 
                       {/* Show existing COR if present and no new COR selected */}
-                      {!newCorPhoto && editingClient.cor_url && (
+                      {!newCorPhoto && editingClient.corUrl && (
                         <div className="relative mb-2">
                           <div className="text-xs text-muted-foreground mb-1">Current COR:</div>
                           <img
-                            src={editingClient.cor_url}
+                            src={editingClient.corUrl}
                             alt="Current COR"
                             className="w-full h-32 object-contain rounded-lg border bg-gray-50"
                           />
@@ -2299,7 +2301,7 @@ export default function MyClientsPage() {
                             className="w-full"
                           >
                             <Upload className="h-4 w-4 mr-2" />
-                            {editingClient.cor_url ? "Replace COR Image" : "Upload COR Image"}
+                            {editingClient.corUrl ? "Replace COR Image" : "Upload COR Image"}
                           </Button>
                           <input
                             ref={corFileInputRef}

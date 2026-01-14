@@ -18,13 +18,12 @@ interface CachedProfile {
 
 /**
  * Get cached profile even if stale (unless corrupted)
- * Persists across page refreshes via sessionStorage
+ * Persists across page refreshes and tab closures via localStorage
  */
 export function getCachedProfile(): User | null {
   try {
-    // Use sessionStorage so it survives refresh but clears on tab close
-    // (User asked for "persistent storage... so it survives page refreshes" - sessionStorage does exactly this)
-    const cached = sessionStorage.getItem(CACHE_KEY);
+    // Use localStorage so session persists even after closing the tab
+    const cached = localStorage.getItem(CACHE_KEY);
     if (!cached) return null;
 
     const profile: CachedProfile = JSON.parse(cached);
@@ -57,7 +56,7 @@ export function getCachedProfile(): User | null {
  */
 export function isCacheStale(): boolean {
   try {
-    const cached = sessionStorage.getItem(CACHE_KEY);
+    const cached = localStorage.getItem(CACHE_KEY);
     if (!cached) return true; // No cache = stale
 
     const profile: CachedProfile = JSON.parse(cached);
@@ -89,15 +88,15 @@ export function setCachedProfile(user: User): void {
       version: '1.0'
     };
 
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify(profile));
+    localStorage.setItem(CACHE_KEY, JSON.stringify(profile));
     console.log('💾 [ProfileCache] Profile cached successfully');
   } catch (error) {
     console.error('❌ [ProfileCache] Error saving cache:', error);
     // If quota exceeded, try to clear and retry once
     if (error instanceof DOMException && error.name === 'QuotaExceededError') {
       try {
-        sessionStorage.clear();
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+        localStorage.clear();
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
           data: user,
           timestamp: Date.now(),
           version: '1.0'
@@ -114,7 +113,7 @@ export function setCachedProfile(user: User): void {
  */
 export function clearProfileCache(): void {
   try {
-    sessionStorage.removeItem(CACHE_KEY);
+    localStorage.removeItem(CACHE_KEY);
     console.log('🗑️ [ProfileCache] Cache cleared');
   } catch (error) {
     console.error('❌ [ProfileCache] Error clearing cache:', error);
@@ -126,7 +125,7 @@ export function clearProfileCache(): void {
  */
 export function getCacheAge(): number | null {
   try {
-    const cached = sessionStorage.getItem(CACHE_KEY);
+    const cached = localStorage.getItem(CACHE_KEY);
     if (!cached) return null;
 
     const profile: CachedProfile = JSON.parse(cached);
