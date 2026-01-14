@@ -809,10 +809,10 @@ export function SalesAgentsTab() {
                   </div>
                   <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                      <div>
+                    <div>
                         <div className="text-[10px] text-muted-foreground">Phone</div>
                         <div className="text-xs font-medium truncate">{agent.phone || '—'}</div>
-                      </div>
+                    </div>
                       <div>
                         <div className="text-[10px] text-muted-foreground">Region</div>
                         <div className="text-xs font-medium truncate">{agent.region || '—'}</div>
@@ -840,13 +840,13 @@ export function SalesAgentsTab() {
                       <div>
                         <div className="text-[10px] text-muted-foreground">Total Sales</div>
                         <div className="text-xs font-semibold">₱{agent.totalSales.toLocaleString()}</div>
-                      </div>
+                    </div>
                       <div>
                         <div className="text-[10px] text-muted-foreground">Orders</div>
                         <div className="text-xs font-semibold">{agent.ordersCount}</div>
-                      </div>
                     </div>
                   </div>
+                    </div>
                   <div className="mt-3 border-t pt-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-xs text-muted-foreground flex items-center gap-2">
@@ -863,16 +863,16 @@ export function SalesAgentsTab() {
                     <div className="grid grid-cols-2 gap-2">
                       <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenView(agent)}>
                         <Eye className="h-3 w-3 mr-1" /> View
-                      </Button>
+                    </Button>
                       <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenEdit(agent)}>
                         <Edit className="h-3 w-3 mr-1" /> Edit
-                      </Button>
+                    </Button>
                       <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleResetPassword(agent)}>
                         <Rewind className="h-3 w-3 mr-1" /> Reset
-                      </Button>
+                    </Button>
                       <Button variant="outline" size="sm" className="text-xs h-8 text-red-600 hover:text-red-700" onClick={() => handleOpenDelete(agent)}>
                         <Trash2 className="h-3 w-3 mr-1" /> Delete
-                      </Button>
+                    </Button>
                     </div>
                   </div>
                 </div>
@@ -1148,12 +1148,12 @@ export function SalesAgentsTab() {
           </SheetContent>
         </Sheet>
       ) : (
-        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Edit User</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="name">Name</Label>
@@ -1271,17 +1271,17 @@ export function SalesAgentsTab() {
               />
               <Label htmlFor="status">Active</Label>
             </div>
-              <div className="flex justify-end space-x-2">
-                <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleConfirmEdit}>
-                  Save Changes
-                </Button>
-              </div>
+            <div className="flex justify-end space-x-2">
+              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleConfirmEdit}>
+                Save Changes
+              </Button>
             </div>
-          </DialogContent>
-        </Dialog>
+          </div>
+        </DialogContent>
+      </Dialog>
       )}
 
       {/* View Dialog - Mobile: Sheet, Desktop: Dialog */}
@@ -1384,16 +1384,16 @@ export function SalesAgentsTab() {
           </SheetContent>
         </Sheet>
       ) : (
-        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-xl font-semibold">Agent Information</DialogTitle>
-              <DialogDescription className="text-sm text-muted-foreground">
-                View agent profile details
-              </DialogDescription>
-            </DialogHeader>
-            {viewingAgent && (
-              <div className="space-y-6 py-4">
+      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold">Agent Information</DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
+              View agent profile details
+            </DialogDescription>
+          </DialogHeader>
+          {viewingAgent && (
+            <div className="space-y-6 py-4">
               {/* Basic Info */}
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold text-muted-foreground uppercase">Contact Information</h3>
@@ -1453,11 +1453,11 @@ export function SalesAgentsTab() {
                     </Badge>
                   </div>
                 </div>
-                </div>
               </div>
-            )}
-          </DialogContent>
-        </Dialog>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       )}
 
       {/* Delete Confirmation Dialog */}

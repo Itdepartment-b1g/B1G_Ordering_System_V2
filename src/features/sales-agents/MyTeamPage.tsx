@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import {
   Search,
@@ -32,8 +34,17 @@ export default function MyTeamPage() {
   const [showMemberDetails, setShowMemberDetails] = useState(false);
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [sortBy, setSortBy] = useState<'name' | 'sales' | 'orders'>('name');
+  const [isMobile, setIsMobile] = useState(false);
 
   const { toast } = useToast();
+
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Check if user is a leader
   useEffect(() => {
@@ -197,68 +208,68 @@ export default function MyTeamPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">My Team</h1>
-        <p className="text-muted-foreground">
-          Manage and view your team members' performance and details
+        <h1 className="text-2xl md:text-3xl font-bold tracking-tight">My Team</h1>
+        <p className="text-sm md:text-base text-muted-foreground">
+          Manage and view your team members' performance
         </p>
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <Card className="border-l-4 border-l-blue-500">
-          <CardContent className="p-6">
+          <CardContent className="p-4 md:p-6">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground mb-1">Total Members</p>
-                <p className="text-3xl font-bold">{totalTeamMembers}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] md:text-sm font-medium text-muted-foreground mb-1 truncate">Total Members</p>
+                <p className="text-xl md:text-3xl font-bold">{totalTeamMembers}</p>
               </div>
-              <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
-                <Users className="h-6 w-6 text-blue-600" />
+              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                <Users className="h-5 w-5 md:h-6 md:w-6 text-blue-600" />
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card className="border-l-4 border-l-green-500">
-          <CardContent className="p-6">
+          <CardContent className="p-4 md:p-6">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground mb-1">Total Sales</p>
-                <p className="text-3xl font-bold">₱{totalTeamSales.toLocaleString()}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] md:text-sm font-medium text-muted-foreground mb-1 truncate">Total Sales</p>
+                <p className="text-base md:text-3xl font-bold truncate">₱{totalTeamSales.toLocaleString()}</p>
               </div>
-              <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
-                <TrendingUp className="h-6 w-6 text-green-600" />
+              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                <TrendingUp className="h-5 w-5 md:h-6 md:w-6 text-green-600" />
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card className="border-l-4 border-l-purple-500">
-          <CardContent className="p-6">
+          <CardContent className="p-4 md:p-6">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground mb-1">Total Orders</p>
-                <p className="text-3xl font-bold">{totalTeamOrders}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] md:text-sm font-medium text-muted-foreground mb-1 truncate">Total Orders</p>
+                <p className="text-xl md:text-3xl font-bold">{totalTeamOrders}</p>
               </div>
-              <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
-                <BarChart3 className="h-6 w-6 text-purple-600" />
+              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                <BarChart3 className="h-5 w-5 md:h-6 md:w-6 text-purple-600" />
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card className="border-l-4 border-l-orange-500">
-          <CardContent className="p-6">
+          <CardContent className="p-4 md:p-6">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground mb-1">Active Members</p>
-                <p className="text-3xl font-bold">{activeMembers}</p>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] md:text-sm font-medium text-muted-foreground mb-1 truncate">Active</p>
+                <p className="text-xl md:text-3xl font-bold">{activeMembers}</p>
               </div>
-              <div className="h-12 w-12 rounded-full bg-orange-100 flex items-center justify-center">
-                <Crown className="h-6 w-6 text-orange-600" />
+              <div className="h-10 w-10 md:h-12 md:w-12 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                <Crown className="h-5 w-5 md:h-6 md:w-6 text-orange-600" />
               </div>
             </div>
           </CardContent>
@@ -267,18 +278,18 @@ export default function MyTeamPage() {
 
       {/* Controls and Team Members */}
       <Card>
-        <CardHeader className="pb-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <CardTitle>Team Members</CardTitle>
-            <div className="flex flex-col sm:flex-row gap-3">
+        <CardHeader className="pb-4 p-4 md:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 md:gap-4">
+            <CardTitle className="text-base md:text-lg">Team Members</CardTitle>
+            <div className="flex flex-col sm:flex-row gap-2 md:gap-3">
               {/* Search */}
               <div className="relative flex-1 sm:max-w-xs">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 md:h-4 md:w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search team members..."
+                  placeholder="Search members..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
+                  className="pl-9 md:pl-10 h-9 md:h-10 text-xs md:text-sm"
                 />
               </div>
 
@@ -287,51 +298,144 @@ export default function MyTeamPage() {
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as 'name' | 'sales' | 'orders')}
-                  className="flex h-10 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  className="flex h-9 md:h-10 w-28 md:w-32 rounded-md border border-input bg-background px-2 md:px-3 py-2 text-xs md:text-sm"
                 >
-                  <option value="name">Sort: Name</option>
-                  <option value="sales">Sort: Sales</option>
-                  <option value="orders">Sort: Orders</option>
+                  <option value="name">Name</option>
+                  <option value="sales">Sales</option>
+                  <option value="orders">Orders</option>
                 </select>
-                <div className="flex border rounded-md">
-                  <Button
-                    variant={viewMode === 'table' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setViewMode('table')}
-                    className="rounded-r-none border-r"
-                  >
-                    <BarChart3 className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant={viewMode === 'cards' ? 'default' : 'ghost'}
-                    size="sm"
-                    onClick={() => setViewMode('cards')}
-                    className="rounded-l-none"
-                  >
-                    <Users className="h-4 w-4" />
-                  </Button>
-                </div>
+                {!isMobile && (
+                  <div className="flex border rounded-md">
+                    <Button
+                      variant={viewMode === 'table' ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setViewMode('table')}
+                      className="rounded-r-none border-r h-9 md:h-10"
+                    >
+                      <BarChart3 className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant={viewMode === 'cards' ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setViewMode('cards')}
+                      className="rounded-l-none h-9 md:h-10"
+                    >
+                      <Users className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="p-4 md:p-6">
           {/* Team Members Display */}
           {loadingTeam ? (
-            <div className="flex items-center justify-center py-12">
+            <div className="flex items-center justify-center py-8 md:py-12">
               <div className="flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span className="text-muted-foreground">Loading team members...</span>
+                <Loader2 className="h-4 w-4 md:h-5 md:w-5 animate-spin" />
+                <span className="text-xs md:text-sm text-muted-foreground">Loading team members...</span>
               </div>
             </div>
           ) : sortedTeamMembers.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-              <h3 className="text-lg font-semibold mb-2">No team members found</h3>
-              <p className="text-muted-foreground">
+            <div className="text-center py-8 md:py-12">
+              <Users className="h-10 w-10 md:h-12 md:w-12 mx-auto mb-3 md:mb-4 text-muted-foreground opacity-50" />
+              <h3 className="text-base md:text-lg font-semibold mb-2">No team members found</h3>
+              <p className="text-xs md:text-sm text-muted-foreground">
                 {searchQuery ? 'Try adjusting your search criteria' : 'No team members have been assigned to you yet'}
               </p>
+            </div>
+          ) : isMobile ? (
+            /* Mobile Card View */
+            <div className="space-y-3">
+              {sortedTeamMembers.map((member) => (
+                <div key={member.id} className="border rounded-lg p-3 space-y-2 bg-background hover:bg-muted/30 transition-colors">
+                  {/* Header */}
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-sm truncate">{member.name}</h3>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1 truncate">
+                        <Mail className="h-3 w-3 flex-shrink-0" />
+                        <span className="truncate">{member.email}</span>
+                      </p>
+                    </div>
+                    <Badge
+                      variant={member.status === 'active' ? 'default' : 'secondary'}
+                      className={`text-[10px] h-5 ml-2 flex-shrink-0 ${member.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}
+                    >
+                      {member.status}
+                    </Badge>
+                  </div>
+
+                  {/* Contact & Location */}
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    {member.phone && (
+                      <div className="flex items-center gap-1">
+                        <Phone className="h-3 w-3 flex-shrink-0" />
+                        <span className="truncate">{member.phone}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <MapPin className="h-3 w-3 flex-shrink-0" />
+                      <span className="truncate">{member.region}</span>
+                    </div>
+                  </div>
+
+                  {/* Cities */}
+                  {member.cities.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {member.cities.slice(0, 3).map((city, index) => (
+                        <Badge key={index} variant="outline" className="text-[10px] h-5">
+                          {city}
+                        </Badge>
+                      ))}
+                      {member.cities.length > 3 && (
+                        <Badge variant="outline" className="text-[10px] h-5">
+                          +{member.cities.length - 3}
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Stats */}
+                  <div className="pt-2 border-t grid grid-cols-2 gap-2">
+                    <div className="text-center">
+                      <p className="text-base font-bold text-green-600">₱{member.totalSales.toLocaleString()}</p>
+                      <p className="text-[10px] text-muted-foreground">Total Sales</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-base font-bold text-blue-600">{member.ordersCount}</p>
+                      <p className="text-[10px] text-muted-foreground">Orders</p>
+                    </div>
+                  </div>
+
+                  {/* Order Breakdown */}
+                  <div className="flex justify-center gap-2 text-[10px] text-muted-foreground">
+                    <span className="text-green-600">{member.approvedOrders} approved</span>
+                    {member.pendingOrders > 0 && (
+                      <span className="text-orange-600">{member.pendingOrders} pending</span>
+                    )}
+                    {member.rejectedOrders > 0 && (
+                      <span className="text-red-600">{member.rejectedOrders} rejected</span>
+                    )}
+                  </div>
+
+                  {/* View Button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full h-8 text-xs"
+                    onClick={() => {
+                      setSelectedMember(member);
+                      setShowMemberDetails(true);
+                    }}
+                  >
+                    <Eye className="h-3 w-3 mr-1" />
+                    View Details
+                  </Button>
+                </div>
+              ))}
             </div>
           ) : viewMode === 'table' ? (
             <div className="overflow-x-auto">
@@ -511,94 +615,196 @@ export default function MyTeamPage() {
       </Card>
 
       {/* Team Member Details Dialog */}
-      <Dialog open={showMemberDetails} onOpenChange={setShowMemberDetails}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {selectedMember?.name}'s Details
-            </DialogTitle>
-          </DialogHeader>
-          {selectedMember && (
-            <div className="space-y-6">
-              {/* Contact Information */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Contact Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium">Email</Label>
-                    <p className="text-sm">{selectedMember.email}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Phone</Label>
-                    <p className="text-sm">{selectedMember.phone || 'Not provided'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Region</Label>
-                    <p className="text-sm">{selectedMember.region || 'Not provided'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Status</Label>
-                    <Badge
-                      variant={selectedMember.status === 'active' ? 'default' : 'secondary'}
-                      className={selectedMember.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}
-                    >
-                      {selectedMember.status}
-                    </Badge>
-                  </div>
-                </div>
+      {isMobile ? (
+        <Sheet open={showMemberDetails} onOpenChange={setShowMemberDetails}>
+          <SheetContent side="bottom" className="h-[85vh] p-0">
+            <ScrollArea className="h-full">
+              <div className="p-6 space-y-4">
+                <SheetHeader>
+                  <SheetTitle className="text-base">
+                    {selectedMember?.name}'s Details
+                  </SheetTitle>
+                </SheetHeader>
+                {selectedMember && (
+                  <>
+                    {/* Contact Information */}
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">Contact Information</h3>
+                      <div className="space-y-3">
+                        <div className="border rounded-lg p-3 bg-background">
+                          <Label className="text-xs font-medium text-muted-foreground">Email</Label>
+                          <p className="text-xs mt-1">{selectedMember.email}</p>
+                        </div>
+                        {selectedMember.phone && (
+                          <div className="border rounded-lg p-3 bg-background">
+                            <Label className="text-xs font-medium text-muted-foreground">Phone</Label>
+                            <p className="text-xs mt-1">{selectedMember.phone}</p>
+                          </div>
+                        )}
+                        <div className="border rounded-lg p-3 bg-background">
+                          <Label className="text-xs font-medium text-muted-foreground">Region</Label>
+                          <p className="text-xs mt-1">{selectedMember.region || 'Not provided'}</p>
+                        </div>
+                        <div className="border rounded-lg p-3 bg-background">
+                          <Label className="text-xs font-medium text-muted-foreground">Status</Label>
+                          <div className="mt-1">
+                            <Badge
+                              variant={selectedMember.status === 'active' ? 'default' : 'secondary'}
+                              className={`text-[10px] h-5 ${selectedMember.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}
+                            >
+                              {selectedMember.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
 
-                {selectedMember.cities.length > 0 && (
-                  <div>
-                    <Label className="text-sm font-medium">Cities</Label>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {selectedMember.cities.map((city, index) => (
-                        <Badge key={index} variant="outline" className="text-xs">
-                          {city}
-                        </Badge>
-                      ))}
+                      {selectedMember.cities.length > 0 && (
+                        <div className="border rounded-lg p-3 bg-background">
+                          <Label className="text-xs font-medium text-muted-foreground">Cities</Label>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {selectedMember.cities.map((city, index) => (
+                              <Badge key={index} variant="outline" className="text-[10px] h-5">
+                                {city}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Performance Summary */}
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold">Performance Summary</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="p-3 border rounded-lg bg-green-50">
+                          <div className="text-lg font-bold text-green-600">₱{selectedMember.totalSales.toLocaleString()}</div>
+                          <div className="text-[10px] text-muted-foreground">Total Sales</div>
+                        </div>
+                        <div className="p-3 border rounded-lg bg-blue-50">
+                          <div className="text-lg font-bold text-blue-600">{selectedMember.ordersCount}</div>
+                          <div className="text-[10px] text-muted-foreground">Total Orders</div>
+                        </div>
+                        <div className="p-3 border rounded-lg bg-purple-50">
+                          <div className="text-lg font-bold text-purple-600">{selectedMember.approvedOrders}</div>
+                          <div className="text-[10px] text-muted-foreground">Approved</div>
+                        </div>
+                        {selectedMember.pendingOrders > 0 && (
+                          <div className="p-3 border rounded-lg bg-orange-50">
+                            <div className="text-lg font-bold text-orange-600">{selectedMember.pendingOrders}</div>
+                            <div className="text-[10px] text-muted-foreground">Pending</div>
+                          </div>
+                        )}
+                        {selectedMember.rejectedOrders > 0 && (
+                          <div className="p-3 border rounded-lg bg-red-50">
+                            <div className="text-lg font-bold text-red-600">{selectedMember.rejectedOrders}</div>
+                            <div className="text-[10px] text-muted-foreground">Rejected</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Close Button */}
+                    <div className="sticky bottom-0 bg-background pt-4 pb-2 border-t">
+                      <Button variant="outline" onClick={() => setShowMemberDetails(false)} className="w-full h-10 text-xs">
+                        Close
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={showMemberDetails} onOpenChange={setShowMemberDetails}>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {selectedMember?.name}'s Details
+              </DialogTitle>
+            </DialogHeader>
+            {selectedMember && (
+              <div className="space-y-6">
+                {/* Contact Information */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold">Contact Information</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium">Email</Label>
+                      <p className="text-sm">{selectedMember.email}</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Phone</Label>
+                      <p className="text-sm">{selectedMember.phone || 'Not provided'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Region</Label>
+                      <p className="text-sm">{selectedMember.region || 'Not provided'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Status</Label>
+                      <Badge
+                        variant={selectedMember.status === 'active' ? 'default' : 'secondary'}
+                        className={selectedMember.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}
+                      >
+                        {selectedMember.status}
+                      </Badge>
                     </div>
                   </div>
-                )}
-              </div>
 
-              {/* Performance Summary */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Performance Summary</h3>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="p-4 border rounded-lg bg-green-50">
-                    <div className="text-2xl font-bold text-green-600">₱{selectedMember.totalSales.toLocaleString()}</div>
-                    <div className="text-sm text-muted-foreground">Total Sales</div>
-                  </div>
-                  <div className="p-4 border rounded-lg bg-blue-50">
-                    <div className="text-2xl font-bold text-blue-600">{selectedMember.ordersCount}</div>
-                    <div className="text-sm text-muted-foreground">Total Orders</div>
-                  </div>
-                  <div className="p-4 border rounded-lg bg-purple-50">
-                    <div className="text-2xl font-bold text-purple-600">{selectedMember.approvedOrders}</div>
-                    <div className="text-sm text-muted-foreground">Approved Orders</div>
-                  </div>
+                  {selectedMember.cities.length > 0 && (
+                    <div>
+                      <Label className="text-sm font-medium">Cities</Label>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {selectedMember.cities.map((city, index) => (
+                          <Badge key={index} variant="outline" className="text-xs">
+                            {city}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {(selectedMember.pendingOrders > 0 || selectedMember.rejectedOrders > 0) && (
-                  <div className="grid grid-cols-2 gap-4">
-                    {selectedMember.pendingOrders > 0 && (
-                      <div className="p-4 border rounded-lg bg-orange-50">
-                        <div className="text-2xl font-bold text-orange-600">{selectedMember.pendingOrders}</div>
-                        <div className="text-sm text-muted-foreground">Pending Orders</div>
-                      </div>
-                    )}
-                    {selectedMember.rejectedOrders > 0 && (
-                      <div className="p-4 border rounded-lg bg-red-50">
-                        <div className="text-2xl font-bold text-red-600">{selectedMember.rejectedOrders}</div>
-                        <div className="text-sm text-muted-foreground">Rejected Orders</div>
-                      </div>
-                    )}
+
+                {/* Performance Summary */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-semibold">Performance Summary</h3>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="p-4 border rounded-lg bg-green-50">
+                      <div className="text-2xl font-bold text-green-600">₱{selectedMember.totalSales.toLocaleString()}</div>
+                      <div className="text-sm text-muted-foreground">Total Sales</div>
+                    </div>
+                    <div className="p-4 border rounded-lg bg-blue-50">
+                      <div className="text-2xl font-bold text-blue-600">{selectedMember.ordersCount}</div>
+                      <div className="text-sm text-muted-foreground">Total Orders</div>
+                    </div>
+                    <div className="p-4 border rounded-lg bg-purple-50">
+                      <div className="text-2xl font-bold text-purple-600">{selectedMember.approvedOrders}</div>
+                      <div className="text-sm text-muted-foreground">Approved Orders</div>
+                    </div>
                   </div>
-                )}
+                  {(selectedMember.pendingOrders > 0 || selectedMember.rejectedOrders > 0) && (
+                    <div className="grid grid-cols-2 gap-4">
+                      {selectedMember.pendingOrders > 0 && (
+                        <div className="p-4 border rounded-lg bg-orange-50">
+                          <div className="text-2xl font-bold text-orange-600">{selectedMember.pendingOrders}</div>
+                          <div className="text-sm text-muted-foreground">Pending Orders</div>
+                        </div>
+                      )}
+                      {selectedMember.rejectedOrders > 0 && (
+                        <div className="p-4 border rounded-lg bg-red-50">
+                          <div className="text-2xl font-bold text-red-600">{selectedMember.rejectedOrders}</div>
+                          <div className="text-sm text-muted-foreground">Rejected Orders</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

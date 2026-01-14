@@ -562,7 +562,7 @@ export default function PurchaseOrdersPage() {
               <Button className="w-full md:w-auto">
                 <Plus className="h-4 w-4 mr-2" />
                 Create PO
-              </Button>
+            </Button>
             </SheetTrigger>
             <SheetContent side="bottom" className="h-[95vh] p-0">
               <SheetHeader className="px-4 pt-4 pb-2 border-b">
@@ -689,7 +689,7 @@ export default function PurchaseOrdersPage() {
                           {itemsToAdd.length > 0 && (
                             <Badge variant="secondary">{itemsToAdd.length} items</Badge>
                           )}
-                        </div>
+              </div>
                       </AccordionTrigger>
                       <AccordionContent>
                 <div className="space-y-4 pt-4">
@@ -995,32 +995,32 @@ export default function PurchaseOrdersPage() {
                         <div key={index} className="flex items-start gap-2 bg-muted p-3 rounded-md">
                           <div className="flex-1 space-y-2 text-sm">
                             <div className="flex items-start justify-between">
-                              <div>
+                            <div>
                                 <p className="font-medium">{item.brand_name} - {item.variant_name}</p>
-                                <Badge
-                                  variant="secondary"
+                              <Badge
+                                variant="secondary"
                                   className={`text-[10px] ${
-                                    item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                      item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                        'bg-purple-100 text-purple-700'
+                                  item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                    item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                      'bg-purple-100 text-purple-700'
                                   }`}
-                                >
-                                  {item.variant_type.toUpperCase()}
-                                </Badge>
-                              </div>
+                              >
+                                {item.variant_type.toUpperCase()}
+                              </Badge>
+                            </div>
                             </div>
                             <div className="grid grid-cols-3 gap-2 text-xs">
-                              <div>
+                            <div>
                                 <p className="text-muted-foreground">Qty</p>
                                 <p className="font-medium">{item.quantity} units</p>
-                              </div>
-                              <div>
+                            </div>
+                            <div>
                                 <p className="text-muted-foreground">Price</p>
                                 <p className="font-medium">₱{item.unit_price.toLocaleString()}</p>
-                              </div>
-                              <div>
+                            </div>
+                            <div>
                                 <p className="text-muted-foreground">Total</p>
-                                <p className="font-semibold">₱{item.total.toLocaleString()}</p>
+                              <p className="font-semibold">₱{item.total.toLocaleString()}</p>
                               </div>
                             </div>
                           </div>
@@ -1036,7 +1036,7 @@ export default function PurchaseOrdersPage() {
                     </div>
                   </div>
                 )}
-                </div>
+              </div>
                       </AccordionContent>
                     </AccordionItem>
 
@@ -1091,21 +1091,21 @@ export default function PurchaseOrdersPage() {
                     <span>₱{calculateTotal().toLocaleString()}</span>
                   </div>
                 </div>
-                </div>
+              </div>
                       </AccordionContent>
                     </AccordionItem>
 
                     {/* Notes Section */}
                     <div className="border rounded-lg p-4 space-y-2">
                       <Label className="font-semibold">Notes (Optional)</Label>
-                      <Textarea
+                <Textarea
                         placeholder="Add any special instructions..."
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        rows={3}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={3}
                         className="text-sm"
-                      />
-                    </div>
+                />
+              </div>
                   </Accordion>
 
                   {/* Submit Button */}
@@ -1147,18 +1147,18 @@ export default function PurchaseOrdersPage() {
               <div className="flex justify-end gap-2 pt-4 border-t">
                 <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
                 <Button onClick={handleCreateOrder} disabled={creatingOrder}>
-                  {creatingOrder ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    'Create Purchase Order'
-                  )}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+                {creatingOrder ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  'Create Purchase Order'
+                )}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
         )}
       </div>
 
@@ -1622,71 +1622,71 @@ export default function PurchaseOrdersPage() {
         </Sheet>
       ) : (
         // Desktop: Dialog
-        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
           <DialogContent className="max-w-4xl max-h-[90vh]">
-            <DialogHeader>
-              <DialogTitle>Purchase Order Details</DialogTitle>
-            </DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Purchase Order Details</DialogTitle>
+          </DialogHeader>
             <ScrollArea className="max-h-[calc(90vh-120px)] pr-4">
-              {orderToView && (
-                <div className="space-y-6 py-4">
-                  {/* PO Number and Status */}
-                  <div className="flex justify-between items-center pb-4 border-b">
-                    <div>
-                      <h3 className="text-2xl font-bold">{orderToView.po_number}</h3>
-                      <p className="text-sm text-muted-foreground">Purchase Order</p>
-                    </div>
-                    <Badge
-                      variant={
-                        orderToView.status === 'approved' ? 'default' :
-                          orderToView.status === 'pending' ? 'secondary' :
-                            'destructive'
-                      }
-                      className="text-base px-4 py-2"
-                    >
-                      {orderToView.status.toUpperCase()}
-                    </Badge>
-                  </div>
+          {orderToView && (
+            <div className="space-y-6 py-4">
+              {/* PO Number and Status */}
+              <div className="flex justify-between items-center pb-4 border-b">
+                <div>
+                  <h3 className="text-2xl font-bold">{orderToView.po_number}</h3>
+                  <p className="text-sm text-muted-foreground">Purchase Order</p>
+                </div>
+                <Badge
+                  variant={
+                    orderToView.status === 'approved' ? 'default' :
+                      orderToView.status === 'pending' ? 'secondary' :
+                        'destructive'
+                  }
+                  className="text-base px-4 py-2"
+                >
+                  {orderToView.status.toUpperCase()}
+                </Badge>
+              </div>
 
-                  {/* Dates */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label className="text-muted-foreground">Order Date</Label>
-                      <p className="font-medium">{new Date(orderToView.order_date).toLocaleDateString()}</p>
-                    </div>
-                    <div>
-                      <Label className="text-muted-foreground">Expected Delivery</Label>
-                      <p className="font-medium">{new Date(orderToView.expected_delivery_date).toLocaleDateString()}</p>
-                    </div>
-                  </div>
+              {/* Dates */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-muted-foreground">Order Date</Label>
+                  <p className="font-medium">{new Date(orderToView.order_date).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Expected Delivery</Label>
+                  <p className="font-medium">{new Date(orderToView.expected_delivery_date).toLocaleDateString()}</p>
+                </div>
+              </div>
 
-                  {/* Buyer and Seller Info */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <h4 className="font-semibold text-lg">Buyer Information</h4>
-                      <div className="bg-muted p-4 rounded-lg space-y-1">
-                        <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
-                        <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
-                        <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
-                        <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
-                        <p className="text-sm">Email: {user?.email || 'N/A'}</p>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <h4 className="font-semibold text-lg">Seller Information</h4>
-                      <div className="bg-muted p-4 rounded-lg space-y-1">
-                        <p className="font-medium">{orderToView.supplier.company_name}</p>
-                        <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
-                        <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
-                        <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
-                        <p className="text-sm">Email: {orderToView.supplier.email}</p>
-                      </div>
-                    </div>
+              {/* Buyer and Seller Info */}
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <h4 className="font-semibold text-lg">Buyer Information</h4>
+                  <div className="bg-muted p-4 rounded-lg space-y-1">
+                    <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
+                    <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
+                    <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
+                    <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
+                    <p className="text-sm">Email: {user?.email || 'N/A'}</p>
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <h4 className="font-semibold text-lg">Seller Information</h4>
+                  <div className="bg-muted p-4 rounded-lg space-y-1">
+                    <p className="font-medium">{orderToView.supplier.company_name}</p>
+                    <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
+                    <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
+                    <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
+                    <p className="text-sm">Email: {orderToView.supplier.email}</p>
+                  </div>
+                </div>
+              </div>
 
                   {/* Items Desktop */}
-                  <div className="space-y-2">
-                    <h4 className="font-semibold text-lg">Items</h4>
+              <div className="space-y-2">
+                <h4 className="font-semibold text-lg">Items</h4>
                     <div className="border rounded-lg">
                   <Table>
                     <TableHeader>
@@ -1767,21 +1767,21 @@ export default function PurchaseOrdersPage() {
                     <div className="flex justify-between text-lg font-bold border-t pt-2">
                       <span>Total Amount:</span>
                       <span>₱{orderToView.total_amount.toLocaleString()}</span>
-                    </div>
-                  </div>
+                </div>
+              </div>
 
-                  {/* Notes */}
-                  {orderToView.notes && (
-                    <div className="space-y-2">
-                      <Label className="font-semibold">Notes</Label>
-                      <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
-                    </div>
-                  )}
+              {/* Notes */}
+              {orderToView.notes && (
+                <div className="space-y-2">
+                  <Label className="font-semibold">Notes</Label>
+                  <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
                 </div>
               )}
+            </div>
+          )}
             </ScrollArea>
-          </DialogContent>
-        </Dialog>
+        </DialogContent>
+      </Dialog>
       )}
     </div>
   );

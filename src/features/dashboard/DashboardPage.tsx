@@ -1,6 +1,6 @@
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { TrendingUp, Users, Package, DollarSign, CheckCircle, XCircle, Bell, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, Calendar, ArrowRight, ShoppingCart, Loader2 } from 'lucide-react';
+import { TrendingUp, Users, Package, DollarSign, CheckCircle, XCircle, Bell, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, Calendar, ArrowRight, ShoppingCart, Loader2, Receipt } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
@@ -79,7 +79,7 @@ export default function DashboardPage() {
     pendingRequests = 0,
     teamRevenue = 0,
     pendingStockRequests = [],
-    pendingOrderApprovals = []
+    recentRemittances = []
   } = leaderStats || {};
 
   const {
@@ -501,52 +501,62 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* Pending Order Approvals */}
+                {/* Recent Remittances */}
                 <div className="border-t pt-4">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-semibold flex items-center gap-2">
-                      <ShoppingCart className="h-4 w-4" />
-                      Order Approvals ({pendingOrderApprovals.length})
+                      <Receipt className="h-4 w-4" />
+                      Recent Remittances ({recentRemittances.length})
                     </h3>
-                    {pendingOrderApprovals.length > 0 && (
-                      <Link to="/orders">
+                    {recentRemittances.length > 0 && (
+                      <Link to="/inventory/remittances">
                         <Button variant="ghost" size="sm" className="text-xs">
                           View All <ArrowRight className="h-3 w-3 ml-1" />
                         </Button>
                       </Link>
                     )}
                   </div>
-                  {pendingOrderApprovals.length === 0 ? (
+                  {recentRemittances.length === 0 ? (
                     <div className="text-center py-4 text-muted-foreground text-sm">
-                      <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-20" />
-                      <p>No pending order approvals</p>
+                      <Receipt className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                      <p>No remittances from sub-team yet</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {pendingOrderApprovals.slice(0, 3).map((order: {
+                      {recentRemittances.slice(0, 3).map((remittance: {
                         id: string;
+                        remittance_id: string;
                         profiles?: { full_name: string } | { full_name: string }[];
-                        order_number: string;
-                        total_amount?: number;
-                        created_at: string
+                        total_revenue: number;
+                        total_orders: number;
+                        remittance_date: string;
+                        status: string;
                       }) => {
-                        const agentName = Array.isArray(order.profiles) ? order.profiles[0]?.full_name : (order.profiles as { full_name: string })?.full_name || 'Unknown Agent';
+                        const agentName = Array.isArray(remittance.profiles) ? remittance.profiles[0]?.full_name : (remittance.profiles as { full_name: string })?.full_name || 'Unknown Agent';
                         return (
-                          <div key={order.id} className="flex items-center justify-between p-3 rounded-lg border bg-blue-50/30 border-blue-200">
+                          <div key={remittance.id} className="flex items-center justify-between p-3 rounded-lg border bg-green-50/30 border-green-200">
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium truncate">{agentName}</p>
                               <p className="text-xs text-muted-foreground truncate">
-                                Order #{order.order_number} • ₱{order.total_amount?.toLocaleString() || '0'}
+                                {remittance.total_orders} orders • ₱{remittance.total_revenue?.toLocaleString() || '0'}
                               </p>
                               <p className="text-xs text-muted-foreground mt-1">
-                                {formatTimeAgo(order.created_at)}
+                                {formatTimeAgo(remittance.remittance_date)}
                               </p>
                             </div>
-                            <Link to="/orders">
-                              <Button variant="outline" size="sm" className="ml-2">
-                                Review
-                              </Button>
-                            </Link>
+                            <div className="flex flex-col items-end gap-1 ml-2">
+                              <Badge 
+                                variant={remittance.status === 'verified' ? 'default' : remittance.status === 'pending' ? 'secondary' : 'outline'}
+                                className="text-[10px] capitalize"
+                              >
+                                {remittance.status}
+                              </Badge>
+                              <Link to="/inventory/remittances">
+                                <Button variant="outline" size="sm">
+                                  View
+                                </Button>
+                              </Link>
+                            </div>
                           </div>
                         );
                       })}
