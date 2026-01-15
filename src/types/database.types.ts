@@ -129,6 +129,7 @@ export interface MainInventory {
   company_id: string;
   variant_id: string;
   stock: number;
+  allocated_stock: number; // Stock reserved for approved requests but not yet distributed
   unit_price: number;
   selling_price?: number;
   dsp_price?: number;
@@ -139,6 +140,11 @@ export interface MainInventory {
   created_at: string;
   updated_at: string;
 }
+
+// Computed available stock = stock - allocated_stock
+export type MainInventoryWithAvailability = MainInventory & {
+  available_stock: number;
+};
 
 export interface AgentInventory {
   id: string;
@@ -374,6 +380,8 @@ export interface StockRequest {
   leader_id: string;
   variant_id: string;
   requested_quantity: number;
+  leader_additional_quantity: number; // Additional qty leader requests for themselves
+  is_combined_request: boolean; // True if request includes leader's additional qty
   requested_at: string;
   status: StockRequestStatus;
   leader_approved_at?: string;
@@ -780,6 +788,32 @@ export interface Database {
       reject_stock_request: {
         Args: { p_request_id: string; p_rejector_id: string; p_reason?: string };
         Returns: FunctionResponse;
+      };
+      // New PRE-ORDER system functions
+      forward_stock_request_with_leader_qty: {
+        Args: { 
+          p_request_id: string; 
+          p_leader_id: string; 
+          p_leader_additional_quantity?: number;
+          p_notes?: string;
+        };
+        Returns: FunctionResponse;
+      };
+      admin_approve_stock_request: {
+        Args: { p_request_id: string; p_admin_id: string; p_notes?: string };
+        Returns: FunctionResponse;
+      };
+      admin_reject_stock_request: {
+        Args: { p_request_id: string; p_admin_id: string; p_reason: string };
+        Returns: FunctionResponse;
+      };
+      leader_accept_and_distribute_stock: {
+        Args: { p_request_id: string; p_leader_id: string };
+        Returns: FunctionResponse;
+      };
+      get_available_stock: {
+        Args: { p_variant_id: string; p_company_id: string };
+        Returns: number;
       };
     };
   };

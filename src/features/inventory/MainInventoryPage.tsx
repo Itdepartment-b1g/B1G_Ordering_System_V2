@@ -21,8 +21,6 @@ export default function MainInventoryPage() {
   const { brands, setBrands, updateBrandName, updateVariant, addOrUpdateInventory, refreshInventory } = useInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
-  const [allocatedStock, setAllocatedStock] = useState<Record<string, number>>({});
-  const [loadingAllocations, setLoadingAllocations] = useState(false);
 
   // Dialog states
   const [editVariantOpen, setEditVariantOpen] = useState(false);
@@ -62,52 +60,8 @@ export default function MainInventoryPage() {
   const [bulkRspValue, setBulkRspValue] = useState<string>('');
   const [updatingBulkPrice, setUpdatingBulkPrice] = useState(false);
 
+
   const { toast } = useToast();
-
-  // Fetch allocated stock data
-  const fetchAllocatedStock = async () => {
-    try {
-      setLoadingAllocations(true);
-
-      // Step 1: Get all agents who are assigned to a leader (subordinates)
-      const { data: assignments, error: assignmentErr } = await supabase
-        .from('leader_teams')
-        .select('agent_id')
-        .eq('company_id', user?.company_id);
-
-      if (assignmentErr) throw assignmentErr;
-
-      const subordinateIds = (assignments || []).map(a => a.agent_id);
-
-      // Step 2: Get all agent_inventory records
-      const { data: allInventory, error: inventoryErr } = await supabase
-        .from('agent_inventory')
-        .select('variant_id, stock, agent_id')
-        .eq('company_id', user?.company_id);
-
-      if (inventoryErr) throw inventoryErr;
-
-      // Step 3: Only sum stock for users who are NOT subordinates (Top-Level)
-      // This prevents double-counting because leaders' stock already reflects their team's stock
-      const allocations: Record<string, number> = {};
-      allInventory?.forEach(item => {
-        if (!subordinateIds.includes(item.agent_id)) {
-          allocations[item.variant_id] = (allocations[item.variant_id] || 0) + (item.stock || 0);
-        }
-      });
-
-      setAllocatedStock(allocations);
-    } catch (error) {
-      console.error('Error fetching allocated stock:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load allocation data',
-        variant: 'destructive'
-      });
-    } finally {
-      setLoadingAllocations(false);
-    }
-  };
 
   const handleDeleteVariant = async (variantId: string) => {
     if (!user?.company_id) {
@@ -133,10 +87,7 @@ export default function MainInventoryPage() {
     }
   };
 
-  // Fetch allocated stock on component mount
-  useEffect(() => {
-    fetchAllocatedStock();
-  }, []);
+  // No need to fetch allocated stock manually anymore
 
   const filteredBrands = brands.filter(brand =>
     brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -159,9 +110,9 @@ export default function MainInventoryPage() {
   };
 
   const getAllocatedStock = (brand: Brand) => {
-    const flavorAllocated = brand.flavors.reduce((sum, f) => sum + (allocatedStock[f.id] || 0), 0);
-    const batteryAllocated = brand.batteries.reduce((sum, b) => sum + (allocatedStock[b.id] || 0), 0);
-    const posmAllocated = (brand.posms || []).reduce((sum, p) => sum + (allocatedStock[p.id] || 0), 0);
+    const flavorAllocated = brand.flavors.reduce((sum, f) => sum + (f.allocatedStock || 0), 0);
+    const batteryAllocated = brand.batteries.reduce((sum, b) => sum + (b.allocatedStock || 0), 0);
+    const posmAllocated = (brand.posms || []).reduce((sum, p) => sum + (p.allocatedStock || 0), 0);
     return flavorAllocated + batteryAllocated + posmAllocated;
   };
 
@@ -169,12 +120,12 @@ export default function MainInventoryPage() {
     return getTotalStock(brand) - getAllocatedStock(brand);
   };
 
-  const getVariantAllocatedStock = (variantId: string) => {
-    return allocatedStock[variantId] || 0;
+  const getVariantAllocatedStock = (variant: Variant) => {
+    return variant.allocatedStock || 0;
   };
 
   const getVariantAvailableStock = (variant: Variant) => {
-    return variant.stock - getVariantAllocatedStock(variant.id);
+    return variant.stock - getVariantAllocatedStock(variant);
   };
 
   const handleEditVariant = (brandId: string, variant: Variant, type: 'flavor' | 'battery' | 'posm') => {
@@ -372,12 +323,11 @@ export default function MainInventoryPage() {
         <div className="flex gap-2">
           <InventoryImportExport brands={brands} />
           <Button
-            onClick={fetchAllocatedStock}
-            disabled={loadingAllocations}
+            onClick={refreshInventory}
             variant="outline"
           >
-            <RefreshCw className={`mr-2 h-4 w-4 ${loadingAllocations ? 'animate-spin' : ''}`} />
-            Refresh Allocations
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh Inventory
           </Button>
         </div>
       </div>
@@ -591,7 +541,7 @@ export default function MainInventoryPage() {
                           </TableHeader>
                           <TableBody>
                             {brand.flavors.map((flavor) => {
-                              const allocated = getVariantAllocatedStock(flavor.id);
+                              const allocated = getVariantAllocatedStock(flavor);
                               const available = getVariantAvailableStock(flavor);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (flavor as any).sellingPrice;
@@ -719,7 +669,7 @@ export default function MainInventoryPage() {
                           </TableHeader>
                           <TableBody>
                             {brand.batteries.map((battery) => {
-                              const allocated = getVariantAllocatedStock(battery.id);
+                              const allocated = getVariantAllocatedStock(battery);
                               const available = getVariantAvailableStock(battery);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (battery as any).sellingPrice;

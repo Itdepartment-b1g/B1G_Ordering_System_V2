@@ -19,6 +19,8 @@ interface PendingRequest {
   agent_id: string;
   variant_id: string;
   requested_quantity: number;
+  leader_additional_quantity: number; // Leader's own stock request
+  is_combined_request: boolean; // True if includes leader qty
   requester_notes: string | null;
   approver_notes: string | null;
   requested_at: string;
@@ -45,6 +47,7 @@ interface PendingRequest {
     notes: string | null;
   };
   admin_stock?: number;
+  available_stock?: number; // Available stock from main inventory
 }
 
 interface AllRequest {
@@ -131,6 +134,8 @@ export default function AdminRequestsPage() {
           leader_id,
           variant_id,
           requested_quantity,
+          leader_additional_quantity,
+          is_combined_request,
           requested_at,
           status,
           leader_notes,
@@ -162,6 +167,8 @@ export default function AdminRequestsPage() {
           agent_id: row.agent_id,
           variant_id: row.variant_id,
           requested_quantity: row.requested_quantity,
+          leader_additional_quantity: row.leader_additional_quantity || 0,
+          is_combined_request: row.is_combined_request || false,
           requested_at: row.requested_at,
           requester_notes: row.leader_notes || null,
           approver_notes: row.admin_notes || null,
@@ -173,10 +180,11 @@ export default function AdminRequestsPage() {
             ? { id: agent.id, full_name: agent.full_name, notes: row.leader_notes || null }
             : undefined,
           admin_stock: 0,
+          available_stock: 0,
         };
       });
 
-      // For each pending request, fetch admin's main inventory stock
+      // For each pending request, fetch admin's main inventory stock (with available calculation)
       const requestsWithStock = await Promise.all(
         basePending.map(async (req) => {
           // Start with any agent_info from the join
@@ -199,16 +207,21 @@ export default function AdminRequestsPage() {
             }
           }
 
-          // Fetch admin's main inventory
+          // Fetch admin's main inventory with allocated_stock
           const { data: inventoryData } = await supabase
             .from('main_inventory')
-            .select('stock')
+            .select('stock, allocated_stock')
             .eq('variant_id', req.variant_id)
             .single();
 
+          const totalStock = inventoryData?.stock || 0;
+          const allocatedStock = inventoryData?.allocated_stock || 0;
+          const availableStock = totalStock - allocatedStock;
+
           return {
             ...req,
-            admin_stock: inventoryData?.stock || 0,
+            admin_stock: totalStock,
+            available_stock: availableStock,
             agent_info: agentInfo,
           };
         })
@@ -285,8 +298,22 @@ export default function AdminRequestsPage() {
     setProcessing(true);
     try {
       if (reviewAction === 'approve') {
-        // Approve & allocate from main inventory to leader
-        const { data, error } = await supabase.rpc('approve_stock_request_by_admin', {
+        // Calculate total quantity needed
+        const totalQty = selectedRequest.requested_quantity + (selectedRequest.leader_additional_quantity || 0);
+        
+        // Check available stock first
+        if ((selectedRequest.available_stock || 0) < totalQty) {
+          toast({
+            title: 'Insufficient Stock',
+            description: `Available: ${selectedRequest.available_stock || 0}, Requested: ${totalQty}`,
+            variant: 'destructive',
+          });
+          setProcessing(false);
+          return;
+        }
+        
+        // Approve using new RPC function that handles inventory allocation
+        const { data, error } = await supabase.rpc('admin_approve_stock_request', {
           p_request_id: selectedRequest.id,
           p_admin_id: user.id,
           p_notes: notes || null,
@@ -297,7 +324,7 @@ export default function AdminRequestsPage() {
         if (data?.success) {
           toast({
             title: 'Success',
-            description: data.message || 'Request approved and stock allocated',
+            description: `Request approved! ${totalQty} units allocated (Agent: ${selectedRequest.requested_quantity}, Leader: ${selectedRequest.leader_additional_quantity || 0})`,
           });
           setReviewDialogOpen(false);
           fetchRequests();
@@ -309,10 +336,10 @@ export default function AdminRequestsPage() {
           });
         }
       } else if (reviewAction === 'deny') {
-        // Deny request via reject_stock_request
-        const { data, error } = await supabase.rpc('reject_stock_request', {
+        // Deny request via new RPC
+        const { data, error } = await supabase.rpc('admin_reject_stock_request', {
           p_request_id: selectedRequest.id,
-          p_rejector_id: user.id,
+          p_admin_id: user.id,
           p_reason: denialReason,
         });
 
@@ -407,39 +434,54 @@ export default function AdminRequestsPage() {
                       <TableHead>Leader</TableHead>
                       <TableHead>Agent</TableHead>
                       <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Requested</TableHead>
-                      <TableHead className="text-right">Main Stock</TableHead>
-                      <TableHead>Requested Date</TableHead>
+                      <TableHead className="text-right">Agent Qty</TableHead>
+                      <TableHead className="text-right">Leader Qty</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Available</TableHead>
+                      <TableHead>Date</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pendingRequests.map(request => (
-                      <TableRow key={request.id}>
-                        <TableCell className="font-medium">{request.requester?.full_name}</TableCell>
-                        <TableCell>{request.agent_info?.full_name || 'N/A'}</TableCell>
-                        <TableCell>{formatProductName(request)}</TableCell>
-                        <TableCell className="text-right">{request.requested_quantity} units</TableCell>
-                        <TableCell className="text-right">
-                          <span className={request.admin_stock && request.admin_stock >= request.requested_quantity ? 'text-green-600 font-semibold' : request.admin_stock && request.admin_stock > 0 ? 'text-yellow-600 font-semibold' : 'text-red-600 font-semibold'}>
-                            {request.admin_stock || 0} units
-                          </span>
-                        </TableCell>
-                        <TableCell>{format(new Date(request.requested_at), 'MMM dd, yyyy')}</TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleReviewRequest(request)}
-                          >
-                            Review
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {pendingRequests.map(request => {
+                      const totalQty = request.requested_quantity + (request.leader_additional_quantity || 0);
+                      const hasEnoughStock = (request.available_stock || 0) >= totalQty;
+                      
+                      return (
+                        <TableRow key={request.id}>
+                          <TableCell className="font-medium">{request.requester?.full_name}</TableCell>
+                          <TableCell>{request.agent_info?.full_name || 'N/A'}</TableCell>
+                          <TableCell>{formatProductName(request)}</TableCell>
+                          <TableCell className="text-right">{request.requested_quantity}</TableCell>
+                          <TableCell className="text-right">
+                            {request.leader_additional_quantity ? (
+                              <Badge variant="secondary" className="bg-blue-50 text-blue-700">
+                                +{request.leader_additional_quantity}
+                              </Badge>
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold">{totalQty}</TableCell>
+                          <TableCell className="text-right">
+                            <span className={hasEnoughStock ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                              {request.available_stock || 0}
+                            </span>
+                          </TableCell>
+                          <TableCell>{format(new Date(request.requested_at), 'MMM dd')}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleReviewRequest(request)}
+                            >
+                              Review
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                     {pendingRequests.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                           <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
                           <p>No pending requests</p>
                         </TableCell>
@@ -532,26 +574,64 @@ export default function AdminRequestsPage() {
               </div>
 
               {/* Request Details */}
-              <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
-                <div>
-                  <p className="text-sm text-muted-foreground">Product</p>
-                  <p className="font-semibold">{formatProductName(selectedRequest)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Requested Quantity</p>
-                  <p className="font-semibold">{selectedRequest.requested_quantity} units</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Main Inventory Stock</p>
-                  <p className={`font-semibold ${selectedRequest.admin_stock && selectedRequest.admin_stock >= selectedRequest.requested_quantity ? 'text-green-600' : selectedRequest.admin_stock && selectedRequest.admin_stock > 0 ? 'text-yellow-600' : 'text-red-600'}`}>
-                    {selectedRequest.admin_stock || 0} units
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Requested Date</p>
-                  <p className="font-semibold">{format(new Date(selectedRequest.requested_at), 'MMM dd, yyyy')}</p>
-                </div>
-              </div>
+              {(() => {
+                const totalQty = selectedRequest.requested_quantity + (selectedRequest.leader_additional_quantity || 0);
+                const hasEnoughStock = (selectedRequest.available_stock || 0) >= totalQty;
+                
+                return (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Product</p>
+                        <p className="font-semibold">{formatProductName(selectedRequest)}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Requested Date</p>
+                        <p className="font-semibold">{format(new Date(selectedRequest.requested_at), 'MMM dd, yyyy')}</p>
+                      </div>
+                    </div>
+                    
+                    {/* Quantity Breakdown */}
+                    <div className="border rounded-lg p-4 space-y-3">
+                      <p className="text-sm font-semibold">Quantity Breakdown</p>
+                      <div className="grid grid-cols-4 gap-3 text-center">
+                        <div className="p-3 bg-blue-50 rounded-lg">
+                          <p className="text-xs text-blue-600">Agent Request</p>
+                          <p className="text-xl font-bold text-blue-700">{selectedRequest.requested_quantity}</p>
+                        </div>
+                        <div className="p-3 bg-green-50 rounded-lg">
+                          <p className="text-xs text-green-600">Leader Addition</p>
+                          <p className="text-xl font-bold text-green-700">+{selectedRequest.leader_additional_quantity || 0}</p>
+                        </div>
+                        <div className="p-3 bg-purple-50 rounded-lg border-2 border-purple-200">
+                          <p className="text-xs text-purple-600">Total Needed</p>
+                          <p className="text-xl font-bold text-purple-700">{totalQty}</p>
+                        </div>
+                        <div className={`p-3 rounded-lg ${hasEnoughStock ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                          <p className={`text-xs ${hasEnoughStock ? 'text-emerald-600' : 'text-red-600'}`}>Available Stock</p>
+                          <p className={`text-xl font-bold ${hasEnoughStock ? 'text-emerald-700' : 'text-red-700'}`}>
+                            {selectedRequest.available_stock || 0}
+                          </p>
+                        </div>
+                      </div>
+                      
+                      {!hasEnoughStock && (
+                        <div className="flex items-center gap-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                          <AlertCircle className="h-4 w-4" />
+                          <span>Insufficient stock! Need {totalQty - (selectedRequest.available_stock || 0)} more units.</span>
+                        </div>
+                      )}
+                      
+                      {selectedRequest.is_combined_request && (
+                        <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
+                          <Package className="h-4 w-4" />
+                          <span>This is a combined request. After approval, leader will distribute: {selectedRequest.leader_additional_quantity || 0} for themselves, {selectedRequest.requested_quantity} for the agent.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Agent's Original Notes */}
               {selectedRequest.agent_info?.notes && (
@@ -574,85 +654,98 @@ export default function AdminRequestsPage() {
               )}
 
               {/* Action Selection */}
-              {!reviewAction && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Button
-                    variant="outline"
-                    className="h-auto flex-col gap-2 p-4"
-                    onClick={() => setReviewAction('approve')}
-                    disabled={!selectedRequest.admin_stock || selectedRequest.admin_stock === 0}
-                  >
-                    <CheckCircle2 className="h-6 w-6 text-green-600" />
-                    <span>Approve & Allocate</span>
-                    <span className="text-xs text-muted-foreground">
-                      {selectedRequest.admin_stock && selectedRequest.admin_stock > 0 ? 'Stock available' : 'No stock available'}
-                    </span>
-                  </Button>
+              {!reviewAction && (() => {
+                const totalQty = selectedRequest.requested_quantity + (selectedRequest.leader_additional_quantity || 0);
+                const hasEnoughStock = (selectedRequest.available_stock || 0) >= totalQty;
+                
+                return (
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      variant="outline"
+                      className="h-auto flex-col gap-2 p-4"
+                      onClick={() => setReviewAction('approve')}
+                      disabled={!hasEnoughStock}
+                    >
+                      <CheckCircle2 className="h-6 w-6 text-green-600" />
+                      <span>Approve & Allocate</span>
+                      <span className="text-xs text-muted-foreground">
+                        {hasEnoughStock ? `Allocate ${totalQty} units` : 'Insufficient stock'}
+                      </span>
+                    </Button>
 
-                  <Button
-                    variant="outline"
-                    className="h-auto flex-col gap-2 p-4"
-                    onClick={() => setReviewAction('deny')}
-                  >
-                    <XCircle className="h-6 w-6 text-red-600" />
-                    <span>Deny Request</span>
-                    <span className="text-xs text-muted-foreground">
-                      Cannot fulfill
-                    </span>
-                  </Button>
-                </div>
-              )}
+                    <Button
+                      variant="outline"
+                      className="h-auto flex-col gap-2 p-4"
+                      onClick={() => setReviewAction('deny')}
+                    >
+                      <XCircle className="h-6 w-6 text-red-600" />
+                      <span>Deny Request</span>
+                      <span className="text-xs text-muted-foreground">
+                        Cannot fulfill
+                      </span>
+                    </Button>
+                  </div>
+                );
+              })()}
 
               {/* Approve Form */}
-              {reviewAction === 'approve' && (
-                <div className="space-y-4 border-t pt-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Approve Quantity</label>
-                    <Input
-                      type="number"
-                      value={approveQuantity}
-                      onChange={(e) => setApproveQuantity(e.target.value)}
-                      max={selectedRequest.admin_stock}
-                      min="1"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Max: {selectedRequest.admin_stock} units (main inventory)
-                    </p>
-                  </div>
+              {reviewAction === 'approve' && (() => {
+                const totalQty = selectedRequest.requested_quantity + (selectedRequest.leader_additional_quantity || 0);
+                
+                return (
+                  <div className="space-y-4 border-t pt-4">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                      <p className="text-sm font-semibold text-emerald-800 mb-2">Allocation Summary</p>
+                      <div className="grid grid-cols-3 gap-3 text-center">
+                        <div>
+                          <p className="text-xs text-emerald-600">Total Allocated</p>
+                          <p className="text-lg font-bold text-emerald-700">{totalQty} units</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-emerald-600">→ For Leader</p>
+                          <p className="text-lg font-bold text-emerald-700">{selectedRequest.leader_additional_quantity || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-emerald-600">→ For Agent</p>
+                          <p className="text-lg font-bold text-emerald-700">{selectedRequest.requested_quantity}</p>
+                        </div>
+                      </div>
+                    </div>
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Notes (Optional)</label>
-                    <Textarea
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="e.g., Approved and allocated to leader and agent"
-                      rows={2}
-                    />
-                  </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Notes (Optional)</label>
+                      <Textarea
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="e.g., Approved and allocated to leader and agent"
+                        rows={2}
+                      />
+                    </div>
 
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                    <p className="text-sm text-blue-800">
-                      <strong>Note:</strong> This will allocate stock from Main Inventory → Leader → Agent automatically
-                    </p>
-                  </div>
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <p className="text-sm text-blue-800">
+                        <strong>Note:</strong> Stock will be reserved in allocated_stock. Leader will distribute to themselves and the agent when they accept.
+                      </p>
+                    </div>
 
-                  <div className="flex gap-2">
-                    <Button onClick={handleConfirmAction} disabled={processing} className="flex-1">
-                      {processing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        'Confirm Approval'
-                      )}
-                    </Button>
-                    <Button variant="outline" onClick={() => setReviewAction(null)}>
-                      Back
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button onClick={handleConfirmAction} disabled={processing} className="flex-1">
+                        {processing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          'Confirm Approval'
+                        )}
+                      </Button>
+                      <Button variant="outline" onClick={() => setReviewAction(null)}>
+                        Back
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Deny Form */}
               {reviewAction === 'deny' && (

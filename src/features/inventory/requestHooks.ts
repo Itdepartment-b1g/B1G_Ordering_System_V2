@@ -100,7 +100,7 @@ export function useInventoryBaseData() {
         queryFn: async () => {
             const [{ data: brands }, { data: variants }] = await Promise.all([
                 supabase.from('brands').select('id, name').order('name'),
-                supabase.from('variants').select('id, name, variant_type, sku, brand:brands(id, name)').order('name')
+                supabase.from('variants').select('id, name, variant_type, sku, brand_id, brand:brands(id, name)').order('name')
             ]);
 
             return {

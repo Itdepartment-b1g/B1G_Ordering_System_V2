@@ -39,7 +39,7 @@ export default function RequestInventoryPage() {
   const queryClient = useQueryClient();
 
   const { data: inventoryData, isLoading: inventoryLoading } = useInventoryBaseData();
-  const { data: requests = [], isLoading: requestsLoading } = useMyRequests();
+  const { data: requests = [], isLoading: requestsLoading, refetch: refetchRequests } = useMyRequests();
 
   const brands = inventoryData?.brands || [];
   const variants = inventoryData?.variants || [];
@@ -55,6 +55,11 @@ export default function RequestInventoryPage() {
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'forwarded' | 'approved' | 'denied'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
+
+  // Leader inventory state
+  const [leaderInventory, setLeaderInventory] = useState<Record<string, number>>({});
+  const [loadingLeaderInventory, setLoadingLeaderInventory] = useState(false);
+  const [leaderId, setLeaderId] = useState<string | null>(null);
 
   // Confirmation dialogs
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
@@ -100,6 +105,76 @@ export default function RequestInventoryPage() {
   const filteredVariants = selectedBrand
     ? variants.filter(v => v.brand_id === selectedBrand)
     : [];
+
+  // Fetch leader ID on mount
+  useEffect(() => {
+    const fetchLeaderId = async () => {
+      if (!user?.id) return;
+
+      const { data: leaderRow, error } = await supabase
+        .from('leader_teams')
+        .select('leader_id')
+        .eq('agent_id', user.id)
+        .maybeSingle();
+
+      if (!error && leaderRow?.leader_id) {
+        setLeaderId(leaderRow.leader_id);
+      }
+    };
+
+    fetchLeaderId();
+  }, [user?.id]);
+
+  // Fetch leader inventory when brand is selected
+  useEffect(() => {
+    const fetchLeaderInventory = async () => {
+      if (!selectedBrand || !leaderId || !user?.company_id || variants.length === 0) {
+        setLeaderInventory({});
+        return;
+      }
+
+      setLoadingLeaderInventory(true);
+      try {
+        // Get all variant IDs for the selected brand
+        const brandVariantIds = variants
+          .filter(v => (v as any).brand_id === selectedBrand)
+          .map(v => v.id);
+
+        if (brandVariantIds.length === 0) {
+          setLeaderInventory({});
+          setLoadingLeaderInventory(false);
+          return;
+        }
+
+        // Fetch leader's inventory for these variants
+        const { data: inventoryData, error } = await supabase
+          .from('agent_inventory')
+          .select('variant_id, stock')
+          .eq('agent_id', leaderId)
+          .eq('company_id', user.company_id)
+          .in('variant_id', brandVariantIds);
+
+        if (error) {
+          console.error('Error fetching leader inventory:', error);
+          setLeaderInventory({});
+        } else {
+          // Convert to record: variant_id -> stock
+          const inventoryMap: Record<string, number> = {};
+          inventoryData?.forEach(item => {
+            inventoryMap[item.variant_id] = item.stock || 0;
+          });
+          setLeaderInventory(inventoryMap);
+        }
+      } catch (error) {
+        console.error('Error fetching leader inventory:', error);
+        setLeaderInventory({});
+      } finally {
+        setLoadingLeaderInventory(false);
+      }
+    };
+
+    fetchLeaderInventory();
+  }, [selectedBrand, leaderId, user?.company_id, variants]);
 
   const handleBrandChange = (brandId: string) => {
     setSelectedBrand(brandId);
@@ -364,7 +439,7 @@ export default function RequestInventoryPage() {
             className="bg-green-50 text-green-700 border-green-200"
           >
             <CheckCircle2 className="h-3 w-3 mr-1" />
-            Fulfilled
+            Approved
           </Badge>
         );
       case 'rejected':
@@ -504,36 +579,77 @@ export default function RequestInventoryPage() {
               </div>
 
               {/* Products List with Quantities */}
-              {selectedBrand && filteredVariants.length > 0 && (
+              {selectedBrand && (
                 <div className="space-y-3">
-                  <label className="text-sm font-semibold">Select Products & Enter Quantities</label>
-                  <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
-                    {filteredVariants.map(variant => (
-                      <div key={variant.id} className="flex items-center gap-4 p-4 hover:bg-muted/30 transition-colors">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm">{variant.name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{variant.variant_type}</p>
-                        </div>
-                        <div className="flex-shrink-0 w-28">
-                          <Input
-                            type="number"
-                            placeholder="0"
-                            value={productQuantities[variant.id] || ''}
-                            onChange={(e) => handleQuantityChange(variant.id, e.target.value)}
-                            min="0"
-                            className="text-center"
-                          />
-                        </div>
-                      </div>
-                    ))}
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold">Select Products & Enter Quantities</label>
+                    {loadingLeaderInventory && (
+                      <Badge variant="outline" className="text-xs">
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        Loading leader stock...
+                      </Badge>
+                    )}
                   </div>
-                </div>
-              )}
+                  <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
+                    {filteredVariants
+                      .filter(variant => {
+                        // If still loading, show all
+                        if (loadingLeaderInventory) return true;
+                        // If loaded, only show if leader has stock > 0
+                        const stock = leaderInventory[variant.id] || 0;
+                        return stock > 0;
+                      })
+                      .map(variant => {
+                        const leaderStock = leaderInventory[variant.id] || 0;
+                        const stockStatus = leaderStock > 0 ? (leaderStock >= 10 ? 'good' : 'low') : 'none';
 
-              {selectedBrand && filteredVariants.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p className="text-sm">No products available for this brand</p>
+                        return (
+                          <div key={variant.id} className="flex items-center gap-4 p-4 hover:bg-muted/30 transition-colors">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium text-sm">{variant.name}</p>
+                                {!loadingLeaderInventory && (
+                                  <Badge
+                                    variant={stockStatus === 'good' ? 'default' : stockStatus === 'low' ? 'secondary' : 'destructive'}
+                                    className="text-xs h-5"
+                                  >
+                                    Leader: {leaderStock}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-0.5">{variant.variant_type}</p>
+                            </div>
+                            <div className="flex-shrink-0 w-28">
+                              <Input
+                                type="number"
+                                placeholder="0"
+                                value={productQuantities[variant.id] || ''}
+                                onChange={(e) => handleQuantityChange(variant.id, e.target.value)}
+                                min="0"
+                                className="text-center"
+                                disabled={loadingLeaderInventory}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                    {/* Empty state logic for when filtering removes all items */}
+                    {!loadingLeaderInventory && filteredVariants.filter(v => (leaderInventory[v.id] || 0) > 0).length === 0 && (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                        <p className="text-sm">No products available for this brand</p>
+                      </div>
+                    )}
+                  </div>
+                  {!loadingLeaderInventory && leaderId && filteredVariants.some(v => (leaderInventory[v.id] || 0) > 0) && (
+                    <div className="text-xs text-muted-foreground bg-blue-50 border border-blue-200 rounded-lg p-2">
+                      <p className="font-medium text-blue-900 mb-1">📊 Leader Inventory Status</p>
+                      <p className="text-blue-700">
+                        Stock levels shown above are from your team leader's current inventory.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -657,6 +773,16 @@ export default function RequestInventoryPage() {
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => refetchRequests()}
+                title="Refresh Requests"
+              >
+                <Loader2 className={`h-4 w-4 ${requestsLoading ? 'animate-spin' : ''}`} />
+                <span className="sr-only">Refresh</span>
+              </Button>
               <div className="relative flex-1 sm:flex-initial sm:w-64">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -787,7 +913,7 @@ export default function RequestInventoryPage() {
                         <div className="hidden sm:flex h-10 w-10 rounded-lg bg-gradient-to-br from-primary to-primary/80 items-center justify-center flex-shrink-0 shadow-sm">
                           <Package className="h-5 w-5 text-white" />
                         </div>
-                        
+
                         {/* Main Content */}
                         <div className="flex-1 min-w-0">
                           {/* Header with Brand and Status */}
@@ -854,10 +980,10 @@ export default function RequestInventoryPage() {
             </TabsContent>
           </Tabs>
         </CardContent>
-      </Card>
+      </Card >
 
       {/* Request Details Dialog */}
-      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+      < Dialog open={detailsOpen} onOpenChange={setDetailsOpen} >
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-4 md:p-6">
           <DialogHeader>
             <DialogTitle className="text-lg md:text-xl">Request Details</DialogTitle>
@@ -995,10 +1121,10 @@ export default function RequestInventoryPage() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog >
 
       {/* Submit Request Confirmation */}
-      <AlertDialog open={showSubmitConfirm} onOpenChange={setShowSubmitConfirm}>
+      < AlertDialog open={showSubmitConfirm} onOpenChange={setShowSubmitConfirm} >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Submit Request?</AlertDialogTitle>
@@ -1014,10 +1140,10 @@ export default function RequestInventoryPage() {
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
-      </AlertDialog>
+      </AlertDialog >
 
       {/* Cancel Single Request Confirmation */}
-      <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+      < AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm} >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel Request?</AlertDialogTitle>
@@ -1033,10 +1159,10 @@ export default function RequestInventoryPage() {
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
-      </AlertDialog>
+      </AlertDialog >
 
       {/* Cancel Batch Confirmation */}
-      <AlertDialog open={showCancelBatchConfirm} onOpenChange={setShowCancelBatchConfirm}>
+      < AlertDialog open={showCancelBatchConfirm} onOpenChange={setShowCancelBatchConfirm} >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel All Pending Requests?</AlertDialogTitle>
@@ -1054,7 +1180,7 @@ export default function RequestInventoryPage() {
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
-      </AlertDialog>
-    </div>
+      </AlertDialog >
+    </div >
   );
 }

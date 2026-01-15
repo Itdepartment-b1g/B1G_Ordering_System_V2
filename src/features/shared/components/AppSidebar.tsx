@@ -235,7 +235,6 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
-      { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Clock },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
     ]
   },

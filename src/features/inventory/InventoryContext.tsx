@@ -7,6 +7,7 @@ export interface Variant {
   id: string;
   name: string;
   stock: number;
+  allocatedStock: number;
   price: number;
   sellingPrice?: number;
   dspPrice?: number;
@@ -60,6 +61,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
         created_at,
         main_inventory (
           stock,
+          allocated_stock,
           unit_price,
           selling_price,
           dsp_price,
@@ -87,6 +89,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
             id: v.id,
             name: v.name,
             stock: inventory.stock,
+            allocatedStock: inventory.allocated_stock || 0,
             price: inventory.unit_price,
             sellingPrice: inventory.selling_price,
             dspPrice: inventory.dsp_price,
@@ -104,6 +107,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
             id: v.id,
             name: v.name,
             stock: inventory.stock,
+            allocatedStock: inventory.allocated_stock || 0,
             price: inventory.unit_price,
             sellingPrice: inventory.selling_price,
             dspPrice: inventory.dsp_price,
@@ -121,6 +125,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
             id: v.id,
             name: v.name,
             stock: inventory.stock,
+            allocatedStock: inventory.allocated_stock || 0,
             price: inventory.unit_price,
             sellingPrice: inventory.selling_price ?? 0,
             dspPrice: inventory.dsp_price ?? 0,

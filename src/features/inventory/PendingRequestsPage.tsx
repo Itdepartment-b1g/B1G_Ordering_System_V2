@@ -21,6 +21,8 @@ interface AgentRequest {
   agent_id?: string;
   variant_id: string;
   requested_quantity: number;
+  leader_additional_quantity?: number; // Leader's own stock added to request
+  is_combined_request?: boolean; // True if includes leader's additional qty
   requester_notes: string | null; // from stock_requests.leader_notes (agent → leader)
   requested_at: string;
   requester?: {
@@ -100,6 +102,9 @@ export default function PendingRequestsPage() {
   const [notes, setNotes] = useState('');
   const [denialReason, setDenialReason] = useState('');
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
+  
+  // Leader's additional quantity per request (for pre-order system)
+  const [leaderAdditionalQuantities, setLeaderAdditionalQuantities] = useState<Record<string, string>>({});
 
   // Mobile detection
   useEffect(() => {
@@ -437,6 +442,8 @@ export default function PendingRequestsPage() {
             leader_id,
             variant_id,
             requested_quantity,
+            leader_additional_quantity,
+            is_combined_request,
             requested_at,
             status,
             leader_notes,
@@ -462,6 +469,8 @@ export default function PendingRequestsPage() {
           agent_id: row.agent_id,
           variant_id: row.variant_id,
           requested_quantity: row.requested_quantity,
+          leader_additional_quantity: row.leader_additional_quantity || 0,
+          is_combined_request: row.is_combined_request || false,
           requested_at: row.requested_at,
           requester_notes: row.leader_notes || null,
           requester: row.agent ? { id: row.agent.id, full_name: row.agent.full_name } : undefined,
@@ -501,67 +510,40 @@ export default function PendingRequestsPage() {
 
     setAllocatingId(request.id);
     try {
-      // Get leader's inventory pricing for this variant
-      const { data: leaderInv, error: invError } = await supabase
-        .from('agent_inventory')
-        .select('allocated_price, dsp_price, rsp_price, stock')
-        .eq('agent_id', user.id)
-        .eq('variant_id', request.variant_id)
-        .maybeSingle();
-
-      if (invError || !leaderInv) {
-        console.error('Error fetching leader inventory for allocation:', invError);
-        toast({
-          title: 'Error',
-          description: 'Could not find your inventory record for this product.',
-          variant: 'destructive',
-        });
-        return;
-      }
-
-      const { data, error } = await supabase.rpc('allocate_to_agent', {
-        p_agent_id: request.requester.id,
-        p_variant_id: request.variant_id,
-        p_quantity: request.requested_quantity,
-        p_allocated_price: leaderInv.allocated_price || 0,
-        p_dsp_price: leaderInv.dsp_price ?? null,
-        p_rsp_price: leaderInv.rsp_price ?? null,
-        p_performed_by: user.id,
+      // Use the new RPC function that handles combined distribution
+      // (leader gets their portion, agent gets theirs)
+      const { data, error } = await supabase.rpc('leader_accept_and_distribute_stock', {
+        p_request_id: request.id,
+        p_leader_id: user.id,
       });
 
-      if (error || (data && data.success === false)) {
-        console.error('Error allocating to agent:', error || data);
+      if (error) {
+        console.error('Error distributing stock:', error);
         toast({
           title: 'Error',
-          description: data?.message || 'Failed to allocate stock to agent',
+          description: error.message || 'Failed to distribute stock',
           variant: 'destructive',
         });
         return;
       }
 
-      const { error: updateError } = await supabase
-        .from('stock_requests')
-        .update({
-          status: 'fulfilled',
-          fulfilled_at: new Date().toISOString(),
-          fulfilled_by: user.id,
-          fulfilled_quantity: request.requested_quantity,
-        } as any)
-        .eq('id', request.id);
-
-      if (updateError) {
-        console.error('Error updating stock request to fulfilled:', updateError);
+      if (data && !data.success) {
         toast({
-          title: 'Warning',
-          description: 'Stock allocated, but failed to update request status.',
+          title: 'Error',
+          description: data.message || 'Failed to distribute stock',
           variant: 'destructive',
         });
-      } else {
-        toast({
-          title: 'Success',
-          description: 'Stock allocated to mobile sales agent successfully.',
-        });
+        return;
       }
+
+      // Show success with distribution details
+      const agentReceived = data?.agent_received || request.requested_quantity;
+      const leaderReceived = data?.leader_received || 0;
+
+      toast({
+        title: 'Success',
+        description: `Stock distributed! Agent received ${agentReceived} units${leaderReceived > 0 ? `, you received ${leaderReceived} units` : ''}.`,
+      });
 
       // Refresh so the row disappears
       fetchRequests();
@@ -634,30 +616,32 @@ export default function PendingRequestsPage() {
           });
         }
       } else if (reviewAction === 'forward') {
-        // Forward: mark status so admin will handle; we just store leader notes
+        // Forward with leader's additional quantity using new RPC
         const results = await Promise.all(
           requestsToProcess.map(async (req) => {
-            const { data, error } = await supabase
-              .from('stock_requests')
-              .update({
-                status: 'approved_by_leader',
-                leader_notes: notes || null,
-              } as any)
-              .eq('id', req.id)
-              .eq('leader_id', user.id)
-              .select()
-              .maybeSingle();
+            const leaderAdditionalQty = parseInt(leaderAdditionalQuantities[req.id] || '0') || 0;
+            
+            const { data, error } = await supabase.rpc('forward_stock_request_with_leader_qty', {
+              p_request_id: req.id,
+              p_leader_id: user.id,
+              p_leader_additional_quantity: leaderAdditionalQty,
+              p_notes: notes || null,
+            });
 
             if (error) throw error;
-            return { success: true, data };
+            return data;
           })
         );
 
         const allSuccess = results.every((r) => r?.success);
         if (allSuccess) {
+          // Calculate totals for notification
+          const totalAgentQty = requestsToProcess.reduce((sum, r) => sum + r.requested_quantity, 0);
+          const totalLeaderQty = requestsToProcess.reduce((sum, r) => sum + (parseInt(leaderAdditionalQuantities[r.id] || '0') || 0), 0);
+          
           toast({
             title: 'Success',
-            description: `Successfully forwarded ${requestsToProcess.length} product request(s) to admin`,
+            description: `Forwarded ${requestsToProcess.length} product(s) to admin${totalLeaderQty > 0 ? ` (includes ${totalLeaderQty} units for yourself)` : ''}`,
           });
 
           // Notify Agent
@@ -676,12 +660,15 @@ export default function PendingRequestsPage() {
             }
           }
 
+          // Reset leader additional quantities
+          setLeaderAdditionalQuantities({});
           setReviewDialogOpen(false);
           fetchRequests();
         } else {
+          const failed = results.find((r) => !r?.success);
           toast({
             title: 'Error',
-            description: 'Some requests failed to forward',
+            description: failed?.message || 'Some requests failed to forward',
             variant: 'destructive',
           });
         }
@@ -1075,60 +1062,76 @@ export default function PendingRequestsPage() {
                     <TableRow>
                       <TableHead>Agent</TableHead>
                       <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Quantity</TableHead>
-                      <TableHead>Requested Date</TableHead>
+                      <TableHead className="text-right">Agent Qty</TableHead>
+                      <TableHead className="text-right">Your Qty</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead>Date</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredReadyRequests.map((req) => (
-                      <TableRow key={req.id}>
-                        <TableCell className="font-medium">
-                          {req.requester?.full_name || 'Unknown'}
-                        </TableCell>
-                        <TableCell>{formatProductName(req)}</TableCell>
-                        <TableCell className="text-right">
-                          {req.requested_quantity} units
-                        </TableCell>
-                        <TableCell>
-                          {format(new Date(req.requested_at), 'MMM dd, yyyy')}
-                        </TableCell>
-                        <TableCell className="text-right space-x-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleAllocateToAgent(req)}
-                            disabled={allocatingId === req.id}
-                          >
-                            {allocatingId === req.id ? (
-                              <>
-                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                Allocating...
-                              </>
-                            ) : (
-                              'Allocate'
-                            )}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setSelectedGroup(null);
-                              setSelectedRequest(req);
-                              setReviewAction(null);
-                              setReviewDialogOpen(true);
-                            }}
-                          >
-                            View
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {filteredReadyRequests.map((req) => {
+                      const totalQty = req.requested_quantity + (req.leader_additional_quantity || 0);
+                      
+                      return (
+                        <TableRow key={req.id}>
+                          <TableCell className="font-medium">
+                            {req.requester?.full_name || 'Unknown'}
+                          </TableCell>
+                          <TableCell>{formatProductName(req)}</TableCell>
+                          <TableCell className="text-right">
+                            {req.requested_quantity}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {req.leader_additional_quantity ? (
+                              <Badge variant="secondary" className="bg-blue-50 text-blue-700">
+                                +{req.leader_additional_quantity}
+                              </Badge>
+                            ) : '-'}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold">
+                            {totalQty}
+                          </TableCell>
+                          <TableCell>
+                            {format(new Date(req.requested_at), 'MMM dd')}
+                          </TableCell>
+                          <TableCell className="text-right space-x-2">
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={() => handleAllocateToAgent(req)}
+                              disabled={allocatingId === req.id}
+                            >
+                              {allocatingId === req.id ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                  Distributing...
+                                </>
+                              ) : (
+                                'Accept & Distribute'
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setSelectedGroup(null);
+                                setSelectedRequest(req);
+                                setReviewAction(null);
+                                setReviewDialogOpen(true);
+                              }}
+                            >
+                              View
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                     {filteredReadyRequests.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                          <p>No admin-approved requests waiting for allocation</p>
+                          <p>No admin-approved requests waiting for distribution</p>
                         </TableCell>
                       </TableRow>
                     )}
@@ -1280,6 +1283,7 @@ export default function PendingRequestsPage() {
           setReviewAction(null);
           setNotes('');
           setDenialReason('');
+          setLeaderAdditionalQuantities({});
         }
       }}>
         <DialogContent className="max-w-2xl">
@@ -1450,10 +1454,81 @@ export default function PendingRequestsPage() {
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                       <p className="text-sm font-medium text-blue-900 mb-1">Forward Summary</p>
                       <p className="text-xs text-blue-700">
-                        You are about to forward {selectedGroup.productCount} product request(s) to admin.
+                        Forward {selectedGroup.productCount} product request(s) to admin. You can add your own quantity for each product below.
                       </p>
                     </div>
                   )}
+
+                  {/* Leader Additional Quantity Section */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-medium">Add Your Own Stock Quantity (Optional)</label>
+                    <p className="text-xs text-muted-foreground">
+                      Request additional stock for yourself alongside the agent's request. This will be combined into a single request to admin.
+                    </p>
+                    <div className="border rounded-lg overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Product</TableHead>
+                            <TableHead className="text-right w-24">Agent Qty</TableHead>
+                            <TableHead className="text-right w-32">Your Additional Qty</TableHead>
+                            <TableHead className="text-right w-24">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(selectedGroup?.requests || (selectedRequest ? [selectedRequest] : [])).map((req) => {
+                            const leaderQty = parseInt(leaderAdditionalQuantities[req.id] || '0') || 0;
+                            const totalQty = req.requested_quantity + leaderQty;
+                            return (
+                              <TableRow key={req.id}>
+                                <TableCell className="font-medium text-sm">{formatProductName(req)}</TableCell>
+                                <TableCell className="text-right">{req.requested_quantity}</TableCell>
+                                <TableCell className="text-right">
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    placeholder="0"
+                                    value={leaderAdditionalQuantities[req.id] || ''}
+                                    onChange={(e) => setLeaderAdditionalQuantities(prev => ({
+                                      ...prev,
+                                      [req.id]: e.target.value
+                                    }))}
+                                    className="w-24 text-right h-8"
+                                  />
+                                </TableCell>
+                                <TableCell className="text-right font-semibold text-primary">{totalQty}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    
+                    {/* Total Summary */}
+                    {(() => {
+                      const requests = selectedGroup?.requests || (selectedRequest ? [selectedRequest] : []);
+                      const totalAgentQty = requests.reduce((sum, r) => sum + r.requested_quantity, 0);
+                      const totalLeaderQty = requests.reduce((sum, r) => sum + (parseInt(leaderAdditionalQuantities[r.id] || '0') || 0), 0);
+                      const grandTotal = totalAgentQty + totalLeaderQty;
+                      
+                      return (
+                        <div className="bg-muted/50 rounded-lg p-3 grid grid-cols-3 gap-4 text-center">
+                          <div>
+                            <p className="text-xs text-muted-foreground">Agent's Request</p>
+                            <p className="text-lg font-semibold">{totalAgentQty}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Your Addition</p>
+                            <p className="text-lg font-semibold text-blue-600">+{totalLeaderQty}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Total to Admin</p>
+                            <p className="text-lg font-semibold text-primary">{grandTotal}</p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
 
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Notes to Admin (Optional)</label>

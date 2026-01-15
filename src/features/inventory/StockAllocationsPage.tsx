@@ -41,8 +41,7 @@ export default function StockAllocationsPage() {
   const [loadingLeaderAgents, setLoadingLeaderAgents] = useState(false);
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [sortBy, setSortBy] = useState<'name' | 'stock' | 'value'>('name');
-  const [allocatedStock, setAllocatedStock] = useState<Record<string, number>>({});
-  const [loadingAllocatedStock, setLoadingAllocatedStock] = useState(false);
+
 
   // Stock allocation state
   const [allocationOpen, setAllocationOpen] = useState(false);
@@ -57,61 +56,11 @@ export default function StockAllocationsPage() {
 
   const { toast } = useToast();
 
-  // Fetch allocated stock data
-  const fetchAllocatedStock = async (showLoading = true) => {
-    try {
-      if (showLoading) {
-        setLoadingAllocatedStock(true);
-      }
-
-      // Step 1: Get all agents who are assigned to a leader (subordinates)
-      const { data: assignments, error: assignmentErr } = await supabase
-        .from('leader_teams')
-        .select('agent_id');
-
-      if (assignmentErr) throw assignmentErr;
-
-      const subordinateIds = (assignments || []).map(a => a.agent_id);
-
-      // Step 2: Get all agent_inventory records
-      const { data: allocationData, error } = await supabase
-        .from('agent_inventory')
-        .select('variant_id, stock, agent_id');
-
-      if (error) throw error;
-
-      // Step 3: Only sum stock for users who are NOT subordinates (Top-Level)
-      const allocations: Record<string, number> = {};
-      allocationData?.forEach(item => {
-        if (!subordinateIds.includes(item.agent_id)) {
-          allocations[item.variant_id] = (allocations[item.variant_id] || 0) + (item.stock || 0);
-        }
-      });
-
-      setAllocatedStock(allocations);
-    } catch (error) {
-      console.error('Error fetching allocated stock:', error);
-      if (showLoading) {
-        toast({
-          title: 'Error',
-          description: 'Failed to load allocation data',
-          variant: 'destructive'
-        });
-      }
-    } finally {
-      if (showLoading) {
-        setLoadingAllocatedStock(false);
-      }
-    }
-  };
-
   // Helper functions for available stock calculation
-  const getVariantAllocatedStock = (variantId: string) => {
-    return allocatedStock[variantId] || 0;
-  };
-
   const getVariantAvailableStock = (variant: any) => {
-    return variant.stock - getVariantAllocatedStock(variant.id);
+    // Use the allocatedStock from the variant object (fetched via InventoryContext)
+    const allocated = variant.allocatedStock || 0;
+    return variant.stock - allocated;
   };
 
   const getAvailableVariants = (variants: any[]) => {
@@ -229,7 +178,6 @@ export default function StockAllocationsPage() {
   useEffect(() => {
     fetchAgentsInventory();
     fetchAgents();
-    fetchAllocatedStock();
 
     // Real-time subscriptions for seamless updates
     let inventoryUpdateTimer: NodeJS.Timeout | null = null;
@@ -248,7 +196,8 @@ export default function StockAllocationsPage() {
       if (allocatedUpdateTimer) clearTimeout(allocatedUpdateTimer);
       allocatedUpdateTimer = setTimeout(() => {
         console.log('🔄 Real-time update: Refreshing allocated stock...');
-        fetchAllocatedStock(false); // Pass false to skip loading state
+        // Allocated stock is now part of main inventory/brands, so we refresh inventory
+        refreshInventory();
       }, 300);
     };
 
@@ -677,9 +626,9 @@ export default function StockAllocationsPage() {
       setAllocationOpen(false);
 
       // Immediately refresh all data for instant UI feedback
+      // Immediately refresh all data for instant UI feedback
       await Promise.all([
         fetchAgentsInventory(false),
-        fetchAllocatedStock(false),
         refreshInventory() // Refresh main inventory to update available stock
       ]);
 
