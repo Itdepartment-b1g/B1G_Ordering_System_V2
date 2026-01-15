@@ -449,7 +449,7 @@ export function CreatePurchaseOrderDialog({
                                     </TableHeader>
                                     <TableBody>
                                         {items.length === 0 && (
-                                            <TableRow>
+                                            <TableRow className="hover:bg-transparent">
                                                 <TableCell colSpan={7} className="h-[400px]">
                                                     <div className="flex flex-col items-center justify-center h-full gap-6">
                                                         <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center">
@@ -630,7 +630,7 @@ export function CreatePurchaseOrderDialog({
                                             {filteredVariantsForDialog.map(variant => (
                                                 <div
                                                     key={variant.id}
-                                                    className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 cursor-pointer"
+                                                    className="flex items-center gap-3 p-2 rounded-md cursor-pointer"
                                                     onClick={() => toggleVariantSelection(variant.id)}
                                                 >
                                                     <Checkbox
