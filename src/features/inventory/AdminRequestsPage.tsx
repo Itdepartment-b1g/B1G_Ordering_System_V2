@@ -300,7 +300,7 @@ export default function AdminRequestsPage() {
       if (reviewAction === 'approve') {
         // Calculate total quantity needed
         const totalQty = selectedRequest.requested_quantity + (selectedRequest.leader_additional_quantity || 0);
-        
+
         // Check available stock first
         if ((selectedRequest.available_stock || 0) < totalQty) {
           toast({
@@ -311,7 +311,7 @@ export default function AdminRequestsPage() {
           setProcessing(false);
           return;
         }
-        
+
         // Approve using new RPC function that handles inventory allocation
         const { data, error } = await supabase.rpc('admin_approve_stock_request', {
           p_request_id: selectedRequest.id,
@@ -446,7 +446,7 @@ export default function AdminRequestsPage() {
                     {pendingRequests.map(request => {
                       const totalQty = request.requested_quantity + (request.leader_additional_quantity || 0);
                       const hasEnoughStock = (request.available_stock || 0) >= totalQty;
-                      
+
                       return (
                         <TableRow key={request.id}>
                           <TableCell className="font-medium">{request.requester?.full_name}</TableCell>
@@ -577,7 +577,7 @@ export default function AdminRequestsPage() {
               {(() => {
                 const totalQty = selectedRequest.requested_quantity + (selectedRequest.leader_additional_quantity || 0);
                 const hasEnoughStock = (selectedRequest.available_stock || 0) >= totalQty;
-                
+
                 return (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
@@ -590,7 +590,7 @@ export default function AdminRequestsPage() {
                         <p className="font-semibold">{format(new Date(selectedRequest.requested_at), 'MMM dd, yyyy')}</p>
                       </div>
                     </div>
-                    
+
                     {/* Quantity Breakdown */}
                     <div className="border rounded-lg p-4 space-y-3">
                       <p className="text-sm font-semibold">Quantity Breakdown</p>
@@ -614,14 +614,14 @@ export default function AdminRequestsPage() {
                           </p>
                         </div>
                       </div>
-                      
+
                       {!hasEnoughStock && (
                         <div className="flex items-center gap-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
                           <AlertCircle className="h-4 w-4" />
                           <span>Insufficient stock! Need {totalQty - (selectedRequest.available_stock || 0)} more units.</span>
                         </div>
                       )}
-                      
+
                       {selectedRequest.is_combined_request && (
                         <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
                           <Package className="h-4 w-4" />
@@ -657,7 +657,7 @@ export default function AdminRequestsPage() {
               {!reviewAction && (() => {
                 const totalQty = selectedRequest.requested_quantity + (selectedRequest.leader_additional_quantity || 0);
                 const hasEnoughStock = (selectedRequest.available_stock || 0) >= totalQty;
-                
+
                 return (
                   <div className="grid grid-cols-2 gap-3">
                     <Button
@@ -691,7 +691,7 @@ export default function AdminRequestsPage() {
               {/* Approve Form */}
               {reviewAction === 'approve' && (() => {
                 const totalQty = selectedRequest.requested_quantity + (selectedRequest.leader_additional_quantity || 0);
-                
+
                 return (
                   <div className="space-y-4 border-t pt-4">
                     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">

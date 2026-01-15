@@ -54,11 +54,13 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
     .select(`
       id,
       name,
+      is_active,
       variants (
         id,
         name,
         variant_type,
         created_at,
+        is_active,
         main_inventory (
           stock,
           allocated_stock,
@@ -71,6 +73,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
       )
     `)
     .eq('company_id', companyId)
+    .eq('is_active', true)
     .order('name');
 
   if (error) throw error;
@@ -80,7 +83,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
       id: brand.id,
       name: brand.name,
       flavors: (brand.variants
-        ?.filter((v: any) => v.variant_type === 'flavor')
+        ?.filter((v: any) => v.variant_type === 'flavor' && v.is_active !== false)
         .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
         .map((v: any) => {
           const inventory = Array.isArray(v.main_inventory) ? v.main_inventory[0] : v.main_inventory;
@@ -98,7 +101,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
           };
         }) || []).filter(Boolean) as any,
       batteries: (brand.variants
-        ?.filter((v: any) => v.variant_type === 'battery')
+        ?.filter((v: any) => v.variant_type === 'battery' && v.is_active !== false)
         .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
         .map((v: any) => {
           const inventory = Array.isArray(v.main_inventory) ? v.main_inventory[0] : v.main_inventory;

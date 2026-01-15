@@ -825,6 +825,7 @@ export default function StockAllocationsPage() {
                   <TableRow>
                     <TableHead>Leader</TableHead>
                     <TableHead>Email</TableHead>
+                    <TableHead>Cities</TableHead>
                     <TableHead className="text-right">Total Stock</TableHead>
                     <TableHead className="text-right">Total Value</TableHead>
                     <TableHead className="text-right">Total DSP</TableHead>
@@ -838,6 +839,20 @@ export default function StockAllocationsPage() {
                     <TableRow key={agent.id}>
                       <TableCell className="font-medium">{agent.name}</TableCell>
                       <TableCell className="text-muted-foreground">{agent.email}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {agent.cities && agent.cities.length > 0 ? (
+                            agent.cities.map((city: string, i: number) => (
+                              <Badge key={i} variant="outline" className="text-xs">
+                                {city}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-muted-foreground text-xs italic">No cities assigned</span>
+                          )}
+                        </div>
+                      </TableCell>
+
                       <TableCell className="text-right font-semibold">
                         {agent.totalStock.toLocaleString()}
                       </TableCell>

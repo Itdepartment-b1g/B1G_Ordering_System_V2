@@ -89,7 +89,7 @@ interface TeamMember {
   id: string;
   full_name: string;
   email: string;
-  position: string;
+  role: string;
 }
 
 export default function TasksPage() {
@@ -236,7 +236,7 @@ export default function TasksPage() {
             id,
             full_name,
             email,
-            position
+            role
           )
         `)
         .eq('leader_id', user?.id);
@@ -247,7 +247,7 @@ export default function TasksPage() {
         id: (item.profiles as any).id,
         full_name: (item.profiles as any).full_name,
         email: (item.profiles as any).email,
-        position: (item.profiles as any).position
+        role: (item.profiles as any).role
       })) || [];
 
       setTeamMembers(members);

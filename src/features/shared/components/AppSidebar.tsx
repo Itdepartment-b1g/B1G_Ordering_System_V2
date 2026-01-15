@@ -274,17 +274,6 @@ const superAdminMenuItems: MenuItem[] = [
   },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
-  {
-    title: 'Tasks',
-    url: '/tasks',
-    icon: ClipboardList,
-    hasSubmenu: true,
-    submenu: [
-      { title: "Today's Tasks", url: '/tasks', icon: ClipboardList },
-      { title: 'Archive Tasks', url: '/tasks/archive', icon: Archive },
-    ]
-  },
-  { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'System History', url: '/system-history', icon: History },
   {
     title: 'Settings',

@@ -9,12 +9,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { usePurchaseOrders } from './hooks';
+import { CreatePurchaseOrderDialog } from './components/CreatePurchaseOrderDialog';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import {
@@ -28,6 +26,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+
 interface BrandVariant {
   id: string;
   name: string;
@@ -38,8 +37,9 @@ interface BrandVariant {
 
 export default function PurchaseOrdersPage() {
   const { user } = useAuth();
-  const { purchaseOrders, suppliers, loading, createPurchaseOrder, approvePurchaseOrder, rejectPurchaseOrder } = usePurchaseOrders();
+  const { purchaseOrders, suppliers, loading, createPurchaseOrder, approvePurchaseOrder, rejectPurchaseOrder, fetchPurchaseOrders } = usePurchaseOrders();
   const [searchQuery, setSearchQuery] = useState('');
+  // Form states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
@@ -47,13 +47,15 @@ export default function PurchaseOrdersPage() {
   const [orderToReject, setOrderToReject] = useState<any>(null);
   const [approvingOrderId, setApprovingOrderId] = useState<string | null>(null);
   const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [orderToView, setOrderToView] = useState<any>(null);
 
-  const { toast } = useToast();
+  // Company info for view dialog
+  const [companyInfo, setCompanyInfo] = useState<{ company_name: string } | null>(null);
+
+  const [isMobile, setIsMobile] = useState(false);
 
   // Detect mobile
   useEffect(() => {
@@ -63,122 +65,40 @@ export default function PurchaseOrdersPage() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Company information for buyer section
-  const [companyInfo, setCompanyInfo] = useState<any>(null);
+  // Fetch company info for view dialog
+  useEffect(() => {
+    const fetchCompanyInfo = async () => {
+      if (!user?.company_id) return;
+      try {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('company_name')
+          .eq('id', user.company_id)
+          .single();
+        if (error) throw error;
+        setCompanyInfo(data);
+      } catch (error) {
+        console.error('Error fetching company info:', error);
+      }
+    };
+    fetchCompanyInfo();
+  }, [user?.company_id]);
+
+
 
   // Available brands and variants for selection
   const [availableVariants, setAvailableVariants] = useState<BrandVariant[]>([]);
   const [loadingVariants, setLoadingVariants] = useState(false);
-  const [variantTypes, setVariantTypes] = useState<Array<{ id: string; name: string }>>([]);
-  const [loadingVariantTypes, setLoadingVariantTypes] = useState(false);
 
-  // For New Item (create brand/variants) flow
+  // Brands for selection
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
   const [loadingBrands, setLoadingBrands] = useState(false);
-  const [newItemTab, setNewItemTab] = useState<'existing' | 'new'>('existing');
-  const [newBrandName, setNewBrandName] = useState('');
-  const [existingBrandId, setExistingBrandId] = useState('');
 
-  // For existing items selection (Add Existing tab)
-  const [selectedBrandForExisting, setSelectedBrandForExisting] = useState('');
-  const [filteredVariantsForBrand, setFilteredVariantsForBrand] = useState<BrandVariant[]>([]);
 
-  const [flavorInput, setFlavorInput] = useState({ name: '', quantity: 0, unit_price: 0 });
-  const [batteryInput, setBatteryInput] = useState({ name: '', quantity: 0, unit_price: 0 });
-  const [posmInput, setPosmInput] = useState({ name: '', quantity: 0, unit_price: 0 });
-  const [newItemsDraft, setNewItemsDraft] = useState<Array<{
-    type: 'flavor' | 'battery' | 'posm';
-    name: string;
-    quantity: number;
-    unit_price: number;
-  }>>([]);
 
-  // Form states
-  const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
-  const [expectedDelivery, setExpectedDelivery] = useState('');
-  const [selectedSupplierId, setSelectedSupplierId] = useState('');
 
-  // Form states for adding items
-  const [selectedVariantId, setSelectedVariantId] = useState('');
-  const [itemQuantity, setItemQuantity] = useState(0);
-  const [itemPrice, setItemPrice] = useState(0);
 
-  // Auto-set price to 0 for POSM variants
-  useEffect(() => {
-    if (selectedVariantId) {
-      const selectedVariant = availableVariants.find(v => v.id === selectedVariantId);
-      if (selectedVariant?.variant_type === 'posm') {
-        setItemPrice(0);
-      }
-    }
-  }, [selectedVariantId, availableVariants]);
 
-  // Lists to be added
-  const [itemsToAdd, setItemsToAdd] = useState<Array<{
-    variant_id: string; // may be empty for new items; will be resolved on submit
-    brand_name: string;
-    variant_name: string;
-    variant_type: 'flavor' | 'battery' | 'posm';
-    quantity: number;
-    unit_price: number;
-    total: number;
-  }>>([]);
-
-  const [taxRate, setTaxRate] = useState(0); // 0% Tax
-  const [discount, setDiscount] = useState(0);
-  const [notes, setNotes] = useState('');
-  const [creatingOrder, setCreatingOrder] = useState(false);
-
-  // Fetch company information for buyer section using user's company_id
-  useEffect(() => {
-    const fetchCompanyInfo = async () => {
-      if (!user?.company_id) {
-        console.warn('[PurchaseOrdersPage] No company_id found for user:', user);
-        return;
-      }
-
-      console.log('[PurchaseOrdersPage] Fetching company info for company_id:', user.company_id);
-
-      try {
-        const { data, error } = await supabase
-          .from('companies')
-          .select('company_name, company_email')
-          .eq('id', user.company_id)
-          .single();
-
-        if (error) {
-          console.error('[PurchaseOrdersPage] Error fetching company:', error);
-          throw error;
-        }
-
-        console.log('[PurchaseOrdersPage] Company info loaded successfully:', data);
-        setCompanyInfo(data);
-      } catch (error: any) {
-        console.error('[PurchaseOrdersPage] Failed to fetch company info:', error);
-        toast({
-          title: 'Warning',
-          description: `Could not load company information: ${error.message || 'Unknown error'}`,
-          variant: 'default'
-        });
-      }
-    };
-
-    if (user?.company_id) {
-      fetchCompanyInfo();
-    }
-  }, [user?.company_id]);
-
-  // Auto-select default supplier: B1G Corporation when dialog opens
-  useEffect(() => {
-    if (!createDialogOpen) return;
-    const defaultSupplier = suppliers.find(s => s.company_name === 'B1G Corporation');
-    if (defaultSupplier) {
-      setSelectedSupplierId(defaultSupplier.id);
-    } else if (!selectedSupplierId && suppliers[0]) {
-      // Fallback: first supplier
-      setSelectedSupplierId(suppliers[0].id);
-    }
-  }, [createDialogOpen, suppliers]);
 
   // Fetch available variants for selection
   useEffect(() => {
@@ -196,6 +116,7 @@ export default function PurchaseOrdersPage() {
               name
             )
           `)
+          .eq('is_active', true)
           .order('name');
 
         if (error) throw error;
@@ -216,14 +137,13 @@ export default function PurchaseOrdersPage() {
       }
     };
 
-    fetchVariants();
-
     const fetchBrands = async () => {
       try {
         setLoadingBrands(true);
         const { data, error } = await supabase
           .from('brands')
           .select('id, name')
+          .eq('is_active', true)
           .order('name');
         if (error) throw error;
         setBrands(data || []);
@@ -233,263 +153,10 @@ export default function PurchaseOrdersPage() {
         setLoadingBrands(false);
       }
     };
+
+    fetchVariants();
     fetchBrands();
-
-    const fetchVariantTypes = async () => {
-      if (!user?.company_id) return;
-      try {
-        setLoadingVariantTypes(true);
-        const { data, error } = await supabase
-          .from('variant_types')
-          .select('id, name')
-          .eq('company_id', user.company_id);
-        if (error) throw error;
-        setVariantTypes(data || []);
-      } catch (err) {
-        console.error('Error fetching variant types:', err);
-      } finally {
-        setLoadingVariantTypes(false);
-      }
-    };
-    if (user?.company_id) {
-      fetchVariantTypes();
-    }
-  }, [user?.company_id]);
-
-  // Filter variants when brand is selected in "Add Existing" tab
-  useEffect(() => {
-    if (selectedBrandForExisting) {
-      const filtered = availableVariants.filter(v => v.brand_id === selectedBrandForExisting);
-      setFilteredVariantsForBrand(filtered);
-      setSelectedVariantId(''); // Reset variant selection when brand changes
-    } else {
-      setFilteredVariantsForBrand(availableVariants);
-    }
-  }, [selectedBrandForExisting, availableVariants]);
-
-  const filteredOrders = purchaseOrders.filter(order =>
-    order.po_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    order.supplier.company_name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const calculateSubtotal = () => {
-    const existingTotal = itemsToAdd.reduce((sum, item) => sum + item.total, 0);
-    const draftTotal = newItemsDraft.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
-    return existingTotal + draftTotal;
-  };
-  const calculateTax = () => (calculateSubtotal() * taxRate) / 100;
-  const calculateTotal = () => calculateSubtotal() + calculateTax() - discount;
-
-  const handleAddItemToList = () => {
-    if (!selectedVariantId) {
-      toast({ title: 'Error', description: 'Please select a product', variant: 'destructive' });
-      return;
-    }
-    if (itemQuantity <= 0) {
-      toast({ title: 'Error', description: 'Quantity must be greater than 0', variant: 'destructive' });
-      return;
-    }
-
-    const selectedVariant = availableVariants.find(v => v.id === selectedVariantId);
-    if (!selectedVariant) {
-      toast({ title: 'Error', description: 'Selected product not found', variant: 'destructive' });
-      return;
-    }
-
-    // Allow 0 price for POSM, but require price for other types
-    if (selectedVariant.variant_type !== 'posm' && itemPrice <= 0) {
-      toast({ title: 'Error', description: 'Price must be greater than 0', variant: 'destructive' });
-      return;
-    }
-
-    // Ensure POSM price is always 0
-    const finalPrice = selectedVariant.variant_type === 'posm' ? 0 : itemPrice;
-
-    const newItem = {
-      variant_id: selectedVariant.id,
-      brand_name: selectedVariant.brand_name,
-      variant_name: selectedVariant.name,
-      variant_type: selectedVariant.variant_type,
-      quantity: itemQuantity,
-      unit_price: finalPrice,
-      total: itemQuantity * finalPrice
-    };
-
-    setItemsToAdd([...itemsToAdd, newItem]);
-    setSelectedVariantId('');
-    setItemQuantity(0);
-    setItemPrice(0);
-    toast({ title: 'Added', description: `${selectedVariant.brand_name} - ${selectedVariant.name} added to list` });
-  };
-
-  const handleRemoveItemFromList = (index: number) => {
-    setItemsToAdd(itemsToAdd.filter((_, i) => i !== index));
-  };
-
-  const handleCreateOrder = async () => {
-    // Always use B1G Corporation as the supplier
-    let supplierId = selectedSupplierId;
-
-    // Try to find B1G Corporation supplier
-    if (!supplierId) {
-      const defaultSupplier = suppliers.find(s => s.company_name === 'B1G Corporation');
-      if (defaultSupplier) {
-        supplierId = defaultSupplier.id;
-        setSelectedSupplierId(supplierId);
-      }
-    }
-
-    // If still not found, try fetching it directly
-    if (!supplierId) {
-      try {
-        const { data: existing, error: findErr } = await supabase
-          .from('suppliers')
-          .select('id, company_name')
-          .ilike('company_name', 'B1G Corporation')
-          .maybeSingle();
-
-        if (!findErr && existing) {
-          supplierId = existing.id;
-          setSelectedSupplierId(supplierId);
-        }
-      } catch (e) {
-        console.error('Error finding B1G Corporation supplier:', e);
-      }
-    }
-
-    if (!supplierId) {
-      toast({
-        title: 'Error',
-        description: 'B1G Corporation supplier not found. Please contact system administrator.',
-        variant: 'destructive'
-      });
-      return;
-    }
-
-    if (itemsToAdd.length === 0 && newItemsDraft.length === 0) {
-      toast({ title: 'Error', description: 'Please add at least one item', variant: 'destructive' });
-      return;
-    }
-
-    if (!expectedDelivery) {
-      toast({ title: 'Error', description: 'Please set expected delivery date', variant: 'destructive' });
-      return;
-    }
-
-    setCreatingOrder(true);
-    const itemsPayload = [...itemsToAdd];
-
-    // If there are draft new items, ensure brand and variants now (just-in-time), but DO NOT add to main inventory here.
-    // They will only reach main inventory upon approval by RPC.
-    if (newItemsDraft.length > 0) {
-      try {
-        // Determine brand to use/create
-        if (!newBrandName.trim() && !existingBrandId) {
-          toast({ title: 'Error', description: 'Enter a new brand or select an existing brand for new items', variant: 'destructive' });
-          setCreatingOrder(false);
-          return;
-        }
-        let brandId = existingBrandId;
-        let brandName = '';
-        if (newBrandName.trim()) {
-          const { data: newBrand, error: brandErr } = await supabase
-            .from('brands')
-            .insert({
-              name: newBrandName.trim(),
-              company_id: user.company_id
-            })
-            .select()
-            .single();
-          if (brandErr) throw brandErr;
-          brandId = newBrand.id;
-          brandName = newBrand.name;
-        } else {
-          const b = brands.find(b => b.id === brandId);
-          brandName = b?.name || 'Unknown';
-        }
-
-        // Create variants and push into itemsToAdd list for this PO
-        for (const draft of newItemsDraft) {
-          // Convert 'posm' to 'POSM' for database constraint
-          const dbVariantType = draft.type === 'posm' ? 'POSM' : draft.type;
-
-          // Find the corresponding variant_type_id
-          const vt = variantTypes.find(type => type.name.toLowerCase() === dbVariantType.toLowerCase());
-          if (!vt) {
-            throw new Error(`Variant type "${dbVariantType}" not found for your company. Please contact support.`);
-          }
-
-          const { data: v, error: vErr } = await supabase
-            .from('variants')
-            .insert({
-              name: draft.name,
-              variant_type: dbVariantType,
-              brand_id: brandId,
-              company_id: user.company_id,
-              variant_type_id: vt.id
-            })
-            .select()
-            .single();
-          if (vErr) throw vErr;
-          // Convert back to lowercase for TypeScript consistency
-          const variantType = v.variant_type.toLowerCase() as 'flavor' | 'battery' | 'posm';
-          itemsPayload.push({
-            variant_id: v.id,
-            brand_name: brandName,
-            variant_name: v.name,
-            variant_type: variantType,
-            quantity: draft.quantity,
-            unit_price: draft.unit_price,
-            total: draft.quantity * draft.unit_price,
-          });
-        }
-      } catch (e: any) {
-        console.error('Error preparing new items for PO:', e);
-        toast({ title: 'Error', description: e?.message || 'Failed to prepare new items', variant: 'destructive' });
-        setCreatingOrder(false);
-        return;
-      }
-    }
-
-    const result = await createPurchaseOrder({
-      supplier_id: supplierId,
-      order_date: orderDate,
-      expected_delivery_date: expectedDelivery,
-      items: itemsPayload.map(item => ({
-        variant_id: item.variant_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-      })),
-      tax_rate: taxRate,
-      discount,
-      notes,
-    });
-
-    setCreatingOrder(false);
-
-    if (result.success) {
-      // Reset form
-      setSelectedSupplierId('');
-      setItemsToAdd([]);
-      setNewItemsDraft([]);
-      setExistingBrandId('');
-      setNewBrandName('');
-      setFlavorInput({ name: '', quantity: 0, unit_price: 0 });
-      setBatteryInput({ name: '', quantity: 0, unit_price: 0 });
-      setPosmInput({ name: '', quantity: 0, unit_price: 0 });
-      setExpectedDelivery('');
-      setDiscount(0);
-      setTaxRate(0);
-      setNotes('');
-      setCreateDialogOpen(false);
-    } else {
-      toast({
-        title: 'Error',
-        description: result.error || 'Failed to create purchase order',
-        variant: 'destructive',
-      });
-    }
-  };
+  }, []);
 
   const handleApproveOrder = async () => {
     if (!orderToApprove) return;
@@ -540,6 +207,13 @@ export default function PurchaseOrdersPage() {
     }
   };
 
+  const { toast } = useToast();
+
+  const filteredOrders = purchaseOrders.filter(order =>
+    order.po_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    order.supplier.company_name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center">
@@ -555,611 +229,20 @@ export default function PurchaseOrdersPage() {
           <h1 className="text-3xl font-bold">Purchase Orders</h1>
           <p className="text-muted-foreground">Create and manage your purchase orders</p>
         </div>
-        {/* Mobile: Use Sheet, Desktop: Use Dialog */}
-        {isMobile ? (
-          <Sheet open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-            <SheetTrigger asChild>
-              <Button className="w-full md:w-auto">
-                <Plus className="h-4 w-4 mr-2" />
-                Create PO
-            </Button>
-            </SheetTrigger>
-            <SheetContent side="bottom" className="h-[95vh] p-0">
-              <SheetHeader className="px-4 pt-4 pb-2 border-b">
-                <SheetTitle>Create Purchase Order</SheetTitle>
-              </SheetHeader>
-              <ScrollArea className="h-[calc(95vh-80px)]">
-                <div className="p-4">
-                  <Accordion type="multiple" defaultValue={["details", "supplier", "items"]} className="space-y-2">
-                    {/* PO Details Section */}
-                    <AccordionItem value="details" className="border rounded-lg px-4">
-                      <AccordionTrigger className="hover:no-underline">
-                        <div className="flex items-center gap-2">
-                          <Package className="h-4 w-4" />
-                          <span className="font-semibold">Order Details</span>
-                        </div>
-                      </AccordionTrigger>
-                      <AccordionContent>
-              <div className="grid grid-cols-1 gap-4 pt-4">
-                <div className="space-y-2">
-                  <Label>PO Number</Label>
-                  <Input value="Auto-generated" disabled />
-                </div>
-                <div className="space-y-2">
-                  <Label>Order Date</Label>
-                  <Input
-                    type="date"
-                    value={orderDate}
-                    onChange={(e) => setOrderDate(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Expected Delivery Date</Label>
-                  <Input
-                    type="date"
-                    value={expectedDelivery}
-                    onChange={(e) => setExpectedDelivery(e.target.value)}
-                    min={orderDate}
-                  />
-                </div>
-              </div>
-                      </AccordionContent>
-                    </AccordionItem>
-
-                    {/* Buyer Information Section */}
-                    <AccordionItem value="buyer" className="border rounded-lg px-4">
-                      <AccordionTrigger className="hover:no-underline">
-                        <span className="font-semibold">Buyer Information</span>
-                      </AccordionTrigger>
-                      <AccordionContent>
-                <div className="grid grid-cols-1 gap-3 text-sm pt-4">
-                  <div>
-                    <p className="text-muted-foreground">Company</p>
-                    <p className="font-medium">{companyInfo?.company_name || 'Loading...'}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Contact Person</p>
-                    <p className="font-medium">{user?.full_name || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Address</p>
-                    <p className="font-medium">{user?.address || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Phone</p>
-                    <p className="font-medium">{user?.phone || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Email</p>
-                    <p className="font-medium">{user?.email || 'N/A'}</p>
-                  </div>
-                </div>
-                      </AccordionContent>
-                    </AccordionItem>
-
-                    {/* Supplier Selection Section */}
-                    <AccordionItem value="supplier" className="border rounded-lg px-4">
-                      <AccordionTrigger className="hover:no-underline">
-                        <span className="font-semibold">Supplier</span>
-                      </AccordionTrigger>
-                      <AccordionContent>
-                <div className="space-y-3 pt-4">
-                  <Label>Select Supplier</Label>
-                  <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose a supplier" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {suppliers.map((supplier) => (
-                        <SelectItem key={supplier.id} value={supplier.id}>
-                          {supplier.company_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedSupplierId && suppliers.find(s => s.id === selectedSupplierId) && (
-                    <div className="mt-3 bg-muted p-3 rounded-lg space-y-1 text-sm">
-                      {(() => {
-                        const supplier = suppliers.find(s => s.id === selectedSupplierId);
-                        return supplier ? (
-                          <>
-                            <p><span className="text-muted-foreground">Contact Person:</span> {supplier.contact_person}</p>
-                            <p><span className="text-muted-foreground">Phone:</span> {supplier.phone}</p>
-                            <p><span className="text-muted-foreground">Email:</span> {supplier.email}</p>
-                            <p><span className="text-muted-foreground">Address:</span> {supplier.address}</p>
-                            <p>
-                              <Badge variant={supplier.status === 'active' ? 'default' : 'secondary'} className="mt-1">
-                                {supplier.status.charAt(0).toUpperCase() + supplier.status.slice(1)}
-                              </Badge>
-                            </p>
-                          </>
-                        ) : null;
-                      })()}
-                    </div>
-                  )}
-                </div>
-                      </AccordionContent>
-                    </AccordionItem>
-
-                    {/* Order Items Section */}
-                    <AccordionItem value="items" className="border rounded-lg px-4">
-                      <AccordionTrigger className="hover:no-underline">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold">Order Items</span>
-                          {itemsToAdd.length > 0 && (
-                            <Badge variant="secondary">{itemsToAdd.length} items</Badge>
-                          )}
-              </div>
-                      </AccordionTrigger>
-                      <AccordionContent>
-                <div className="space-y-4 pt-4">
-
-                <Tabs defaultValue="existing" value={newItemTab} onValueChange={(v) => setNewItemTab(v as any)}>
-                  <TabsList className="grid grid-cols-2 w-full">
-                    <TabsTrigger value="existing" className="text-xs md:text-sm">Add Existing</TabsTrigger>
-                    <TabsTrigger value="new" className="text-xs md:text-sm">Add New Item</TabsTrigger>
-                  </TabsList>
-
-                  {/* Existing Item Tab */}
-                  <TabsContent value="existing" className="space-y-3 bg-muted/30 p-4 rounded-lg">
-                    <div className="space-y-2">
-                      <Label>Select Brand</Label>
-                      <Select value={selectedBrandForExisting} onValueChange={setSelectedBrandForExisting}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Choose a brand" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Brands</SelectItem>
-                          {brands.map((brand) => (
-                            <SelectItem key={brand.id} value={brand.id}>
-                              {brand.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Select Variant</Label>
-                      <Select
-                        value={selectedVariantId}
-                        onValueChange={setSelectedVariantId}
-                        disabled={!selectedBrandForExisting || filteredVariantsForBrand.length === 0}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={
-                            !selectedBrandForExisting
-                              ? "Select a brand first"
-                              : filteredVariantsForBrand.length === 0
-                                ? "No variants available"
-                                : "Choose a variant"
-                          } />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {filteredVariantsForBrand.map((variant) => (
-                            <SelectItem key={variant.id} value={variant.id}>
-                              {variant.name} ({variant.variant_type.toUpperCase()})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label>Quantity</Label>
-                        <Input
-                          type="number"
-                          min="0"
-                          placeholder="0"
-                          value={itemQuantity || ''}
-                          onChange={(e) => setItemQuantity(parseInt(e.target.value) || 0)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Unit Price (₱)</Label>
-                        <Input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          placeholder="0.00"
-                          value={itemPrice || ''}
-                          onChange={(e) => setItemPrice(parseFloat(e.target.value) || 0)}
-                          disabled={selectedVariantId && availableVariants.find(v => v.id === selectedVariantId)?.variant_type === 'posm'}
-                          className={selectedVariantId && availableVariants.find(v => v.id === selectedVariantId)?.variant_type === 'posm' ? 'bg-muted cursor-not-allowed' : ''}
-                        />
-                        {selectedVariantId && availableVariants.find(v => v.id === selectedVariantId)?.variant_type === 'posm' && (
-                          <p className="text-xs text-muted-foreground">POSM items have 0 price</p>
-                        )}
-                      </div>
-                    </div>
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={handleAddItemToList}
-                      size="sm"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add to Order
-                    </Button>
-                  </TabsContent>
-
-                  {/* New Item Tab */}
-                  <TabsContent value="new" className="space-y-4 bg-muted/30 p-4 rounded-lg">
-                    {/* Brand Section */}
-                    <div className="space-y-3">
-                      <Label className="text-base font-semibold">Brand</Label>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="space-y-2">
-                          <Label>New Brand Name</Label>
-                          <Input
-                            placeholder="e.g., RELX, JUUL"
-                            value={newBrandName}
-                            onChange={(e) => setNewBrandName(e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Or Select Existing Brand</Label>
-                          <Select value={existingBrandId} onValueChange={setExistingBrandId}>
-                            <SelectTrigger>
-                              <SelectValue placeholder={loadingBrands ? 'Loading brands...' : 'Choose existing brand'} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {brands.map(b => (
-                                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Enter a new brand name OR select an existing brand</p>
-                    </div>
-
-                    {/* Variants Section */}
-                    <div className="space-y-3">
-                      <Label className="text-base font-semibold">Variants</Label>
-                      <div className="space-y-4">
-                        {/* Flavor */}
-                        <div className="border rounded-lg p-3 space-y-3">
-                          <Label className="text-primary font-semibold">Flavor</Label>
-                          <div className="space-y-2">
-                            <Label>Flavor Name</Label>
-                            <Input
-                              placeholder="Flavor Code"
-                              value={flavorInput.name}
-                              onChange={(e) => setFlavorInput({ ...flavorInput, name: e.target.value })}
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="space-y-2">
-                              <Label className="text-xs">Quantity</Label>
-                              <Input
-                                type="number" min="0" placeholder="0"
-                                value={flavorInput.quantity || ''}
-                                onChange={(e) => setFlavorInput({ ...flavorInput, quantity: parseInt(e.target.value) || 0 })}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label className="text-xs">Price (₱)</Label>
-                              <Input
-                                type="number" min="0" step="0.01" placeholder="0.00"
-                                value={flavorInput.unit_price || ''}
-                                onChange={(e) => setFlavorInput({ ...flavorInput, unit_price: parseFloat(e.target.value) || 0 })}
-                              />
-                            </div>
-                          </div>
-                          <Button
-                            variant="outline"
-                            className="w-full"
-                            size="sm"
-                            onClick={() => {
-                              if (!flavorInput.name.trim() || flavorInput.quantity <= 0 || flavorInput.unit_price <= 0) return;
-                              setNewItemsDraft([...newItemsDraft, { type: 'flavor', name: flavorInput.name.trim(), quantity: flavorInput.quantity, unit_price: flavorInput.unit_price }]);
-                              setFlavorInput({ name: '', quantity: 0, unit_price: 0 });
-                            }}
-                          >
-                            <Plus className="h-3 w-3 mr-2" /> Add
-                          </Button>
-                        </div>
-
-                        {/* Battery */}
-                        <div className="border rounded-lg p-3 space-y-3">
-                          <Label className="text-green-700 font-semibold">Battery</Label>
-                          <div className="space-y-2">
-                            <Label>Battery Name</Label>
-                            <Input
-                              placeholder="Battery Code"
-                              value={batteryInput.name}
-                              onChange={(e) => setBatteryInput({ ...batteryInput, name: e.target.value })}
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="space-y-2">
-                              <Label className="text-xs">Quantity</Label>
-                              <Input
-                                type="number" min="0" placeholder="0"
-                                value={batteryInput.quantity || ''}
-                                onChange={(e) => setBatteryInput({ ...batteryInput, quantity: parseInt(e.target.value) || 0 })}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label className="text-xs">Price (₱)</Label>
-                              <Input
-                                type="number" min="0" step="0.01" placeholder="0.00"
-                                value={batteryInput.unit_price || ''}
-                                onChange={(e) => setBatteryInput({ ...batteryInput, unit_price: parseFloat(e.target.value) || 0 })}
-                              />
-                            </div>
-                          </div>
-                          <Button
-                            variant="outline"
-                            className="w-full"
-                            size="sm"
-                            onClick={() => {
-                              if (!batteryInput.name.trim() || batteryInput.quantity <= 0 || batteryInput.unit_price <= 0) return;
-                              setNewItemsDraft([...newItemsDraft, { type: 'battery', name: batteryInput.name.trim(), quantity: batteryInput.quantity, unit_price: batteryInput.unit_price }]);
-                              setBatteryInput({ name: '', quantity: 0, unit_price: 0 });
-                            }}
-                          >
-                            <Plus className="h-3 w-3 mr-2" /> Add
-                          </Button>
-                        </div>
-
-                        {/* POSM */}
-                        <div className="border rounded-lg p-3 space-y-3">
-                          <Label className="text-purple-700 font-semibold">POSM</Label>
-                          <div className="space-y-2">
-                            <Label>POSM Name</Label>
-                            <Input
-                              placeholder="Marketin Materials"
-                              value={posmInput.name}
-                              onChange={(e) => setPosmInput({ ...posmInput, name: e.target.value })}
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="space-y-2">
-                              <Label className="text-xs">Quantity</Label>
-                              <Input
-                                type="number" min="0" placeholder="0"
-                                value={posmInput.quantity || ''}
-                                onChange={(e) => setPosmInput({ ...posmInput, quantity: parseInt(e.target.value) || 0 })}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label className="text-xs">Price (₱)</Label>
-                              <Input
-                                type="number"
-                                value="0.00"
-                                disabled
-                                className="bg-muted cursor-not-allowed"
-                              />
-                            </div>
-                          </div>
-                          <Button
-                            variant="outline"
-                            className="w-full"
-                            size="sm"
-                            onClick={() => {
-                              if (!posmInput.name.trim() || posmInput.quantity <= 0) return;
-                              setNewItemsDraft([...newItemsDraft, { type: 'posm', name: posmInput.name.trim(), quantity: posmInput.quantity, unit_price: 0 }]);
-                              setPosmInput({ name: '', quantity: 0, unit_price: 0 });
-                            }}
-                          >
-                            <Plus className="h-3 w-3 mr-2" /> Add
-                          </Button>
-                        </div>
-                      </div>
-
-                      {/* Draft list */}
-                      {newItemsDraft.length > 0 ? (
-                        <div className="border rounded-lg p-3 space-y-2">
-                          <Label className="text-sm">New Items to Create ({newItemsDraft.length})</Label>
-                          <div className="space-y-2">
-                            {newItemsDraft.map((d, idx) => (
-                              <div key={idx} className="flex items-center justify-between bg-background p-2 rounded">
-                                <div className="flex items-center gap-2 text-sm">
-                                  <Badge variant="secondary" className={
-                                    d.type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                      d.type === 'battery' ? 'bg-green-100 text-green-700' :
-                                        'bg-purple-100 text-purple-700'
-                                  }>
-                                    {d.type.toUpperCase()}
-                                  </Badge>
-                                  <span className="font-medium">{d.name}</span>
-                                  <span className="text-muted-foreground">•</span>
-                                  <span>{d.quantity} units</span>
-                                  <span className="text-muted-foreground">@</span>
-                                  <span>₱{d.unit_price.toFixed(2)}</span>
-                                </div>
-                                <Button variant="ghost" size="icon" onClick={() => setNewItemsDraft(newItemsDraft.filter((_, i) => i !== idx))}>
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            Items will be created and added to inventory only when the PO is created and approved.
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">No items added yet</p>
-                      )}
-                    </div>
-                  </TabsContent>
-                </Tabs>
-
-                {/* Items List */}
-                {itemsToAdd.length > 0 && (
-                  <div className="border-t pt-3 space-y-2">
-                    <Label className="text-sm font-semibold">Items in Order ({itemsToAdd.length})</Label>
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                      {itemsToAdd.map((item, index) => (
-                        <div key={index} className="flex items-start gap-2 bg-muted p-3 rounded-md">
-                          <div className="flex-1 space-y-2 text-sm">
-                            <div className="flex items-start justify-between">
-                            <div>
-                                <p className="font-medium">{item.brand_name} - {item.variant_name}</p>
-                              <Badge
-                                variant="secondary"
-                                  className={`text-[10px] ${
-                                  item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                    item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                      'bg-purple-100 text-purple-700'
-                                  }`}
-                              >
-                                {item.variant_type.toUpperCase()}
-                              </Badge>
-                            </div>
-                            </div>
-                            <div className="grid grid-cols-3 gap-2 text-xs">
-                            <div>
-                                <p className="text-muted-foreground">Qty</p>
-                                <p className="font-medium">{item.quantity} units</p>
-                            </div>
-                            <div>
-                                <p className="text-muted-foreground">Price</p>
-                                <p className="font-medium">₱{item.unit_price.toLocaleString()}</p>
-                            </div>
-                            <div>
-                                <p className="text-muted-foreground">Total</p>
-                              <p className="font-semibold">₱{item.total.toLocaleString()}</p>
-                              </div>
-                            </div>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleRemoveItemFromList(index)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-                      </AccordionContent>
-                    </AccordionItem>
-
-                    {/* Pricing Section */}
-                    <AccordionItem value="pricing" className="border rounded-lg px-4">
-                      <AccordionTrigger className="hover:no-underline">
-                        <div className="flex items-center justify-between w-full pr-4">
-                          <span className="font-semibold">Pricing</span>
-                          <span className="text-sm font-bold">₱{calculateTotal().toLocaleString()}</span>
-                        </div>
-                      </AccordionTrigger>
-                      <AccordionContent>
-                <div className="space-y-3 pt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Tax Rate (%)</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.1"
-                      value={taxRate}
-                      onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Discount (₱)</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={discount}
-                      onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
-                    />
-                  </div>
-                </div>
-                <div className="border-t pt-3 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Subtotal:</span>
-                    <span className="font-medium">₱{calculateSubtotal().toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Tax ({taxRate}%):</span>
-                    <span className="font-medium">₱{calculateTax().toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Discount:</span>
-                    <span className="font-medium">- ₱{discount.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-lg font-bold border-t pt-2">
-                    <span>Total Amount:</span>
-                    <span>₱{calculateTotal().toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-                      </AccordionContent>
-                    </AccordionItem>
-
-                    {/* Notes Section */}
-                    <div className="border rounded-lg p-4 space-y-2">
-                      <Label className="font-semibold">Notes (Optional)</Label>
-                <Textarea
-                        placeholder="Add any special instructions..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={3}
-                        className="text-sm"
-                />
-              </div>
-                  </Accordion>
-
-                  {/* Submit Button */}
-                  <div className="sticky bottom-0 bg-background pt-4 pb-2 border-t">
-                    <Button className="w-full h-12" onClick={handleCreateOrder} disabled={creatingOrder}>
-                      {creatingOrder ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Creating...
-                        </>
-                      ) : (
-                        'Create Purchase Order'
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </ScrollArea>
-            </SheetContent>
-          </Sheet>
-        ) : (
-          // Desktop: Use Dialog
-          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Create Purchase Order
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-5xl max-h-[90vh]">
-              <DialogHeader>
-                <DialogTitle>Create Purchase Order</DialogTitle>
-              </DialogHeader>
-              <ScrollArea className="max-h-[calc(90vh-120px)] pr-4">
-                {/* Desktop layout - render the same content but without accordion */}
-                <div className="space-y-6 py-4">
-                  {/* Continue with the original desktop layout below */}
-                </div>
-              </ScrollArea>
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-                <Button onClick={handleCreateOrder} disabled={creatingOrder}>
-                {creatingOrder ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  'Create Purchase Order'
-                )}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-        )}
+        <Button className="w-full md:w-auto" onClick={() => setCreateDialogOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Create PO
+        </Button>
+        <CreatePurchaseOrderDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          suppliers={suppliers}
+          availableVariants={availableVariants}
+          brands={brands}
+          user={user}
+          onCreateOrder={createPurchaseOrder}
+          refreshData={fetchPurchaseOrders}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -1546,11 +629,10 @@ export default function PurchaseOrdersPage() {
                                 </div>
                                 <Badge
                                   variant="secondary"
-                                  className={`text-[10px] ${
-                                    item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                      item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                        'bg-purple-100 text-purple-700'
-                                  }`}
+                                  className={`text-[10px] ${item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                    item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                      'bg-purple-100 text-purple-700'
+                                    }`}
                                 >
                                   {item.variant_type.toUpperCase()}
                                 </Badge>
@@ -1622,131 +704,111 @@ export default function PurchaseOrdersPage() {
         </Sheet>
       ) : (
         // Desktop: Dialog
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
           <DialogContent className="max-w-4xl max-h-[90vh]">
-          <DialogHeader>
-            <DialogTitle>Purchase Order Details</DialogTitle>
-          </DialogHeader>
+            <DialogHeader>
+              <DialogTitle>Purchase Order Details</DialogTitle>
+            </DialogHeader>
             <ScrollArea className="max-h-[calc(90vh-120px)] pr-4">
-          {orderToView && (
-            <div className="space-y-6 py-4">
-              {/* PO Number and Status */}
-              <div className="flex justify-between items-center pb-4 border-b">
-                <div>
-                  <h3 className="text-2xl font-bold">{orderToView.po_number}</h3>
-                  <p className="text-sm text-muted-foreground">Purchase Order</p>
-                </div>
-                <Badge
-                  variant={
-                    orderToView.status === 'approved' ? 'default' :
-                      orderToView.status === 'pending' ? 'secondary' :
-                        'destructive'
-                  }
-                  className="text-base px-4 py-2"
-                >
-                  {orderToView.status.toUpperCase()}
-                </Badge>
-              </div>
-
-              {/* Dates */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Order Date</Label>
-                  <p className="font-medium">{new Date(orderToView.order_date).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Expected Delivery</Label>
-                  <p className="font-medium">{new Date(orderToView.expected_delivery_date).toLocaleDateString()}</p>
-                </div>
-              </div>
-
-              {/* Buyer and Seller Info */}
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <h4 className="font-semibold text-lg">Buyer Information</h4>
-                  <div className="bg-muted p-4 rounded-lg space-y-1">
-                    <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
-                    <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
-                    <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
-                    <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
-                    <p className="text-sm">Email: {user?.email || 'N/A'}</p>
+              {orderToView && (
+                <div className="space-y-6 py-4">
+                  {/* PO Number and Status */}
+                  <div className="flex justify-between items-center pb-4 border-b">
+                    <div>
+                      <h3 className="text-2xl font-bold">{orderToView.po_number}</h3>
+                      <p className="text-sm text-muted-foreground">Purchase Order</p>
+                    </div>
+                    <Badge
+                      variant={
+                        orderToView.status === 'approved' ? 'default' :
+                          orderToView.status === 'pending' ? 'secondary' :
+                            'destructive'
+                      }
+                      className="text-base px-4 py-2"
+                    >
+                      {orderToView.status.toUpperCase()}
+                    </Badge>
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <h4 className="font-semibold text-lg">Seller Information</h4>
-                  <div className="bg-muted p-4 rounded-lg space-y-1">
-                    <p className="font-medium">{orderToView.supplier.company_name}</p>
-                    <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
-                    <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
-                    <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
-                    <p className="text-sm">Email: {orderToView.supplier.email}</p>
+
+                  {/* Dates */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-muted-foreground">Order Date</Label>
+                      <p className="font-medium">{new Date(orderToView.order_date).toLocaleDateString()}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Expected Delivery</Label>
+                      <p className="font-medium">{new Date(orderToView.expected_delivery_date).toLocaleDateString()}</p>
+                    </div>
                   </div>
-                </div>
-              </div>
+
+                  {/* Buyer and Seller Info */}
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-lg">Buyer Information</h4>
+                      <div className="bg-muted p-4 rounded-lg space-y-1">
+                        <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
+                        <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
+                        <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
+                        <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
+                        <p className="text-sm">Email: {user?.email || 'N/A'}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-lg">Seller Information</h4>
+                      <div className="bg-muted p-4 rounded-lg space-y-1">
+                        <p className="font-medium">{orderToView.supplier.company_name}</p>
+                        <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
+                        <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
+                        <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
+                        <p className="text-sm">Email: {orderToView.supplier.email}</p>
+                      </div>
+                    </div>
+                  </div>
 
                   {/* Items Desktop */}
-              <div className="space-y-2">
-                <h4 className="font-semibold text-lg">Items</h4>
+                  <div className="space-y-2">
+                    <h4 className="font-semibold text-lg">Items</h4>
                     <div className="border rounded-lg">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Brand</TableHead>
-                        <TableHead>Item</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {orderToView.items.map((item: any) => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-medium">{item.brand_name}</TableCell>
-                          <TableCell>{item.variant_name}</TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="secondary"
-                              className={
-                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                  item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                    'bg-purple-100 text-purple-700'
-                              }
-                            >
-                              {item.variant_type.toUpperCase()}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right">{item.quantity}</TableCell>
-                          <TableCell className="text-right">₱{item.unit_price.toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-semibold">₱{item.total_price.toFixed(2)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-
-              {/* Pricing Summary */}
-              <div className="space-y-2 border-t pt-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Subtotal:</span>
-                  <span className="font-medium">₱{orderToView.subtotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Tax ({orderToView.tax_rate}%):</span>
-                  <span className="font-medium">₱{orderToView.tax_amount.toFixed(2)}</span>
-                </div>
-                {orderToView.discount > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Discount:</span>
-                    <span className="font-medium text-green-600">- ₱{orderToView.discount.toFixed(2)}</span>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Brand</TableHead>
+                            <TableHead>Item</TableHead>
+                            <TableHead>Type</TableHead>
+                            <TableHead className="text-right">Quantity</TableHead>
+                            <TableHead className="text-right">Unit Price</TableHead>
+                            <TableHead className="text-right">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {orderToView.items.map((item: any) => (
+                            <TableRow key={item.id}>
+                              <TableCell className="font-medium">{item.brand_name}</TableCell>
+                              <TableCell>{item.variant_name}</TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant="secondary"
+                                  className={
+                                    item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                      item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                        'bg-purple-100 text-purple-700'
+                                  }
+                                >
+                                  {item.variant_type.toUpperCase()}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">{item.quantity}</TableCell>
+                              <TableCell className="text-right">₱{item.unit_price.toFixed(2)}</TableCell>
+                              <TableCell className="text-right font-semibold">₱{item.total_price.toFixed(2)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
-                )}
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total Amount:</span>
-                  <span>₱{orderToView.total_amount.toFixed(2)}</span>
-                </div>
-              </div>
+
+
 
                   {/* Pricing Summary */}
                   <div className="space-y-2 border-t pt-4">
@@ -1767,21 +829,21 @@ export default function PurchaseOrdersPage() {
                     <div className="flex justify-between text-lg font-bold border-t pt-2">
                       <span>Total Amount:</span>
                       <span>₱{orderToView.total_amount.toLocaleString()}</span>
-                </div>
-              </div>
+                    </div>
+                  </div>
 
-              {/* Notes */}
-              {orderToView.notes && (
-                <div className="space-y-2">
-                  <Label className="font-semibold">Notes</Label>
-                  <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
+                  {/* Notes */}
+                  {orderToView.notes && (
+                    <div className="space-y-2">
+                      <Label className="font-semibold">Notes</Label>
+                      <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
             </ScrollArea>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

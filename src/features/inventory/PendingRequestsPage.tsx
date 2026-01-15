@@ -102,7 +102,7 @@ export default function PendingRequestsPage() {
   const [notes, setNotes] = useState('');
   const [denialReason, setDenialReason] = useState('');
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
-  
+
   // Leader's additional quantity per request (for pre-order system)
   const [leaderAdditionalQuantities, setLeaderAdditionalQuantities] = useState<Record<string, string>>({});
 
@@ -118,7 +118,7 @@ export default function PendingRequestsPage() {
     if (!user?.id) return;
 
     // Initial fetch
-      fetchRequests();
+    fetchRequests();
 
     // Debounce timer for smooth real-time updates
     let updateTimer: NodeJS.Timeout | null = null;
@@ -126,7 +126,7 @@ export default function PendingRequestsPage() {
       if (updateTimer) clearTimeout(updateTimer);
       updateTimer = setTimeout(() => {
         console.log('🔄 Real-time update: Refreshing stock requests...');
-          fetchRequests();
+        fetchRequests();
       }, 300);
     };
 
@@ -620,7 +620,7 @@ export default function PendingRequestsPage() {
         const results = await Promise.all(
           requestsToProcess.map(async (req) => {
             const leaderAdditionalQty = parseInt(leaderAdditionalQuantities[req.id] || '0') || 0;
-            
+
             const { data, error } = await supabase.rpc('forward_stock_request_with_leader_qty', {
               p_request_id: req.id,
               p_leader_id: user.id,
@@ -638,7 +638,7 @@ export default function PendingRequestsPage() {
           // Calculate totals for notification
           const totalAgentQty = requestsToProcess.reduce((sum, r) => sum + r.requested_quantity, 0);
           const totalLeaderQty = requestsToProcess.reduce((sum, r) => sum + (parseInt(leaderAdditionalQuantities[r.id] || '0') || 0), 0);
-          
+
           toast({
             title: 'Success',
             description: `Forwarded ${requestsToProcess.length} product(s) to admin${totalLeaderQty > 0 ? ` (includes ${totalLeaderQty} units for yourself)` : ''}`,
@@ -914,60 +914,60 @@ export default function PendingRequestsPage() {
                 // Desktop Table View
                 <div className="border rounded-lg overflow-hidden bg-card">
                   <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Agent</TableHead>
-                      <TableHead>Products</TableHead>
-                      <TableHead className="text-right">Total Quantity</TableHead>
-                      <TableHead>Requested Date</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredGroupedRequests.map(group => (
-                      <TableRow key={group.id}>
-                        <TableCell className="font-medium">{group.agentName}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap gap-1">
-                            {group.requests.slice(0, 3).map((req, idx) => (
-                              <Badge key={idx} variant="outline" className="text-xs">
-                                {formatProductName(req)} ({req.requested_quantity})
-                              </Badge>
-                            ))}
-                            {group.requests.length > 3 && (
-                              <Badge variant="secondary" className="text-xs">
-                                +{group.requests.length - 3} more
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right font-semibold">{group.totalQuantity} units</TableCell>
-                        <TableCell>{format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}</TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedGroup(group);
-                              setSelectedRequest(group.requests[0]); // Set first request for compatibility
-                              setReviewDialogOpen(true);
-                            }}
-                          >
-                            Review
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {filteredGroupedRequests.length === 0 && (
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                          <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                          <p>No pending requests from your team</p>
-                        </TableCell>
+                        <TableHead>Agent</TableHead>
+                        <TableHead>Products</TableHead>
+                        <TableHead className="text-right">Total Quantity</TableHead>
+                        <TableHead>Requested Date</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredGroupedRequests.map(group => (
+                        <TableRow key={group.id}>
+                          <TableCell className="font-medium">{group.agentName}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              {group.requests.slice(0, 3).map((req, idx) => (
+                                <Badge key={idx} variant="outline" className="text-xs">
+                                  {formatProductName(req)} ({req.requested_quantity})
+                                </Badge>
+                              ))}
+                              {group.requests.length > 3 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  +{group.requests.length - 3} more
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right font-semibold">{group.totalQuantity} units</TableCell>
+                          <TableCell>{format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedGroup(group);
+                                setSelectedRequest(group.requests[0]); // Set first request for compatibility
+                                setReviewDialogOpen(true);
+                              }}
+                            >
+                              Review
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {filteredGroupedRequests.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                            <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                            <p>No pending requests from your team</p>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
                 </div>
               )}
             </TabsContent>
@@ -1024,7 +1024,7 @@ export default function PendingRequestsPage() {
                           variant="default"
                           size="sm"
                           className="w-full h-8 text-xs"
-                          onClick={() => handleAllocate(req.id)}
+                          onClick={() => handleAllocateToAgent(req)}
                           disabled={allocatingId === req.id || (req.leader_stock || 0) < req.requested_quantity}
                         >
                           {allocatingId === req.id ? (
@@ -1058,85 +1058,85 @@ export default function PendingRequestsPage() {
                 // Desktop Table View
                 <div className="border rounded-lg overflow-hidden bg-card">
                   <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Agent</TableHead>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Agent Qty</TableHead>
-                      <TableHead className="text-right">Your Qty</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredReadyRequests.map((req) => {
-                      const totalQty = req.requested_quantity + (req.leader_additional_quantity || 0);
-                      
-                      return (
-                        <TableRow key={req.id}>
-                          <TableCell className="font-medium">
-                            {req.requester?.full_name || 'Unknown'}
-                          </TableCell>
-                          <TableCell>{formatProductName(req)}</TableCell>
-                          <TableCell className="text-right">
-                            {req.requested_quantity}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {req.leader_additional_quantity ? (
-                              <Badge variant="secondary" className="bg-blue-50 text-blue-700">
-                                +{req.leader_additional_quantity}
-                              </Badge>
-                            ) : '-'}
-                          </TableCell>
-                          <TableCell className="text-right font-semibold">
-                            {totalQty}
-                          </TableCell>
-                          <TableCell>
-                            {format(new Date(req.requested_at), 'MMM dd')}
-                          </TableCell>
-                          <TableCell className="text-right space-x-2">
-                            <Button
-                              size="sm"
-                              variant="default"
-                              onClick={() => handleAllocateToAgent(req)}
-                              disabled={allocatingId === req.id}
-                            >
-                              {allocatingId === req.id ? (
-                                <>
-                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                  Distributing...
-                                </>
-                              ) : (
-                                'Accept & Distribute'
-                              )}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                setSelectedGroup(null);
-                                setSelectedRequest(req);
-                                setReviewAction(null);
-                                setReviewDialogOpen(true);
-                              }}
-                            >
-                              View
-                            </Button>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Agent</TableHead>
+                        <TableHead>Product</TableHead>
+                        <TableHead className="text-right">Agent Qty</TableHead>
+                        <TableHead className="text-right">Your Qty</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredReadyRequests.map((req) => {
+                        const totalQty = req.requested_quantity + (req.leader_additional_quantity || 0);
+
+                        return (
+                          <TableRow key={req.id}>
+                            <TableCell className="font-medium">
+                              {req.requester?.full_name || 'Unknown'}
+                            </TableCell>
+                            <TableCell>{formatProductName(req)}</TableCell>
+                            <TableCell className="text-right">
+                              {req.requested_quantity}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {req.leader_additional_quantity ? (
+                                <Badge variant="secondary" className="bg-blue-50 text-blue-700">
+                                  +{req.leader_additional_quantity}
+                                </Badge>
+                              ) : '-'}
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">
+                              {totalQty}
+                            </TableCell>
+                            <TableCell>
+                              {format(new Date(req.requested_at), 'MMM dd')}
+                            </TableCell>
+                            <TableCell className="text-right space-x-2">
+                              <Button
+                                size="sm"
+                                variant="default"
+                                onClick={() => handleAllocateToAgent(req)}
+                                disabled={allocatingId === req.id}
+                              >
+                                {allocatingId === req.id ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    Distributing...
+                                  </>
+                                ) : (
+                                  'Accept & Distribute'
+                                )}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setSelectedGroup(null);
+                                  setSelectedRequest(req);
+                                  setReviewAction(null);
+                                  setReviewDialogOpen(true);
+                                }}
+                              >
+                                View
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      {filteredReadyRequests.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                            <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                            <p>No admin-approved requests waiting for distribution</p>
                           </TableCell>
                         </TableRow>
-                      );
-                    })}
-                    {filteredReadyRequests.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                          <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                          <p>No admin-approved requests waiting for distribution</p>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                      )}
+                    </TableBody>
+                  </Table>
                 </div>
               )}
             </TabsContent>
@@ -1159,11 +1159,11 @@ export default function PendingRequestsPage() {
                 // Mobile Cards View
                 <div className="space-y-3">
                   {filteredForwardedRequests.map(req => {
-                    const statusColor = 
+                    const statusColor =
                       req.status === 'approved_by_admin' ? 'bg-green-50 border-green-200' :
-                      req.status === 'rejected' ? 'bg-red-50 border-red-200' :
-                      'bg-background';
-                    
+                        req.status === 'rejected' ? 'bg-red-50 border-red-200' :
+                          'bg-background';
+
                     return (
                       <Card key={req.id} className={`hover:shadow-md transition-shadow ${statusColor}`}>
                         <CardContent className="p-3">
@@ -1228,45 +1228,45 @@ export default function PendingRequestsPage() {
                 // Desktop Table View
                 <div className="border rounded-lg overflow-hidden bg-card">
                   <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Quantity</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Forwarded Date</TableHead>
-                      <TableHead>Admin Response</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredForwardedRequests.map(request => (
-                      <TableRow key={request.id}>
-                        <TableCell className="font-medium">{formatProductName(request)}</TableCell>
-                        <TableCell className="text-right">{request.requested_quantity} units</TableCell>
-                        <TableCell>{getForwardedStatusBadge(request.status)}</TableCell>
-                        <TableCell>{format(new Date(request.requested_at), 'MMM dd, yyyy')}</TableCell>
-                        <TableCell>
-                          {request.status === 'approved' && request.approver_notes && (
-                            <span className="text-green-600 text-sm">{request.approver_notes}</span>
-                          )}
-                          {request.status === 'denied' && request.denial_reason && (
-                            <span className="text-red-600 text-sm">{request.denial_reason}</span>
-                          )}
-                          {request.status === 'pending' && (
-                            <span className="text-muted-foreground text-sm">Waiting for admin...</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {filteredForwardedRequests.length === 0 && (
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                          <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                          <p>No forwarded requests</p>
-                        </TableCell>
+                        <TableHead>Product</TableHead>
+                        <TableHead className="text-right">Quantity</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Forwarded Date</TableHead>
+                        <TableHead>Admin Response</TableHead>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredForwardedRequests.map(request => (
+                        <TableRow key={request.id}>
+                          <TableCell className="font-medium">{formatProductName(request)}</TableCell>
+                          <TableCell className="text-right">{request.requested_quantity} units</TableCell>
+                          <TableCell>{getForwardedStatusBadge(request.status)}</TableCell>
+                          <TableCell>{format(new Date(request.requested_at), 'MMM dd, yyyy')}</TableCell>
+                          <TableCell>
+                            {request.status === 'approved' && request.approver_notes && (
+                              <span className="text-green-600 text-sm">{request.approver_notes}</span>
+                            )}
+                            {request.status === 'denied' && request.denial_reason && (
+                              <span className="text-red-600 text-sm">{request.denial_reason}</span>
+                            )}
+                            {request.status === 'pending' && (
+                              <span className="text-muted-foreground text-sm">Waiting for admin...</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {filteredForwardedRequests.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                            <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                            <p>No forwarded requests</p>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
                 </div>
               )}
             </TabsContent>
@@ -1503,14 +1503,14 @@ export default function PendingRequestsPage() {
                         </TableBody>
                       </Table>
                     </div>
-                    
+
                     {/* Total Summary */}
                     {(() => {
                       const requests = selectedGroup?.requests || (selectedRequest ? [selectedRequest] : []);
                       const totalAgentQty = requests.reduce((sum, r) => sum + r.requested_quantity, 0);
                       const totalLeaderQty = requests.reduce((sum, r) => sum + (parseInt(leaderAdditionalQuantities[r.id] || '0') || 0), 0);
                       const grandTotal = totalAgentQty + totalLeaderQty;
-                      
+
                       return (
                         <div className="bg-muted/50 rounded-lg p-3 grid grid-cols-3 gap-4 text-center">
                           <div>

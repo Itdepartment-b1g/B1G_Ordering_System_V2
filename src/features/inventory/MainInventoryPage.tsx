@@ -70,17 +70,18 @@ export default function MainInventoryPage() {
     }
     try {
       setIsDeleting(true);
-      const { error } = await supabase.rpc('delete_inventory_variant', {
-        p_variant_id: variantId,
-        p_company_id: user.company_id
-      });
+      // Soft delete: set is_active = false instead of actually deleting
+      const { error } = await supabase
+        .from('variants')
+        .update({ is_active: false })
+        .eq('id', variantId);
       if (error) throw error;
-      toast({ title: "Product Deleted", description: "All related records have been removed." });
+      toast({ title: "Product Archived", description: "The product has been archived and hidden from inventory." });
       refreshInventory();
       queryClient.invalidateQueries({ queryKey: ['inventory'] }); // Invalidate react-query cache
     } catch (err: any) {
-      console.error('Error deleting variant:', err);
-      toast({ title: "Delete Failed", description: err.message, variant: "destructive" });
+      console.error('Error archiving variant:', err);
+      toast({ title: "Archive Failed", description: err.message, variant: "destructive" });
     } finally {
       setIsDeleting(false);
       setDeleteVariantId(null);
@@ -492,12 +493,6 @@ export default function MainInventoryPage() {
                               brand.batteries.some((b: any) => b.status === 'low-stock') ||
                               (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'Low Stock' : 'In Stock'}
                       </Badge>
-                      <Button variant="ghost" size="sm" onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditBrand(brand);
-                      }}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
                     </div>
                   </div>
                 </div>
@@ -606,9 +601,9 @@ export default function MainInventoryPage() {
                                         </AlertDialogTrigger>
                                         <AlertDialogContent>
                                           <AlertDialogHeader>
-                                            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                            <AlertDialogTitle>Archive this product?</AlertDialogTitle>
                                             <AlertDialogDescription>
-                                              This will permanently delete <strong>{flavor.name}</strong> and all its related history (orders, transactions, stock records). This action cannot be undone.
+                                              This will hide <strong>{flavor.name}</strong> from inventory. Existing purchase orders and history will be preserved.
                                             </AlertDialogDescription>
                                           </AlertDialogHeader>
                                           <AlertDialogFooter>
@@ -618,7 +613,7 @@ export default function MainInventoryPage() {
                                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                               disabled={isDeleting}
                                             >
-                                              {isDeleting ? "Deleting..." : "Delete Permanently"}
+                                              {isDeleting ? "Archiving..." : "Archive"}
                                             </AlertDialogAction>
                                           </AlertDialogFooter>
                                         </AlertDialogContent>
@@ -734,9 +729,9 @@ export default function MainInventoryPage() {
                                         </AlertDialogTrigger>
                                         <AlertDialogContent>
                                           <AlertDialogHeader>
-                                            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                            <AlertDialogTitle>Archive this product?</AlertDialogTitle>
                                             <AlertDialogDescription>
-                                              This will permanently delete <strong>{battery.name}</strong> and all its related history (orders, transactions, stock records). This action cannot be undone.
+                                              This will hide <strong>{battery.name}</strong> from inventory. Existing purchase orders and history will be preserved.
                                             </AlertDialogDescription>
                                           </AlertDialogHeader>
                                           <AlertDialogFooter>
@@ -746,7 +741,7 @@ export default function MainInventoryPage() {
                                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                               disabled={isDeleting}
                                             >
-                                              {isDeleting ? "Deleting..." : "Delete Permanently"}
+                                              {isDeleting ? "Archiving..." : "Archive"}
                                             </AlertDialogAction>
                                           </AlertDialogFooter>
                                         </AlertDialogContent>
@@ -883,7 +878,8 @@ export default function MainInventoryPage() {
                 <Input
                   id="name"
                   value={editingVariant.name}
-                  onChange={(e) => setEditingVariant({ ...editingVariant, name: e.target.value })}
+                  disabled
+                  className="bg-muted cursor-not-allowed"
                 />
               </div>
               <div>
