@@ -89,7 +89,8 @@ export default function StockAllocationsPage() {
             id,
             full_name,
             email,
-            role
+            role,
+            city
           ),
           variants (
             id,
@@ -117,12 +118,19 @@ export default function StockAllocationsPage() {
         const agentId = item.profiles.id;
         const agentName = item.profiles.full_name;
         const agentEmail = item.profiles.email;
+        const agentCity = item.profiles.city;
 
         if (!agentsMap.has(agentId)) {
+          // Parse city as comma-separated string into array
+          const cities = agentCity
+            ? (Array.isArray(agentCity) ? agentCity : agentCity.split(',').map((c: string) => c.trim()).filter((c: string) => c))
+            : [];
+
           agentsMap.set(agentId, {
             id: agentId,
             name: agentName,
             email: agentEmail,
+            cities,
             totalStock: 0,
             totalValue: 0,
             totalDspValue: 0,
@@ -667,1130 +675,1052 @@ export default function StockAllocationsPage() {
   const averageStock = totalAgents > 0 ? Math.round(totalStock / totalAgents) : 0;
 
   return (
-    <div className="p-8 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Stock Allocations</h1>
-          <p className="text-muted-foreground">
-            View and manage inventory distribution across all leaders
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button onClick={() => setAllocationOpen(true)}>
-            <ArrowRight className="mr-2 h-4 w-4" />
-            Allocate Stock
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+      <div className="p-6 lg:p-8 space-y-8">
+
+        {/* Friendly Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Team Inventory</h1>
+            <p className="text-slate-500 mt-1">
+              See what stock each team leader has and send them more products
+            </p>
+          </div>
+          <Button
+            onClick={() => setAllocationOpen(true)}
+            className="bg-primary hover:bg-primary/90 text-white shadow-md hover:shadow-lg transition-all"
+            size="lg"
+          >
+            <Plus className="mr-2 h-5 w-5" />
+            Send Products to Leader
           </Button>
         </div>
-      </div>
 
-      {/* Stats Overview */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-blue-600" />
-              <div>
-                <div className="text-2xl font-bold">{totalAgents}</div>
-                <div className="text-xs text-muted-foreground">Total Leaders</div>
+        {/* Simple Stats - 3 Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card className="bg-white shadow-sm hover:shadow-md transition-shadow">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-purple-50 rounded-xl">
+                  <Users className="h-6 w-6 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-3xl font-bold text-slate-900">{totalAgents}</p>
+                  <p className="text-sm text-slate-500">Team Leaders</p>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Package className="h-4 w-4 text-green-600" />
-              <div>
-                <div className="text-2xl font-bold">{totalStock.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Total Stock</div>
+          <Card className="bg-white shadow-sm hover:shadow-md transition-shadow">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-green-50 rounded-xl">
+                  <Package className="h-6 w-6 text-green-600" />
+                </div>
+                <div>
+                  <p className="text-3xl font-bold text-slate-900">{totalStock.toLocaleString()}</p>
+                  <p className="text-sm text-slate-500">Total Stocks</p>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-purple-600" />
-              <div>
-                <div className="text-2xl font-bold">₱{totalValue.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Total Value</div>
+          <Card className="bg-white shadow-sm hover:shadow-md transition-shadow">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-purple-50 rounded-xl">
+                  <TrendingUp className="h-6 w-6 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-3xl font-bold text-slate-900">₱{totalValue.toLocaleString()}</p>
+                  <p className="text-sm text-slate-500">Total Value</p>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-orange-600" />
-              <div>
-                <div className="text-2xl font-bold">{averageStock}</div>
-                <div className="text-xs text-muted-foreground">Avg Stock</div>
+        {/* Search Bar - Simplified */}
+        <div className="relative max-w-md">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+          <Input
+            placeholder="Search team leaders..."
+            value={allocationSearchQuery}
+            onChange={(e) => setAllocationSearchQuery(e.target.value)}
+            className="pl-12 h-12 bg-white border-slate-200 rounded-xl shadow-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+          />
+        </div>
+
+        {/* Team Leaders List */}
+        {loadingAllocations ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-purple-600" />
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Enhanced Controls */}
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex flex-col lg:flex-row gap-4 items-center">
-            {/* Search */}
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search leaders by name or email..."
-                value={allocationSearchQuery}
-                onChange={(e) => setAllocationSearchQuery(e.target.value)}
-                className="pl-10 h-11"
-              />
-            </div>
-
-            {/* Sort Dropdown */}
-            <div className="flex gap-2">
-              <Label className="text-sm font-medium text-muted-foreground self-center">Sort by:</Label>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'name' | 'stock' | 'value')}
-                className="flex h-11 w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              >
-                <option value="name">Name</option>
-                <option value="stock">Stock</option>
-                <option value="value">Value</option>
-              </select>
-            </div>
-
-            {/* View Toggle */}
-            <div className="flex gap-2">
-              <Button
-                variant={viewMode === 'table' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('table')}
-                className="gap-2"
-              >
-                <BarChart3 className="h-4 w-4" />
-                Table
-              </Button>
-              <Button
-                variant={viewMode === 'cards' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('cards')}
-                className="gap-2"
-              >
-                <Package className="h-4 w-4" />
-                Cards
-              </Button>
+              <p className="text-slate-500">Loading team inventory...</p>
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Enhanced Content Display */}
-      {loadingAllocations ? (
-        <Card>
-          <CardContent className="p-12">
-            <div className="flex items-center justify-center">
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Loading leaders inventory...</span>
+        ) : sortedAgents.length === 0 ? (
+          <Card className="bg-white border-0 shadow-sm">
+            <CardContent className="py-16">
+              <div className="text-center">
+                <div className="h-16 w-16 mx-auto mb-4 rounded-full bg-slate-100 flex items-center justify-center">
+                  <Users className="h-8 w-8 text-slate-400" />
+                </div>
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">
+                  {allocationSearchQuery ? 'No matching leaders found' : 'No team leaders yet'}
+                </h3>
+                <p className="text-slate-500 max-w-md mx-auto">
+                  {allocationSearchQuery
+                    ? 'Try adjusting your search or clear the filter to see all leaders'
+                    : 'When you send products to team leaders, they will appear here'}
+                </p>
+                {!allocationSearchQuery && (
+                  <Button
+                    onClick={() => setAllocationOpen(true)}
+                    className="mt-6 bg-primary hover:bg-primary/90"
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Send Products to First Leader
+                  </Button>
+                )}
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      ) : sortedAgents.length === 0 ? (
-        <Card>
-          <CardContent className="p-12">
-            <div className="text-center">
-              <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-              <h3 className="text-lg font-semibold mb-2">No leaders found</h3>
-              <p className="text-muted-foreground">
-                {allocationSearchQuery ? 'Try adjusting your search criteria' : 'No leaders have inventory allocated yet'}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : viewMode === 'table' ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Leader Inventory Overview</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Leader</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Cities</TableHead>
-                    <TableHead className="text-right">Total Stock</TableHead>
-                    <TableHead className="text-right">Total Value</TableHead>
-                    <TableHead className="text-right">Total DSP</TableHead>
-                    <TableHead className="text-right">Total RSP</TableHead>
-                    <TableHead className="text-right">Items</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedAgents.map((agent) => (
-                    <TableRow key={agent.id}>
-                      <TableCell className="font-medium">{agent.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{agent.email}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {agent.cities && agent.cities.length > 0 ? (
-                            agent.cities.map((city: string, i: number) => (
-                              <Badge key={i} variant="outline" className="text-xs">
-                                {city}
-                              </Badge>
-                            ))
-                          ) : (
-                            <span className="text-muted-foreground text-xs italic">No cities assigned</span>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {sortedAgents.map((agent) => (
+              <Card key={agent.id} className="bg-white border border-slate-200 shadow-sm hover:shadow-lg hover:border-purple-200 transition-all duration-200 overflow-hidden">
+                {/* Leader Header */}
+                <div className="px-6 pt-6 pb-4 border-b border-slate-100">
+                  <div className="flex items-start gap-4">
+                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+                      {agent.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-slate-900 truncate">{agent.name}</h3>
+                      <p className="text-sm text-slate-500 truncate">{agent.email}</p>
+                      {agent.cities && agent.cities.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {agent.cities.slice(0, 2).map((city: string, i: number) => (
+                            <Badge key={i} variant="outline" className="text-xs bg-slate-50 border-slate-200">
+                              📍 {city}
+                            </Badge>
+                          ))}
+                          {agent.cities.length > 2 && (
+                            <Badge variant="outline" className="text-xs bg-slate-50 border-slate-200">
+                              +{agent.cities.length - 2} more
+                            </Badge>
                           )}
                         </div>
-                      </TableCell>
-
-                      <TableCell className="text-right font-semibold">
-                        {agent.totalStock.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        ₱{agent.totalValue.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold text-foreground">
-                        ₱{(agent.totalDspValue || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold text-foreground">
-                        ₱{(agent.totalRspValue || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant="secondary">
-                          {agent.items.length} items
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedAgent(agent);
-                            setShowAgentDetails(true);
-                          }}
-                        >
-                          <Eye className="h-4 w-4 mr-2" />
-                          View Details
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sortedAgents.map((agent) => (
-            <Card key={agent.id} className="hover:shadow-md transition-shadow">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-lg">{agent.name}</CardTitle>
-                    <p className="text-sm text-muted-foreground">{agent.email}</p>
-                  </div>
-                  <Badge variant="secondary">
-                    {agent.items.length} items
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-blue-600">
-                      {agent.totalStock.toLocaleString()}
+                      )}
                     </div>
-                    <div className="text-xs text-muted-foreground">Total Stock</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">
-                      ₱{agent.totalValue.toLocaleString()}
-                    </div>
-                    <div className="text-xs text-muted-foreground">Total Value</div>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">Top Items:</div>
-                  {agent.items.slice(0, 3).map((item: any) => (
-                    <div key={item.id} className="flex justify-between text-sm">
-                      <span className="truncate">{item.brandName} - {item.variantName}</span>
-                      <span className="font-medium">{item.stock}</span>
-                    </div>
-                  ))}
-                  {agent.items.length > 3 && (
-                    <div className="text-xs text-muted-foreground">
-                      +{agent.items.length - 3} more items
-                    </div>
-                  )}
+                {/* Stats Grid */}
+                <div className="grid grid-cols-3 divide-x divide-slate-100 bg-slate-50/50">
+                  <div className="px-4 py-4 text-center">
+                    <p className="text-2xl font-bold text-slate-900">{agent.items.length}</p>
+                    <p className="text-xs text-slate-500">Products</p>
+                  </div>
+                  <div className="px-4 py-4 text-center">
+                    <p className="text-2xl font-bold text-purple-600">{agent.totalStock.toLocaleString()}</p>
+                    <p className="text-xs text-slate-500">Stocks</p>
+                  </div>
+                  <div className="px-4 py-4 text-center">
+                    <p className="text-lg font-bold text-green-600">₱{(agent.totalValue / 1000).toFixed(1)}k</p>
+                    <p className="text-xs text-slate-500">Value</p>
+                  </div>
                 </div>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => {
-                    setSelectedAgent(agent);
-                    setShowAgentDetails(true);
-                  }}
-                >
-                  <Eye className="h-4 w-4 mr-2" />
-                  View All Items
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+                {/* Top Products Preview */}
+                {agent.items.length > 0 && (
+                  <div className="px-6 py-4 border-t border-slate-100">
+                    <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-3">Top Products</p>
+                    <div className="space-y-2">
+                      {agent.items.slice(0, 2).map((item: any) => (
+                        <div key={item.id} className="flex items-center justify-between text-sm">
+                          <span className="text-slate-600 truncate flex-1">{item.variantName}</span>
+                          <Badge variant="secondary" className="ml-2 bg-purple-50 text-purple-700 border-0">
+                            {item.stock} pcs
+                          </Badge>
+                        </div>
+                      ))}
+                      {agent.items.length > 2 && (
+                        <p className="text-xs text-slate-400">+{agent.items.length - 2} more products</p>
+                      )}
+                    </div>
+                  </div>
+                )}
 
-      {/* Agent Details Dialog */}
-      <Dialog open={showAgentDetails} onOpenChange={setShowAgentDetails}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-3 text-2xl">
-              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                <Package className="h-5 w-5 text-primary" />
-              </div>
-              {selectedAgent?.name}'s Inventory
-            </DialogTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              View detailed stock allocation and inventory value
-            </p>
-          </DialogHeader>
-          {selectedAgent && (
-            <div className="space-y-6 pt-4">
-              {/* Enhanced Summary Cards */}
-              <div className="grid grid-cols-3 gap-4">
-                <Card className="border-blue-200 bg-blue-50/50">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center gap-3">
-                      <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
-                        <Package className="h-6 w-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <div className="text-3xl font-bold text-blue-900">{selectedAgent.totalStock.toLocaleString()}</div>
-                        <div className="text-sm text-blue-700">Total Units</div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card className="border-green-200 bg-green-50/50">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center gap-3">
-                      <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
-                        <TrendingUp className="h-6 w-6 text-green-600" />
-                      </div>
-                      <div>
-                        <div className="text-3xl font-bold text-green-900">
-                          ₱{selectedAgent.totalValue.toLocaleString()}
-                        </div>
-                        <div className="text-sm text-green-700">
-                          Total Value (Unit Price)
-                        </div>
-                        <div className="text-xs text-foreground font-medium mt-1">
-                          DSP: ₱
-                          {selectedAgent.items
-                            .reduce(
-                              (sum: number, item: any) =>
-                                sum + (item.dspPrice || 0) * item.stock,
-                              0
-                            )
-                            .toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          {' • '}
-                          RSP: ₱
-                          {selectedAgent.items
-                            .reduce(
-                              (sum: number, item: any) =>
-                                sum + (item.rspPrice || 0) * item.stock,
-                              0
-                            )
-                            .toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card className="border-purple-200 bg-purple-50/50">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center gap-3">
-                      <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
-                        <BarChart3 className="h-6 w-6 text-purple-600" />
-                      </div>
-                      <div>
-                        <div className="text-3xl font-bold text-purple-900">{selectedAgent.items.length}</div>
-                        <div className="text-sm text-purple-700">Product Types</div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Inventory Items with improved styling */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold">Inventory Breakdown</h3>
-                  <Badge variant="outline">{selectedAgent.items.length} items</Badge>
+                {/* Actions */}
+                <div className="px-6 py-4 bg-white border-t border-slate-100">
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 border-slate-200 hover:bg-slate-50"
+                      onClick={() => {
+                        setSelectedAgent(agent);
+                        setShowAgentDetails(true);
+                      }}
+                    >
+                      <Eye className="h-4 w-4 mr-2" />
+                      View Details
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="flex-1 bg-primary hover:bg-primary/90"
+                      onClick={() => {
+                        setAllocation({ ...allocation, agentId: agent.id });
+                        setAllocationOpen(true);
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Send More
+                    </Button>
+                  </div>
                 </div>
+              </Card>
+            ))}
+          </div>
+        )}
 
-                <div className="border rounded-lg overflow-hidden">
-                  <Table>
-                    <TableHeader className="bg-muted/50">
-                      <TableRow>
-                        <TableHead className="font-semibold">Product</TableHead>
-                        <TableHead className="font-semibold">Type</TableHead>
-                        <TableHead className="text-center font-semibold">Stock</TableHead>
-                        <TableHead className="text-right font-semibold">Unit / DSP / RSP</TableHead>
-                        <TableHead className="text-right font-semibold">Totals</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {selectedAgent.items.map((item: any, index: number) => {
-                        const unitPrice = item.allocatedPrice || 0;
-                        const dspPrice = item.dspPrice || 0;
-                        const rspPrice = item.rspPrice || 0;
-
-                        const unitTotal = unitPrice * item.stock;
-                        const dspTotal = dspPrice * item.stock;
-                        const rspTotal = rspPrice * item.stock;
-
-                        return (
-                          <TableRow key={item.id} className={index % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                            <TableCell>
-                              <div>
-                                <div className="font-medium">{item.brandName}</div>
-                                <div className="text-sm text-muted-foreground">{item.variantName}</div>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
-                                {item.variantType}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-center">
-                              <span className="font-semibold">{item.stock.toLocaleString()}</span>
-                              <span className="text-muted-foreground text-sm"> units</span>
-                            </TableCell>
-                            <TableCell className="text-right text-xs sm:text-sm">
-                              <div className="flex flex-col items-end gap-0.5">
-                                <div>
-                                  Unit:{' '}
-                                  <span className="font-semibold">
-                                    ₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </span>
-                                </div>
-                                <div className="text-muted-foreground">
-                                  DSP: ₱{dspPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • RSP:{' '}
-                                  ₱{rspPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right text-xs sm:text-sm">
-                              <div className="flex flex-col items-end gap-0.5">
-                                <div className="font-bold text-primary">
-                                  Total:{' '}
-                                  ₱{unitTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-muted-foreground">
-                                  DSP: ₱{dspTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • RSP:{' '}
-                                  ₱{rspTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </div>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+        {/* Agent Details Dialog */}
+        <Dialog open={showAgentDetails} onOpenChange={setShowAgentDetails}>
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-3 text-2xl">
+                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Package className="h-5 w-5 text-primary" />
                 </div>
-              </div>
-
-              {/* View Team Button */}
-              <div className="flex justify-center pt-2 border-t">
-                <Button
-                  onClick={() => {
-                    fetchLeaderAgents(selectedAgent.id);
-                    setShowFullDetails(true);
-                  }}
-                  className="gap-2"
-                  size="lg"
-                >
-                  <Users className="h-5 w-5" />
-                  View Team Members' Inventory
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Full Details Modal - Team Members */}
-      <Dialog open={showFullDetails} onOpenChange={setShowFullDetails}>
-        <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-3 text-2xl">
-              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                <Users className="h-5 w-5 text-primary" />
-              </div>
-              {selectedAgent?.name}'s Team Inventory
-            </DialogTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              Complete overview of all team members and their allocated stock
-            </p>
-          </DialogHeader>
-          {loadingLeaderAgents ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="flex flex-col items-center gap-4">
-                <Loader2 className="h-10 w-10 animate-spin text-primary" />
-                <span className="text-lg font-medium">Loading team members...</span>
-                <p className="text-sm text-muted-foreground">Please wait while we fetch the data</p>
-              </div>
-            </div>
-          ) : leaderAgents.length === 0 ? (
-            <div className="text-center py-20">
-              <div className="h-20 w-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
-                <Users className="h-10 w-10 text-muted-foreground" />
-              </div>
-              <h3 className="text-xl font-semibold mb-2">No team members found</h3>
-              <p className="text-muted-foreground max-w-md mx-auto">
-                This leader doesn't have any agents assigned to their team yet. Assign agents from the Team Management section.
+                {selectedAgent?.name}'s Inventory
+              </DialogTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                View detailed stock allocation and inventory value
               </p>
-            </div>
-          ) : (
-            <div className="space-y-6 pt-4">
-              {/* Enhanced Team Summary Cards */}
-              <div className="grid grid-cols-4 gap-4">
-                <Card className="border-blue-200 bg-blue-50/50">
-                  <CardContent className="pt-6">
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-blue-900">{leaderAgents.length}</div>
-                      <div className="text-sm text-blue-700 mt-1">Team Members</div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card className="border-green-200 bg-green-50/50">
-                  <CardContent className="pt-6">
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-green-900">
-                        {leaderAgents.reduce((sum, agent) => sum + agent.totalStock, 0).toLocaleString()}
+            </DialogHeader>
+            {selectedAgent && (
+              <div className="space-y-6 pt-4">
+                {/* Enhanced Summary Cards */}
+                <div className="grid grid-cols-3 gap-4">
+                  <Card className="border-purple-200 bg-purple-50/50">
+                    <CardContent className="pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
+                          <Package className="h-6 w-6 text-purple-600" />
+                        </div>
+                        <div>
+                          <div className="text-3xl font-bold text-purple-900">{selectedAgent.totalStock.toLocaleString()}</div>
+                          <div className="text-sm text-purple-700">Total Units</div>
+                        </div>
                       </div>
-                      <div className="text-sm text-green-700 mt-1">Total Units</div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card className="border-purple-200 bg-purple-50/50">
-                  <CardContent className="pt-6">
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-purple-900">
-                        ₱{leaderAgents.reduce((sum, agent) => sum + agent.totalValue, 0).toLocaleString()}
-                      </div>
-                      <div className="text-sm text-purple-700 mt-1">Total Value</div>
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card className="border-orange-200 bg-orange-50/50">
-                  <CardContent className="pt-6">
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-orange-900">
-                        {leaderAgents.reduce((sum, agent) => sum + agent.items.length, 0)}
-                      </div>
-                      <div className="text-sm text-orange-700 mt-1">Product Types</div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Team Members Grid */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold">Team Members</h3>
-                  <Badge variant="outline" className="text-sm">{leaderAgents.length} agents</Badge>
-                </div>
-
-                <div className="grid gap-4">
-                  {leaderAgents.map((agent) => (
-                    <Card key={agent.id} className="hover:shadow-lg transition-all border-2 hover:border-primary/50">
-                      <CardHeader className="pb-4 bg-gradient-to-r from-muted/30 to-muted/10">
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start gap-3">
-                            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                              <span className="text-lg font-bold text-primary">{agent.name.charAt(0)}</span>
-                            </div>
-                            <div>
-                              <CardTitle className="text-xl">{agent.name}</CardTitle>
-                              <p className="text-sm text-muted-foreground mt-1">{agent.email}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5">📍 {agent.region}</p>
-                            </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-green-200 bg-green-50/50">
+                    <CardContent className="pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
+                          <TrendingUp className="h-6 w-6 text-green-600" />
+                        </div>
+                        <div>
+                          <div className="text-3xl font-bold text-green-900">
+                            ₱{selectedAgent.totalValue.toLocaleString()}
                           </div>
-                          <div className="text-right space-y-2">
-                            <Badge variant={agent.role === 'team_leader' ? 'default' : 'secondary'} className="text-xs">
-                              {agent.role === 'team_leader' ? '👑 Team Leader' : '📱 Mobile Sales'}
-                            </Badge>
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-end gap-2 text-sm">
-                                <Package className="h-4 w-4 text-blue-600" />
-                                <span className="font-bold text-blue-900">{agent.totalStock.toLocaleString()}</span>
-                                <span className="text-muted-foreground">units</span>
-                              </div>
-                              <div className="flex items-center justify-end gap-2 text-sm">
-                                <TrendingUp className="h-4 w-4 text-green-600" />
-                                <span className="font-bold text-green-900">₱{agent.totalValue.toLocaleString()}</span>
-                              </div>
-                            </div>
+                          <div className="text-sm text-green-700">
+                            Total Value (Unit Price)
+                          </div>
+                          <div className="text-xs text-foreground font-medium mt-1">
+                            DSP: ₱
+                            {selectedAgent.items
+                              .reduce(
+                                (sum: number, item: any) =>
+                                  sum + (item.dspPrice || 0) * item.stock,
+                                0
+                              )
+                              .toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            {' • '}
+                            RSP: ₱
+                            {selectedAgent.items
+                              .reduce(
+                                (sum: number, item: any) =>
+                                  sum + (item.rspPrice || 0) * item.stock,
+                                0
+                              )
+                              .toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
                           </div>
                         </div>
-                      </CardHeader>
-                      <CardContent className="pt-4">
-                        {agent.items.length === 0 ? (
-                          <div className="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
-                            <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                            <p>No inventory allocated yet</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <div className="text-sm font-semibold">Inventory Breakdown</div>
-                              <Badge variant="outline">{agent.items.length} products</Badge>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                              {agent.items.map((item: any) => (
-                                <div key={item.id} className="border rounded-lg p-3 bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-shadow">
-                                  <div className="flex justify-between items-start gap-2 mb-2">
-                                    <div className="flex-1 min-w-0">
-                                      <div className="font-semibold text-sm truncate">{item.brandName}</div>
-                                      <div className="text-xs text-muted-foreground truncate">{item.variantName}</div>
-                                    </div>
-                                    <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'} className="text-xs shrink-0">
-                                      {item.variantType}
-                                    </Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-purple-200 bg-purple-50/50">
+                    <CardContent className="pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="h-12 w-12 rounded-full bg-purple-100 flex items-center justify-center">
+                          <BarChart3 className="h-6 w-6 text-purple-600" />
+                        </div>
+                        <div>
+                          <div className="text-3xl font-bold text-purple-900">{selectedAgent.items.length}</div>
+                          <div className="text-sm text-purple-700">Product Types</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Inventory Items with improved styling */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold">Inventory Breakdown</h3>
+                    <Badge variant="outline">{selectedAgent.items.length} items</Badge>
+                  </div>
+
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader className="bg-muted/50">
+                        <TableRow>
+                          <TableHead className="font-semibold">Product</TableHead>
+                          <TableHead className="font-semibold">Type</TableHead>
+                          <TableHead className="text-center font-semibold">Stock</TableHead>
+                          <TableHead className="text-right font-semibold">Unit / DSP / RSP</TableHead>
+                          <TableHead className="text-right font-semibold">Totals</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedAgent.items.map((item: any, index: number) => {
+                          const unitPrice = item.allocatedPrice || 0;
+                          const dspPrice = item.dspPrice || 0;
+                          const rspPrice = item.rspPrice || 0;
+
+                          const unitTotal = unitPrice * item.stock;
+                          const dspTotal = dspPrice * item.stock;
+                          const rspTotal = rspPrice * item.stock;
+
+                          return (
+                            <TableRow key={item.id} className={index % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                              <TableCell>
+                                <div>
+                                  <div className="font-medium">{item.brandName}</div>
+                                  <div className="text-sm text-muted-foreground">{item.variantName}</div>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
+                                  {item.variantType}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <span className="font-semibold">{item.stock.toLocaleString()}</span>
+                                <span className="text-muted-foreground text-sm"> units</span>
+                              </TableCell>
+                              <TableCell className="text-right text-xs sm:text-sm">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <div>
+                                    Unit:{' '}
+                                    <span className="font-semibold">
+                                      ₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
                                   </div>
-                                  <div className="flex justify-between items-center pt-2 border-t">
-                                    <div className="text-sm">
-                                      <span className="font-bold">{item.stock}</span>
-                                      <span className="text-muted-foreground text-xs"> units</span>
-                                    </div>
-                                    <div className="text-sm font-semibold text-primary">
-                                      ₱{item.totalValue.toLocaleString()}
-                                    </div>
+                                  <div className="text-muted-foreground">
+                                    DSP: ₱{dspPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • RSP:{' '}
+                                    ₱{rspPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </div>
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))}
+                              </TableCell>
+                              <TableCell className="text-right text-xs sm:text-sm">
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <div className="font-bold text-primary">
+                                    Total:{' '}
+                                    ₱{unitTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                  <div className="text-muted-foreground">
+                                    DSP: ₱{dspTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • RSP:{' '}
+                                    ₱{rspTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                {/* View Team Button */}
+                <div className="flex justify-center pt-2 border-t">
+                  <Button
+                    onClick={() => {
+                      fetchLeaderAgents(selectedAgent.id);
+                      setShowFullDetails(true);
+                    }}
+                    className="gap-2"
+                    size="lg"
+                  >
+                    <Users className="h-5 w-5" />
+                    View Team Members' Inventory
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            )}
+          </DialogContent>
+        </Dialog>
 
-      {/* Stock Allocation Dialog */}
-      <Dialog open={allocationOpen} onOpenChange={setAllocationOpen}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-3 text-2xl">
-              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                <ArrowRight className="h-5 w-5 text-primary" />
+        {/* Full Details Modal - Team Members */}
+        <Dialog open={showFullDetails} onOpenChange={setShowFullDetails}>
+          <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-3 text-2xl">
+                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Users className="h-5 w-5 text-primary" />
+                </div>
+                {selectedAgent?.name}'s Team Inventory
+              </DialogTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Complete overview of all team members and their allocated stock
+              </p>
+            </DialogHeader>
+            {loadingLeaderAgents ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="flex flex-col items-center gap-4">
+                  <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                  <span className="text-lg font-medium">Loading team members...</span>
+                  <p className="text-sm text-muted-foreground">Please wait while we fetch the data</p>
+                </div>
               </div>
-              Allocate Stock to Team Leader
-            </DialogTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              Select a leader, choose products, and allocate stock from main inventory
-            </p>
-          </DialogHeader>
-          <div className="space-y-5 py-4">
-            {/* Selection Cards */}
-            <div className="grid grid-cols-2 gap-4">
-              {/* Leader Selection Card */}
-              <Card className="border-2">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <Users className="h-4 w-4" />
-                    Select Team Leader
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Select
-                    value={allocation.agentId}
-                    onValueChange={(value) => setAllocation({ ...allocation, agentId: value })}
-                  >
-                    <SelectTrigger className="h-11">
-                      <SelectValue placeholder="Choose a leader" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {agents.filter(a => a.status === 'active').map(leader => (
-                        <SelectItem key={leader.id} value={leader.id}>
-                          <div className="flex items-center gap-2">
-                            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold">
-                              {leader.name.charAt(0)}
+            ) : leaderAgents.length === 0 ? (
+              <div className="text-center py-20">
+                <div className="h-20 w-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
+                  <Users className="h-10 w-10 text-muted-foreground" />
+                </div>
+                <h3 className="text-xl font-semibold mb-2">No team members found</h3>
+                <p className="text-muted-foreground max-w-md mx-auto">
+                  This leader doesn't have any agents assigned to their team yet. Assign agents from the Team Management section.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-6 pt-4">
+                {/* Enhanced Team Summary Cards */}
+                <div className="grid grid-cols-4 gap-4">
+                  <Card className="border-purple-200 bg-purple-50/50">
+                    <CardContent className="pt-6">
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-purple-900">{leaderAgents.length}</div>
+                        <div className="text-sm text-purple-700 mt-1">Team Members</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-green-200 bg-green-50/50">
+                    <CardContent className="pt-6">
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-green-900">
+                          {leaderAgents.reduce((sum, agent) => sum + agent.totalStock, 0).toLocaleString()}
+                        </div>
+                        <div className="text-sm text-green-700 mt-1">Total Units</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-purple-200 bg-purple-50/50">
+                    <CardContent className="pt-6">
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-purple-900">
+                          ₱{leaderAgents.reduce((sum, agent) => sum + agent.totalValue, 0).toLocaleString()}
+                        </div>
+                        <div className="text-sm text-purple-700 mt-1">Total Value</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-orange-200 bg-orange-50/50">
+                    <CardContent className="pt-6">
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-orange-900">
+                          {leaderAgents.reduce((sum, agent) => sum + agent.items.length, 0)}
+                        </div>
+                        <div className="text-sm text-orange-700 mt-1">Product Types</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Team Members Grid */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold">Team Members</h3>
+                    <Badge variant="outline" className="text-sm">{leaderAgents.length} agents</Badge>
+                  </div>
+
+                  <div className="grid gap-4">
+                    {leaderAgents.map((agent) => (
+                      <Card key={agent.id} className="hover:shadow-lg transition-all border-2 hover:border-primary/50">
+                        <CardHeader className="pb-4 bg-gradient-to-r from-muted/30 to-muted/10">
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-start gap-3">
+                              <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                                <span className="text-lg font-bold text-primary">{agent.name.charAt(0)}</span>
+                              </div>
+                              <div>
+                                <CardTitle className="text-xl">{agent.name}</CardTitle>
+                                <p className="text-sm text-muted-foreground mt-1">{agent.email}</p>
+                                <p className="text-xs text-muted-foreground mt-0.5">📍 {agent.region}</p>
+                              </div>
                             </div>
-                            <div>
-                              <div className="font-medium">{leader.name}</div>
-                              <div className="text-xs text-muted-foreground">📍 {leader.region}</div>
+                            <div className="text-right space-y-2">
+                              <Badge variant={agent.role === 'team_leader' ? 'default' : 'secondary'} className="text-xs">
+                                {agent.role === 'team_leader' ? '👑 Team Leader' : '📱 Mobile Sales'}
+                              </Badge>
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-end gap-2 text-sm">
+                                  <Package className="h-4 w-4 text-purple-600" />
+                                  <span className="font-bold text-purple-900">{agent.totalStock.toLocaleString()}</span>
+                                  <span className="text-muted-foreground">units</span>
+                                </div>
+                                <div className="flex items-center justify-end gap-2 text-sm">
+                                  <TrendingUp className="h-4 w-4 text-green-600" />
+                                  <span className="font-bold text-green-900">₱{agent.totalValue.toLocaleString()}</span>
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </CardContent>
-              </Card>
+                        </CardHeader>
+                        <CardContent className="pt-4">
+                          {agent.items.length === 0 ? (
+                            <div className="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
+                              <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                              <p>No inventory allocated yet</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div className="text-sm font-semibold">Inventory Breakdown</div>
+                                <Badge variant="outline">{agent.items.length} products</Badge>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {agent.items.map((item: any) => (
+                                  <div key={item.id} className="border rounded-lg p-3 bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between items-start gap-2 mb-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="font-semibold text-sm truncate">{item.brandName}</div>
+                                        <div className="text-xs text-muted-foreground truncate">{item.variantName}</div>
+                                      </div>
+                                      <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'} className="text-xs shrink-0">
+                                        {item.variantType}
+                                      </Badge>
+                                    </div>
+                                    <div className="flex justify-between items-center pt-2 border-t">
+                                      <div className="text-sm">
+                                        <span className="font-bold">{item.stock}</span>
+                                        <span className="text-muted-foreground text-xs"> units</span>
+                                      </div>
+                                      <div className="text-sm font-semibold text-primary">
+                                        ₱{item.totalValue.toLocaleString()}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
-              {/* Brand Selection Card */}
-              <Card className="border-2">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <Package className="h-4 w-4" />
-                    Select Brand
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Select
-                    value={allocation.brandId}
-                    onValueChange={(value) => {
-                      setAllocation({ ...allocation, brandId: value });
-                      setAllocationItems([]);
-                      setVariantQuantities({});
-                      setAllocationWarnings([]);
-                    }}
-                    disabled={loadingBrands}
-                  >
-                    <SelectTrigger className="h-11">
-                      <SelectValue placeholder={loadingBrands ? "Loading brands..." : "Choose a brand"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {brands.map(brand => (
-                        <SelectItem key={brand.id} value={brand.id}>
-                          <div className="flex items-center gap-2">
-                            <Package className="h-4 w-4" />
-                            <span className="font-medium">{brand.name}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </CardContent>
-              </Card>
-            </div>
-
-            {allocation.brandId && brands.find(b => b.id === allocation.brandId) && (
-              <>
-                {/* Add Variants Section with Enhanced Tabs */}
+        {/* Stock Allocation Dialog */}
+        <Dialog open={allocationOpen} onOpenChange={setAllocationOpen}>
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-3 text-2xl">
+                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  <ArrowRight className="h-5 w-5 text-primary" />
+                </div>
+                Allocate Stock to Team Leader
+              </DialogTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Select a leader, choose products, and allocate stock from main inventory
+              </p>
+            </DialogHeader>
+            <div className="space-y-5 py-4">
+              {/* Selection Cards */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Leader Selection Card */}
                 <Card className="border-2">
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Package className="h-5 w-5" />
-                      Select Products to Allocate
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      Select Team Leader
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <Tabs defaultValue="flavor" className="w-full">
-                      <TabsList className="grid w-full grid-cols-3 h-12">
-                        <TabsTrigger value="flavor" className="gap-2">
-                          <div className="h-2 w-2 rounded-full bg-blue-500"></div>
-                          Flavors ({brands.find(b => b.id === allocation.brandId)?.flavors.filter(v => getVariantAvailableStock(v) > 0).length || 0})
-                        </TabsTrigger>
-                        <TabsTrigger value="battery" className="gap-2">
-                          <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                          Batteries ({brands.find(b => b.id === allocation.brandId)?.batteries.filter(v => getVariantAvailableStock(v) > 0).length || 0})
-                        </TabsTrigger>
-                        <TabsTrigger value="posm" className="gap-2">
-                          <div className="h-2 w-2 rounded-full bg-purple-500"></div>
-                          POSM ({((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).filter((v: any) => getVariantAvailableStock(v) > 0).length || 0})
-                        </TabsTrigger>
-                      </TabsList>
-
-                      {/* Flavor Tab */}
-                      <TabsContent value="flavor" className="space-y-3 mt-4">
-                        {brands.find(b => b.id === allocation.brandId)?.flavors.length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-4">
-                            No flavors available for this brand
-                          </p>
-                        ) : (
-                          <div className="space-y-2">
-                            {brands.find(b => b.id === allocation.brandId)?.flavors
-                              .filter(v => getVariantAvailableStock(v) > 0)
-                              .map(variant => {
-                                const sellingPriceRaw = (variant as any).sellingPrice;
-                                const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                                // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                                const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                                const availableStock = getVariantAvailableStock(variant);
-                                const quantity = variantQuantities[variant.id] || 0;
-
-                                return (
-                                  <div
-                                    key={variant.id}
-                                    className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                      }`}
-                                  >
-                                    <div className="flex-1">
-                                      <div className="font-medium flex items-center gap-2">
-                                        {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                        <span>{variant.name}</span>
-                                      </div>
-                                      <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                        {hasInvalidPrice ? (
-                                          'Invalid Selling Price. Please Proceed To The Main Inventory Page To Set The Selling Price.'
-                                        ) : (
-                                          <>
-                                            Selling Price: ₱{sellingPrice.toFixed(2)}
-                                            {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
-                                            {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
-                                          </>
-                                        )} • Available: {availableStock} units
-                                      </div>
-                                    </div>
-                                    <div className="w-28">
-                                      <Input
-                                        type="number"
-                                        placeholder="0"
-                                        min="0"
-                                        max={availableStock}
-                                        value={quantity === 0 ? '' : quantity}
-                                        onChange={(e) => {
-                                          const inputValue = parseInt(e.target.value) || 0;
-                                          const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                          setVariantQuantities(prev => ({
-                                            ...prev,
-                                            [variant.id]: cappedValue
-                                          }));
-                                        }}
-                                        disabled={hasInvalidPrice}
-                                      />
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        )}
-                      </TabsContent>
-
-                      {/* Battery Tab */}
-                      <TabsContent value="battery" className="space-y-3 mt-4">
-                        {brands.find(b => b.id === allocation.brandId)?.batteries.length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-4">
-                            No batteries available for this brand
-                          </p>
-                        ) : (
-                          <div className="space-y-2">
-                            {brands.find(b => b.id === allocation.brandId)?.batteries
-                              .filter(v => getVariantAvailableStock(v) > 0)
-                              .map(variant => {
-                                const sellingPriceRaw = (variant as any).sellingPrice;
-                                const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                                // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                                const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                                const availableStock = getVariantAvailableStock(variant);
-                                const quantity = variantQuantities[variant.id] || 0;
-
-                                return (
-                                  <div
-                                    key={variant.id}
-                                    className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                      }`}
-                                  >
-                                    <div className="flex-1">
-                                      <div className="font-medium flex items-center gap-2">
-                                        {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                        <span>{variant.name}</span>
-                                      </div>
-                                      <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                        {hasInvalidPrice ? (
-                                          'Invalid Selling Price'
-                                        ) : (
-                                          <>
-                                            Selling Price: ₱{sellingPrice.toFixed(2)}
-                                            {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
-                                            {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
-                                          </>
-                                        )} • Available: {availableStock} units
-                                      </div>
-                                    </div>
-                                    <div className="w-28">
-                                      <Input
-                                        type="number"
-                                        placeholder="0"
-                                        min="0"
-                                        max={availableStock}
-                                        value={quantity === 0 ? '' : quantity}
-                                        onChange={(e) => {
-                                          const inputValue = parseInt(e.target.value) || 0;
-                                          const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                          setVariantQuantities(prev => ({
-                                            ...prev,
-                                            [variant.id]: cappedValue
-                                          }));
-                                        }}
-                                        disabled={hasInvalidPrice}
-                                      />
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        )}
-                      </TabsContent>
-
-                      {/* POSM Tab */}
-                      <TabsContent value="posm" className="space-y-3 mt-4">
-                        {((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).length === 0 ? (
-                          <p className="text-sm text-muted-foreground text-center py-4">
-                            No POSM available for this brand
-                          </p>
-                        ) : (
-                          <div className="space-y-2">
-                            {((brands.find(b => b.id === allocation.brandId) as any)?.posms || [])
-                              .filter((v: any) => getVariantAvailableStock(v) > 0)
-                              .map((variant: any) => {
-                                const sellingPriceRaw = variant.sellingPrice;
-                                const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                                // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                                const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                                const availableStock = getVariantAvailableStock(variant);
-                                const quantity = variantQuantities[variant.id] || 0;
-
-                                return (
-                                  <div
-                                    key={variant.id}
-                                    className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                      }`}
-                                  >
-                                    <div className="flex-1">
-                                      <div className="font-medium flex items-center gap-2">
-                                        {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                        <span>{variant.name}</span>
-                                      </div>
-                                      <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                        {hasInvalidPrice ? (
-                                          'Invalid Selling Price'
-                                        ) : (
-                                          <>
-                                            Selling Price: ₱{sellingPrice.toFixed(2)}
-                                            {variant.dspPrice && ` • DSP: ₱${variant.dspPrice.toFixed(2)}`}
-                                            {variant.rspPrice && ` • RSP: ₱${variant.rspPrice.toFixed(2)}`}
-                                          </>
-                                        )} • Available: {availableStock} units
-                                      </div>
-                                    </div>
-                                    <div className="w-28">
-                                      <Input
-                                        type="number"
-                                        placeholder="0"
-                                        min="0"
-                                        max={availableStock}
-                                        value={quantity === 0 ? '' : quantity}
-                                        onChange={(e) => {
-                                          const inputValue = parseInt(e.target.value) || 0;
-                                          const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                          setVariantQuantities(prev => ({
-                                            ...prev,
-                                            [variant.id]: cappedValue
-                                          }));
-                                        }}
-                                        disabled={hasInvalidPrice}
-                                      />
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        )}
-                      </TabsContent>
-                    </Tabs>
+                    <Select
+                      value={allocation.agentId}
+                      onValueChange={(value) => setAllocation({ ...allocation, agentId: value })}
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="Choose a leader" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {agents.filter(a => a.status === 'active').map(leader => (
+                          <SelectItem key={leader.id} value={leader.id}>
+                            <div className="flex items-center gap-2">
+                              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold">
+                                {leader.name.charAt(0)}
+                              </div>
+                              <div>
+                                <div className="font-medium">{leader.name}</div>
+                                <div className="text-xs text-muted-foreground">📍 {leader.region}</div>
+                              </div>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </CardContent>
                 </Card>
 
-                {/* Enhanced Allocation Items List */}
-                {allocationItems.length > 0 && (
-                  <Card className="border-2 border-green-200 bg-green-50/20">
+                {/* Brand Selection Card */}
+                <Card className="border-2">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      Select Brand
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Select
+                      value={allocation.brandId}
+                      onValueChange={(value) => {
+                        setAllocation({ ...allocation, brandId: value });
+                        setAllocationItems([]);
+                        setVariantQuantities({});
+                        setAllocationWarnings([]);
+                      }}
+                      disabled={loadingBrands}
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder={loadingBrands ? "Loading brands..." : "Choose a brand"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {brands.map(brand => (
+                          <SelectItem key={brand.id} value={brand.id}>
+                            <div className="flex items-center gap-2">
+                              <Package className="h-4 w-4" />
+                              <span className="font-medium">{brand.name}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {allocation.brandId && brands.find(b => b.id === allocation.brandId) && (
+                <>
+                  {/* Add Variants Section with Enhanced Tabs */}
+                  <Card className="border-2">
                     <CardHeader>
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-base flex items-center gap-2">
-                          <CheckCircle className="h-5 w-5 text-green-600" />
-                          Selected Items ({allocationItems.length})
-                        </CardTitle>
-                        <Badge variant="default" className="bg-green-600">
-                          Total: ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </Badge>
-                      </div>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Package className="h-5 w-5" />
+                        Select Products to Allocate
+                      </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="space-y-2">
-                        {allocationItems.map((item, index) => (
-                          <div key={index} className="flex items-center justify-between p-4 bg-background rounded-lg border-2 hover:border-primary/50 transition-colors">
-                            <div className="flex-1">
-                              <div className="font-semibold text-lg">{item.brand_name}</div>
-                              <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1 flex-wrap">
-                                <span>{item.variant_name}</span>
-                                <span>•</span>
-                                <Badge variant="outline" className="text-xs">
-                                  {item.variant_type}
-                                </Badge>
-                                <span>•</span>
-                                <span>Selling: ₱{item.selling_price.toFixed(2)}</span>
-                                {item.dsp_price && (
-                                  <>
-                                    <span>•</span>
-                                    <span>DSP: ₱{item.dsp_price.toFixed(2)}</span>
-                                  </>
-                                )}
-                                {item.rsp_price && (
-                                  <>
-                                    <span>•</span>
-                                    <span>RSP: ₱{item.rsp_price.toFixed(2)}</span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <div className="text-right">
-                                <div className="text-lg font-bold text-blue-600">
-                                  {item.quantity} units
-                                </div>
-                                <div className="text-sm text-muted-foreground">
-                                  ₱{item.total_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                </div>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleRemoveVariant(item.variant_id)}
-                                className="hover:bg-red-100 hover:text-red-600"
-                              >
-                                <Trash2 className="h-5 w-5" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <Tabs defaultValue="flavor" className="w-full">
+                        <TabsList className="grid w-full grid-cols-3 h-12">
+                          <TabsTrigger value="flavor" className="gap-2">
+                            <div className="h-2 w-2 rounded-full bg-purple-500"></div>
+                            Flavors ({brands.find(b => b.id === allocation.brandId)?.flavors.filter(v => getVariantAvailableStock(v) > 0).length || 0})
+                          </TabsTrigger>
+                          <TabsTrigger value="battery" className="gap-2">
+                            <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                            Batteries ({brands.find(b => b.id === allocation.brandId)?.batteries.filter(v => getVariantAvailableStock(v) > 0).length || 0})
+                          </TabsTrigger>
+                          <TabsTrigger value="posm" className="gap-2">
+                            <div className="h-2 w-2 rounded-full bg-purple-500"></div>
+                            POSM ({((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).filter((v: any) => getVariantAvailableStock(v) > 0).length || 0})
+                          </TabsTrigger>
+                        </TabsList>
 
-                      {/* Total Summary */}
-                      <div className="border-t-2 pt-4 mt-4 space-y-3">
-                        <div className="flex justify-between items-center text-lg">
-                          <div className="flex items-center gap-2">
-                            <Package className="h-5 w-5 text-blue-600" />
-                            <span className="font-bold text-blue-900">Total Items: {allocationItems.length}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
+                        {/* Flavor Tab */}
+                        <TabsContent value="flavor" className="space-y-3 mt-4">
+                          {brands.find(b => b.id === allocation.brandId)?.flavors.length === 0 ? (
+                            <p className="text-sm text-muted-foreground text-center py-4">
+                              No flavors available for this brand
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              {brands.find(b => b.id === allocation.brandId)?.flavors
+                                .filter(v => getVariantAvailableStock(v) > 0)
+                                .map(variant => {
+                                  const sellingPriceRaw = (variant as any).sellingPrice;
+                                  const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+                                  // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                                  const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
+                                  const availableStock = getVariantAvailableStock(variant);
+                                  const quantity = variantQuantities[variant.id] || 0;
+
+                                  return (
+                                    <div
+                                      key={variant.id}
+                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                        }`}
+                                    >
+                                      <div className="flex-1">
+                                        <div className="font-medium flex items-center gap-2">
+                                          {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                          <span>{variant.name}</span>
+                                        </div>
+                                        <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                          {hasInvalidPrice ? (
+                                            'Invalid Selling Price. Please Proceed To The Main Inventory Page To Set The Selling Price.'
+                                          ) : (
+                                            <>
+                                              Selling Price: ₱{sellingPrice.toFixed(2)}
+                                              {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
+                                              {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
+                                            </>
+                                          )} • Available: {availableStock} units
+                                        </div>
+                                      </div>
+                                      <div className="w-28">
+                                        <Input
+                                          type="number"
+                                          placeholder="0"
+                                          min="0"
+                                          max={availableStock}
+                                          value={quantity === 0 ? '' : quantity}
+                                          onChange={(e) => {
+                                            const inputValue = parseInt(e.target.value) || 0;
+                                            const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
+                                            setVariantQuantities(prev => ({
+                                              ...prev,
+                                              [variant.id]: cappedValue
+                                            }));
+                                          }}
+                                          disabled={hasInvalidPrice}
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          )}
+                        </TabsContent>
+
+                        {/* Battery Tab */}
+                        <TabsContent value="battery" className="space-y-3 mt-4">
+                          {brands.find(b => b.id === allocation.brandId)?.batteries.length === 0 ? (
+                            <p className="text-sm text-muted-foreground text-center py-4">
+                              No batteries available for this brand
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              {brands.find(b => b.id === allocation.brandId)?.batteries
+                                .filter(v => getVariantAvailableStock(v) > 0)
+                                .map(variant => {
+                                  const sellingPriceRaw = (variant as any).sellingPrice;
+                                  const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+                                  // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                                  const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
+                                  const availableStock = getVariantAvailableStock(variant);
+                                  const quantity = variantQuantities[variant.id] || 0;
+
+                                  return (
+                                    <div
+                                      key={variant.id}
+                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                        }`}
+                                    >
+                                      <div className="flex-1">
+                                        <div className="font-medium flex items-center gap-2">
+                                          {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                          <span>{variant.name}</span>
+                                        </div>
+                                        <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                          {hasInvalidPrice ? (
+                                            'Invalid Selling Price'
+                                          ) : (
+                                            <>
+                                              Selling Price: ₱{sellingPrice.toFixed(2)}
+                                              {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
+                                              {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
+                                            </>
+                                          )} • Available: {availableStock} units
+                                        </div>
+                                      </div>
+                                      <div className="w-28">
+                                        <Input
+                                          type="number"
+                                          placeholder="0"
+                                          min="0"
+                                          max={availableStock}
+                                          value={quantity === 0 ? '' : quantity}
+                                          onChange={(e) => {
+                                            const inputValue = parseInt(e.target.value) || 0;
+                                            const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
+                                            setVariantQuantities(prev => ({
+                                              ...prev,
+                                              [variant.id]: cappedValue
+                                            }));
+                                          }}
+                                          disabled={hasInvalidPrice}
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          )}
+                        </TabsContent>
+
+                        {/* POSM Tab */}
+                        <TabsContent value="posm" className="space-y-3 mt-4">
+                          {((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).length === 0 ? (
+                            <p className="text-sm text-muted-foreground text-center py-4">
+                              No POSM available for this brand
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              {((brands.find(b => b.id === allocation.brandId) as any)?.posms || [])
+                                .filter((v: any) => getVariantAvailableStock(v) > 0)
+                                .map((variant: any) => {
+                                  const sellingPriceRaw = variant.sellingPrice;
+                                  const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+                                  // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
+                                  const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
+                                  const availableStock = getVariantAvailableStock(variant);
+                                  const quantity = variantQuantities[variant.id] || 0;
+
+                                  return (
+                                    <div
+                                      key={variant.id}
+                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
+                                        }`}
+                                    >
+                                      <div className="flex-1">
+                                        <div className="font-medium flex items-center gap-2">
+                                          {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                          <span>{variant.name}</span>
+                                        </div>
+                                        <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                          {hasInvalidPrice ? (
+                                            'Invalid Selling Price'
+                                          ) : (
+                                            <>
+                                              Selling Price: ₱{sellingPrice.toFixed(2)}
+                                              {variant.dspPrice && ` • DSP: ₱${variant.dspPrice.toFixed(2)}`}
+                                              {variant.rspPrice && ` • RSP: ₱${variant.rspPrice.toFixed(2)}`}
+                                            </>
+                                          )} • Available: {availableStock} units
+                                        </div>
+                                      </div>
+                                      <div className="w-28">
+                                        <Input
+                                          type="number"
+                                          placeholder="0"
+                                          min="0"
+                                          max={availableStock}
+                                          value={quantity === 0 ? '' : quantity}
+                                          onChange={(e) => {
+                                            const inputValue = parseInt(e.target.value) || 0;
+                                            const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
+                                            setVariantQuantities(prev => ({
+                                              ...prev,
+                                              [variant.id]: cappedValue
+                                            }));
+                                          }}
+                                          disabled={hasInvalidPrice}
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          )}
+                        </TabsContent>
+                      </Tabs>
+                    </CardContent>
+                  </Card>
+
+                  {/* Enhanced Allocation Items List */}
+                  {allocationItems.length > 0 && (
+                    <Card className="border-2 border-green-200 bg-green-50/20">
+                      <CardHeader>
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-base flex items-center gap-2">
                             <CheckCircle className="h-5 w-5 text-green-600" />
-                            <span className="font-bold">Total Units: {allocationItems.reduce((sum, item) => sum + item.quantity, 0).toLocaleString()}</span>
-                          </div>
+                            Selected Items ({allocationItems.length})
+                          </CardTitle>
+                          <Badge variant="default" className="bg-green-600">
+                            Total: ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </Badge>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          {allocationItems.map((item, index) => (
+                            <div key={index} className="flex items-center justify-between p-4 bg-background rounded-lg border-2 hover:border-primary/50 transition-colors">
+                              <div className="flex-1">
+                                <div className="font-semibold text-lg">{item.brand_name}</div>
+                                <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1 flex-wrap">
+                                  <span>{item.variant_name}</span>
+                                  <span>•</span>
+                                  <Badge variant="outline" className="text-xs">
+                                    {item.variant_type}
+                                  </Badge>
+                                  <span>•</span>
+                                  <span>Selling: ₱{item.selling_price.toFixed(2)}</span>
+                                  {item.dsp_price && (
+                                    <>
+                                      <span>•</span>
+                                      <span>DSP: ₱{item.dsp_price.toFixed(2)}</span>
+                                    </>
+                                  )}
+                                  {item.rsp_price && (
+                                    <>
+                                      <span>•</span>
+                                      <span>RSP: ₱{item.rsp_price.toFixed(2)}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <div className="text-right">
+                                  <div className="text-lg font-bold text-purple-600">
+                                    {item.quantity} units
+                                  </div>
+                                  <div className="text-sm text-muted-foreground">
+                                    ₱{item.total_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleRemoveVariant(item.variant_id)}
+                                  className="hover:bg-red-100 hover:text-red-600"
+                                >
+                                  <Trash2 className="h-5 w-5" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-                          <div className="bg-primary/5 p-3 rounded-lg border border-primary/10">
-                            <div className="text-xs text-muted-foreground uppercase font-semibold">Total Unit Price</div>
-                            <div className="text-xl font-bold text-primary">
-                              ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {/* Total Summary */}
+                        <div className="border-t-2 pt-4 mt-4 space-y-3">
+                          <div className="flex justify-between items-center text-lg">
+                            <div className="flex items-center gap-2">
+                              <Package className="h-5 w-5 text-purple-600" />
+                              <span className="font-bold text-purple-900">Total Items: {allocationItems.length}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <CheckCircle className="h-5 w-5 text-green-600" />
+                              <span className="font-bold">Total Units: {allocationItems.reduce((sum, item) => sum + item.quantity, 0).toLocaleString()}</span>
                             </div>
                           </div>
-                          <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                            <div className="text-xs text-blue-700 uppercase font-semibold">Total DSP Price</div>
-                            <div className="text-xl font-bold text-blue-900">
-                              ₱{allocationItems.reduce((sum, item) => sum + ((item.dsp_price || 0) * item.quantity), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </div>
-                          </div>
-                          <div className="bg-purple-50 p-3 rounded-lg border border-purple-100">
-                            <div className="text-xs text-purple-700 uppercase font-semibold">Total RSP Price</div>
-                            <div className="text-xl font-bold text-purple-900">
-                              ₱{allocationItems.reduce((sum, item) => sum + ((item.rsp_price || 0) * item.quantity), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
 
-                {allocationWarnings.length > 0 && (
-                  <Card className="border-2 border-yellow-400 bg-yellow-50/50">
-                    <CardContent className="pt-6">
-                      <div className="flex items-start gap-3">
-                        <div className="h-10 w-10 rounded-full bg-yellow-100 flex items-center justify-center shrink-0">
-                          <AlertTriangle className="h-5 w-5 text-yellow-700" />
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                            <div className="bg-primary/5 p-3 rounded-lg border border-primary/10">
+                              <div className="text-xs text-muted-foreground uppercase font-semibold">Total Unit Price</div>
+                              <div className="text-xl font-bold text-primary">
+                                ₱{allocationItems.reduce((sum, item) => sum + item.total_value, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                            <div className="bg-purple-50 p-3 rounded-lg border border-purple-100">
+                              <div className="text-xs text-purple-700 uppercase font-semibold">Total DSP Price</div>
+                              <div className="text-xl font-bold text-purple-900">
+                                ₱{allocationItems.reduce((sum, item) => sum + ((item.dsp_price || 0) * item.quantity), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                            <div className="bg-purple-50 p-3 rounded-lg border border-purple-100">
+                              <div className="text-xs text-purple-700 uppercase font-semibold">Total RSP Price</div>
+                              <div className="text-xl font-bold text-purple-900">
+                                ₱{allocationItems.reduce((sum, item) => sum + ((item.rsp_price || 0) * item.quantity), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <p className="font-semibold text-yellow-900 mb-2">⚠️ Action Required: Set Prices First</p>
-                          <ul className="space-y-1.5 text-sm text-yellow-800">
-                            {allocationWarnings.map((warning, index) => (
-                              <li key={index} className="flex items-start gap-2">
-                                <span className="text-yellow-600 mt-0.5">•</span>
-                                <span>{warning}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
+                      </CardContent>
+                    </Card>
+                  )}
 
-                {/* Enhanced Action Buttons */}
-                <div className="flex justify-between items-center pt-4 border-t-2">
-                  <div className="text-sm text-muted-foreground">
-                    {allocationItems.length > 0 ? (
-                      <span className="flex items-center gap-2">
-                        <CheckCircle className="h-4 w-4 text-green-600" />
-                        {allocationItems.length} item{allocationItems.length > 1 ? 's' : ''} ready for allocation
-                      </span>
-                    ) : (
-                      <span>Select products above to begin allocation</span>
-                    )}
+                  {allocationWarnings.length > 0 && (
+                    <Card className="border-2 border-yellow-400 bg-yellow-50/50">
+                      <CardContent className="pt-6">
+                        <div className="flex items-start gap-3">
+                          <div className="h-10 w-10 rounded-full bg-yellow-100 flex items-center justify-center shrink-0">
+                            <AlertTriangle className="h-5 w-5 text-yellow-700" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-semibold text-yellow-900 mb-2">⚠️ Action Required: Set Prices First</p>
+                            <ul className="space-y-1.5 text-sm text-yellow-800">
+                              {allocationWarnings.map((warning, index) => (
+                                <li key={index} className="flex items-start gap-2">
+                                  <span className="text-yellow-600 mt-0.5">•</span>
+                                  <span>{warning}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Enhanced Action Buttons */}
+                  <div className="flex justify-between items-center pt-4 border-t-2">
+                    <div className="text-sm text-muted-foreground">
+                      {allocationItems.length > 0 ? (
+                        <span className="flex items-center gap-2">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          {allocationItems.length} item{allocationItems.length > 1 ? 's' : ''} ready for allocation
+                        </span>
+                      ) : (
+                        <span>Select products above to begin allocation</span>
+                      )}
+                    </div>
+                    <div className="flex gap-3">
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        onClick={() => setAllocationOpen(false)}
+                        className="gap-2"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="lg"
+                        onClick={handleConfirmAllocation}
+                        disabled={!allocation.agentId || allocationItems.length === 0 || allocationWarnings.length > 0}
+                        className="gap-2"
+                      >
+                        <CheckCircle className="h-5 w-5" />
+                        Allocate Stock Now
+                        <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      size="lg"
-                      onClick={() => setAllocationOpen(false)}
-                      className="gap-2"
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="lg"
-                      onClick={handleConfirmAllocation}
-                      disabled={!allocation.agentId || allocationItems.length === 0 || allocationWarnings.length > 0}
-                      className="gap-2"
-                    >
-                      <CheckCircle className="h-5 w-5" />
-                      Allocate Stock Now
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+                </>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
     </div>
   );
 }

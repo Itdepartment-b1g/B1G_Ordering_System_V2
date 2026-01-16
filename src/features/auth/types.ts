@@ -7,7 +7,7 @@ export interface User extends Profile {
 
 export interface LoginResult {
     success: boolean;
-    error?: 'invalid_credentials' | 'account_restricted' | 'company_inactive';
+    error?: 'invalid_credentials' | 'account_restricted' | 'company_inactive' | 'network_error';
 }
 
 export interface AuthContextType {
@@ -20,4 +20,6 @@ export interface AuthContextType {
     stopImpersonation: () => void;
     isAuthenticated: boolean;
     isLoading: boolean;
+    isInitialized: boolean;
+    isOffline: boolean;
 }

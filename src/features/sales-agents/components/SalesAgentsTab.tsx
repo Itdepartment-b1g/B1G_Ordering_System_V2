@@ -155,57 +155,65 @@ export function SalesAgentsTab() {
       setLoading(true);
 
       // Fetch all users in the company except the logged-in user (RLS will handle company isolation)
-      const { data: agentsData, error: agentsError } = await supabase
-        .from('profiles')
-        .select(`
-          id,
-          full_name,
-          email,
-          phone,
-          region,
-          city,
-          status,
-          role
-        `)
-        .neq('id', user.id)
-        .order('created_at', { ascending: false });
+      // AND fetch all approved orders in a SINGLE query (not N+1)
+      const [agentsResult, ordersResult] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select(`
+            id,
+            full_name,
+            email,
+            phone,
+            region,
+            city,
+            status,
+            role
+          `)
+          .neq('id', user.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('client_orders')
+          .select('agent_id, total_amount')
+          .eq('status', 'approved')
+      ]);
 
-      if (agentsError) throw agentsError;
+      if (agentsResult.error) throw agentsResult.error;
+      if (ordersResult.error) {
+        console.error('Error fetching orders:', ordersResult.error);
+      }
 
-      // Fetch sales data for each user
-      const agentsWithSales = await Promise.all(
-        (agentsData || []).map(async (agent: any) => {
-          // Get total sales and orders count
-          const { data: salesData, error: salesError } = await supabase
-            .from('client_orders')
-            .select('total_amount, status')
-            .eq('agent_id', agent.id)
-            .eq('status', 'approved');
+      const agentsData = agentsResult.data || [];
+      const ordersData = ordersResult.data || [];
 
-          if (salesError) {
-            console.error('Error fetching sales data for user', agent.id, salesError);
-          }
+      // Pre-aggregate orders by agent_id (O(n) instead of O(n*m))
+      const salesByAgent: Record<string, { totalSales: number; ordersCount: number }> = {};
+      for (const order of ordersData) {
+        if (!order.agent_id) continue;
+        if (!salesByAgent[order.agent_id]) {
+          salesByAgent[order.agent_id] = { totalSales: 0, ordersCount: 0 };
+        }
+        const amount = typeof order.total_amount === 'number'
+          ? order.total_amount
+          : parseFloat(String(order.total_amount)) || 0;
+        salesByAgent[order.agent_id].totalSales += amount;
+        salesByAgent[order.agent_id].ordersCount += 1;
+      }
 
-          const totalSales = (salesData || []).reduce((sum: number, order: any) => {
-            const amount = typeof order.total_amount === 'number' ? order.total_amount : parseFloat(String(order.total_amount)) || 0;
-            return sum + amount;
-          }, 0);
-          const ordersCount = salesData?.length || 0;
-
-          return {
-            id: agent.id,
-            name: agent.full_name,
-            email: agent.email,
-            phone: agent.phone || '',
-            region: agent.region || '',
-            cities: agent.city ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map(c => c.trim()).filter(c => c)) : [],
-            status: agent.status || 'active',
-            role: agent.role || 'mobile_sales',
-            totalSales,
-            ordersCount
-          };
-        })
-      );
+      // Map agents with pre-aggregated sales data
+      const agentsWithSales = agentsData.map((agent: any) => ({
+        id: agent.id,
+        name: agent.full_name,
+        email: agent.email,
+        phone: agent.phone || '',
+        region: agent.region || '',
+        cities: agent.city
+          ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map((c: string) => c.trim()).filter((c: string) => c))
+          : [],
+        status: agent.status || 'active',
+        role: agent.role || 'mobile_sales',
+        totalSales: salesByAgent[agent.id]?.totalSales || 0,
+        ordersCount: salesByAgent[agent.id]?.ordersCount || 0
+      }));
 
       setAgents(agentsWithSales);
     } catch (error) {
@@ -809,10 +817,10 @@ export function SalesAgentsTab() {
                   </div>
                   <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                    <div>
+                      <div>
                         <div className="text-[10px] text-muted-foreground">Phone</div>
                         <div className="text-xs font-medium truncate">{agent.phone || '—'}</div>
-                    </div>
+                      </div>
                       <div>
                         <div className="text-[10px] text-muted-foreground">Region</div>
                         <div className="text-xs font-medium truncate">{agent.region || '—'}</div>
@@ -840,13 +848,13 @@ export function SalesAgentsTab() {
                       <div>
                         <div className="text-[10px] text-muted-foreground">Total Sales</div>
                         <div className="text-xs font-semibold">₱{agent.totalSales.toLocaleString()}</div>
-                    </div>
+                      </div>
                       <div>
                         <div className="text-[10px] text-muted-foreground">Orders</div>
                         <div className="text-xs font-semibold">{agent.ordersCount}</div>
+                      </div>
                     </div>
                   </div>
-                    </div>
                   <div className="mt-3 border-t pt-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-xs text-muted-foreground flex items-center gap-2">
@@ -863,16 +871,16 @@ export function SalesAgentsTab() {
                     <div className="grid grid-cols-2 gap-2">
                       <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenView(agent)}>
                         <Eye className="h-3 w-3 mr-1" /> View
-                    </Button>
+                      </Button>
                       <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenEdit(agent)}>
                         <Edit className="h-3 w-3 mr-1" /> Edit
-                    </Button>
+                      </Button>
                       <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleResetPassword(agent)}>
                         <Rewind className="h-3 w-3 mr-1" /> Reset
-                    </Button>
+                      </Button>
                       <Button variant="outline" size="sm" className="text-xs h-8 text-red-600 hover:text-red-700" onClick={() => handleOpenDelete(agent)}>
                         <Trash2 className="h-3 w-3 mr-1" /> Delete
-                    </Button>
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -1148,140 +1156,140 @@ export function SalesAgentsTab() {
           </SheetContent>
         </Sheet>
       ) : (
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Edit User</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label htmlFor="role">Role</Label>
-              <Select
-                value={editForm.role}
-                onValueChange={(value) => setEditForm({ ...editForm, role: value as UserRole })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="finance">Finance</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="team_leader">Team Leader</SelectItem>
-                  <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className={`grid gap-4 ${editDialogRequiresTerritory ? 'md:grid-cols-2' : 'grid-cols-1 md:grid-cols-1'}`}>
-              <div>
-                <Label htmlFor="phone">Phone</Label>
-                <Input
-                  id="phone"
-                  value={editForm.phone}
-                  onChange={(e) => {
-                    const formatted = formatPhoneNumber(e.target.value);
-                    setEditForm({ ...editForm, phone: formatted });
-                  }}
-                  placeholder="+63 917 555 0101"
-                  maxLength={17}
-                />
-              </div>
-              {editDialogRequiresTerritory && (
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Edit User</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="region">Region</Label>
+                  <Label htmlFor="name">Name</Label>
                   <Input
-                    id="region"
-                    value={editForm.region}
-                    onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
+                    id="name"
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                   />
                 </div>
-              )}
-            </div>
-            {editDialogRequiresTerritory ? (
-              <div>
-                <Label htmlFor="city">Cities</Label>
-                <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <Input
-                      id="city"
-                      placeholder="Enter city name"
-                      value={editCityInput}
-                      onChange={(e) => setEditCityInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addCityToEditForm();
-                        }
-                      }}
-                    />
-                    <Button type="button" onClick={addCityToEditForm} variant="outline">
-                      Add
-                    </Button>
-                  </div>
-                  {editForm.cities.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {editForm.cities.map((city, index) => (
-                        <Badge key={index} variant="outline" className="text-xs">
-                          {city}
-                          <button
-                            type="button"
-                            onClick={() => removeCityFromEditForm(city)}
-                            className="ml-1 hover:text-red-500"
-                          >
-                            ×
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  />
                 </div>
               </div>
-            ) : (
-              <div className="rounded-md border border-dashed bg-muted/40 p-3 text-xs text-muted-foreground">
-                Region and cities are not required for {getRoleLabel(editingAgent?.role)} users.
-              </div>
-            )}
 
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="status"
-                checked={editForm.status === 'active'}
-                onCheckedChange={(checked) => setEditForm({ ...editForm, status: checked ? 'active' : 'inactive' })}
-              />
-              <Label htmlFor="status">Active</Label>
+              <div>
+                <Label htmlFor="role">Role</Label>
+                <Select
+                  value={editForm.role}
+                  onValueChange={(value) => setEditForm({ ...editForm, role: value as UserRole })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="finance">Finance</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="team_leader">Team Leader</SelectItem>
+                    <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className={`grid gap-4 ${editDialogRequiresTerritory ? 'md:grid-cols-2' : 'grid-cols-1 md:grid-cols-1'}`}>
+                <div>
+                  <Label htmlFor="phone">Phone</Label>
+                  <Input
+                    id="phone"
+                    value={editForm.phone}
+                    onChange={(e) => {
+                      const formatted = formatPhoneNumber(e.target.value);
+                      setEditForm({ ...editForm, phone: formatted });
+                    }}
+                    placeholder="+63 917 555 0101"
+                    maxLength={17}
+                  />
+                </div>
+                {editDialogRequiresTerritory && (
+                  <div>
+                    <Label htmlFor="region">Region</Label>
+                    <Input
+                      id="region"
+                      value={editForm.region}
+                      onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
+                    />
+                  </div>
+                )}
+              </div>
+              {editDialogRequiresTerritory ? (
+                <div>
+                  <Label htmlFor="city">Cities</Label>
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <Input
+                        id="city"
+                        placeholder="Enter city name"
+                        value={editCityInput}
+                        onChange={(e) => setEditCityInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addCityToEditForm();
+                          }
+                        }}
+                      />
+                      <Button type="button" onClick={addCityToEditForm} variant="outline">
+                        Add
+                      </Button>
+                    </div>
+                    {editForm.cities.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {editForm.cities.map((city, index) => (
+                          <Badge key={index} variant="outline" className="text-xs">
+                            {city}
+                            <button
+                              type="button"
+                              onClick={() => removeCityFromEditForm(city)}
+                              className="ml-1 hover:text-red-500"
+                            >
+                              ×
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed bg-muted/40 p-3 text-xs text-muted-foreground">
+                  Region and cities are not required for {getRoleLabel(editingAgent?.role)} users.
+                </div>
+              )}
+
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="status"
+                  checked={editForm.status === 'active'}
+                  onCheckedChange={(checked) => setEditForm({ ...editForm, status: checked ? 'active' : 'inactive' })}
+                />
+                <Label htmlFor="status">Active</Label>
+              </div>
+              <div className="flex justify-end space-x-2">
+                <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleConfirmEdit}>
+                  Save Changes
+                </Button>
+              </div>
             </div>
-            <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleConfirmEdit}>
-                Save Changes
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* View Dialog - Mobile: Sheet, Desktop: Dialog */}
@@ -1384,80 +1392,80 @@ export function SalesAgentsTab() {
           </SheetContent>
         </Sheet>
       ) : (
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Agent Information</DialogTitle>
-            <DialogDescription className="text-sm text-muted-foreground">
-              View agent profile details
-            </DialogDescription>
-          </DialogHeader>
-          {viewingAgent && (
-            <div className="space-y-6 py-4">
-              {/* Basic Info */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase">Contact Information</h3>
-                <div className="space-y-2">
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Name:</span>
-                    <span className="text-sm font-medium">{viewingAgent.name}</span>
-                  </div>
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Email:</span>
-                    <span className="text-sm">{viewingAgent.email}</span>
-                  </div>
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Phone:</span>
-                    <span className="text-sm">{viewingAgent.phone || '—'}</span>
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-semibold">Agent Information</DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                View agent profile details
+              </DialogDescription>
+            </DialogHeader>
+            {viewingAgent && (
+              <div className="space-y-6 py-4">
+                {/* Basic Info */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase">Contact Information</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Name:</span>
+                      <span className="text-sm font-medium">{viewingAgent.name}</span>
+                    </div>
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Email:</span>
+                      <span className="text-sm">{viewingAgent.email}</span>
+                    </div>
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Phone:</span>
+                      <span className="text-sm">{viewingAgent.phone || '—'}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Location Info */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase">Location</h3>
-                <div className="space-y-2">
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Region:</span>
-                    <span className="text-sm">{viewingAgent.region || '—'}</span>
+                {/* Location Info */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase">Location</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Region:</span>
+                      <span className="text-sm">{viewingAgent.region || '—'}</span>
+                    </div>
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Cities:</span>
+                      <div className="flex flex-wrap gap-1">
+                        {viewingAgent.cities.length > 0 ? (
+                          viewingAgent.cities.map((city, index) => (
+                            <Badge key={index} variant="outline" className="text-xs">
+                              {city}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Cities:</span>
-                    <div className="flex flex-wrap gap-1">
-                      {viewingAgent.cities.length > 0 ? (
-                        viewingAgent.cities.map((city, index) => (
-                          <Badge key={index} variant="outline" className="text-xs">
-                            {city}
-                          </Badge>
-                        ))
-                      ) : (
-                        <span className="text-sm text-muted-foreground">—</span>
-                      )}
+                </div>
+
+                {/* Role & Status */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase">Role & Status</h3>
+                  <div className="space-y-2">
+
+                    <div className="flex items-start gap-3 py-2">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Status:</span>
+                      <Badge
+                        variant={viewingAgent.status === 'active' ? 'default' : 'secondary'}
+                        className={viewingAgent.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}
+                      >
+                        {viewingAgent.status}
+                      </Badge>
                     </div>
                   </div>
                 </div>
               </div>
-
-              {/* Role & Status */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase">Role & Status</h3>
-                <div className="space-y-2">
-
-                  <div className="flex items-start gap-3 py-2">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Status:</span>
-                    <Badge
-                      variant={viewingAgent.status === 'active' ? 'default' : 'secondary'}
-                      className={viewingAgent.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}
-                    >
-                      {viewingAgent.status}
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            )}
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* Delete Confirmation Dialog */}

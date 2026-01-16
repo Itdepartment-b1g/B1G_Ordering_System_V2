@@ -21,11 +21,18 @@ export default function SuperAdminDashboardPage() {
   useEffect(() => {
     if (user?.company_id) {
       fetchDashboardData();
+    } else if (user) {
+      // User exists but no company_id - stop loading to prevent infinite loading state
+      console.warn('⚠️ [SuperAdminDashboard] User has no company_id, skipping data fetch');
+      setIsLoading(false);
     }
   }, [user]);
 
   const fetchDashboardData = async () => {
-    if (!user?.company_id) return;
+    if (!user?.company_id) {
+      setIsLoading(false);
+      return;
+    }
 
     try {
       setIsLoading(true);

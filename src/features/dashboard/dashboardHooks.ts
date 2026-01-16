@@ -13,61 +13,71 @@ export function useAdminStats() {
         enabled: !!user?.company_id,
         queryFn: async () => {
             if (!user?.company_id) return null;
-            // Get total revenue from admin-approved client orders
-            const { data: approvedOrdersForRevenue } = await supabase
-                .from('client_orders')
-                .select('total_amount')
-                .eq('company_id', user.company_id)
-                .eq('stage', 'admin_approved');
+
+            // Run all queries in parallel for performance
+            const sixMonthsAgoIso = new Date(new Date().setMonth(new Date().getMonth() - 6)).toISOString();
+
+            const [
+                approvedOrdersResult,
+                ordersResult,
+                agentsResult,
+                variantsResult,
+                monthlyResult
+            ] = await Promise.all([
+                // Get total revenue from admin-approved client orders
+                supabase
+                    .from('client_orders')
+                    .select('total_amount')
+                    .eq('company_id', user.company_id)
+                    .eq('stage', 'admin_approved'),
+                // Get orders stats
+                supabase
+                    .from('client_orders')
+                    .select('id, status')
+                    .eq('company_id', user.company_id),
+                // Get agents stats
+                supabase
+                    .from('profiles')
+                    .select('id, status')
+                    .eq('company_id', user.company_id)
+                    .eq('role', 'sales_agent'),
+                // Get products stats
+                supabase
+                    .from('variants')
+                    .select(`
+                      id,
+                      main_inventory (
+                        stock,
+                        reorder_level
+                      )
+                    `)
+                    .eq('company_id', user.company_id),
+                // Get monthly revenue for chart
+                supabase
+                    .from('client_orders')
+                    .select('total_amount, order_date')
+                    .eq('company_id', user.company_id)
+                    .eq('stage', 'admin_approved')
+                    .gte('order_date', sixMonthsAgoIso)
+            ]);
+
+            const approvedOrdersForRevenue = approvedOrdersResult.data;
+            const orders = ordersResult.data;
+            const agents = agentsResult.data;
+            const variants = variantsResult.data;
+            const monthlyApproved = monthlyResult.data;
 
             const revenue = (approvedOrdersForRevenue || []).reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
-
-            // Get orders stats
-            const { data: orders } = await supabase
-                .from('client_orders')
-                .select('id, status')
-                .eq('company_id', user.company_id);
-
             const totalOrders = orders?.length || 0;
             const pendingOrders = orders?.filter(o => o.status === 'pending').length || 0;
-
-            // Get agents stats
-            const { data: agents } = await supabase
-                .from('profiles')
-                .select('id, status')
-                .eq('company_id', user.company_id)
-                .eq('role', 'sales_agent');
-
             const totalAgents = agents?.length || 0;
             const activeAgents = agents?.filter(a => a.status === 'active').length || 0;
-
-            // Get products stats
-            const { data: variants } = await supabase
-                .from('variants')
-                .select(`
-                  id,
-                  main_inventory (
-                    stock,
-                    reorder_level
-                  )
-                `)
-                .eq('company_id', user.company_id);
-
             const totalProducts = variants?.length || 0;
             const lowStockProducts = variants?.filter(v => {
                 const stock = v.main_inventory?.[0]?.stock || 0;
                 const reorderLevel = v.main_inventory?.[0]?.reorder_level || 50;
                 return stock < reorderLevel;
             }).length || 0;
-
-            // Get monthly revenue for chart
-            const sixMonthsAgoIso = new Date(new Date().setMonth(new Date().getMonth() - 6)).toISOString();
-            const { data: monthlyApproved } = await supabase
-                .from('client_orders')
-                .select('total_amount, order_date')
-                .eq('company_id', user.company_id)
-                .eq('stage', 'admin_approved')
-                .gte('order_date', sixMonthsAgoIso);
 
             const revenueByMonth = (monthlyApproved || []).reduce((acc: any, o: any) => {
                 const month = new Date(o.order_date).toLocaleString('default', { month: 'short' });
@@ -144,87 +154,87 @@ export function useLeaderStats() {
                 };
             }
 
-            // Get team orders
-            const { data: orders } = await supabase
-                .from('client_orders')
-                .select('id, total_amount, status, created_at, stage, order_number, agent_id, profiles!client_orders_agent_id_fkey(full_name)')
-                .in('agent_id', teamMemberIds);
+            // Run all queries in parallel for performance
+            const [ordersResult, clientsResult, requestsResult, remittancesResult] = await Promise.all([
+                // Get team orders
+                supabase
+                    .from('client_orders')
+                    .select('id, total_amount, status, created_at, stage, order_number, agent_id, profiles!client_orders_agent_id_fkey(full_name)')
+                    .in('agent_id', teamMemberIds),
+                // Get team clients
+                supabase
+                    .from('clients')
+                    .select('id')
+                    .in('agent_id', teamMemberIds),
+                // Get pending stock requests
+                supabase
+                    .from('stock_requests')
+                    .select(`
+                    id,
+                    request_number,
+                    requested_quantity,
+                    requested_at,
+                    agent_id,
+                    variant_id,
+                    profiles!stock_requests_agent_id_fkey(full_name),
+                    variants(name, variant_type, brands(name))
+                    `)
+                    .in('agent_id', teamMemberIds)
+                    .eq('status', 'pending')
+                    .order('requested_at', { ascending: false }),
+                // Get recent remittances from sub-team (mobile sales)
+                supabase
+                    .from('remittances_log')
+                    .select(`
+                        id,
+                        remittance_id,
+                        agent_id,
+                        leader_id,
+                        total_revenue,
+                        total_orders,
+                        remittance_date,
+                        status,
+                        profiles!remittances_log_agent_id_fkey(full_name)
+                    `)
+                    .eq('leader_id', user.id)
+                    .in('agent_id', teamMemberIds)
+                    .order('remittance_date', { ascending: false })
+                    .limit(10)
+            ]);
 
-            const teamRevenue = (orders || []).reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
+            const orders = ordersResult.data || [];
+            const clients = clientsResult.data || [];
+            const pendingStockRequests = requestsResult.data || [];
+            const recentRemittances = remittancesResult.data || [];
+
+            // Process orders data
+            const teamRevenue = orders.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
 
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const todayOrdersData = (orders || []).filter((o: any) => new Date(o.created_at) >= today);
+            const todayOrdersData = orders.filter((o: any) => new Date(o.created_at) >= today);
             const todayOrders = todayOrdersData.length;
             const todayRevenue = todayOrdersData.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
 
             const weekAgo = new Date();
             weekAgo.setDate(weekAgo.getDate() - 7);
             weekAgo.setHours(0, 0, 0, 0);
-            const weekOrdersData = (orders || []).filter((o: any) => new Date(o.created_at) >= weekAgo);
+            const weekOrdersData = orders.filter((o: any) => new Date(o.created_at) >= weekAgo);
             const weekOrders = weekOrdersData.length;
             const weekRevenue = weekOrdersData.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
 
-            const pendingLeaderOrders = (orders || []).filter((o: any) =>
+            const pendingLeaderOrders = orders.filter((o: any) =>
                 o.status === 'pending' && o.stage !== 'leader_approved' && o.stage !== 'admin_approved'
             ).length;
 
-            const approvedOrdersCount = (orders || []).filter((o: any) =>
+            const approvedOrdersCount = orders.filter((o: any) =>
                 o.status === 'approved' || o.stage === 'leader_approved' || o.stage === 'admin_approved'
             ).length;
 
-            // Get team clients
-            const { data: clients } = await supabase
-                .from('clients')
-                .select('id')
-                .in('agent_id', teamMemberIds);
-
-            const teamClientsCount = clients?.length || 0;
-
-            // Get pending stock requests
-            const { data: requests } = await supabase
-                .from('stock_requests')
-                .select(`
-                id,
-                request_number,
-                requested_quantity,
-                requested_at,
-                agent_id,
-                variant_id,
-                profiles!stock_requests_agent_id_fkey(full_name),
-                variants(name, variant_type, brands(name))
-                `)
-                .in('agent_id', teamMemberIds)
-                .eq('status', 'pending')
-                .order('requested_at', { ascending: false });
-
-            const pendingStockRequests = requests || [];
-
-            // Get recent remittances from sub-team (mobile sales)
-            const { data: remittances } = await supabase
-                .from('remittances_log')
-                .select(`
-                    id,
-                    remittance_id,
-                    agent_id,
-                    leader_id,
-                    total_revenue,
-                    total_orders,
-                    remittance_date,
-                    status,
-                    profiles!remittances_log_agent_id_fkey(full_name)
-                `)
-                .eq('leader_id', user.id)
-                .in('agent_id', teamMemberIds)
-                .order('remittance_date', { ascending: false })
-                .limit(10);
-
-            const recentRemittances = remittances || [];
-
             return {
                 teamMembers: teamMemberIds.length,
-                teamOrders: orders?.length || 0,
-                teamClients: teamClientsCount,
+                teamOrders: orders.length,
+                teamClients: clients.length,
                 pendingRequests: pendingStockRequests.length,
                 teamRevenue,
                 todayOrders,
@@ -311,10 +321,10 @@ export function useAgentStats() {
                 const stage = order.stage;
                 // Include agent_pending, finance_pending, leader_approved (waiting for admin)
                 // Exclude admin_approved, leader_rejected, admin_rejected
-                return stage === 'agent_pending' || 
-                       stage === 'finance_pending' || 
-                       stage === 'leader_approved' ||
-                       (!stage && order.status === 'pending'); // Fallback for orders without stage
+                return stage === 'agent_pending' ||
+                    stage === 'finance_pending' ||
+                    stage === 'leader_approved' ||
+                    (!stage && order.status === 'pending'); // Fallback for orders without stage
             });
             const pendingSales = pendingOrders.reduce((sum, order) => {
                 const amount = Number(order.total_amount) || 0;
@@ -363,6 +373,8 @@ export function useTopPerformers() {
         enabled: !!user?.company_id,
         queryFn: async () => {
             if (!user?.company_id) return { topAgents: [], topFlavors: [] };
+
+            // First query - get approved orders
             const { data: approvedOrders, error: ordersError } = await supabase
                 .from('client_orders')
                 .select('id, agent_id, total_amount')
@@ -375,15 +387,26 @@ export function useTopPerformers() {
             const approvedOrderIds = approvedOrders.map(order => order.id);
             const agentIds = [...new Set(approvedOrders.map(order => order.agent_id).filter(Boolean))];
 
-            let topAgents: any[] = [];
-            if (agentIds.length > 0) {
-                const { data: agentProfiles } = await supabase
-                    .from('profiles')
-                    .select('id, full_name')
-                    .eq('company_id', user.company_id)
-                    .in('id', agentIds);
+            // Run agent profiles and order items queries in parallel (they don't depend on each other)
+            const [agentProfilesResult, orderItemsResult] = await Promise.all([
+                agentIds.length > 0
+                    ? supabase
+                        .from('profiles')
+                        .select('id, full_name')
+                        .eq('company_id', user.company_id)
+                        .in('id', agentIds)
+                    : Promise.resolve({ data: [] }),
+                supabase
+                    .from('client_order_items')
+                    .select('quantity, variant_id')
+                    .in('client_order_id', approvedOrderIds)
+            ]);
 
-                const agentNameMap = (agentProfiles || []).reduce((acc: any, profile: any) => {
+            // Process top agents
+            let topAgents: any[] = [];
+            const agentProfiles = agentProfilesResult.data || [];
+            if (agentIds.length > 0) {
+                const agentNameMap = agentProfiles.reduce((acc: any, profile: any) => {
                     acc[profile.id] = profile.full_name || 'Unknown';
                     return acc;
                 }, {});
@@ -400,13 +423,10 @@ export function useTopPerformers() {
                 topAgents = Object.values(agentStats).sort((a: any, b: any) => b.revenue - a.revenue).slice(0, 10);
             }
 
+            // Process top flavors
             let topFlavors: any[] = [];
-            const { data: orderItems } = await supabase
-                .from('client_order_items')
-                .select('quantity, variant_id')
-                .in('client_order_id', approvedOrderIds);
-
-            if (orderItems && orderItems.length > 0) {
+            const orderItems = orderItemsResult.data || [];
+            if (orderItems.length > 0) {
                 const variantIds = [...new Set(orderItems.map(item => item.variant_id).filter(Boolean))];
                 const { data: variants } = await supabase
                     .from('variants')
