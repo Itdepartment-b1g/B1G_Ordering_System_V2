@@ -23,7 +23,7 @@ export interface Client {
         accuracy: number;
         capturedAt: string;
     };
-    account_type?: 'Key Accounts' | 'Standard Accounts';
+    accountType?: 'Key Accounts' | 'Standard Accounts';
     category?: 'Permanently Closed' | 'Renovating' | 'Open';
     approvalStatus: 'pending' | 'approved' | 'rejected';
     approvalRequestedAt?: string;
@@ -36,6 +36,7 @@ export interface Client {
     corUrl?: string;
     tin?: string;
     contactPerson?: string;
+    taxStatus?: 'Tax on Sales' | 'Tax Exempt';
 }
 
 const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<string | null> => {
@@ -78,7 +79,7 @@ export function useMyClients() {
 
             const { data, error } = await supabase
                 .from('clients')
-                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status, cor_url, tin, contact_person, visit_logs(count)')
+                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status, cor_url, tin, contact_person, tax_status, visit_logs(count)')
                 .eq('agent_id', user.id)
                 .eq('status', 'active')
                 .order('created_at', { ascending: false });
@@ -122,7 +123,7 @@ export function useMyClients() {
                         phone: c.phone || '',
                         company: c.company || '',
                         city: c.city || '',
-                        account_type: c.account_type || 'Standard Accounts',
+                        accountType: c.account_type || 'Standard Accounts',
                         category: c.category || 'Open',
                         address: c.address || '',
                         totalOrders: ordersByClient[c.id]?.totalOrders ?? 0,
@@ -134,6 +135,7 @@ export function useMyClients() {
                         corUrl: c.cor_url,
                         tin: c.tin,
                         contactPerson: c.contact_person,
+                        taxStatus: c.tax_status,
                         location: c.location_latitude && c.location_longitude ? {
                             latitude: c.location_latitude,
                             longitude: c.location_longitude,

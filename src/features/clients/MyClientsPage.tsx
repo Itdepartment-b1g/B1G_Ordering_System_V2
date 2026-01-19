@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
@@ -191,7 +191,7 @@ export default function MyClientsPage() {
       phone: phoneWithoutPrefix,
       contact_person: client.contactPerson || '',
       tin: client.tin || '',
-      account_type: client.account_type || 'Standard Accounts',
+      account_type: client.accountType || 'Standard Accounts',
       category: client.category || 'Open'
     });
     setNewCorPhoto(null);
@@ -313,6 +313,7 @@ export default function MyClientsPage() {
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           cor_url: corUrl || null,
+          tax_status: (corUrl || null) ? 'Tax on Sales' : 'Tax Exempt' // Determine tax status based on COR presence
         } as any)
         .eq('id', editingClient.id);
 
@@ -1163,6 +1164,14 @@ export default function MyClientsPage() {
       return;
     }
 
+    // COR is now optional
+    /*
+    if (!newCorPhoto) {
+      toast({ title: 'Error', description: 'COR (Certificate of Registration) photo is required', variant: 'destructive' });
+      return;
+    }
+    */
+
     if (!user?.id) {
       toast({
         title: 'Error',
@@ -1333,6 +1342,7 @@ export default function MyClientsPage() {
           approval_status: approvalStatus,
           approval_requested_at: approvalRequestedAt,
           approval_notes: approvalNotes,
+          tax_status: corUrl ? 'Tax on Sales' : 'Tax Exempt',
           approved_at: approvedAt,
           approved_by: null,
           status: 'active'
@@ -1543,9 +1553,9 @@ export default function MyClientsPage() {
               {/* COR Upload Section */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold">
-                  COR (Certificate of Registration) *
+                  COR (Certificate of Registration) <span className="text-muted-foreground font-normal">(Optional)</span>
                 </Label>
-                <p className="text-xs text-muted-foreground">Upload PNG or JPG image (max 10MB)</p>
+                <p className="text-xs text-muted-foreground">Upload PNG or JPG image (max 10MB). Uploading a COR will set tax status to "Tax on Sales".</p>
 
                 {!newCorPhoto && (
                   <div>
@@ -1614,6 +1624,14 @@ export default function MyClientsPage() {
                   placeholder="Contact person name"
                   value={formData.contact_person}
                   onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>TIN (Tax Identification Number)</Label>
+                <Input
+                  placeholder="000-000-000-000"
+                  value={formData.tin}
+                  onChange={(e) => setFormData({ ...formData, tin: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
@@ -1979,191 +1997,222 @@ export default function MyClientsPage() {
 
       {/* View Client Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Client Details</DialogTitle>
+            <DialogTitle className="text-xl">Client Details</DialogTitle>
           </DialogHeader>
           {viewingClient && (
             <div className="space-y-6 py-4">
-              {/* Client Photo */}
-              {viewingClient.photo && (
-                <div className="flex justify-center">
-                  <div className="relative">
-                    <img
-                      src={viewingClient.photo}
-                      alt={viewingClient.name}
-                      className="w-48 h-48 rounded-lg object-cover border-4 border-primary shadow-lg"
-                    />
-                    <Badge className="absolute bottom-2 right-2 bg-primary">
-                      <Camera className="h-3 w-3 mr-1" />
-                      Verified
-                    </Badge>
-                  </div>
-                </div>
-              )}
-
-              {/* Photo Timestamp */}
-              {viewingClient.photoTimestamp && (
-                <div className="text-center text-sm text-muted-foreground">
-                  Photo captured: {new Date(viewingClient.photoTimestamp).toLocaleString()}
-                </div>
-              )}
-
-              {/* Approval Status */}
-              <div className="flex flex-col items-center gap-2">
-                <Badge variant="outline" className={`border ${getApprovalStatusBadge(viewingClient.approvalStatus).className}`}>
-                  {getApprovalStatusBadge(viewingClient.approvalStatus).label}
-                </Badge>
-                <div className="text-xs text-muted-foreground text-center space-y-1">
-                  {viewingClient.approvalStatus === 'pending' && viewingClient.approvalRequestedAt && (
-                    <p>Approval requested on {new Date(viewingClient.approvalRequestedAt).toLocaleString()}</p>
-                  )}
-                  {viewingClient.approvalStatus === 'approved' && viewingClient.approvedAt && (
-                    <p>Approved on {new Date(viewingClient.approvedAt).toLocaleString()}</p>
-                  )}
-                  {viewingClient.approvalStatus === 'rejected' && viewingClient.approvalNotes && (
-                    <p className="text-destructive">Reason: {viewingClient.approvalNotes}</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Client Information */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Client Name</Label>
-                  <p className="font-semibold text-lg">{viewingClient.name}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Shop Name</Label>
-                  <p className="font-semibold text-lg">{viewingClient.company || 'N/A'}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Email</Label>
-                  <p className="font-medium">{viewingClient.email}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Phone</Label>
-                  <p className="font-medium">{viewingClient.phone || 'N/A'}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">City</Label>
-                  <p className="font-medium">{viewingClient.city || 'N/A'}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Total Orders</Label>
-                  <p className="font-medium">{viewingClient.totalOrders}</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Total Visits</Label>
-                  <div className="flex items-center gap-1 font-medium text-purple-600">
-                    <MapPin className="h-4 w-4" />
-                    {viewingClient.visitCount}
-                  </div>
-                </div>
-              </div>
-
-              {/* Compliance Checklist */}
-              <div className="space-y-3">
-                <Label className="text-base font-semibold">Compliance Status</Label>
-                <div className="grid grid-cols-1 gap-4">
-                  {/* COR Check */}
-                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.corUrl ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${viewingClient.corUrl ? 'bg-green-100' : 'bg-red-100'}`}>
-                        {viewingClient.corUrl ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+              {/* Top Section: Photo & Basic Info */}
+              <div className="flex flex-col md:flex-row gap-6">
+                {/* Photo Column */}
+                <div className="w-full md:w-1/3 space-y-3">
+                  <div className="relative aspect-square w-full rounded-xl overflow-hidden border-2 border-gray-100 bg-gray-50 flex items-center justify-center shadow-sm">
+                    {viewingClient.photo ? (
+                      <img
+                        src={viewingClient.photo}
+                        alt={viewingClient.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="text-center p-4 text-muted-foreground">
+                        <Camera className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        <p className="text-xs">No photo available</p>
                       </div>
-                      <div>
-                        <p className={`font-medium ${viewingClient.corUrl ? 'text-green-900' : 'text-red-900'}`}>COR (Certificate of Registration)</p>
-                        <p className="text-xs text-muted-foreground">{viewingClient.corUrl ? 'Uploaded & Verified' : 'Missing Document'}</p>
-                      </div>
-                    </div>
-                    {viewingClient.corUrl && (
-                      <Button variant="ghost" size="sm" onClick={() => window.open(viewingClient.corUrl, '_blank')}>
-                        <Eye className="h-4 w-4" />
-                      </Button>
                     )}
-                  </div>
 
-                  {/* TIN Check */}
-                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.tin ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${viewingClient.tin ? 'bg-green-100' : 'bg-red-100'}`}>
-                        {viewingClient.tin ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
-                      </div>
-                      <div>
-                        <p className={`font-medium ${viewingClient.tin ? 'text-green-900' : 'text-red-900'}`}>TIN (Tax ID Number)</p>
-                        <p className="text-xs text-muted-foreground">{viewingClient.tin ? viewingClient.tin : 'Missing TIN'}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Address */}
-              {viewingClient.address && (
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Address</Label>
-                  <p className="font-medium">{viewingClient.address}</p>
-                </div>
-              )}
-
-              {/* Location Information */}
-              {viewingClient.location && (
-                <div className="space-y-3 p-4 bg-muted rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <MapPin className="h-5 w-5 text-primary" />
-                    <Label className="text-lg">Location Verification</Label>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Latitude:</span>
-                      <p className="font-mono font-medium">{viewingClient.location.latitude.toFixed(6)}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Longitude:</span>
-                      <p className="font-mono font-medium">{viewingClient.location.longitude.toFixed(6)}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Accuracy:</span>
-                      <Badge
-                        variant="outline"
-                        className={`${getAccuracyBadge(viewingClient.location.accuracy).color}`}
-                      >
-                        {getAccuracyBadge(viewingClient.location.accuracy).icon} ±{Math.round(viewingClient.location.accuracy)}m ({getAccuracyBadge(viewingClient.location.accuracy).label})
+                    {/* Status Badge Overlay */}
+                    <div className="absolute top-2 right-2">
+                      <Badge variant="outline" className={`bg-white/90 backdrop-blur border shadow-sm ${getApprovalStatusBadge(viewingClient.approvalStatus).className}`}>
+                        {getApprovalStatusBadge(viewingClient.approvalStatus).label}
                       </Badge>
                     </div>
-                    <div>
-                      <span className="text-muted-foreground">Captured:</span>
-                      <p className="text-sm">{new Date(viewingClient.location.capturedAt).toLocaleString()}</p>
+                  </div>
+
+                  {viewingClient.photoTimestamp && (
+                    <div className="text-center text-xs text-muted-foreground bg-gray-50 p-2 rounded-lg border">
+                      Captured: {new Date(viewingClient.photoTimestamp).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+
+                {/* Basic Info Column */}
+                <div className="flex-1 space-y-6">
+                  <div>
+                    <h3 className="text-2xl font-bold text-gray-900">{viewingClient.name}</h3>
+                    <div className="flex items-center gap-2 text-muted-foreground mt-1">
+                      <Building className="h-4 w-4" />
+                      <span className="font-medium">{viewingClient.company || 'No Shop Name'}</span>
                     </div>
                   </div>
-                  <div className="pt-2">
-                    <a
-                      href={`https://www.google.com/maps?q=${viewingClient.location.latitude},${viewingClient.location.longitude}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline text-sm font-medium"
-                    >
-                      📍 View on Google Maps →
-                    </a>
-                  </div>
-                </div>
-              )}
 
-              {/* Order History */}
-              <div className="space-y-2 p-4 bg-primary/5 rounded-lg">
-                <Label className="text-lg">Order History</Label>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <span className="text-muted-foreground text-sm">Total Orders:</span>
-                    <p className="font-bold text-xl text-primary">{viewingClient.totalOrders}</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-gray-50 p-3 rounded-lg border">
+                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Account Type</span>
+                      <div className="mt-1">
+                        {viewingClient.accountType === 'Key Accounts' ? (
+                          <Badge className="bg-purple-100 text-purple-700 border-purple-200 hover:bg-purple-100">
+                            <span className="mr-1">⭐</span> Key Account
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                            Standard Account
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg border">
+                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Category</span>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`w-2 h-2 rounded-full ${viewingClient.category === 'Open' ? 'bg-green-500' :
+                          viewingClient.category === 'Renovating' ? 'bg-yellow-500' : 'bg-red-500'
+                          }`} />
+                        <p className="font-semibold text-gray-900">{viewingClient.category}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground text-sm">Last Order:</span>
-                    <p className="font-medium">{new Date(viewingClient.lastOrder).toLocaleDateString()}</p>
+
+                  {/* Quick Stats */}
+                  <div className="flex gap-4 border-t pt-4">
+                    <div className="flex-1">
+                      <p className="text-xs text-muted-foreground">Total Orders</p>
+                      <p className="text-2xl font-bold text-primary">{viewingClient.totalOrders}</p>
+                    </div>
+                    <div className="w-px bg-border" />
+                    <div className="flex-1">
+                      <p className="text-xs text-muted-foreground">Total Visits</p>
+                      <p className="text-2xl font-bold text-purple-600">{viewingClient.visitCount}</p>
+                    </div>
                   </div>
                 </div>
               </div>
+
+              <div className="h-px bg-border" />
+
+              {/* Information Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                {/* Contact Information */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-sm flex items-center gap-2 text-primary">
+                    <span className="w-1 h-4 bg-primary rounded-full"></span>
+                    Contact Details
+                  </h4>
+                  <div className="space-y-3 bg-gray-50/50 p-4 rounded-xl border">
+                    <div className="grid grid-cols-[24px_1fr] gap-2 items-start">
+                      <User className="h-4 w-4 text-muted-foreground mt-0.5" />
+                      <div>
+                        <span className="text-xs text-muted-foreground block">Contact Person</span>
+                        <span className="font-medium">{viewingClient.contactPerson || 'N/A'}</span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-[24px_1fr] gap-2 items-start">
+                      <Mail className="h-4 w-4 text-muted-foreground mt-0.5" />
+                      <div>
+                        <span className="text-xs text-muted-foreground block">Email Address</span>
+                        <span className="font-medium break-all">{viewingClient.email}</span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-[24px_1fr] gap-2 items-start">
+                      <Phone className="h-4 w-4 text-muted-foreground mt-0.5" />
+                      <div>
+                        <span className="text-xs text-muted-foreground block">Phone Number</span>
+                        <span className="font-medium">{viewingClient.phone || 'N/A'}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Legal & Compliance */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-sm flex items-center gap-2 text-primary">
+                    <span className="w-1 h-4 bg-primary rounded-full"></span>
+                    Legal & Compliance
+                  </h4>
+                  <div className="space-y-3 bg-gray-50/50 p-4 rounded-xl border">
+                    <div className="grid grid-cols-[24px_1fr] gap-2 items-start">
+                      <FileText className="h-4 w-4 text-muted-foreground mt-0.5" />
+                      <div>
+                        <span className="text-xs text-muted-foreground block">TIN (Tax ID)</span>
+                        <span className="font-mono font-medium">{viewingClient.tin || 'N/A'}</span>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-dashed my-2" />
+
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-muted-foreground font-medium uppercase">COR Document</span>
+                        {viewingClient.corUrl ? (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[10px]">Verified</Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px]">Missing</Badge>
+                        )}
+                      </div>
+
+                      {viewingClient.corUrl ? (
+                        <div className="flex items-center gap-3 p-2 bg-white rounded-lg border">
+                          <div className="h-10 w-10 bg-gray-100 rounded flex items-center justify-center shrink-0">
+                            <FileText className="h-5 w-5 text-gray-500" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">Certificate of Org.</p>
+                            <p className="text-xs text-muted-foreground">View document</p>
+                          </div>
+                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => window.open(viewingClient.corUrl, '_blank')}>
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="p-3 text-center border-2 border-dashed rounded-lg bg-gray-50 text-muted-foreground text-xs">
+                          No document uploaded
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Location Section */}
+              {viewingClient.location && (
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-sm flex items-center gap-2 text-primary">
+                    <span className="w-1 h-4 bg-primary rounded-full"></span>
+                    Location Data
+                  </h4>
+                  <div className="bg-muted/50 p-4 rounded-xl border space-y-3">
+                    <div className="flex items-start gap-3">
+                      <MapPin className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-medium text-sm leading-tight">{viewingClient.address}</p>
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          <span>{viewingClient.city || 'City not detailed'}</span>
+                          <span>•</span>
+                          <span>Lat: {viewingClient.location.latitude.toFixed(6)}</span>
+                          <span>•</span>
+                          <span>Lon: {viewingClient.location.longitude.toFixed(6)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs pt-2 border-t border-dashed border-gray-300">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className={getAccuracyBadge(viewingClient.location.accuracy).color}>
+                          {getAccuracyBadge(viewingClient.location.accuracy).icon} ±{Math.round(viewingClient.location.accuracy)}m Accuracy
+                        </Badge>
+                      </div>
+                      <a
+                        href={`https://www.google.com/maps?q=${viewingClient.location.latitude},${viewingClient.location.longitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline font-medium flex items-center gap-1"
+                      >
+                        Open Maps <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
@@ -2182,127 +2231,305 @@ export default function MyClientsPage() {
             <DialogTitle className="text-lg sm:text-xl">Edit Client</DialogTitle>
           </DialogHeader>
           {editingClient && (
-            <div className="space-y-4 py-4">
-              {/* Photo Section */}
-              <div className="space-y-2">
-                <Label className="text-sm font-semibold">Client Photo</Label>
-                <p className="text-xs text-muted-foreground">Update, replace, or remove the client photo</p>
+            <div className="space-y-6 py-4">
+              {/* Top Section: Photo & Basic Info */}
+              <div className="flex flex-col md:flex-row gap-6">
+                {/* Photo Column */}
+                <div className="w-full md:w-1/3 space-y-3">
+                  <Label className="text-sm font-semibold">Client Photo</Label>
 
-                {/* Current Photo Display */}
-                {editPhoto && !isEditCameraOpen && (
-                  <div className="relative">
-                    <img
-                      src={editPhoto}
-                      alt="Client preview"
-                      className="w-full h-64 object-cover rounded-lg border"
-                    />
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="icon"
-                      className="absolute top-2 right-2"
-                      onClick={removeEditPhoto}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                    <div className="mt-2 text-xs text-green-600 font-medium">
-                      ✓ New photo selected
-                    </div>
-                  </div>
-                )}
-
-                {/* Original Photo Display */}
-                {!editPhoto && editingClient.photo && !isEditCameraOpen && (
-                  <div className="relative">
-                    <img
-                      src={editingClient.photo}
-                      alt="Current client photo"
-                      className="w-full h-64 object-cover rounded-lg border"
-                    />
-                    <div className="mt-2 text-xs text-muted-foreground">
-                      Current photo
-                    </div>
-                  </div>
-                )}
-
-                {/* Camera Interface */}
-                {isEditCameraOpen && (
-                  <div className="space-y-2">
-                    <div className="relative rounded-lg overflow-hidden bg-black">
-                      <video
-                        ref={editVideoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-64 object-cover"
-                        onLoadedMetadata={() => {
-                          if (editVideoRef.current) {
-                            editVideoRef.current.play().catch(err => {
-                              console.error('Error playing video:', err);
-                            });
-                            setIsEditCameraLoading(false);
-                          }
-                        }}
-                      />
-                      {isEditCameraLoading && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                          <div className="text-center text-white">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
-                            <p className="text-sm">Initializing camera...</p>
-                          </div>
+                  {/* Photo Display Area */}
+                  <div className="relative aspect-square w-full rounded-xl overflow-hidden border-2 border-dashed border-gray-200 bg-gray-50 flex items-center justify-center group hover:border-primary/50 transition-colors">
+                    {/* Camera View */}
+                    {isEditCameraOpen ? (
+                      <div className="absolute inset-0 bg-black">
+                        <video
+                          ref={editVideoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-full object-cover"
+                          onLoadedMetadata={() => {
+                            if (editVideoRef.current) {
+                              editVideoRef.current.play().catch(err => console.error(err));
+                              setIsEditCameraLoading(false);
+                            }
+                          }}
+                        />
+                        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2 px-4">
+                          <Button
+                            size="sm"
+                            onClick={captureEditPhoto}
+                            disabled={isEditCameraLoading}
+                            className="flex-1 bg-white text-black hover:bg-white/90"
+                          >
+                            Capture
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={closeEditCamera}
+                            className="flex-1"
+                          >
+                            Cancel
+                          </Button>
                         </div>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
+                      </div>
+                    ) : (
+                      // Image Display
+                      (editPhoto || editingClient.photo) ? (
+                        <>
+                          <img
+                            src={editPhoto || editingClient.photo}
+                            alt="Client"
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute top-2 right-2 flex gap-1 bg-black/50 p-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={removeEditPhoto}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          {editPhoto && (
+                            <div className="absolute bottom-2 left-2 bg-green-500 text-white text-[10px] px-2 py-0.5 rounded-full font-medium">
+                              New
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-center p-4 text-muted-foreground">
+                          <Camera className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                          <p className="text-xs">No photo available</p>
+                        </div>
+                      )
+                    )}
+                  </div>
+
+                  {/* Photo Actions */}
+                  {!isEditCameraOpen && (
+                    <div className="grid grid-cols-2 gap-2">
                       <Button
                         type="button"
-                        onClick={captureEditPhoto}
-                        className="flex-1"
-                        disabled={isEditCameraLoading}
+                        variant="outline"
+                        size="sm"
+                        onClick={openEditCamera}
+                        className="text-xs"
                       >
-                        <Camera className="h-4 w-4 mr-2" />
-                        Capture Photo
+                        <Camera className="h-3 w-3 mr-1.5" />
+                        Camera
                       </Button>
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={closeEditCamera}
+                        size="sm"
+                        onClick={() => editFileInputRef.current?.click()}
+                        className="text-xs"
                       >
-                        Cancel
+                        <Upload className="h-3 w-3 mr-1.5" />
+                        Upload
                       </Button>
-                      <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
+                      <input
+                        ref={editFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleEditFileUpload}
+                        className="hidden"
+                      />
                     </div>
+                  )}
+                </div>
 
-                    {/* COR Upload Section for Edit */}
+                {/* Basic Info Column */}
+                <div className="flex-1 space-y-4">
+                  <div className="grid grid-cols-1 gap-4">
                     <div className="space-y-2">
-                      <Label className="text-sm font-semibold">
-                        COR (Certificate of Registration)
-                      </Label>
-                      <p className="text-xs text-muted-foreground">Update COR Image (PNG or JPG, max 10MB)</p>
+                      <Label>Trade Name</Label>
+                      <Input
+                        placeholder="Enter trade name"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        className="h-10"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Shop Name</Label>
+                      <Input
+                        placeholder="Shop name"
+                        value={editForm.company}
+                        onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
+                        className="h-10"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Type Of Account</Label>
+                        <Select
+                          value={editForm.account_type}
+                          onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                            setEditForm({ ...editForm, account_type: value })
+                          }
+                        >
+                          <SelectTrigger className="h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                            <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Category</Label>
+                        <Select
+                          value={editForm.category}
+                          onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
+                            setEditForm({ ...editForm, category: value })
+                          }
+                        >
+                          <SelectTrigger className="h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Open">Open</SelectItem>
+                            <SelectItem value="Renovating">Renovating</SelectItem>
+                            <SelectItem value="Permanently Closed">Closed</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-                      {/* Show existing COR if present and no new COR selected */}
-                      {!newCorPhoto && editingClient.corUrl && (
-                        <div className="relative mb-2">
-                          <div className="text-xs text-muted-foreground mb-1">Current COR:</div>
-                          <img
-                            src={editingClient.corUrl}
-                            alt="Current COR"
-                            className="w-full h-32 object-contain rounded-lg border bg-gray-50"
+              <div className="h-px bg-border" />
+
+              {/* Contact & Legal Section */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Contact Info */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-sm flex items-center gap-2 text-primary">
+                    <span className="w-1 h-4 bg-primary rounded-full"></span>
+                    Contact Information
+                  </h4>
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label>Contact Person</Label>
+                      <Input
+                        placeholder="Name of contact"
+                        value={editForm.contact_person}
+                        onChange={(e) => setEditForm({ ...editForm, contact_person: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Email Address</Label>
+                      <Input
+                        type="email"
+                        placeholder="client@company.com"
+                        value={editForm.email}
+                        onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Phone Number</Label>
+                      <div className="flex gap-2">
+                        <div className="w-16 shrink-0">
+                          <Input
+                            value="+63"
+                            disabled
+                            className="bg-muted text-center font-semibold"
                           />
                         </div>
-                      )}
+                        <Input
+                          placeholder="9XX-XXX-XXXX"
+                          value={editForm.phone}
+                          onChange={(e) => handlePhoneChange(e.target.value, 'edit')}
+                          maxLength={12}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-                      {!newCorPhoto && (
-                        <div>
+                {/* Legal & Documents */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-sm flex items-center gap-2 text-primary">
+                    <span className="w-1 h-4 bg-primary rounded-full"></span>
+                    Legal & Documents
+                  </h4>
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label>TIN (Tax Identification Number)</Label>
+                      <Input
+                        placeholder="000-000-000-000"
+                        value={editForm.tin}
+                        onChange={(e) => setEditForm({ ...editForm, tin: e.target.value })}
+                        className="font-mono text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="flex justify-between items-center">
+                        <span>COR Document</span>
+                        <span className="text-xs text-muted-foreground font-normal">(Optional)</span>
+                      </Label>
+
+                      <div className="border rounded-lg p-3 bg-gray-50/50 space-y-3">
+                        {/* COR Status/Preview */}
+                        <div className="flex items-center gap-3">
+                          {newCorPhoto ? (
+                            <div className="relative h-16 w-16 shrink-0 rounded-md overflow-hidden border">
+                              <img src={newCorPhoto} alt="New COR" className="h-full w-full object-cover" />
+                              <div className="absolute inset-0 bg-green-500/20 ring-1 ring-inset ring-green-500/50" />
+                            </div>
+                          ) : editingClient.corUrl ? (
+                            <div className="relative h-16 w-16 shrink-0 rounded-md overflow-hidden border">
+                              <img src={editingClient.corUrl} alt="Current COR" className="h-full w-full object-cover opacity-80" />
+                            </div>
+                          ) : (
+                            <div className="h-16 w-16 shrink-0 rounded-md border border-dashed flex items-center justify-center bg-white text-muted-foreground">
+                              <Upload className="h-6 w-6 opacity-30" />
+                            </div>
+                          )}
+
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {newCorPhoto ? 'New Document Selected' : editingClient.corUrl ? 'COR on File' : 'No Document'}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {newCorPhoto ? 'Will replace existing' : editingClient.corUrl ? 'View or replace below' : 'Upload PNG/JPG (Max 10MB)'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* COR Actions */}
+                        <div className="grid grid-cols-2 gap-2">
                           <Button
                             type="button"
                             variant="outline"
+                            size="sm"
+                            className="w-full text-xs h-8"
                             onClick={() => corFileInputRef.current?.click()}
-                            className="w-full"
                           >
-                            <Upload className="h-4 w-4 mr-2" />
-                            {editingClient.corUrl ? "Replace COR Image" : "Upload COR Image"}
+                            <Upload className="h-3 w-3 mr-1.5" />
+                            {editingClient.corUrl || newCorPhoto ? "Replace" : "Upload"}
                           </Button>
+                          {newCorPhoto && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="w-full text-xs h-8 text-destructive hover:text-destructive"
+                              onClick={() => setNewCorPhoto(null)}
+                            >
+                              <X className="h-3 w-3 mr-1.5" />
+                              Clear New
+                            </Button>
+                          )}
                           <input
                             ref={corFileInputRef}
                             type="file"
@@ -2311,178 +2538,18 @@ export default function MyClientsPage() {
                             className="hidden"
                           />
                         </div>
-                      )}
-
-                      {newCorPhoto && (
-                        <div className="relative">
-                          <img
-                            src={newCorPhoto}
-                            alt="New COR preview"
-                            className="w-full h-48 object-contain rounded-lg border bg-gray-50"
-                          />
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            size="icon"
-                            className="absolute top-2 right-2"
-                            onClick={() => setNewCorPhoto(null)}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                          <div className="mt-2 text-xs text-green-600 font-medium">
-                            ✓ New COR selected
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Contact Person</Label>
-                      <Input
-                        placeholder="Contact person name"
-                        value={editForm.contact_person}
-                        onChange={(e) => setEditForm({ ...editForm, contact_person: e.target.value })}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>TIN (Tax Identification Number)</Label>
-                      <Input
-                        placeholder="XXX-XXX-XXX-XXX"
-                        value={editForm.tin}
-                        onChange={(e) => setEditForm({ ...editForm, tin: e.target.value })}
-                      />
+                      </div>
                     </div>
                   </div>
-                )}
-
-                {/* Photo Action Buttons */}
-                {!isEditCameraOpen && (
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={openEditCamera}
-                      className="flex-1"
-                      size="sm"
-                    >
-                      <Camera className="h-4 w-4 mr-2" />
-                      Take New Photo
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => editFileInputRef.current?.click()}
-                      className="flex-1"
-                      size="sm"
-                    >
-                      <Upload className="h-4 w-4 mr-2" />
-                      Upload Photo
-                    </Button>
-                    {(editPhoto || editingClient.photo) && (
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        onClick={removeEditPhoto}
-                        className="sm:flex-shrink-0"
-                        size="sm"
-                      >
-                        <X className="h-4 w-4 mr-2" />
-                        Remove
-                      </Button>
-                    )}
-                    <input
-                      ref={editFileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleEditFileUpload}
-                      className="hidden"
-                    />
-                  </div>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>Trade Name</Label>
-                <Input
-                  placeholder="Enter trade name"
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Shop Name</Label>
-                <Input
-                  placeholder="Shop name"
-                  value={editForm.company}
-                  onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Email</Label>
-                <Input
-                  type="email"
-                  placeholder="client@company.com"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Phone Number</Label>
-                <div className="flex gap-2">
-                  <div className="w-16">
-                    <Input
-                      value="+63"
-                      disabled
-                      className="bg-muted text-center font-semibold"
-                    />
-                  </div>
-                  <Input
-                    placeholder="9XX-XXX-XXXX"
-                    value={editForm.phone}
-                    onChange={(e) => handlePhoneChange(e.target.value, 'edit')}
-                    maxLength={12}
-                  />
                 </div>
-                <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
               </div>
-              <div className="space-y-2">
-                <Label>Type Of Account</Label>
-                <Select
-                  value={editForm.account_type}
-                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                    setEditForm({ ...editForm, account_type: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                    <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                  </SelectContent>
-                </Select>
+
+              {/* Action Bar */}
+              <div className="pt-2 flex justify-end gap-3">
+                <Button className="w-full sm:w-auto min-w-[120px]" onClick={handleSaveEdit}>
+                  Save Changes
+                </Button>
               </div>
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <Select
-                  value={editForm.category}
-                  onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
-                    setEditForm({ ...editForm, category: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Open">Open</SelectItem>
-                    <SelectItem value="Renovating">Renovating</SelectItem>
-                    <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button className="w-full sm:w-auto sm:ml-auto" onClick={handleSaveEdit}>
-                Save Changes
-              </Button>
             </div>
           )}
         </DialogContent>

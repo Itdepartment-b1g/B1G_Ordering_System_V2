@@ -65,6 +65,7 @@ interface Client {
   approved_at?: string;
   approved_by?: string | null;
   visit_count: number; // Added
+  tax_status?: 'Tax on Sales' | 'Tax Exempt';
 }
 
 interface Agent {
@@ -522,6 +523,7 @@ export default function ClientsPage() {
         approved_at: client.approved_at || undefined,
         approved_by: client.approved_by || null,
         visit_count: client.visit_logs?.[0]?.count || 0, // Map count
+        tax_status: client.tax_status,
       }));
 
       setClients(formattedClients);
@@ -722,6 +724,7 @@ export default function ClientsPage() {
           approved_at: approvedAt,
           approved_by: isAdminUser && approvedAt ? user.id : null,
           agent_id: agentId,
+          tax_status: 'Tax Exempt',
         };
       });
 
@@ -1005,6 +1008,10 @@ export default function ClientsPage() {
       if (editCorPhoto && corUrl) {
         updateData.cor_url = corUrl;
       }
+
+      // Update tax_status based on COR presence (new or existing)
+      const finalCorUrl = editCorPhoto ? corUrl : editingClient.cor_url;
+      updateData.tax_status = finalCorUrl ? 'Tax on Sales' : 'Tax Exempt';
 
       const { error } = await supabase
         .from('clients')
@@ -2429,8 +2436,8 @@ export default function ClientsPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               {isAdmin && (
-                <DropdownMenuItem 
-                  onClick={handleExportToExcel} 
+                <DropdownMenuItem
+                  onClick={handleExportToExcel}
                   disabled={exporting || clients.length === 0}
                 >
                   {exporting ? (
@@ -2485,405 +2492,405 @@ export default function ClientsPage() {
 
       {/* Add Client Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={(open) => {
-            setAddDialogOpen(open);
-            if (open) {
-              startLocationPrewarm();
-            } else {
-              resetAddForm();
-            }
-          }}>
-            <DialogContent className="max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Add New Client</DialogTitle>
-                <DialogDescription>
-                  Create a new client in the system. {isAdmin ? 'This client will have no agent assigned until transferred to an agent.' : 'This client will be assigned to you.'}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                {/* Photo Section */}
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Client Photo / Proof of Identity *</Label>
-                  <p className="text-xs text-muted-foreground">Required for verification - Take a photo or upload an existing one</p>
+        setAddDialogOpen(open);
+        if (open) {
+          startLocationPrewarm();
+        } else {
+          resetAddForm();
+        }
+      }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add New Client</DialogTitle>
+            <DialogDescription>
+              Create a new client in the system. {isAdmin ? 'This client will have no agent assigned until transferred to an agent.' : 'This client will be assigned to you.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Photo Section */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Client Photo / Proof of Identity *</Label>
+              <p className="text-xs text-muted-foreground">Required for verification - Take a photo or upload an existing one</p>
 
-                  {!newClientPhoto && !isCameraOpen && (
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={openCamera}
-                        className="flex-1"
-                      >
-                        <Camera className="h-4 w-4 mr-2" />
-                        Open Camera
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="flex-1"
-                      >
-                        <Upload className="h-4 w-4 mr-2" />
-                        Upload Photo
-                      </Button>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
-                    </div>
-                  )}
-
-                  {isCameraOpen && (
-                    <div className="space-y-2">
-                      <div className="relative rounded-lg overflow-hidden bg-black">
-                        <video
-                          ref={videoRef}
-                          autoPlay
-                          playsInline
-                          muted
-                          className="w-full h-64 object-cover"
-                          onLoadedMetadata={() => {
-                            // Ensure video plays once metadata is loaded
-                            if (videoRef.current) {
-                              videoRef.current.play().catch(err => {
-                                console.error('Error playing video:', err);
-                              });
-                              setIsCameraLoading(false);
-                            }
-                          }}
-                        />
-                        {isCameraLoading && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                            <div className="text-center text-white">
-                              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
-                              <p className="text-sm">Initializing camera...</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          onClick={capturePhoto}
-                          className="flex-1"
-                          disabled={isCameraLoading}
-                        >
-                          <Camera className="h-4 w-4 mr-2" />
-                          Capture Photo
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={closeCamera}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {newClientPhoto && !isCameraOpen && (
-                    <div className="relative">
-                      <img
-                        src={newClientPhoto}
-                        alt="Client preview"
-                        className="w-full h-64 object-cover rounded-lg border"
-                      />
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="icon"
-                        className="absolute top-2 right-2"
-                        onClick={removePhoto}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                      <div className="mt-2 text-xs text-green-600 font-medium">
-                        ✓ Photo captured: {new Date().toLocaleString()}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {/* COR Upload Section */}
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">
-                    COR (Certificate of Registration) *
-                  </Label>
-                  <p className="text-xs text-muted-foreground">Upload PNG or JPG image (max 10MB)</p>
-
-                  {!newCorPhoto && (
-                    <div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => corFileInputRef.current?.click()}
-                        className="w-full"
-                      >
-                        <Upload className="h-4 w-4 mr-2" />
-                        Upload COR Image
-                      </Button>
-                      <input
-                        ref={corFileInputRef}
-                        type="file"
-                        accept="image/png,image/jpeg,image/jpg"
-                        onChange={handleCorFileUpload}
-                        className="hidden"
-                      />
-                    </div>
-                  )}
-
-                  {newCorPhoto && (
-                    <div className="relative">
-                      <img
-                        src={newCorPhoto}
-                        alt="COR preview"
-                        className="w-full h-48 object-contain rounded-lg border bg-gray-50"
-                      />
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="icon"
-                        className="absolute top-2 right-2"
-                        onClick={() => setNewCorPhoto(null)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                      <div className="mt-2 text-xs text-green-600 font-medium">
-                        ✓ COR uploaded successfully
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {/* Client Information Fields */}
-                <div className="space-y-2">
-                  <Label>Trade Name *</Label>
-                  <Input
-                    placeholder="Enter client name"
-                    value={addForm.name}
-                    onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
+              {!newClientPhoto && !isCameraOpen && (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={openCamera}
+                    className="flex-1"
+                  >
+                    <Camera className="h-4 w-4 mr-2" />
+                    Open Camera
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1"
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Upload Photo
+                  </Button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileUpload}
+                    className="hidden"
                   />
                 </div>
+              )}
+
+              {isCameraOpen && (
                 <div className="space-y-2">
-                  <Label>Shop Name</Label>
-                  <Input
-                    placeholder="Shop Name"
-                    value={addForm.company}
-                    onChange={(e) => setAddForm({ ...addForm, company: e.target.value })}
-                  />
-                </div>
-                {/* Contact Person Field */}
-                <div className="space-y-2">
-                  <Label>Contact Person</Label>
-                  <Input
-                    placeholder="Contact person name"
-                    value={addForm.contact_person}
-                    onChange={(e) => setAddForm({ ...addForm, contact_person: e.target.value })}
-                  />
-                  <p className="text-xs text-muted-foreground">Name of the contact person for this client</p>
-                </div>
-                <div className="space-y-2">
-                  <Label>Email *</Label>
-                  <Input
-                    type="email"
-                    placeholder="client@company.com"
-                    value={addForm.email}
-                    onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Phone Number</Label>
-                  <div className="flex gap-2">
-                    <div className="w-16">
-                      <Input
-                        value="+63"
-                        disabled
-                        className="bg-muted text-center font-semibold"
-                      />
-                    </div>
-                    <Input
-                      placeholder="9XX-XXX-XXXX"
-                      value={addForm.phone}
-                      onChange={(e) => handlePhoneChange(e.target.value, 'add')}
-                      maxLength={12}
+                  <div className="relative rounded-lg overflow-hidden bg-black">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-64 object-cover"
+                      onLoadedMetadata={() => {
+                        // Ensure video plays once metadata is loaded
+                        if (videoRef.current) {
+                          videoRef.current.play().catch(err => {
+                            console.error('Error playing video:', err);
+                          });
+                          setIsCameraLoading(false);
+                        }
+                      }}
                     />
-                  </div>
-                  <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
-                </div>
-
-                {/* TIN Field */}
-                <div className="space-y-2">
-                  <Label>TIN (Tax Identification Number)</Label>
-                  <Input
-                    placeholder="XXX-XXX-XXX-XXX"
-                    value={addForm.tin}
-                    onChange={(e) => setAddForm({ ...addForm, tin: e.target.value })}
-                  />
-                  <p className="text-xs text-muted-foreground">Tax Identification Number</p>
-                </div>
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-2">
-                    Address
-                    {isPrewarmingLocation && (
-                      <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                        <div className="animate-pulse">🌍 Pre-warming GPS...</div>
-                      </Badge>
-                    )}
-                    {capturedLocation && (
-                      <Badge
-                        variant="outline"
-                        className={`text-xs ${getAccuracyBadge(capturedLocation.accuracy).color}`}
-                      >
-                        <MapPin className="h-3 w-3 mr-1" />
-                        {getAccuracyBadge(capturedLocation.accuracy).icon} {getAccuracyBadge(capturedLocation.accuracy).label} (±{Math.round(capturedLocation.accuracy)}m)
-                      </Badge>
-                    )}
-                  </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder={capturedLocation ? "Auto-filled from location" : "Address will be auto-filled when location is captured"}
-                      value={addForm.address}
-                      disabled
-                      readOnly
-                      className={`bg-muted cursor-not-allowed ${capturedLocation ? (
-                        capturedLocation.accuracy <= 100 ? "border-green-300" :
-                          capturedLocation.accuracy <= 500 ? "border-yellow-300" : "border-red-300"
-                      ) : ""}`}
-                    />
-                    {capturedLocation && capturedLocation.accuracy > 100 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={retryLocation}
-                        title="Retry for better accuracy"
-                        className="shrink-0"
-                      >
-                        <RefreshCw className="h-4 w-4" />
-                      </Button>
+                    {isCameraLoading && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                        <div className="text-center text-white">
+                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
+                          <p className="text-sm">Initializing camera...</p>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  {capturedLocation && (
-                    <div className="text-xs text-muted-foreground space-y-1">
-                      <p>📍 Lat: {capturedLocation.latitude.toFixed(6)}, Lon: {capturedLocation.longitude.toFixed(6)}</p>
-                      {capturedLocation.accuracy > 100 && (
-                        <p className="text-yellow-600 font-medium">
-                          ⚠ Low accuracy detected. Click retry button for better location.
-                        </p>
-                      )}
-                    </div>
-                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="flex-1"
+                      disabled={isCameraLoading}
+                    >
+                      <Camera className="h-4 w-4 mr-2" />
+                      Capture Photo
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={closeCamera}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>
-                    City
-                    <span className="text-xs text-muted-foreground ml-2">(Auto-filled from location)</span>
-                    {!isAdmin && agentCities.length > 0 && (
-                      <span className="text-xs text-muted-foreground ml-2">
-                        (Must be: {agentCities.join(', ')})
-                      </span>
-                    )}
-                  </Label>
+              )}
+
+              {newClientPhoto && !isCameraOpen && (
+                <div className="relative">
+                  <img
+                    src={newClientPhoto}
+                    alt="Client preview"
+                    className="w-full h-64 object-cover rounded-lg border"
+                  />
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="icon"
+                    className="absolute top-2 right-2"
+                    onClick={removePhoto}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                  <div className="mt-2 text-xs text-green-600 font-medium">
+                    ✓ Photo captured: {new Date().toLocaleString()}
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* COR Upload Section */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">
+                COR (Certificate of Registration) *
+              </Label>
+              <p className="text-xs text-muted-foreground">Upload PNG or JPG image (max 10MB)</p>
+
+              {!newCorPhoto && (
+                <div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => corFileInputRef.current?.click()}
+                    className="w-full"
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Upload COR Image
+                  </Button>
+                  <input
+                    ref={corFileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg"
+                    onChange={handleCorFileUpload}
+                    className="hidden"
+                  />
+                </div>
+              )}
+
+              {newCorPhoto && (
+                <div className="relative">
+                  <img
+                    src={newCorPhoto}
+                    alt="COR preview"
+                    className="w-full h-48 object-contain rounded-lg border bg-gray-50"
+                  />
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="icon"
+                    className="absolute top-2 right-2"
+                    onClick={() => setNewCorPhoto(null)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                  <div className="mt-2 text-xs text-green-600 font-medium">
+                    ✓ COR uploaded successfully
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Client Information Fields */}
+            <div className="space-y-2">
+              <Label>Trade Name *</Label>
+              <Input
+                placeholder="Enter client name"
+                value={addForm.name}
+                onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Shop Name</Label>
+              <Input
+                placeholder="Shop Name"
+                value={addForm.company}
+                onChange={(e) => setAddForm({ ...addForm, company: e.target.value })}
+              />
+            </div>
+            {/* Contact Person Field */}
+            <div className="space-y-2">
+              <Label>Contact Person</Label>
+              <Input
+                placeholder="Contact person name"
+                value={addForm.contact_person}
+                onChange={(e) => setAddForm({ ...addForm, contact_person: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">Name of the contact person for this client</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Email *</Label>
+              <Input
+                type="email"
+                placeholder="client@company.com"
+                value={addForm.email}
+                onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Phone Number</Label>
+              <div className="flex gap-2">
+                <div className="w-16">
                   <Input
-                    placeholder="City will be auto-filled when location is captured"
-                    value={addForm.city}
+                    value="+63"
                     disabled
-                    readOnly
-                    className="bg-muted cursor-not-allowed"
+                    className="bg-muted text-center font-semibold"
                   />
-                  {!capturedLocation && (
-                    <p className="text-xs text-muted-foreground">
-                      📍 Capture location to auto-fill city
+                </div>
+                <Input
+                  placeholder="9XX-XXX-XXXX"
+                  value={addForm.phone}
+                  onChange={(e) => handlePhoneChange(e.target.value, 'add')}
+                  maxLength={12}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">Format: +63 9XX-XXX-XXXX</p>
+            </div>
+
+            {/* TIN Field */}
+            <div className="space-y-2">
+              <Label>TIN (Tax Identification Number)</Label>
+              <Input
+                placeholder="XXX-XXX-XXX-XXX"
+                value={addForm.tin}
+                onChange={(e) => setAddForm({ ...addForm, tin: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">Tax Identification Number</p>
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                Address
+                {isPrewarmingLocation && (
+                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                    <div className="animate-pulse">🌍 Pre-warming GPS...</div>
+                  </Badge>
+                )}
+                {capturedLocation && (
+                  <Badge
+                    variant="outline"
+                    className={`text-xs ${getAccuracyBadge(capturedLocation.accuracy).color}`}
+                  >
+                    <MapPin className="h-3 w-3 mr-1" />
+                    {getAccuracyBadge(capturedLocation.accuracy).icon} {getAccuracyBadge(capturedLocation.accuracy).label} (±{Math.round(capturedLocation.accuracy)}m)
+                  </Badge>
+                )}
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder={capturedLocation ? "Auto-filled from location" : "Address will be auto-filled when location is captured"}
+                  value={addForm.address}
+                  disabled
+                  readOnly
+                  className={`bg-muted cursor-not-allowed ${capturedLocation ? (
+                    capturedLocation.accuracy <= 100 ? "border-green-300" :
+                      capturedLocation.accuracy <= 500 ? "border-yellow-300" : "border-red-300"
+                  ) : ""}`}
+                />
+                {capturedLocation && capturedLocation.accuracy > 100 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={retryLocation}
+                    title="Retry for better accuracy"
+                    className="shrink-0"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {capturedLocation && (
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>📍 Lat: {capturedLocation.latitude.toFixed(6)}, Lon: {capturedLocation.longitude.toFixed(6)}</p>
+                  {capturedLocation.accuracy > 100 && (
+                    <p className="text-yellow-600 font-medium">
+                      ⚠ Low accuracy detected. Click retry button for better location.
                     </p>
                   )}
-                  {capturedLocation && addForm.city && !isAdmin && agentCities.length > 0 && (() => {
-                    const clientCity = addForm.city.trim().toLowerCase();
-                    const normalizedAgentCities = agentCities.map(c => c.toLowerCase());
-                    const cityMatches = normalizedAgentCities.includes(clientCity);
-                    return cityMatches ? (
-                      <p className="text-xs text-green-600">✓ City matches your assigned cities</p>
-                    ) : (
-                      <p className="text-xs text-destructive">
-                        ⚠ City "{addForm.city}" does not match your assigned cities: {agentCities.join(', ')}
-                      </p>
-                    );
-                  })()}
                 </div>
-                <div className="space-y-2">
-                  <Label>Type Of Account</Label>
-                  <Select
-                    value={addForm.account_type}
-                    onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                      setAddForm({ ...addForm, account_type: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                      <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Category</Label>
-                  <Select
-                    value={addForm.category}
-                    onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
-                      setAddForm({ ...addForm, category: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Open">Open</SelectItem>
-                      <SelectItem value="Renovating">Renovating</SelectItem>
-                      <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>
+                City
+                <span className="text-xs text-muted-foreground ml-2">(Auto-filled from location)</span>
+                {!isAdmin && agentCities.length > 0 && (
+                  <span className="text-xs text-muted-foreground ml-2">
+                    (Must be: {agentCities.join(', ')})
+                  </span>
+                )}
+              </Label>
+              <Input
+                placeholder="City will be auto-filled when location is captured"
+                value={addForm.city}
+                disabled
+                readOnly
+                className="bg-muted cursor-not-allowed"
+              />
+              {!capturedLocation && (
+                <p className="text-xs text-muted-foreground">
+                  📍 Capture location to auto-fill city
+                </p>
+              )}
+              {capturedLocation && addForm.city && !isAdmin && agentCities.length > 0 && (() => {
+                const clientCity = addForm.city.trim().toLowerCase();
+                const normalizedAgentCities = agentCities.map(c => c.toLowerCase());
+                const cityMatches = normalizedAgentCities.includes(clientCity);
+                return cityMatches ? (
+                  <p className="text-xs text-green-600">✓ City matches your assigned cities</p>
+                ) : (
+                  <p className="text-xs text-destructive">
+                    ⚠ City "{addForm.city}" does not match your assigned cities: {agentCities.join(', ')}
+                  </p>
+                );
+              })()}
+            </div>
+            <div className="space-y-2">
+              <Label>Type Of Account</Label>
+              <Select
+                value={addForm.account_type}
+                onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                  setAddForm({ ...addForm, account_type: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                  <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Select
+                value={addForm.category}
+                onValueChange={(value: 'Permanently Closed' | 'Renovating' | 'Open') =>
+                  setAddForm({ ...addForm, category: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Open">Open</SelectItem>
+                  <SelectItem value="Renovating">Renovating</SelectItem>
+                  <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
 
 
-                {/* Has Forge Field */}
-                <div className="space-y-3">
-                  <Label>Has Forge?</Label>
-                  <RadioGroup
-                    value={addForm.has_forge ? 'yes' : 'no'}
-                    onValueChange={(value) => setAddForm({ ...addForm, has_forge: value === 'yes' })}
-                    className="flex gap-4"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="yes" id="has-forge-yes" />
-                      <Label htmlFor="has-forge-yes" className="font-normal cursor-pointer">
-                        Yes
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="no" id="has-forge-no" />
-                      <Label htmlFor="has-forge-no" className="font-normal cursor-pointer">
-                        No
-                      </Label>
-                    </div>
-                  </RadioGroup>
+            {/* Has Forge Field */}
+            <div className="space-y-3">
+              <Label>Has Forge?</Label>
+              <RadioGroup
+                value={addForm.has_forge ? 'yes' : 'no'}
+                onValueChange={(value) => setAddForm({ ...addForm, has_forge: value === 'yes' })}
+                className="flex gap-4"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="yes" id="has-forge-yes" />
+                  <Label htmlFor="has-forge-yes" className="font-normal cursor-pointer">
+                    Yes
+                  </Label>
                 </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="no" id="has-forge-no" />
+                  <Label htmlFor="has-forge-no" className="font-normal cursor-pointer">
+                    No
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
 
-                <Button className="w-full" onClick={handleAddClient} disabled={adding}>
-                  {adding ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Adding...
-                    </>
-                  ) : (
-                    'Add Client'
-                  )}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+            <Button className="w-full" onClick={handleAddClient} disabled={adding}>
+              {adding ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                'Add Client'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -3069,10 +3076,10 @@ export default function ClientsPage() {
 
                   {/* Actions */}
                   <div className="border-t bg-muted/20 p-2 flex gap-1.5">
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="flex-1 h-8 text-xs" 
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="flex-1 h-8 text-xs"
                       onClick={() => handleOpenView(client)}
                     >
                       <Eye className="h-3.5 w-3.5 mr-1" />
@@ -3080,10 +3087,10 @@ export default function ClientsPage() {
                     </Button>
                     {!isManager && (
                       <>
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="flex-1 h-8 text-xs" 
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex-1 h-8 text-xs"
                           onClick={() => handleOpenEdit(client)}
                         >
                           <Edit className="h-3.5 w-3.5 mr-1" />
@@ -3300,7 +3307,7 @@ export default function ClientsPage() {
                       // Add ellipsis if there's a gap
                       const prevPage = array[index - 1];
                       const showEllipsis = prevPage && page - prevPage > 1;
-                      
+
                       return (
                         <div key={page} className="flex items-center gap-1">
                           {showEllipsis && (
@@ -3497,7 +3504,7 @@ export default function ClientsPage() {
                       Client Photo
                       <Badge variant="secondary" className="ml-2 text-xs">Admin Only</Badge>
                     </h3>
-                    
+
                     {/* Current Photo Display */}
                     <div className="space-y-3">
                       <Label className="text-sm">Current Photo</Label>
@@ -3536,7 +3543,7 @@ export default function ClientsPage() {
                             />
                             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3">
                               <p className="text-xs text-white">
-                                {editingClient.photo_timestamp 
+                                {editingClient.photo_timestamp
                                   ? `Captured: ${new Date(editingClient.photo_timestamp).toLocaleDateString()}`
                                   : 'Photo on file'
                                 }
@@ -3777,7 +3784,7 @@ export default function ClientsPage() {
                       Compliance Documents
                       <Badge variant="secondary" className="ml-2 text-xs">Admin Only</Badge>
                     </h3>
-                    
+
                     {/* COR Display */}
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
@@ -3829,9 +3836,9 @@ export default function ClientsPage() {
                                 <p className="text-sm font-semibold text-green-900">COR Document Available</p>
                                 <p className="text-xs text-green-700 mt-0.5">Certificate of Registration is on file</p>
                               </div>
-                              <Button 
-                                variant="ghost" 
-                                size="sm" 
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => window.open(editingClient.cor_url, '_blank')}
                                 className="flex-shrink-0 h-9 bg-white hover:bg-green-100"
                               >
@@ -3859,10 +3866,10 @@ export default function ClientsPage() {
                             className="w-full h-12"
                           >
                             <Upload className="h-5 w-5 mr-2" />
-                            {editCorPhoto 
+                            {editCorPhoto
                               ? 'Choose Different Document'
-                              : editingClient?.cor_url 
-                                ? 'Replace COR Document' 
+                              : editingClient?.cor_url
+                                ? 'Replace COR Document'
                                 : 'Upload COR Document'
                             }
                           </Button>
@@ -3912,8 +3919,8 @@ export default function ClientsPage() {
               Last updated: {editingClient && new Date(editingClient.updated_at).toLocaleString()}
             </div>
             <div className="flex gap-2">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => {
                   setEditDialogOpen(false);
                   setEditCorPhoto(null);

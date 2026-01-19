@@ -240,6 +240,7 @@ export interface Client {
   cor_url?: string;
   contact_person?: string;
   tin?: string;
+  tax_status?: 'Tax on Sales' | 'Tax Exempt';
   created_at: string;
   updated_at: string;
 }
@@ -791,9 +792,9 @@ export interface Database {
       };
       // New PRE-ORDER system functions
       forward_stock_request_with_leader_qty: {
-        Args: { 
-          p_request_id: string; 
-          p_leader_id: string; 
+        Args: {
+          p_request_id: string;
+          p_leader_id: string;
           p_leader_additional_quantity?: number;
           p_notes?: string;
         };
