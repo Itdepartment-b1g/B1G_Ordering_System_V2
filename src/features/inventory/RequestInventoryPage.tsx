@@ -642,14 +642,7 @@ export default function RequestInventoryPage() {
                       </div>
                     )}
                   </div>
-                  {!loadingLeaderInventory && leaderId && filteredVariants.some(v => (leaderInventory[v.id] || 0) > 0) && (
-                    <div className="text-xs text-muted-foreground bg-blue-50 border border-blue-200 rounded-lg p-2">
-                      <p className="font-medium text-blue-900 mb-1">📊 Leader Inventory Status</p>
-                      <p className="text-blue-700">
-                        Stock levels shown above are from your team leader's current inventory.
-                      </p>
-                    </div>
-                  )}
+
                 </div>
               )}
 
@@ -936,7 +929,7 @@ export default function RequestInventoryPage() {
                               </span>
                             </div>
                             <div className="flex items-center gap-1.5">
-                              <span className="font-medium">{groupedRequest.totalQuantity} units</span>
+                              <span className="font-medium">{groupedRequest.totalQuantity} Stocks</span>
                             </div>
                             <div className="flex items-center gap-1.5 col-span-2 sm:col-span-1">
                               <Calendar className="h-3.5 w-3.5 flex-shrink-0" />
@@ -1026,7 +1019,7 @@ export default function RequestInventoryPage() {
                 <Card className="border-border/50">
                   <CardContent className="p-3 md:p-4 text-center">
                     <p className="text-xl md:text-2xl font-semibold text-green-600">{selectedGroupedRequest.totalQuantity}</p>
-                    <p className="text-[10px] md:text-xs text-muted-foreground mt-1">Total Units</p>
+                    <p className="text-[10px] md:text-xs text-muted-foreground mt-1">Total Stocks</p>
                   </CardContent>
                 </Card>
                 <Card className="border-border/50">
@@ -1053,7 +1046,7 @@ export default function RequestInventoryPage() {
                           </div>
                           <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4">
                             <div className="text-left sm:text-right">
-                              <p className="text-sm md:text-base font-semibold">{request.requested_quantity} Units</p>
+                              <p className="text-sm md:text-base font-semibold">{request.requested_quantity} Stocks</p>
                             </div>
                             <div className="flex items-center gap-2">
                               {getStatusBadge(request.status)}

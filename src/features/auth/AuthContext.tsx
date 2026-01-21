@@ -17,7 +17,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isOffline, setIsOffline] = useState(false); // NEW: Track offline state
   const { toast } = useToast();
   const userRef = useRef<User | null>(null);
-  const initializationAttempted = useRef(false); // Prevent double initialization
 
   // Handle global read-only mode for impersonation
   useEffect(() => {
@@ -61,30 +60,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Load user session on mount
   useEffect(() => {
-    if (initializationAttempted.current) {
-      console.log('⚠️ [AuthContext] Initialization already attempted, skipping');
-      return;
-    }
+    let mounted = true;
 
-    console.log('🚀 [AuthContext] Initializing auth...');
-    initializationAttempted.current = true;
+    const init = async () => {
+      console.log('🚀 [AuthContext] Initializing auth...');
+      
+      // Clean up deprecated localStorage items
+      cleanupLocalStorage();
 
-    // Clean up deprecated localStorage items
-    cleanupLocalStorage();
-
-    // Load impersonation from sessionStorage
-    const savedImpersonation = sessionStorage.getItem('impersonated_company');
-    if (savedImpersonation) {
-      try {
-        setImpersonatedCompany(JSON.parse(savedImpersonation));
-      } catch (e) {
-        console.error('Failed to parse saved impersonation', e);
+      // Load impersonation from sessionStorage
+      const savedImpersonation = sessionStorage.getItem('impersonated_company');
+      if (savedImpersonation) {
+        try {
+          if (mounted) setImpersonatedCompany(JSON.parse(savedImpersonation));
+        } catch (e) {
+          console.error('Failed to parse saved impersonation', e);
+        }
       }
-    }
 
-    initializeAuth();
+      // Initialize auth state
+      await initializeAuth(mounted);
+    };
+
+    init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+      
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
       const justLoggedOut = localStorage.getItem('just_logged_out');
@@ -128,6 +130,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+      stopTokenMonitoring();
+    };
+  }, [toast]);
+
+  // NEW: Session monitoring effect (Interval, Visibility, Focus)
+  useEffect(() => {
     const companyStatusCheckInterval = setInterval(async () => {
       const currentUser = userRef.current;
       if (currentUser?.company_id && currentUser.role !== 'system_administrator') {
@@ -184,6 +195,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
           if (sessionError || !session) {
+            // NEW: graceful handling of network errors on wake
+            if (isNetworkError(sessionError)) {
+              console.warn('⚠️ [AuthContext] Network error after wake, entering offline mode');
+              setIsOffline(true);
+              return;
+            }
+
             console.warn('⚠️ [AuthContext] Session expired after wake from sleep');
             toast({
               title: 'Session Expired',
@@ -214,7 +232,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           }
         } catch (error) {
-          console.error('❌ [AuthContext] Visibility change check failed:', error);
+           if (isNetworkError(error)) {
+             console.warn('⚠️ [AuthContext] Network error during visibility check');
+             setIsOffline(true);
+           } else {
+             console.error('❌ [AuthContext] Visibility change check failed:', error);
+           }
         }
       }
     };
@@ -265,18 +288,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('focus', handleFocus);
 
     return () => {
-      subscription.unsubscribe();
+      // subscription is handled in the other effect
       clearInterval(companyStatusCheckInterval);
-      stopTokenMonitoring();
+      // stopTokenMonitoring is handled in the other effect (or safely callable here too, but let's keep it separate)
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
   }, [toast]);
 
-  const initializeAuth = async () => {
+  const initializeAuth = async (mounted = true) => {
     let flowCompleted = false;
     const safetyTimer = setTimeout(() => {
-      if (!flowCompleted) {
+      if (!flowCompleted && mounted) {
         console.warn('⚠️ [AuthContext] Init timeout - forcing app load');
         setIsInitialized(true);
         if (isLoading) setIsLoading(false);
@@ -288,11 +311,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const justLoggedOut = localStorage.getItem('just_logged_out');
       if (justLoggedOut === 'true') {
         console.log('🚫 [AuthContext] Just logged out, skipping session restoration');
-        setUser(null);
-        userRef.current = null;
-        setIsLoading(false);
-        localStorage.removeItem('just_logged_out');
-        setIsInitialized(true);
+        if (mounted) {
+          setUser(null);
+          userRef.current = null;
+          setIsLoading(false);
+          localStorage.removeItem('just_logged_out');
+          setIsInitialized(true);
+        }
         return;
       }
 
@@ -312,11 +337,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Check if it's a network error
         if (error.message?.includes('fetch') || error.message?.includes('network')) {
           console.log('🌐 [AuthContext] Network error during init, using cached profile');
-          setIsOffline(true);
+          if (mounted) setIsOffline(true);
 
           // Try to use cached profile for offline access
           const cachedProfile = getCachedProfile();
-          if (cachedProfile) {
+          if (cachedProfile && mounted) {
             console.log('✅ [AuthContext] Using cached profile in offline mode');
             setUser(cachedProfile);
             userRef.current = cachedProfile;
@@ -335,20 +360,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // No session and no cache - show login
         console.log('🚫 [AuthContext] No session and no cache available');
         clearProfileCache();
-        setUser(null);
-        userRef.current = null;
-        setIsLoading(false);
-        setIsInitialized(true);
+        if (mounted) {
+          setUser(null);
+          userRef.current = null;
+          setIsLoading(false);
+          setIsInitialized(true);
+        }
         return;
       }
 
       if (!session?.user) {
         console.log('🚫 [AuthContext] No valid session, clearing any stale cache');
         clearProfileCache();
-        setUser(null);
-        userRef.current = null;
-        setIsLoading(false);
-        setIsInitialized(true);
+        if (mounted) {
+          setUser(null);
+          userRef.current = null;
+          setIsLoading(false);
+          setIsInitialized(true);
+        }
         return;
       }
 
@@ -356,10 +385,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const cachedProfile = getCachedProfile();
       if (cachedProfile && cachedProfile.id === session.user.id && !isCacheStale()) {
         console.log('⚡ [AuthContext] Using fresh cached profile');
-        setUser(cachedProfile);
-        userRef.current = cachedProfile;
-        setIsLoading(false);
-        setIsInitialized(true);
+        if (mounted) {
+          setUser(cachedProfile);
+          userRef.current = cachedProfile;
+          setIsLoading(false);
+          setIsInitialized(true);
+        }
 
         startTokenMonitoring(() => {
           logSecurityEvent('Token tampering detected');
@@ -376,7 +407,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Fetch fresh profile
       console.log('🔍 [AuthContext] Fetching fresh profile from database...');
-      setIsLoading(true);
+      if (mounted) setIsLoading(true);
 
       await loadUserProfile(session);
 
@@ -397,19 +428,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const cachedProfile = getCachedProfile();
       if (cachedProfile) {
         console.log('⚡ [AuthContext] Using cached profile after init error');
-        setUser(cachedProfile);
-        userRef.current = cachedProfile;
-        setIsOffline(true);
+        if (mounted) {
+          setUser(cachedProfile);
+          userRef.current = cachedProfile;
+          setIsOffline(true);
+        }
       } else {
-        setUser(null);
-        userRef.current = null;
+        if (mounted) {
+          setUser(null);
+          userRef.current = null;
+        }
       }
 
-      setIsLoading(false);
+      if (mounted) setIsLoading(false);
     } finally {
       flowCompleted = true;
       clearTimeout(safetyTimer);
-      setIsInitialized(true);
+      if (mounted) setIsInitialized(true);
     }
   };
 

@@ -125,7 +125,6 @@ const agentMenuItems: MenuItem[] = [
   { title: 'Request Inventory', url: '/inventory/request', icon: Send },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
-  { title: 'My History', url: '/my-history', icon: ClipboardList },
   { title: 'My Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
