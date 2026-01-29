@@ -10,13 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Check, ChevronsUpDown, Loader2 } from 'lucide-react';
-import { 
-  Calendar as CalendarIcon, 
-  ChevronLeft, 
-  ChevronRight, 
-  Plus, 
-  Clock, 
-  MapPin, 
+import {
+  Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Clock,
+  MapPin,
   Users,
   Filter,
   Grid3X3,
@@ -34,8 +34,41 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+
+// Fix Leaflet marker icon issue
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+
+const DefaultIcon = L.icon({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41]
+});
+
+L.Marker.prototype.options.icon = DefaultIcon;
+
+// Function to update map center when position changes
+function ChangeView({ center }: { center: [number, number] }) {
+  const map = useMap();
+  map.setView(center, map.getZoom());
+  return null;
+}
+
+import { VisitLog } from '@/types/database.types';
 
 // Types
+type VisitLogWithClient = VisitLog & {
+  client: {
+    name: string;
+    location_latitude?: number;
+    location_longitude?: number;
+  } | null;
+};
+
 interface Task {
   id: string;
   leader_id: string;
@@ -56,6 +89,10 @@ interface Task {
   notes: string | null;
   urgency_status: 'overdue' | 'due_soon' | 'on_time';
   attachment_url?: string | null;
+  client_id?: string; // Added for visit logs
+  location_latitude?: number; // Added for visit logs
+  location_longitude?: number; // Added for visit logs
+  location_address?: string; // Added for visit logs
 }
 
 interface CalendarEvent {
@@ -69,8 +106,9 @@ interface CalendarEvent {
   priority: 'low' | 'medium' | 'high';
   location?: string;
   attendees?: string[];
-  status: 'scheduled' | 'completed' | 'cancelled';
+  status: 'scheduled' | 'completed' | 'cancelled' | 'verified' | 'unverified';
   taskData?: Task; // For tasks from database
+  visitData?: VisitLogWithClient; // For visit logs
   attachment_url?: string | null; // For task attachments
 }
 
@@ -81,7 +119,7 @@ interface CalendarDay {
   events: CalendarEvent[];
 }
 
-  
+
 
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -97,28 +135,45 @@ export default function CalendarPage() {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [mobileTab, setMobileTab] = useState<'today' | 'all'>('today');
   const [currentTime, setCurrentTime] = useState(new Date());
+
   const [isMobile, setIsMobile] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [visits, setVisits] = useState<VisitLogWithClient[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
-  
+
   // Daily task creation states
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
-  const [dailyTaskPhoto, setDailyTaskPhoto] = useState<string | null>(null);
   const [dailyTaskForm, setDailyTaskForm] = useState({
     title: '',
     description: '',
     date: new Date().toISOString().split('T')[0],
     time: '',
+    notes: '',
+    priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent'
+  });
+
+  // Record Visit states
+  const [showRecordVisitDialog, setShowRecordVisitDialog] = useState(false);
+  const [visitPhoto, setVisitPhoto] = useState<string | null>(null);
+  const [visitForm, setVisitForm] = useState({
     notes: ''
   });
+  const [visitLocation, setVisitLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    address: string;
+    city?: string;
+  } | null>(null);
+
   const [isUploading, setIsUploading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [capturingPhoto, setCapturingPhoto] = useState(false);
-  
+
   // Client selection states
   const [clients, setClients] = useState<Array<{
     id: string;
@@ -143,19 +198,11 @@ export default function CalendarPage() {
     location_longitude?: number;
   } | null>(null);
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
-  const [isPrewarmingLocation, setIsPrewarmingLocation] = useState(false);
-  const [prewarmPosition, setPrewarmPosition] = useState<GeolocationPosition | null>(null);
-  
-  // Location capture states for daily task
-  const [taskLocation, setTaskLocation] = useState<{
-    latitude: number;
-    longitude: number;
-    accuracy: number;
-    address: string;
-    city?: string;
-  } | null>(null);
-  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
-  
+
+
+
+
+
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -165,14 +212,14 @@ export default function CalendarPage() {
       // Use the separate time field if available, otherwise default to 09:00
       let startTime = '09:00';
       let endTime = '10:00';
-      
+
       if (task.time) {
         // Extract hours and minutes from time field (format: HH:MM:SS)
         const timeParts = task.time.split(':');
         const hours = timeParts[0].padStart(2, '0');
         const minutes = timeParts[1].padStart(2, '0');
         startTime = `${hours}:${minutes}`;
-        
+
         // Set end time to 1 hour after start time
         const startHour = parseInt(hours);
         const startMinute = parseInt(minutes);
@@ -196,8 +243,35 @@ export default function CalendarPage() {
       };
     });
 
-    return taskEvents; // Only show tasks, no sample events
-  }, [tasks]);
+    const visitEvents: CalendarEvent[] = visits.map(visit => {
+      const visitDate = new Date(visit.visited_at);
+      const hours = visitDate.getHours().toString().padStart(2, '0');
+      const minutes = visitDate.getMinutes().toString().padStart(2, '0');
+      const startTime = `${hours}:${minutes}`;
+
+      const endDate = new Date(visitDate.getTime() + 30 * 60000); // +30 mins
+      const endHours = endDate.getHours().toString().padStart(2, '0');
+      const endMinutes = endDate.getMinutes().toString().padStart(2, '0');
+      const endTime = `${endHours}:${endMinutes}`;
+
+      return {
+        id: `visit-${visit.id}`,
+        title: `Visited ${visit.client?.name || 'Client'}`,
+        description: visit.notes || 'No notes',
+        startTime,
+        endTime,
+        date: visit.visited_at.split('T')[0],
+        type: 'meeting' as const,
+        priority: 'medium',
+        status: visit.is_within_radius ? 'verified' : 'unverified',
+        visitData: visit,
+        location: visit.address,
+        attachment_url: visit.photo_url
+      };
+    });
+
+    return [...taskEvents, ...visitEvents];
+  }, [tasks, visits]);
 
   // Update current time every minute
   useEffect(() => {
@@ -234,8 +308,9 @@ export default function CalendarPage() {
   useEffect(() => {
     if (user?.id) {
       fetchTasks();
+      fetchVisits();
     }
-    
+
     // Cleanup subscriptions on unmount
     return () => {
       if (realtimeEnabled) {
@@ -261,7 +336,7 @@ export default function CalendarPage() {
         },
         (payload) => {
           console.log('Real-time task update:', payload);
-          
+
           // Handle different event types
           switch (payload.eventType) {
             case 'INSERT':
@@ -273,10 +348,10 @@ export default function CalendarPage() {
               });
               fetchTasks(); // Refresh tasks
               break;
-              
-            case 'UPDATE':
+
+            case 'UPDATE': {
               // Task updated
-              const updatedTask = payload.new as any;
+              const updatedTask = payload.new as Task;
               if (updatedTask.status === 'completed') {
                 toast({
                   title: 'Task Completed',
@@ -292,7 +367,8 @@ export default function CalendarPage() {
               }
               fetchTasks(); // Refresh tasks
               break;
-              
+            }
+
             case 'DELETE':
               // Task deleted
               toast({
@@ -337,16 +413,16 @@ export default function CalendarPage() {
       if (!realtimeEnabled) {
         setLoadingTasks(true);
       }
-      
+
       const { data, error } = await supabase
         .from('task_details')
-        .select('*')
+        .select('id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, urgency_status, attachment_url')
         .eq('agent_id', user?.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setTasks(data || []);
-      
+
       // Enable real-time subscriptions after initial load
       if (!realtimeEnabled) {
         setupRealtimeSubscriptions();
@@ -364,12 +440,34 @@ export default function CalendarPage() {
     }
   };
 
+  const fetchVisits = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('visit_logs')
+        .select(`
+          *,
+          client:clients (
+            name,
+            location_latitude,
+            location_longitude
+          )
+        `)
+        .eq('agent_id', user?.id)
+        .order('visited_at', { ascending: false });
+
+      if (error) throw error;
+      setVisits(data || []);
+    } catch (error) {
+      console.error('Error fetching visits:', error);
+    }
+  };
+
   const handleStartTask = async (taskId: string) => {
     try {
       // Optimistic update - update UI immediately
-      setTasks(prevTasks => 
-        prevTasks.map(task => 
-          task.id === taskId 
+      setTasks(prevTasks =>
+        prevTasks.map(task =>
+          task.id === taskId
             ? { ...task, status: 'in_progress', updated_at: new Date().toISOString() }
             : task
         )
@@ -385,9 +483,9 @@ export default function CalendarPage() {
 
       if (error) {
         // Revert optimistic update on error
-        setTasks(prevTasks => 
-          prevTasks.map(task => 
-            task.id === taskId 
+        setTasks(prevTasks =>
+          prevTasks.map(task =>
+            task.id === taskId
               ? { ...task, status: 'pending' }
               : task
           )
@@ -412,17 +510,17 @@ export default function CalendarPage() {
   const handleCompleteTask = async (taskId: string) => {
     try {
       const completionTime = new Date().toISOString();
-      
+
       // Optimistic update - update UI immediately
-      setTasks(prevTasks => 
-        prevTasks.map(task => 
-          task.id === taskId 
-            ? { 
-                ...task, 
-                status: 'completed', 
-                completed_at: completionTime,
-                updated_at: completionTime 
-              }
+      setTasks(prevTasks =>
+        prevTasks.map(task =>
+          task.id === taskId
+            ? {
+              ...task,
+              status: 'completed',
+              completed_at: completionTime,
+              updated_at: completionTime
+            }
             : task
         )
       );
@@ -438,9 +536,9 @@ export default function CalendarPage() {
 
       if (error) {
         // Revert optimistic update on error
-        setTasks(prevTasks => 
-          prevTasks.map(task => 
-            task.id === taskId 
+        setTasks(prevTasks =>
+          prevTasks.map(task =>
+            task.id === taskId
               ? { ...task, status: 'in_progress', completed_at: null }
               : task
           )
@@ -469,20 +567,10 @@ export default function CalendarPage() {
     setShowCompletionConfirm(true);
   };
 
-  // Handle daily task creation with photo upload
+  // Handle daily task creation (Simply create a task)
   const handleCreateDailyTask = async () => {
     if (!dailyTaskForm.title.trim()) {
       toast({ title: 'Error', description: 'Task title is required', variant: 'destructive' });
-      return;
-    }
-
-    if (!dailyTaskPhoto) {
-      toast({ title: 'Error', description: 'Photo is required. Please take a photo before creating the task.', variant: 'destructive' });
-      return;
-    }
-
-    if (!selectedClient) {
-      toast({ title: 'Error', description: 'Client selection is required. Please select a client before creating the task.', variant: 'destructive' });
       return;
     }
 
@@ -493,116 +581,29 @@ export default function CalendarPage() {
 
     setIsUploading(true);
     try {
-      let attachmentUrl = null;
-
-      // Photo is required, so we always upload it
-      if (dailyTaskPhoto) {
-        // Convert base64 to blob
-        const base64Data = dailyTaskPhoto.split(',')[1];
-        const byteCharacters = atob(base64Data);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: 'image/jpeg' });
-
-        // Generate unique filename
-        const sanitizeTitle = dailyTaskForm.title
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '_')
-          .replace(/_+/g, '_')
-          .replace(/^_|_$/g, '');
-        
-        const timestamp = Date.now();
-        const fileName = `${user.id}/${sanitizeTitle}_${timestamp}.jpg`;
-        
-        // Upload to Supabase Storage
-        const { error: uploadError } = await supabase.storage
-          .from('daily-attachments')
-          .upload(fileName, blob, {
-            contentType: 'image/jpeg',
-            upsert: false
-          });
-
-        if (uploadError) {
-          console.error('Upload error:', uploadError);
-          throw new Error(`Failed to upload photo: ${uploadError.message}`);
-        }
-
-        // Get public URL
-        const { data: urlData } = supabase.storage
-          .from('daily-attachments')
-          .getPublicUrl(fileName);
-        
-        attachmentUrl = urlData.publicUrl;
-      }
-
-      // Build notes with client and location info
-      let finalNotes = dailyTaskForm.notes || '';
-      if (selectedClient) {
-        finalNotes += `\n\n--- Client Information ---\n`;
-        finalNotes += `Client: ${selectedClient.name}`;
-        if (selectedClient.company) {
-          finalNotes += ` (${selectedClient.company})`;
-        }
-        if (selectedClient.city) {
-          finalNotes += `\nCity: ${selectedClient.city}`;
-        }
-        if (selectedClient.address) {
-          finalNotes += `\nAddress: ${selectedClient.address}`;
-        }
-        if (selectedClient.email) {
-          finalNotes += `\nEmail: ${selectedClient.email}`;
-        }
-        if (selectedClient.phone) {
-          finalNotes += `\nPhone: ${selectedClient.phone}`;
-        }
-      }
-      if (taskLocation) {
-        finalNotes += `\n\n--- Task Location ---\n`;
-        finalNotes += `Location: ${taskLocation.address}${taskLocation.city ? ` (${taskLocation.city})` : ''}\n`;
-        finalNotes += `Coordinates: ${taskLocation.latitude.toFixed(6)}, ${taskLocation.longitude.toFixed(6)}\n`;
-        finalNotes += `Accuracy: ±${Math.round(taskLocation.accuracy)}m`;
-        if (selectedClient && selectedClient.location_latitude && selectedClient.location_longitude) {
-          const distance = calculateDistance(
-            taskLocation.latitude,
-            taskLocation.longitude,
-            selectedClient.location_latitude,
-            selectedClient.location_longitude
-          );
-          finalNotes += `\nDistance from client: ${Math.round(distance)}m`;
-          if (distance > 100) {
-            finalNotes += ` (⚠ Warning: More than 100m away)`;
-          } else {
-            finalNotes += ` (✓ Verified)`;
-          }
-        }
-      }
-
       // Create task in database
-      // Note: For agent-created tasks: leader_id = NULL, agent_id = current user
-      // For leader-assigned tasks: leader_id = leader who assigns, agent_id = assigned agent
-      const { error } = await supabase
+      const { data: taskData, error: taskError } = await supabase
         .from('tasks')
         .insert({
           agent_id: user.id,
           leader_id: null, // NULL for agent-created tasks
+          client_id: selectedClient?.id || null, // Optional client link
           title: dailyTaskForm.title,
           description: dailyTaskForm.description || null,
           due_date: dailyTaskForm.date || null,
           time: dailyTaskForm.time || null,
-          notes: finalNotes.trim() || null,
-          attachment_url: attachmentUrl,
-          status: 'pending',
-          priority: 'medium'
-        });
+          notes: dailyTaskForm.notes || null,
+          priority: dailyTaskForm.priority,
+          status: 'pending'
+        })
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (taskError) throw taskError;
 
       toast({
         title: 'Success',
-        description: 'Daily task created successfully'
+        description: 'Task created successfully'
       });
 
       // Reset form and close dialog
@@ -611,23 +612,20 @@ export default function CalendarPage() {
         description: '',
         date: new Date().toISOString().split('T')[0],
         time: '',
-        notes: ''
+        notes: '',
+        priority: 'medium'
       });
-      setDailyTaskPhoto(null);
-      setTaskLocation(null);
       setSelectedClient(null);
       setClientPopoverOpen(false);
-      setPrewarmPosition(null);
-      setIsPrewarmingLocation(false);
       setShowAddTaskDialog(false);
 
       // Refresh tasks (real-time will also handle this)
       await fetchTasks();
     } catch (error) {
-      console.error('Error creating daily task:', error);
+      console.error('Error creating task:', error);
       toast({
         title: 'Error',
-        description: 'Failed to create daily task. Please try again.',
+        description: 'Failed to create task. Please try again.',
         variant: 'destructive'
       });
     } finally {
@@ -635,9 +633,144 @@ export default function CalendarPage() {
     }
   };
 
-  const removeTaskPhoto = () => {
-    setDailyTaskPhoto(null);
-    setTaskLocation(null);
+  // Handle Record Visit
+  const handleRecordVisit = async () => {
+    if (!visitPhoto) {
+      toast({ title: 'Error', description: 'Photo is required for visit verification.', variant: 'destructive' });
+      return;
+    }
+
+    if (!selectedClient) {
+      toast({ title: 'Error', description: 'Client user is required.', variant: 'destructive' });
+      return;
+    }
+
+    if (!visitLocation) {
+      toast({ title: 'Error', description: 'Location is required for visit verification.', variant: 'destructive' });
+      return;
+    }
+
+    if (!user?.id) {
+      toast({ title: 'Error', description: 'User not authenticated', variant: 'destructive' });
+      return;
+    }
+
+    // Radius Check
+    if (selectedClient.location_latitude && selectedClient.location_longitude) {
+      const distance = calculateDistance(
+        visitLocation.latitude,
+        visitLocation.longitude,
+        selectedClient.location_latitude,
+        selectedClient.location_longitude
+      );
+
+      if (distance > 100) {
+        toast({
+          title: 'Outside Perimeter',
+          description: `You are ${Math.round(distance)}m away from the client. Must be within 100m.`,
+          variant: 'destructive'
+        });
+        return;
+      }
+    } else {
+      toast({ title: 'Warning', description: 'Client has no location set. Visit recorded but unverified.', variant: 'default' });
+    }
+
+    setIsUploading(true);
+    try {
+      let photoUrl = null;
+
+      // Upload Photo
+      if (visitPhoto) {
+        const base64Data = visitPhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+        const sanitizeName = selectedClient.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const timestamp = Date.now();
+        const fileName = `${user.id}/visit_${sanitizeName}_${timestamp}.jpg`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('daily-attachments') // Reuse bucket or create new 'visit-photos'
+          .upload(fileName, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          });
+
+        if (uploadError) throw new Error(`Failed to upload photo: ${uploadError.message}`);
+
+        const { data: urlData } = supabase.storage
+          .from('daily-attachments')
+          .getPublicUrl(fileName);
+
+        photoUrl = urlData.publicUrl;
+      }
+
+      // Calculate distance for log
+      let distance = 0;
+      let isWithin = false;
+      if (selectedClient.location_latitude && selectedClient.location_longitude) {
+        distance = calculateDistance(
+          visitLocation.latitude,
+          visitLocation.longitude,
+          selectedClient.location_latitude,
+          selectedClient.location_longitude
+        );
+        isWithin = distance <= 100;
+      }
+
+      // Create Visit Log
+      const { error: visitError } = await supabase
+        .from('visit_logs')
+        .insert({
+          company_id: user.company_id || '', // Ensure company_id is available
+          agent_id: user.id,
+          client_id: selectedClient.id,
+          task_id: null, // Standalone visit
+          latitude: visitLocation.latitude,
+          longitude: visitLocation.longitude,
+          address: visitLocation.address,
+          is_within_radius: isWithin,
+          distance_meters: distance,
+          radius_limit_meters: 100,
+          photo_url: photoUrl,
+          notes: visitForm.notes
+        });
+
+      if (visitError) throw visitError;
+
+      toast({
+        title: 'Visit Recorded',
+        description: 'Visit logged successfully.'
+      });
+
+      // Reset
+      setVisitPhoto(null);
+      setVisitLocation(null);
+      setVisitForm({ notes: '' });
+      setSelectedClient(null);
+      setShowRecordVisitDialog(false);
+
+    } catch (error) {
+      console.error('Error recording visit:', error);
+      toast({
+        title: 'Error',
+        description: (error as Error).message || 'Failed to record visit.',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const removeVisitPhoto = () => {
+    setVisitPhoto(null);
+    setVisitLocation(null);
   };
 
   // Start camera
@@ -649,7 +782,7 @@ export default function CalendarPage() {
       });
       setStream(mediaStream);
       setShowCamera(true);
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
@@ -702,137 +835,28 @@ export default function CalendarPage() {
     const Δφ = (lat2 - lat1) * Math.PI / 180;
     const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) *
+      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     return R * c; // Distance in meters
   };
 
-  const getAccuracyBadge = (accuracy: number) => {
-    if (accuracy <= 50) {
-      return {
-        label: 'Excellent',
-        color: 'bg-green-50 text-green-700 border-green-200',
-        icon: '🎯'
-      };
-    } else if (accuracy <= 100) {
-      return {
-        label: 'Good',
-        color: 'bg-blue-50 text-blue-700 border-blue-200',
-        icon: '✓'
-      };
-    } else if (accuracy <= 500) {
-      return {
-        label: 'Fair',
-        color: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-        icon: '⚠'
-      };
-    }
 
-    return {
-      label: 'Poor',
-      color: 'bg-red-50 text-red-700 border-red-200',
-      icon: '⚠️'
-    };
-  };
 
-  // Get current location
-  const getCurrentLocation = (): Promise<GeolocationPosition> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error('Geolocation is not supported by your browser'));
-        return;
-      }
 
-      navigator.geolocation.getCurrentPosition(
-        resolve,
-        reject,
-        {
-          enableHighAccuracy: true,
-          timeout: 30000,
-          maximumAge: 0
-        }
-      );
-    });
-  };
-
-  // Pre-warm GPS when dialog opens
-  const startLocationPrewarm = async () => {
-    setIsPrewarmingLocation(true);
-    try {
-      const position = await getCurrentLocation();
-      setPrewarmPosition(position);
-    } catch (error) {
-      console.error('Pre-warm location error:', error);
-    } finally {
-      setIsPrewarmingLocation(false);
-    }
-  };
-
-  // Reverse geocode location
-  const reverseGeocode = async (latitude: number, longitude: number): Promise<{ address: string; city: string }> => {
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-        {
-          headers: {
-            'Accept-Language': 'en'
-          }
-        }
-      );
-      
-      const data = await response.json();
-      
-      if (data && data.address) {
-        const addr = data.address;
-        const city = addr.city || addr.town || addr.village || addr.municipality || '';
-        const parts = [
-          addr.house_number,
-          addr.road,
-          addr.suburb || addr.neighbourhood,
-          addr.city || addr.town || addr.village,
-          addr.state,
-          addr.country
-        ].filter(Boolean);
-        return { address: parts.join(', '), city };
-      } else if (data && data.display_name) {
-        return { address: data.display_name, city: '' };
-      }
-      
-      return { address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, city: '' };
-    } catch (error) {
-      console.error('Reverse geocoding error:', error);
-      return { address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, city: '' };
-    }
-  };
-
-  const processTaskLocation = async (position: GeolocationPosition) => {
-    const { latitude, longitude, accuracy } = position.coords;
-    const { address, city } = await reverseGeocode(latitude, longitude);
-
-    setTaskLocation({ latitude, longitude, accuracy, address, city });
-
-    const badge = getAccuracyBadge(accuracy);
-    toast({
-      title: 'Location Captured',
-      description: `${badge.icon} ${badge.label} (±${Math.round(accuracy)}m)`
-    });
-
-    return { latitude, longitude, accuracy, address, city };
-  };
 
   // Switch camera (front/back)
   const switchCamera = async () => {
     const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newFacingMode);
-    
+
     // Stop current stream
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
     }
-    
+
     // Start new stream
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -840,7 +864,7 @@ export default function CalendarPage() {
         audio: false
       });
       setStream(mediaStream);
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
@@ -854,79 +878,7 @@ export default function CalendarPage() {
     }
   };
 
-  // Capture photo from camera
-  const capturePhoto = async () => {
-    if (!videoRef.current) return;
-    
-    setCapturingPhoto(true);
-    const video = videoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    
-    if (ctx) {
-      ctx.drawImage(video, 0, 0);
-      const dataUrl = canvas.toDataURL('image/jpeg');
-      setDailyTaskPhoto(dataUrl);
-    }
-    
-    stopCamera();
-    setCapturingPhoto(false);
-    
-    // Capture location when photo is taken, mirroring add-client logic
-    try {
-      setIsCapturingLocation(true);
-      let position: GeolocationPosition;
 
-      if (prewarmPosition) {
-        position = prewarmPosition;
-      } else {
-        toast({
-          title: 'Getting location...',
-          description: 'Please wait while we capture your current location.'
-        });
-        position = await getCurrentLocation();
-      }
-
-      const locationData = await processTaskLocation(position);
-      setPrewarmPosition(null);
-
-      if (locationData && selectedClient && selectedClient.location_latitude && selectedClient.location_longitude) {
-        const distance = calculateDistance(
-          locationData.latitude,
-          locationData.longitude,
-          selectedClient.location_latitude,
-          selectedClient.location_longitude
-        );
-
-        if (distance > 100) {
-          toast({
-            title: 'Location Mismatch',
-            description: `You are ${Math.round(distance)}m away from the client's location. Please ensure you are at the correct location.`,
-            variant: 'destructive'
-          });
-        } else {
-          toast({
-            title: 'Location Verified',
-            description: `Location confirmed. You are ${Math.round(distance)}m from the client's location.`
-          });
-        }
-      }
-
-      // Prewarm again in case the user needs to retake the photo
-      startLocationPrewarm();
-    } catch (error: any) {
-      console.error('Error capturing location:', error);
-      toast({
-        title: 'Location Error',
-        description: error.message || 'Failed to capture location. Please ensure location permissions are enabled.',
-        variant: 'destructive'
-      });
-    } finally {
-      setIsCapturingLocation(false);
-    }
-  };
 
   // Cleanup camera on unmount
   useEffect(() => {
@@ -982,22 +934,22 @@ export default function CalendarPage() {
   const getFilteredEvents = (events: CalendarEvent[]) => {
     return events.filter(event => {
       // Status filter
-      const statusMatch = filterType === 'all' || 
+      const statusMatch = filterType === 'all' ||
         (event.taskData && event.taskData.status === filterType);
-      
+
       // Search filter
-      const searchMatch = !searchQuery || 
+      const searchMatch = !searchQuery ||
         event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (event.taskData && (
           event.taskData.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
           event.taskData.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
           event.taskData.agent_name?.toLowerCase().includes(searchQuery.toLowerCase())
         ));
-      
+
       // Priority filter
-      const priorityMatch = priorityFilter === 'all' || 
+      const priorityMatch = priorityFilter === 'all' ||
         (event.taskData && event.taskData.priority === priorityFilter);
-      
+
       // Mobile tab filter
       let mobileMatch = true;
       if (isMobile && mobileTab !== 'all') {
@@ -1009,7 +961,7 @@ export default function CalendarPage() {
             break;
         }
       }
-      
+
       return statusMatch && searchMatch && priorityMatch && mobileMatch;
     });
   };
@@ -1018,24 +970,24 @@ export default function CalendarPage() {
   const generateCalendarDays = (): CalendarDay[] => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    
+
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
     const startDate = new Date(firstDay);
     startDate.setDate(startDate.getDate() - firstDay.getDay());
-    
+
     const days: CalendarDay[] = [];
     const today = new Date();
-    
+
     for (let i = 0; i < 42; i++) {
       const date = new Date(startDate);
       date.setDate(startDate.getDate() + i);
-      
+
       const dayEvents = getFilteredEvents(allEvents).filter(event => {
         const eventDate = new Date(event.date);
         return eventDate.toDateString() === date.toDateString();
       });
-      
+
       days.push({
         date,
         isCurrentMonth: date.getMonth() === month,
@@ -1043,7 +995,7 @@ export default function CalendarPage() {
         events: dayEvents
       });
     }
-    
+
     return days;
   };
 
@@ -1053,19 +1005,19 @@ export default function CalendarPage() {
     const day = startOfWeek.getDay();
     const diff = startOfWeek.getDate() - day;
     startOfWeek.setDate(diff);
-    
+
     const weekDays: CalendarDay[] = [];
     const today = new Date();
-    
+
     for (let i = 0; i < 7; i++) {
       const date = new Date(startOfWeek);
       date.setDate(startOfWeek.getDate() + i);
-      
+
       const dayEvents = getFilteredEvents(allEvents).filter(event => {
         const eventDate = new Date(event.date);
         return eventDate.toDateString() === date.toDateString();
       });
-      
+
       weekDays.push({
         date,
         isCurrentMonth: true,
@@ -1073,7 +1025,7 @@ export default function CalendarPage() {
         events: dayEvents
       });
     }
-    
+
     return weekDays;
   };
 
@@ -1126,424 +1078,463 @@ export default function CalendarPage() {
   const weekDays = getWeekDays();
   const dayEvents = getDayEvents();
 
+  const captureVisitPhoto = async () => {
+    if (!videoRef.current) return;
+
+    try {
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        ctx.drawImage(video, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setVisitPhoto(dataUrl);
+        stopCamera();
+
+        // Start location capture
+        toast({
+          title: 'Acquiring Location...',
+          description: 'Please wait, getting high-accuracy GPS...',
+          duration: 3000
+        });
+
+        // 1. Define getPos helper
+        const getPos = (opts: PositionOptions): Promise<GeolocationPosition> => {
+          return new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, opts);
+          });
+        };
+
+        // 2. Try High Accuracy
+        let position: GeolocationPosition | null = null;
+        try {
+          position = await getPos({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+        } catch (e) {
+          console.warn('High accuracy failed, trying low accuracy...');
+          try {
+            position = await getPos({ enableHighAccuracy: false, timeout: 15000, maximumAge: 20000 });
+          } catch (e2) {
+            console.error('All location attempts failed');
+            throw new Error('Could not acquire location. Please check your GPS settings.');
+          }
+        }
+
+        if (!position) throw new Error('Location capture failed.');
+
+        // 3. Process Location
+        const { latitude, longitude, accuracy } = position.coords;
+
+        // Reverse Geocode
+        let address = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+          const data = await r.json();
+          if (data && data.display_name) address = data.display_name;
+        } catch (e) { console.error('Reverse geocode failed', e); }
+
+        setVisitLocation({
+          latitude, longitude, accuracy, address
+        });
+
+        toast({
+          title: 'Location Captured',
+          description: `Accuracy: ±${Math.round(accuracy)}m`,
+          className: "bg-green-50 border-green-200 text-green-800"
+        });
+      }
+    } catch (error) {
+      console.error('Capture error:', error);
+      toast({
+        title: 'Error',
+        description: (error as Error).message || 'Failed to capture photo/location.',
+        variant: 'destructive'
+      });
+      setVisitPhoto(null);
+    }
+  };
+
   return (
     <div className="p-3 sm:p-4 md:p-6 lg:p-8 space-y-3 sm:space-y-4 md:space-y-6 overflow-x-hidden max-w-full">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:gap-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold">Calendar</h1>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-xs sm:text-sm md:text-base text-muted-foreground">Manage your tasks and schedule</p>
-              {realtimeEnabled && (
-                <div className="flex items-center gap-1 text-green-600 shrink-0">
-                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-[10px] sm:text-xs font-medium">Live</span>
+
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Calendar & Visits</h1>
+            <p className="text-muted-foreground">Manage your schedule and record client visits.</p>
+          </div>
+          <div className="flex gap-2 w-full sm:w-auto">
+            {/* Record Visit Button */}
+            <Dialog open={showRecordVisitDialog} onOpenChange={(open) => {
+              setShowRecordVisitDialog(open);
+              if (open) {
+                // startLocationPrewarm(); // Optional: prewarm on open
+              } else {
+                setVisitPhoto(null);
+                setVisitLocation(null);
+                setVisitForm({ notes: '' });
+                setSelectedClient(null);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 text-white">
+                  <MapPin className="mr-2 h-4 w-4" />
+                  Record Visit
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Record Client Visit</DialogTitle>
+                </DialogHeader>
+
+                <div className="space-y-4 py-2">
+                  {/* 1. Client Selection (Mandatory) */}
+                  <div className="space-y-2">
+                    <Label>Select Client *</Label>
+                    <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={clientPopoverOpen}
+                          className="w-full justify-between"
+                          onClick={() => fetchClients()}
+                        >
+                          {selectedClient ? selectedClient.name : "Select a client..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[300px] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search clients..." />
+                          <CommandList>
+                            <CommandEmpty>No client found.</CommandEmpty>
+                            <CommandGroup>
+                              {clients.map((client) => (
+                                <CommandItem
+                                  key={client.id}
+                                  value={client.name}
+                                  onSelect={() => {
+                                    setSelectedClient(client);
+                                    setClientPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${selectedClient?.id === client.id ? "opacity-100" : "opacity-0"
+                                      }`}
+                                  />
+                                  <div className="flex flex-col">
+                                    <span>{client.name}</span>
+                                    {client.company && <span className="text-xs text-muted-foreground">{client.company}</span>}
+                                    {client.city && <span className="text-xs text-muted-foreground">{client.city}</span>}
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  {/* 2. Camera & Location Section */}
+                  <div className="space-y-2">
+                    <Label>Verification Photo *</Label>
+
+                    {/* Camera Logic Reuse */}
+                    {!visitPhoto && !showCamera && (
+                      <div className="border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" onClick={startCamera}>
+                        <Camera className="h-10 w-10 text-muted-foreground mb-2" />
+                        <p className="font-medium text-sm">Tap to Take Photo</p>
+                        <p className="text-xs text-muted-foreground">Camera & Location required</p>
+                      </div>
+                    )}
+
+                    {/* Camera View */}
+                    {showCamera && (
+                      <div className="relative rounded-lg overflow-hidden bg-black">
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-64 object-cover"
+                        />
+                        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4 z-20">
+                          <Button
+                            variant="destructive"
+                            onClick={stopCamera}
+                            className="rounded-full w-12 h-12 p-0 flex items-center justify-center"
+                          >
+                            <X className="h-6 w-6" />
+                          </Button>
+                          <Button
+                            onClick={() => captureVisitPhoto()}
+                            className="rounded-full w-16 h-16 p-0 flex items-center justify-center bg-white hover:bg-gray-200 border-4 border-gray-300"
+                          >
+                            <div className="w-12 h-12 rounded-full bg-red-500"></div>
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Photo Preview & Map */}
+                    {visitPhoto && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Map */}
+                        <div className="h-64 rounded-lg overflow-hidden border relative z-0 shadow-sm">
+                          {visitLocation && selectedClient?.location_latitude && selectedClient?.location_longitude ? (
+                            <MapContainer
+                              center={[visitLocation.latitude, visitLocation.longitude]}
+                              zoom={18}
+                              style={{ height: '100%', width: '100%' }}
+                              dragging={!isMobile}
+                            >
+                              <ChangeView center={[visitLocation.latitude, visitLocation.longitude]} />
+                              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                              <Circle
+                                center={[selectedClient.location_latitude, selectedClient.location_longitude]}
+                                pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.8, fillOpacity: 0.2 }}
+                                radius={100}
+                              />
+                              <Marker position={[selectedClient.location_latitude, selectedClient.location_longitude]} />
+                              <Marker position={[visitLocation.latitude, visitLocation.longitude]}>
+                                <Popup>You are here</Popup>
+                              </Marker>
+                            </MapContainer>
+                          ) : (
+                            <div className="flex items-center justify-center h-full bg-muted text-muted-foreground p-4 text-center">
+                              <p>Map unavailable (missing locations)</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Photo */}
+                        <div className="relative h-64 rounded-lg overflow-hidden border bg-black">
+                          <img src={visitPhoto} className="w-full h-full object-contain" />
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="absolute top-2 right-2"
+                            onClick={removeVisitPhoto}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+
+                          {/* Distance Status */}
+                          {visitLocation && selectedClient?.location_latitude && (
+                            <div className={`absolute bottom-0 left-0 right-0 p-2 text-center text-xs font-bold text-white 
+                                        ${calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude) <= 100 ? 'bg-green-600/90' : 'bg-red-600/90'}
+                                     `}>
+                              Distance: {Math.round(calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude))}m
+                              {calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude) > 100 ? ' (Too Far)' : ' (Verified)'}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notes */}
+                  <div className="space-y-2">
+                    <Label>Visit Notes</Label>
+                    <Textarea
+                      placeholder="Details about the visit..."
+                      value={visitForm.notes}
+                      onChange={(e) => setVisitForm({ ...visitForm, notes: e.target.value })}
+                    />
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    onClick={handleRecordVisit}
+                    disabled={isUploading || !visitPhoto || !visitLocation || !selectedClient}
+                  >
+                    {isUploading ? 'Recording...' : 'Submit Visit Log'}
+                  </Button>
                 </div>
-              )}
-            </div>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={showAddTaskDialog} onOpenChange={(open) => {
+              setShowAddTaskDialog(open);
+              if (!open) {
+                setDailyTaskForm({
+                  title: '',
+                  description: '',
+                  date: new Date().toISOString().split('T')[0],
+                  time: '',
+                  notes: '',
+                  priority: 'medium'
+                });
+                setSelectedClient(null);
+                setClientPopoverOpen(false);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Task
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Add New Task</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  {/* Task Title */}
+                  <div className="space-y-2">
+                    <Label>Task Title *</Label>
+                    <Input
+                      placeholder="Enter task title"
+                      value={dailyTaskForm.title}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, title: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Optional Client Link */}
+                  <div className="space-y-2">
+                    <Label>Link Client (Optional)</Label>
+                    <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={clientPopoverOpen}
+                          className="w-full justify-between"
+                          onClick={() => fetchClients()}
+                        >
+                          {selectedClient ? selectedClient.name : "Select a client..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[300px] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search clients..." />
+                          <CommandList>
+                            <CommandEmpty>No client found.</CommandEmpty>
+                            <CommandGroup>
+                              {clients.map((client) => (
+                                <CommandItem
+                                  key={client.id}
+                                  value={client.name}
+                                  onSelect={() => {
+                                    setSelectedClient(client);
+                                    setClientPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${selectedClient?.id === client.id ? "opacity-100" : "opacity-0"
+                                      }`}
+                                  />
+                                  <div className="flex flex-col">
+                                    <span>{client.name}</span>
+                                    {client.company && <span className="text-xs text-muted-foreground">{client.company}</span>}
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  {/* Description */}
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Textarea
+                      placeholder="Task description (optional)"
+                      value={dailyTaskForm.description}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, description: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Date and Time */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Date</Label>
+                      <Input
+                        type="date"
+                        value={dailyTaskForm.date}
+                        onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, date: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Time</Label>
+                      <Input
+                        type="time"
+                        value={dailyTaskForm.time}
+                        onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, time: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Priority</Label>
+                    <Select
+                      value={dailyTaskForm.priority}
+                      onValueChange={(val: string) => setDailyTaskForm({ ...dailyTaskForm, priority: val as 'low' | 'medium' | 'high' | 'urgent' })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="urgent">Urgent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Notes */}
+                  <div className="space-y-2">
+                    <Label>Notes</Label>
+                    <Textarea
+                      placeholder="Additional notes (optional)"
+                      value={dailyTaskForm.notes}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, notes: e.target.value })}
+                    />
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    onClick={handleCreateDailyTask}
+                    disabled={isUploading || !dailyTaskForm.title.trim()}
+                  >
+                    {isUploading ? 'Creating...' : 'Create Task'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
-        
-        <div className="flex items-center gap-2">
-          {/* Add Daily Task Button - Full width on mobile */}
-          <Dialog open={showAddTaskDialog} onOpenChange={(open) => {
-            setShowAddTaskDialog(open);
-            if (open) {
-              // Fetch clients when dialog opens
-              fetchClients();
-              // Set system time when opening the dialog (only once, won't update when system time changes)
-              const now = new Date();
-              const hours = now.getHours().toString().padStart(2, '0');
-              const minutes = now.getMinutes().toString().padStart(2, '0');
-              setDailyTaskForm(prev => ({
-                ...prev,
-                time: `${hours}:${minutes}`
-              }));
-              startLocationPrewarm();
-            } else {
-              // Reset form when closing dialog
-              setDailyTaskForm({
-                title: '',
-                description: '',
-                date: new Date().toISOString().split('T')[0],
-                time: '',
-                notes: ''
-              });
-              setDailyTaskPhoto(null);
-              setTaskLocation(null);
-              setSelectedClient(null);
-              setClientPopoverOpen(false);
-              setPrewarmPosition(null);
-              setIsPrewarmingLocation(false);
-            }
-          }}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-                <Plus className="h-4 w-4 mr-2" />
-                <span className="text-sm sm:text-base">Add Daily Task</span>
-              </Button>
-            </DialogTrigger>
-            <DialogContent 
-              className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto"
-              onInteractOutside={(e) => e.preventDefault()}
-            >
-              <DialogHeader>
-                <DialogTitle className="text-lg sm:text-xl">Create Daily Task</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                {/* Camera View */}
-                {showCamera && (
-                  <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Camera</Label>
-                    
-                    <div className="relative bg-black rounded-lg overflow-hidden aspect-[4/3]">
-                      {!stream && (
-                        <div className="flex items-center justify-center h-full text-white">
-                          <div className="text-center">
-                            <Camera className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                            <p>Loading camera...</p>
-                          </div>
-                        </div>
-                      )}
-                      
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        className="w-full h-full object-cover"
-                        style={{ display: stream ? 'block' : 'none' }}
-                      />
-                      
-                      <div className="absolute top-2 right-2 flex flex-col gap-2">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="bg-white/80 hover:bg-white"
-                          onClick={switchCamera}
-                          title={`Switch to ${facingMode === 'user' ? 'back' : 'front'} camera`}
-                        >
-                          <Camera className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      
-                      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-3">
-                        <Button
-                          variant="destructive"
-                          size="icon"
-                          className="bg-white/80 hover:bg-white"
-                          onClick={stopCamera}
-                        >
-                          <X className="h-5 w-5" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          className="h-14 w-14 rounded-full bg-white shadow-lg"
-                          onClick={capturePhoto}
-                          disabled={capturingPhoto || !stream}
-                        >
-                          <div className="h-12 w-12 rounded-full border-4 border-gray-300"></div>
-                        </Button>
-                        <div className="w-12"></div>
-                      </div>
-                    </div>
-                    
-                    <p className="text-xs text-muted-foreground text-center">
-                      {facingMode === 'user' ? 'Front Camera' : 'Back Camera'}
-                    </p>
-                  </div>
-                )}
-
-                {/* Client Selection - Required */}
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">
-                    Client *
-                    {selectedClient && selectedClient.city && (
-                      <span className="text-xs text-muted-foreground ml-2">📍 {selectedClient.city}</span>
-                    )}
-                  </Label>
-                  <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={clientPopoverOpen}
-                        className="w-full justify-between min-h-[44px]"
-                      >
-                        {selectedClient ? (
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <span className="truncate font-medium">{selectedClient.name}</span>
-                            {selectedClient.company && (
-                              <span className="text-xs text-muted-foreground truncate hidden sm:inline">
-                                ({selectedClient.company})
-                              </span>
-                            )}
-                            {selectedClient.city && (
-                              <span className="text-xs text-muted-foreground hidden md:inline">
-                                📍 {selectedClient.city}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">Select client...</span>
-                        )}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                      <Command>
-                        <CommandInput placeholder="Search clients by name, company, or email..." />
-                        <CommandList>
-                          <CommandEmpty>No clients found.</CommandEmpty>
-                          <CommandGroup>
-                            {clients.map((client) => (
-                              <CommandItem
-                                key={client.id}
-                                value={`${client.name} ${client.company || ''} ${client.email || ''} ${client.city || ''}`}
-                                onSelect={() => {
-                                  setSelectedClient(client);
-                                  setClientPopoverOpen(false);
-                                }}
-                                className="cursor-pointer"
-                              >
-                                <Check
-                                  className={`mr-2 h-4 w-4 ${
-                                    selectedClient?.id === client.id ? 'opacity-100' : 'opacity-0'
-                                  }`}
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-medium truncate">{client.name}</p>
-                                  {client.company && (
-                                    <p className="text-xs text-muted-foreground truncate">{client.company}</p>
-                                  )}
-                                  {client.city && (
-                                    <p className="text-xs text-muted-foreground">📍 {client.city}</p>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                  
-                  {/* Selected Client Info */}
-                  {selectedClient && (
-                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
-                      <p className="font-semibold text-sm">{selectedClient.name}</p>
-                      {selectedClient.company && (
-                        <p className="text-xs text-muted-foreground">Company: {selectedClient.company}</p>
-                      )}
-                      {selectedClient.city && (
-                        <p className="text-xs text-muted-foreground">📍 City: <span className="font-medium">{selectedClient.city}</span></p>
-                      )}
-                      {selectedClient.address && (
-                        <p className="text-xs text-muted-foreground">Address: {selectedClient.address}</p>
-                      )}
-                      {selectedClient.email && (
-                        <p className="text-xs text-muted-foreground">Email: {selectedClient.email}</p>
-                      )}
-                      {selectedClient.phone && (
-                        <p className="text-xs text-muted-foreground">Phone: {selectedClient.phone}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Photo Preview */}
-                {!showCamera && (
-                  <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Photo *</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Take a photo for this task (required)
-                      {selectedClient && ' - Location will be captured and validated against client location'}
-                    </p>
-                    
-                    {!dailyTaskPhoto && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={startCamera}
-                        className="w-full min-h-[44px]"
-                        disabled={isCapturingLocation}
-                      >
-                        <Camera className="h-4 w-4 mr-2" />
-                        {isCapturingLocation ? 'Capturing Location...' : 'Take Photo'}
-                      </Button>
-                    )}
-                    
-                    {isPrewarmingLocation && !dailyTaskPhoto && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-2">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Preparing GPS for accurate location...
-                      </p>
-                    )}
-                    
-                    {dailyTaskPhoto && (
-                      <div className="relative">
-                        <img
-                          src={dailyTaskPhoto}
-                          alt="Task attachment preview"
-                          className="w-full h-64 object-cover rounded-lg border"
-                        />
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          size="icon"
-                          className="absolute top-2 right-2"
-                          onClick={() => {
-                            removeTaskPhoto();
-                            setTaskLocation(null);
-                          }}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={startCamera}
-                          className="w-full mt-2"
-                          disabled={isCapturingLocation}
-                        >
-                          <Camera className="h-4 w-4 mr-2" />
-                          Retake Photo
-                        </Button>
-                        
-                        {/* Location Info */}
-                        {taskLocation && (
-                          <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs">
-                            <p className="font-medium text-green-800">📍 Location Captured</p>
-                            <p className="text-green-700">Accuracy: ±{Math.round(taskLocation.accuracy)}m</p>
-                            <p className="text-green-700 truncate">{taskLocation.address}</p>
-                            {taskLocation.city && (
-                              <p className="text-green-700 truncate">City: {taskLocation.city}</p>
-                            )}
-                            {selectedClient && selectedClient.location_latitude && selectedClient.location_longitude && (
-                              (() => {
-                                const distance = calculateDistance(
-                                  taskLocation.latitude,
-                                  taskLocation.longitude,
-                                  selectedClient.location_latitude!,
-                                  selectedClient.location_longitude!
-                                );
-                                return (
-                                  <p className={`font-medium mt-1 ${distance <= 100 ? 'text-green-700' : 'text-orange-600'}`}>
-                                    {distance <= 100 
-                                      ? `✓ Verified: ${Math.round(distance)}m from client location`
-                                      : `⚠ Warning: ${Math.round(distance)}m from client location`
-                                    }
-                                  </p>
-                                );
-                              })()
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Task Title */}
-                <div className="space-y-2">
-                  <Label>Task Title *</Label>
-                  <Input 
-                    placeholder="Enter task title" 
-                    value={dailyTaskForm.title}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, title: e.target.value })}
-                  />
-                </div>
-
-                {/* Description */}
-                <div className="space-y-2">
-                  <Label>Description</Label>
-                  <Textarea 
-                    placeholder="Task description (optional)" 
-                    value={dailyTaskForm.description}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, description: e.target.value })}
-                  />
-                </div>
-
-                {/* Date and Time */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-sm">
-                      Date
-                      <Badge variant="secondary" className="text-xs">Today Only</Badge>
-                    </Label>
-                    <Input 
-                      type="date"
-                      value={dailyTaskForm.date}
-                      readOnly
-                      disabled
-                      className="bg-gray-50 cursor-not-allowed text-sm"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-sm">
-                      Time
-                      <Badge variant="secondary" className="text-xs">Auto</Badge>
-                    </Label>
-                    <Input 
-                      type="time"
-                      value={dailyTaskForm.time}
-                      readOnly
-                      disabled
-                      className="bg-gray-50 cursor-not-allowed text-sm"
-                    />
-                  </div>
-                </div>
-
-                {/* Notes */}
-                <div className="space-y-2">
-                  <Label>Notes</Label>
-                  <Textarea 
-                    placeholder="Additional notes (optional)" 
-                    value={dailyTaskForm.notes}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, notes: e.target.value })}
-                  />
-                </div>
-
-                <Button 
-                  className="w-full" 
-                  onClick={handleCreateDailyTask} 
-                  disabled={isUploading || !dailyTaskForm.title.trim() || !dailyTaskPhoto || !selectedClient}
-                >
-                  {isUploading ? (
-                    <>
-                      <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-                      Creating...
-                    </>
-                  ) : (
-                    'Create Task'
-                  )}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
+        <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4">
           {/* Mobile Tab Navigation */}
           {isMobile ? (
             <div className="flex w-full">
-              <div className="flex border rounded-lg w-full min-h-[44px]">
-                <Button
-                  variant={mobileTab === 'today' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setMobileTab('today')}
-                  className="flex-1 text-xs sm:text-sm min-h-[44px]"
-                >
-                  Today
-                </Button>
-                <Button
-                  variant={mobileTab === 'all' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setMobileTab('all')}
-                  className="flex-1 text-xs sm:text-sm min-h-[44px]"
-                >
-                  All
-                </Button>
-              </div>
+              <Button
+                variant={mobileTab === 'today' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setMobileTab('today')}
+                className="flex-1 text-xs sm:text-sm min-h-[44px]"
+              >
+                Today
+              </Button>
+              <Button
+                variant={mobileTab === 'all' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setMobileTab('all')}
+                className="flex-1 text-xs sm:text-sm min-h-[44px]"
+              >
+                All
+              </Button>
             </div>
+
           ) : (
             <>
               {/* Search Bar */}
@@ -1608,7 +1599,7 @@ export default function CalendarPage() {
               </div>
             </>
           )}
-          
+
           {/* Filter */}
           <Select value={filterType} onValueChange={setFilterType}>
             <SelectTrigger className="w-32">
@@ -1622,7 +1613,7 @@ export default function CalendarPage() {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
-          
+
         </div>
       </div>
 
@@ -1631,9 +1622,9 @@ export default function CalendarPage() {
         <CardHeader className="p-3 sm:p-6">
           <div className="flex items-center justify-between gap-2 w-full overflow-x-hidden">
             <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0 overflow-x-hidden">
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   if (isMobile) navigateWeek('prev');
                   else if (viewMode === 'month') navigateMonth('prev');
@@ -1644,7 +1635,7 @@ export default function CalendarPage() {
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              
+
               <h2 className="text-base sm:text-lg md:text-xl font-semibold truncate text-center flex-1">
                 {isMobile
                   ? currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -1654,10 +1645,10 @@ export default function CalendarPage() {
                     (viewMode === 'day' && currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }))
                   )}
               </h2>
-              
-              <Button 
-                variant="outline" 
-                size="sm" 
+
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   if (isMobile) navigateWeek('next');
                   else if (viewMode === 'month') navigateMonth('next');
@@ -1669,10 +1660,10 @@ export default function CalendarPage() {
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            
-            <Button 
-              variant="outline" 
-              size="sm" 
+
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setCurrentDate(new Date())}
               className="min-h-[44px] px-3 sm:px-4 text-xs sm:text-sm shrink-0"
             >
@@ -1680,7 +1671,7 @@ export default function CalendarPage() {
             </Button>
           </div>
         </CardHeader>
-        
+
         <CardContent className="p-3 sm:p-6 overflow-x-hidden w-full">
           {/* Mobile: fixed week strip with selected day's list below */}
           {isMobile && (
@@ -1704,9 +1695,8 @@ export default function CalendarPage() {
                     return (
                       <button
                         key={index}
-                        className={`py-2.5 sm:py-3 text-sm sm:text-base border-r last:border-r-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-colors min-h-[44px] sm:min-h-[48px] active:scale-95 ${
-                          isSelected ? 'bg-primary text-primary-foreground font-semibold' : isToday ? 'bg-muted font-semibold' : 'hover:bg-muted/50'
-                        }`}
+                        className={`py-2.5 sm:py-3 text-sm sm:text-base border-r last:border-r-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-colors min-h-[44px] sm:min-h-[48px] active:scale-95 ${isSelected ? 'bg-primary text-primary-foreground font-semibold' : isToday ? 'bg-muted font-semibold' : 'hover:bg-muted/50'
+                          }`}
                         onClick={() => handleDayClick(day.date)}
                         aria-label={`Select ${day.date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`}
                       >
@@ -1726,16 +1716,16 @@ export default function CalendarPage() {
                       const hourEvents = dayEvents.filter(event => parseInt(event.startTime.split(':')[0]) === hour);
                       // Skip early morning hours (0-5) if they have no events
                       if (hourEvents.length === 0 && hour < 6) return null;
-                      
+
                       // Check if current time is in this hour for sticky positioning
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
-                        <div 
-                          key={hour} 
+                        <div
+                          key={hour}
                           className="flex items-start gap-2 sm:gap-3 p-2.5 sm:p-3 min-h-[48px] sm:min-h-[56px] relative"
                           data-hour={hour}
                         >
@@ -1796,22 +1786,22 @@ export default function CalendarPage() {
                               </div>
                             )}
                           </div>
-                          
+
                           {/* Current time indicator - Sticky within this hour row */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute left-2 sm:left-3 -top-1.5 w-3 h-3 sm:w-4 sm:h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute right-2 sm:right-3 -top-2.5 sm:-top-3 text-[10px] sm:text-xs md:text-sm text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -1881,23 +1871,22 @@ export default function CalendarPage() {
                     const priorityOrder = { urgent: 4, high: 3, medium: 2, low: 1 };
                     const aPriority = priorityOrder[a.taskData?.priority as keyof typeof priorityOrder] || 0;
                     const bPriority = priorityOrder[b.taskData?.priority as keyof typeof priorityOrder] || 0;
-                    
+
                     if (aPriority !== bPriority) {
                       return bPriority - aPriority;
                     }
-                    
+
                     return a.startTime.localeCompare(b.startTime);
                   })
                   .map(event => (
                     <Card
                       key={event.id}
-                      className={`cursor-pointer transition-all hover:shadow-sm active:scale-[0.98] border-l-4 ${
-                        event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                      className={`cursor-pointer transition-all hover:shadow-sm active:scale-[0.98] border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
                         event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                        event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                        event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                        'border-l-gray-500 bg-gray-50'
-                      } ${event.taskData?.status === 'completed' ? 'opacity-75' : ''}`}
+                          event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                            event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                              'border-l-gray-500 bg-gray-50'
+                        } ${event.taskData?.status === 'completed' ? 'opacity-75' : ''}`}
                       onClick={() => handleEventClick(event)}
                     >
                       <CardContent className="p-3">
@@ -1906,15 +1895,14 @@ export default function CalendarPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <h4 className={`font-medium text-sm leading-tight truncate ${
-                                  event.taskData?.status === 'completed' ? 'line-through text-muted-foreground' : ''
-                                }`}>
+                                <h4 className={`font-medium text-sm leading-tight truncate ${event.taskData?.status === 'completed' ? 'line-through text-muted-foreground' : ''
+                                  }`}>
                                   {event.title}
                                 </h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-[10px] px-1.5 py-0 h-5 shrink-0">
                                   {event.taskData?.priority}
                                 </Badge>
@@ -2011,7 +1999,7 @@ export default function CalendarPage() {
                                 </div>
                               )}
                             </div>
-                            
+
                             <span className="text-[10px] text-gray-500">
                               {new Date(event.taskData?.created_at || '').toLocaleDateString('en-US', {
                                 month: 'short',
@@ -2047,26 +2035,22 @@ export default function CalendarPage() {
                   {day}
                 </div>
               ))}
-              
+
               {/* Calendar Days */}
               {calendarDays.map((day, index) => {
                 const isClicked = clickedDay && clickedDay.toDateString() === day.date.toDateString();
                 return (
                   <div
                     key={index}
-                    className={`min-h-[120px] p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${
-                      day.isCurrentMonth ? 'bg-background' : 'bg-muted/50'
-                    } ${day.isToday ? 'ring-2 ring-primary' : ''} ${
-                      isClicked ? 'bg-primary/10 border-primary ring-2 ring-primary/20' : ''
-                    }`}
+                    className={`min-h-[120px] p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${day.isCurrentMonth ? 'bg-background' : 'bg-muted/50'
+                      } ${day.isToday ? 'ring-2 ring-primary' : ''} ${isClicked ? 'bg-primary/10 border-primary ring-2 ring-primary/20' : ''
+                      }`}
                     onClick={() => handleDayClick(day.date)}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <div className={`text-sm font-medium ${
-                        day.isCurrentMonth ? 'text-foreground' : 'text-muted-foreground'
-                      } ${day.isToday ? 'text-primary font-bold' : ''} ${
-                        isClicked ? 'text-primary font-bold' : ''
-                      }`}>
+                      <div className={`text-sm font-medium ${day.isCurrentMonth ? 'text-foreground' : 'text-muted-foreground'
+                        } ${day.isToday ? 'text-primary font-bold' : ''} ${isClicked ? 'text-primary font-bold' : ''
+                        }`}>
                         {day.date.getDate()}
                       </div>
                       {day.events.length > 0 && (
@@ -2075,7 +2059,7 @@ export default function CalendarPage() {
                         </Badge>
                       )}
                     </div>
-                    
+
                     <div className="space-y-1">
                       {day.events.slice(0, 3).map(event => (
                         <div
@@ -2140,10 +2124,9 @@ export default function CalendarPage() {
                 const isClicked = clickedDay && clickedDay.toDateString() === day.date.toDateString();
                 return (
                   <div key={index} className="space-y-2">
-                    <div 
-                      className={`text-center p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${
-                        day.isToday ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                      } ${isClicked ? 'bg-primary/20 border-primary ring-2 ring-primary/20' : ''}`}
+                    <div
+                      className={`text-center p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${day.isToday ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                        } ${isClicked ? 'bg-primary/20 border-primary ring-2 ring-primary/20' : ''}`}
                       onClick={() => handleDayClick(day.date)}
                     >
                       <div className="text-sm font-medium">
@@ -2154,7 +2137,7 @@ export default function CalendarPage() {
                       </div>
                       {/* plus indicator removed for mobile spec */}
                     </div>
-                    
+
                     <div className="space-y-1">
                       {day.events.map(event => (
                         <div
@@ -2220,16 +2203,16 @@ export default function CalendarPage() {
                         const eventHour = parseInt(event.startTime.split(':')[0]);
                         return eventHour === hour;
                       });
-                      
+
                       // Skip early morning hours (0-5) if they have no events
                       if (hourEvents.length === 0 && hour < 6) return null;
-                      
+
                       // Check if current time is in this hour
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
                         <div key={hour} className="relative min-h-[44px] sm:min-h-[52px] border-b last:border-b-0">
                           <div className="flex gap-2 sm:gap-3 p-2 sm:p-3">
@@ -2237,7 +2220,7 @@ export default function CalendarPage() {
                             <div className="w-12 sm:w-16 text-[10px] sm:text-xs text-muted-foreground font-medium shrink-0 pt-0.5">
                               {hour.toString().padStart(2, '0')}:00
                             </div>
-                            
+
                             {/* Events for this hour */}
                             <div className="flex-1 space-y-1.5 sm:space-y-2 min-w-0">
                               {hourEvents.length === 0 ? (
@@ -2287,22 +2270,22 @@ export default function CalendarPage() {
                               )}
                             </div>
                           </div>
-                          
+
                           {/* Current time indicator - Sticky within this hour row */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute left-2 sm:left-3 -top-1.5 w-3 h-3 sm:w-4 sm:h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute right-2 sm:right-3 -top-2.5 sm:-top-3 text-[10px] sm:text-xs md:text-sm text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -2318,20 +2301,20 @@ export default function CalendarPage() {
                         const eventHour = parseInt(event.startTime.split(':')[0]);
                         return eventHour === hour;
                       });
-                      
+
                       // Check if current time is in this hour
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
                         <div key={hour} className="relative min-h-[60px] border-r border-gray-200 p-2">
                           {/* Time label */}
                           <div className="text-xs text-muted-foreground font-medium mb-2">
                             {hour.toString().padStart(2, '0')}:00
                           </div>
-                          
+
                           {/* Events for this hour */}
                           <div className="space-y-1">
                             {hourEvents.map(event => (
@@ -2371,22 +2354,22 @@ export default function CalendarPage() {
                               </div>
                             ))}
                           </div>
-                          
+
                           {/* Current time indicator - Within this hour column */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute -left-2 -top-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute -right-16 -top-1 text-xs text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -2397,7 +2380,7 @@ export default function CalendarPage() {
                   </div>
                 )}
               </div>
-              
+
               {/* Empty state when no events */}
               {dayEvents.length === 0 && (
                 <div className="text-center py-8 sm:py-12 text-muted-foreground border-2 border-dashed border-gray-200 rounded-lg">
@@ -2446,13 +2429,12 @@ export default function CalendarPage() {
                       .map(event => (
                         <Card
                           key={event.id}
-                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${
-                            event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
                             event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                            event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                            event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                            'border-l-gray-500 bg-gray-50'
-                          }`}
+                              event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                                event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                                  'border-l-gray-500 bg-gray-50'
+                            }`}
                           onClick={() => handleEventClick(event)}
                         >
                           <CardContent className="p-4">
@@ -2461,8 +2443,8 @@ export default function CalendarPage() {
                                 <h4 className="font-medium text-sm leading-tight">{event.title}</h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-xs">
                                   {event.taskData?.priority}
                                 </Badge>
@@ -2548,13 +2530,12 @@ export default function CalendarPage() {
                       .map(event => (
                         <Card
                           key={event.id}
-                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${
-                            event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
                             event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                            event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                            event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                            'border-l-gray-500 bg-gray-50'
-                          }`}
+                              event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                                event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                                  'border-l-gray-500 bg-gray-50'
+                            }`}
                           onClick={() => handleEventClick(event)}
                         >
                           <CardContent className="p-4">
@@ -2563,8 +2544,8 @@ export default function CalendarPage() {
                                 <h4 className="font-medium text-sm leading-tight">{event.title}</h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-xs">
                                   {event.taskData?.priority}
                                 </Badge>
@@ -2743,13 +2724,13 @@ export default function CalendarPage() {
       {/* Event Details Dialog */}
       <Dialog open={showEventDetails} onOpenChange={setShowEventDetails}>
         <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
+          <DialogHeader>
             <DialogTitle className="text-lg sm:text-xl flex items-center gap-2">
               <CalendarIcon className="h-5 w-5" />
               Event Details
             </DialogTitle>
           </DialogHeader>
-          
+
           {selectedEvent && (
             <div className="space-y-6 py-4">
               {/* Event Header */}
@@ -2765,9 +2746,9 @@ export default function CalendarPage() {
                     {selectedEvent.status}
                   </Badge>
                 </div>
-                
+
                 <h2 className="text-xl sm:text-2xl font-bold">{selectedEvent.title}</h2>
-                
+
                 {selectedEvent.description && (
                   <p className="text-muted-foreground text-sm sm:text-lg">{selectedEvent.description}</p>
                 )}
@@ -2784,11 +2765,11 @@ export default function CalendarPage() {
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">Date:</span>
-                      <span>{new Date(selectedEvent.date).toLocaleDateString('en-US', { 
-                        weekday: 'long', 
-                        year: 'numeric', 
-                        month: 'long', 
-                        day: 'numeric' 
+                      <span>{new Date(selectedEvent.date).toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
                       })}</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -2823,9 +2804,9 @@ export default function CalendarPage() {
                         <span className="font-medium">Status:</span>
                         <Badge variant="outline" className={
                           selectedEvent.taskData.status === 'completed' ? 'bg-green-100 text-green-600' :
-                          selectedEvent.taskData.status === 'in_progress' ? 'bg-blue-100 text-blue-600' :
-                          selectedEvent.taskData.status === 'pending' ? 'bg-yellow-100 text-yellow-600' :
-                          'bg-gray-100 text-gray-600'
+                            selectedEvent.taskData.status === 'in_progress' ? 'bg-blue-100 text-blue-600' :
+                              selectedEvent.taskData.status === 'pending' ? 'bg-yellow-100 text-yellow-600' :
+                                'bg-gray-100 text-gray-600'
                         }>
                           {selectedEvent.taskData.status.replace('_', ' ')}
                         </Badge>
@@ -2883,6 +2864,88 @@ export default function CalendarPage() {
                   </div>
                 )}
 
+                {/* Visit Details (Photo & Map) */}
+                {selectedEvent.visitData && (
+                  <div className="col-span-1 md:col-span-2 space-y-4">
+                    <h3 className="font-semibold text-lg flex items-center gap-2">
+                      <MapPin className="h-5 w-5" />
+                      Visit Verification
+                    </h3>
+
+                    {/* Status Banner */}
+                    <div className={`p-3 rounded-lg border flex items-center gap-3 ${selectedEvent.visitData.is_within_radius ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'
+                      }`}>
+                      {selectedEvent.visitData.is_within_radius ? (
+                        <CheckCircle className="h-5 w-5" />
+                      ) : (
+                        <AlertCircle className="h-5 w-5" />
+                      )}
+                      <div className="flex-1">
+                        <p className="font-bold">
+                          {selectedEvent.visitData.is_within_radius ? 'Verified Visit' : 'Location Warning'}
+                        </p>
+                        <p className="text-sm">
+                          {selectedEvent.visitData.is_within_radius
+                            ? `Agent was within ${Math.round(selectedEvent.visitData.distance_meters || 0)}m of client location.`
+                            : `Agent was ${Math.round(selectedEvent.visitData.distance_meters || 0)}m away from client (Limit: ${selectedEvent.visitData.radius_limit_meters || 100}m).`
+                          }
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Photo */}
+                      {selectedEvent.visitData.photo_url ? (
+                        <div className="relative rounded-lg overflow-hidden border bg-black h-64">
+                          <img
+                            src={selectedEvent.visitData.photo_url}
+                            alt="Visit verification"
+                            className="w-full h-full object-contain cursor-pointer"
+                            onClick={() => window.open(selectedEvent.visitData!.photo_url, '_blank')}
+                          />
+                        </div>
+                      ) : (
+                        <div className="h-64 rounded-lg border bg-gray-50 flex items-center justify-center text-muted-foreground">
+                          No photo captured
+                        </div>
+                      )}
+
+                      {/* Map */}
+                      <div className="h-64 rounded-lg overflow-hidden border relative z-0">
+                        {selectedEvent.visitData.latitude && selectedEvent.visitData.longitude ? (
+                          <MapContainer
+                            center={[selectedEvent.visitData.latitude, selectedEvent.visitData.longitude]}
+                            zoom={16}
+                            style={{ height: '100%', width: '100%' }}
+                            dragging={!isMobile}
+                          >
+                            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                            {/* Client Location Circle */}
+                            {selectedEvent.visitData.client?.location_latitude && (
+                              <Circle
+                                center={[selectedEvent.visitData.client.location_latitude, selectedEvent.visitData.client.location_longitude]}
+                                pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.8, fillOpacity: 0.2 }}
+                                radius={selectedEvent.visitData.radius_limit_meters || 100}
+                              />
+                            )}
+                            {/* Visit Location */}
+                            <Marker position={[selectedEvent.visitData.latitude, selectedEvent.visitData.longitude]}>
+                              <Popup>
+                                Visit Location<br />
+                                {new Date(selectedEvent.visitData.visited_at).toLocaleTimeString()}
+                              </Popup>
+                            </Marker>
+                          </MapContainer>
+                        ) : (
+                          <div className="flex items-center justify-center h-full bg-muted text-muted-foreground">
+                            Map unavailable
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Location & Attendees */}
                 <div className="space-y-3">
                   {selectedEvent.location && (
@@ -2894,7 +2957,7 @@ export default function CalendarPage() {
                       <p className="text-muted-foreground">{selectedEvent.location}</p>
                     </div>
                   )}
-                  
+
                   {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
                     <div>
                       <h3 className="font-semibold text-lg flex items-center gap-2">
@@ -2919,13 +2982,13 @@ export default function CalendarPage() {
                 <Button variant="outline" onClick={() => setShowEventDetails(false)}>
                   Close
                 </Button>
-                
+
                 {/* Task-specific actions */}
                 {selectedEvent.type === 'task' && selectedEvent.taskData && (
                   <>
                     {selectedEvent.taskData.status === 'pending' && (
-                      <Button 
-                        variant="default" 
+                      <Button
+                        variant="default"
                         onClick={() => handleStartTask(selectedEvent.taskData!.id)}
                         className="flex items-center gap-2"
                       >
@@ -2934,8 +2997,8 @@ export default function CalendarPage() {
                       </Button>
                     )}
                     {selectedEvent.taskData.status === 'in_progress' && (
-                      <Button 
-                        variant="default" 
+                      <Button
+                        variant="default"
                         onClick={handleCompleteTaskWithConfirmation}
                         className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
                       >
@@ -2951,7 +3014,7 @@ export default function CalendarPage() {
                     )}
                   </>
                 )}
-                
+
                 {/* General event actions (for non-task events) */}
                 {selectedEvent.type !== 'task' && (
                   <>
@@ -2978,12 +3041,12 @@ export default function CalendarPage() {
               Complete Task
             </DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-4 py-4">
             <p className="text-muted-foreground">
               Are you sure you want to mark this task as completed? This action cannot be undone.
             </p>
-            
+
             {selectedEvent?.taskData && (
               <div className="bg-gray-50 p-3 rounded-lg">
                 <h4 className="font-medium text-sm text-gray-700 mb-1">Task Details:</h4>
@@ -2993,16 +3056,16 @@ export default function CalendarPage() {
                 )}
               </div>
             )}
-            
+
             <div className="flex flex-col sm:flex-row justify-end gap-3">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => setShowCompletionConfirm(false)}
                 className="w-full sm:w-auto"
               >
                 Cancel
               </Button>
-              <Button 
+              <Button
                 variant="default"
                 onClick={() => selectedEvent?.taskData && handleCompleteTask(selectedEvent.taskData.id)}
                 className="bg-green-600 hover:bg-green-700 w-full sm:w-auto"
@@ -3015,6 +3078,6 @@ export default function CalendarPage() {
         </DialogContent>
       </Dialog>
 
-    </div>
+    </div >
   );
 }

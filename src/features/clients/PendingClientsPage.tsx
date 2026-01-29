@@ -225,7 +225,7 @@ const PendingClientsPage = () => {
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search clients by name, company, email, or city"
+              placeholder="Search clients by name, shop name, email, or city"
               className="pl-10"
             />
           </div>
@@ -241,7 +241,7 @@ const PendingClientsPage = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Client</TableHead>
-                    <TableHead>Company</TableHead>
+                    <TableHead>Shop Name</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>City</TableHead>

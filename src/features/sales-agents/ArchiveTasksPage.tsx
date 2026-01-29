@@ -73,6 +73,7 @@ interface TeamMember {
   id: string;
   full_name: string;
   email: string;
+  role: string;
 }
 
 export default function ArchiveTasksPage() {
@@ -86,13 +87,13 @@ export default function ArchiveTasksPage() {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [agentFilter, setAgentFilter] = useState<string>('all');
   const [dateFilter, setDateFilter] = useState<string>('');
-  
+
   // Dialog states
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   // Check if user is a leader
-  const isLeader = user?.position === 'Leader';
+  const isLeader = user?.role === 'team_leader';
 
   useEffect(() => {
     if (isLeader) {
@@ -104,10 +105,10 @@ export default function ArchiveTasksPage() {
   const fetchTasks = async () => {
     try {
       setLoading(true);
-      
+
       let query = supabase
         .from('task_details')
-        .select('*')
+        .select('id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, urgency_status, attachment_url')
         .eq('leader_id', user?.id)
         .order('created_at', { ascending: false });
 
@@ -119,7 +120,7 @@ export default function ArchiveTasksPage() {
         const tasksQuery = await supabase
           .from('tasks')
           .select(`
-            *,
+            id, leader_id, agent_id, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, attachment_url,
             leader:profiles!tasks_leader_id_fkey(full_name, email),
             agent:profiles!tasks_agent_id_fkey(full_name, email)
           `)
@@ -127,18 +128,18 @@ export default function ArchiveTasksPage() {
           .order('created_at', { ascending: false });
 
         if (tasksQuery.error) throw tasksQuery.error;
-        
+
         const transformedData = tasksQuery.data?.map(task => ({
           ...task,
-          leader_name: task.leader?.full_name || 'Unknown Leader',
-          leader_email: task.leader?.email || '',
-          agent_name: task.agent?.full_name || 'Unknown Agent',
-          agent_email: task.agent?.email || '',
-          urgency_status: task.due_date && task.due_date < new Date().toISOString() && task.status !== 'completed' 
-            ? 'overdue' 
+          leader_name: (task.leader as any)?.full_name || 'Unknown Leader',
+          leader_email: (task.leader as any)?.email || '',
+          agent_name: (task.agent as any)?.full_name || 'Unknown Agent',
+          agent_email: (task.agent as any)?.email || '',
+          urgency_status: task.due_date && task.due_date < new Date().toISOString() && task.status !== 'completed'
+            ? 'overdue'
             : task.due_date && new Date(task.due_date) <= new Date(Date.now() + 24 * 60 * 60 * 1000) && task.status !== 'completed'
-            ? 'due_soon'
-            : 'on_time'
+              ? 'due_soon'
+              : 'on_time' as 'overdue' | 'due_soon' | 'on_time'
         })) || [];
 
         setTasks(transformedData);
@@ -170,7 +171,7 @@ export default function ArchiveTasksPage() {
             id,
             full_name,
             email,
-            position
+            role
           )
         `)
         .eq('leader_id', user?.id);
@@ -181,7 +182,7 @@ export default function ArchiveTasksPage() {
         id: (item.profiles as any).id,
         full_name: (item.profiles as any).full_name,
         email: (item.profiles as any).email,
-        position: (item.profiles as any).position
+        role: (item.profiles as any).role
       })) || [];
 
       setTeamMembers(members);
@@ -242,13 +243,13 @@ export default function ArchiveTasksPage() {
 
   const filteredTasks = tasks.filter(task => {
     const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         task.agent_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         task.description.toLowerCase().includes(searchQuery.toLowerCase());
+      task.agent_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      task.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
     const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
     const matchesAgent = agentFilter === 'all' || task.agent_id === agentFilter;
     const matchesDate = !dateFilter || (task.due_date && task.due_date.startsWith(dateFilter));
-    
+
     return matchesSearch && matchesStatus && matchesPriority && matchesAgent && matchesDate;
   });
 
@@ -290,7 +291,7 @@ export default function ArchiveTasksPage() {
                 />
               </div>
             </div>
-            
+
             <Select value={agentFilter} onValueChange={setAgentFilter}>
               <SelectTrigger>
                 <SelectValue placeholder="Agent" />
@@ -439,7 +440,7 @@ export default function ArchiveTasksPage() {
               View complete task information
             </DialogDescription>
           </DialogHeader>
-          
+
           {selectedTask && (
             <div className="space-y-6 py-4">
               {/* Task Title & Status */}
@@ -491,8 +492,8 @@ export default function ArchiveTasksPage() {
                 <div>
                   <Label className="text-sm font-semibold">Completed</Label>
                   <div className="mt-2 text-sm text-gray-600">
-                    {selectedTask.completed_at 
-                      ? new Date(selectedTask.completed_at).toLocaleString() 
+                    {selectedTask.completed_at
+                      ? new Date(selectedTask.completed_at).toLocaleString()
                       : 'Not completed'}
                   </div>
                 </div>

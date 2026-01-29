@@ -1,9 +1,9 @@
 // B1G Ordering System - Database Types
 // Auto-generated TypeScript types for Supabase tables
 
-export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales';
+export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent';
 export type UserStatus = 'active' | 'inactive';
-export type VariantType = 'flavor' | 'battery';
+export type VariantType = 'flavor' | 'battery' | 'posm';
 export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
 export type AgentInventoryStatus = 'available' | 'low' | 'none';
 export type OrderStatus = 'pending' | 'approved' | 'rejected';
@@ -12,18 +12,26 @@ export type TransactionType = 'purchase_order_received' | 'allocated_to_agent' |
 export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
 export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
 export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';
-export type NotificationType = 
-  | 'order_created' 
-  | 'order_approved' 
+export type NotificationType =
+  | 'order_created'
+  | 'order_approved'
   | 'order_rejected'
-  | 'inventory_low' 
+  | 'inventory_low'
   | 'inventory_allocated'
-  | 'purchase_order_approved' 
+  | 'purchase_order_approved'
   | 'new_client'
   | 'system_message'
   | 'stock_request_created'
   | 'stock_request_approved'
-  | 'stock_request_rejected';
+  | 'stock_request_rejected'
+  | 'audit_system_change'
+  | 'audit_critical_action';
+
+export type AuditOperation = 'INSERT' | 'UPDATE' | 'DELETE';
+
+// Pricing types for order creation
+export type PricingColumn = 'selling_price' | 'dsp_price' | 'rsp_price';
+export type PricingStrategy = 'custom' | 'dsp' | 'rsp';
 
 // ============================================================================
 // TABLE TYPES
@@ -37,9 +45,44 @@ export interface Company {
   super_admin_email: string;
   role: string; // Default: 'Super Admin'
   status: UserStatus;
+  team_leader_allowed_pricing?: PricingColumn[];
+  mobile_sales_allowed_pricing?: PricingColumn[];
   created_at: string;
   updated_at: string;
 }
+
+// Helper to map pricing strategy to column
+export const PRICING_STRATEGY_MAP: Record<PricingStrategy, PricingColumn> = {
+  rsp: 'rsp_price',
+  dsp: 'dsp_price',
+  custom: 'selling_price'
+};
+
+// Reverse map for UI display
+export const PRICING_COLUMN_MAP: Record<PricingColumn, PricingStrategy> = {
+  rsp_price: 'rsp',
+  dsp_price: 'dsp',
+  selling_price: 'custom'
+};
+
+// Pricing option metadata for UI
+export const PRICING_OPTIONS = {
+  selling_price: {
+    label: 'Special Pricing',
+    description: 'Custom Unit Prices',
+    badge: 'Custom'
+  },
+  dsp_price: {
+    label: 'DSP Pricing',
+    description: 'Distributor Price',
+    badge: 'DSP'
+  },
+  rsp_price: {
+    label: 'RSP Pricing',
+    description: 'Standard Retail Price',
+    badge: 'RSP'
+  }
+} as const;
 
 export interface Profile {
   id: string;
@@ -86,6 +129,7 @@ export interface MainInventory {
   company_id: string;
   variant_id: string;
   stock: number;
+  allocated_stock: number; // Stock reserved for approved requests but not yet distributed
   unit_price: number;
   selling_price?: number;
   dsp_price?: number;
@@ -96,6 +140,11 @@ export interface MainInventory {
   created_at: string;
   updated_at: string;
 }
+
+// Computed available stock = stock - allocated_stock
+export type MainInventoryWithAvailability = MainInventory & {
+  available_stock: number;
+};
 
 export interface AgentInventory {
   id: string;
@@ -182,11 +231,16 @@ export interface Client {
   category: ClientCategory;
   status: UserStatus;
   approval_status: ClientApprovalStatus;
+  has_forge: boolean;
   approval_notes?: string;
   approval_requested_at?: string;
   approved_at?: string;
   approved_by?: string;
   last_order_date?: string;
+  cor_url?: string;
+  contact_person?: string;
+  tin?: string;
+  tax_status?: 'Tax on Sales' | 'Tax Exempt';
   created_at: string;
   updated_at: string;
 }
@@ -208,8 +262,10 @@ export interface ClientOrder {
   notes?: string;
   signature_url?: string;
   payment_method?: 'GCASH' | 'BANK_TRANSFER' | 'CASH';
+  bank_type?: 'Unionbank' | 'BPI' | 'PBCOM';
   payment_proof_url?: string;
   stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected';
+  remitted?: boolean;
   created_at: string;
   approved_by?: string;
   approved_at?: string;
@@ -293,6 +349,20 @@ export interface Notification {
   created_at: string;
 }
 
+export interface Event {
+  id: string;
+  occurred_at: string;
+  actor_id: string;
+  actor_role: string;
+  performed_by: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  details: any;
+  target_label?: string | null;
+  actor_label?: string | null;
+}
+
 export interface LeaderTeam {
   id: string;
   company_id: string;
@@ -311,6 +381,8 @@ export interface StockRequest {
   leader_id: string;
   variant_id: string;
   requested_quantity: number;
+  leader_additional_quantity: number; // Additional qty leader requests for themselves
+  is_combined_request: boolean; // True if request includes leader's additional qty
   requested_at: string;
   status: StockRequestStatus;
   leader_approved_at?: string;
@@ -338,6 +410,66 @@ export interface StockRequestItem {
   fulfilled_quantity: number;
   unit_price?: number;
   notes?: string;
+  created_at: string;
+}
+
+export interface VisitLog {
+  id: string;
+  company_id: string;
+  agent_id: string;
+  client_id: string;
+  task_id?: string;
+  visited_at: string;
+  latitude: number;
+  longitude: number;
+  address?: string;
+  is_within_radius: boolean;
+  distance_meters?: number;
+  radius_limit_meters?: number;
+  photo_url?: string;
+  notes?: string;
+  created_at: string;
+}
+
+export interface Task {
+  id: string;
+  company_id: string;
+  agent_id: string;
+  leader_id?: string;
+  client_id?: string; // Added
+  title: string;
+  description?: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  due_date?: string;
+  time?: string;
+  notes?: string;
+  attachment_url?: string;
+  location_latitude?: number; // Added
+  location_longitude?: number; // Added
+  location_address?: string; // Added
+  given_at: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SystemAuditLog {
+  id: string;
+  company_id: string;
+  table_name: string;
+  operation: AuditOperation;
+  record_id: string;
+  user_id?: string;
+  user_email?: string;
+  user_name?: string;
+  user_role?: UserRole;
+  old_data?: Record<string, any>;
+  new_data?: Record<string, any>;
+  changed_fields?: string[];
+  description?: string;
+  ip_address?: string;
+  user_agent?: string;
   created_at: string;
 }
 
@@ -386,6 +518,33 @@ export interface ClientOrderItemWithVariant extends ClientOrderItem {
 export interface LeaderTeamWithDetails extends LeaderTeam {
   leader: Profile;
   agent: Profile;
+}
+
+export interface SystemAuditLogWithProfile extends SystemAuditLog {
+  user_profile?: Profile;
+}
+
+export interface BusinessAuditLog {
+  id: string;
+  company_id: string;
+  action_type: string;
+  action_category: string;
+  action_description: string;
+  user_id?: string;
+  user_name?: string;
+  user_email?: string;
+  user_role?: UserRole;
+  affected_user_id?: string;
+  affected_user_name?: string;
+  affected_client_id?: string;
+  affected_client_name?: string;
+  details?: Record<string, any>;
+  reference_type?: string;
+  reference_id?: string;
+  reference_number?: string;
+  ip_address?: string;
+  user_agent?: string;
+  created_at: string;
 }
 
 export interface StockRequestWithDetails extends StockRequest {
@@ -630,6 +789,32 @@ export interface Database {
       reject_stock_request: {
         Args: { p_request_id: string; p_rejector_id: string; p_reason?: string };
         Returns: FunctionResponse;
+      };
+      // New PRE-ORDER system functions
+      forward_stock_request_with_leader_qty: {
+        Args: {
+          p_request_id: string;
+          p_leader_id: string;
+          p_leader_additional_quantity?: number;
+          p_notes?: string;
+        };
+        Returns: FunctionResponse;
+      };
+      admin_approve_stock_request: {
+        Args: { p_request_id: string; p_admin_id: string; p_notes?: string };
+        Returns: FunctionResponse;
+      };
+      admin_reject_stock_request: {
+        Args: { p_request_id: string; p_admin_id: string; p_reason: string };
+        Returns: FunctionResponse;
+      };
+      leader_accept_and_distribute_stock: {
+        Args: { p_request_id: string; p_leader_id: string };
+        Returns: FunctionResponse;
+      };
+      get_available_stock: {
+        Args: { p_variant_id: string; p_company_id: string };
+        Returns: number;
       };
     };
   };

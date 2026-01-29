@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, FileText } from 'lucide-react';
+import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, FileText, AlertCircle } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
@@ -48,10 +48,9 @@ export default function OrdersPage() {
   const [rejectingForRole, setRejectingForRole] = useState<'leader' | 'admin' | null>(null);
 
   // Role flags and leader team state
-  const isAdmin = user?.role === 'admin';
-  const isLeader = user?.position === 'Leader';
-  const [teamAgentIds, setTeamAgentIds] = useState<string[]>([]);
-  const [teamAgents, setTeamAgents] = useState<{ id: string; name: string }[]>([]);
+  // Role flags
+  const isAdmin = user?.role === 'admin' || user?.role === 'finance' || user?.role === 'super_admin';
+  const isFinance = user?.role === 'finance';
 
   // Bulk approval states
   const [bulkApproveDialogOpen, setBulkApproveDialogOpen] = useState(false);
@@ -63,72 +62,25 @@ export default function OrdersPage() {
   const [loadingBulkClient, setLoadingBulkClient] = useState(false);
   const [processingBulkApproval, setProcessingBulkApproval] = useState(false);
 
-  // Load leader team agents when user is a leader
-  useEffect(() => {
-    const loadTeam = async () => {
-      try {
-        if (!isLeader || !user?.id) {
-          setTeamAgentIds([]);
-          return;
-        }
-        const { data, error } = await supabase
-          .from('leader_teams')
-          .select('agent_id')
-          .eq('leader_id', user.id);
-        if (error) throw error;
-        const ids = (data || []).map((r: any) => r.agent_id);
-        setTeamAgentIds(ids);
-        if (ids.length > 0) {
-          const { data: profiles } = await supabase
-            .from('profiles')
-            .select('id, full_name')
-            .in('id', ids);
-          setTeamAgents((profiles || []).map((p: any) => ({ id: p.id, name: p.full_name || 'Unknown Agent' })));
-        } else {
-          setTeamAgents([]);
-        }
-      } catch (e) {
-        console.error('Error loading leader team:', e);
-        setTeamAgentIds([]);
-      }
-    };
-    loadTeam();
-  }, [isLeader, user?.id]);
+  // Load team logic removed as orders now go directly to finance
 
   // Restrict visible orders based on role
   const visibleOrders = useMemo(() => {
     if (isAdmin) return orders;
-    if (isLeader) return orders.filter(o => teamAgentIds.includes(o.agentId));
     return [] as Order[];
-  }, [orders, isAdmin, isLeader, teamAgentIds]);
+  }, [orders, isAdmin]);
 
-  // Build team agent list (leaders only) from visible orders
-  const teamAgentsSummary = useMemo(() => {
-    if (!isLeader) return [] as { agentId: string; agentName: string; orders: number }[];
-    const countByAgent: Record<string, number> = {};
-    for (const o of visibleOrders) {
-      countByAgent[o.agentId] = (countByAgent[o.agentId] || 0) + 1;
-    }
-    const list = teamAgents.map(a => ({ agentId: a.id, agentName: a.name, orders: countByAgent[a.id] || 0 }));
-    return list.sort((a, b) => a.agentName.localeCompare(b.agentName));
-  }, [visibleOrders, isLeader, teamAgents]);
+  // Team summary logic removed
 
   // Pending orders count (role-based) - matches the filterOrders logic
   const pendingOrdersCount = useMemo(() => {
-    if (isAdmin) {
-      return visibleOrders.filter(o => o.stage === 'leader_approved').length;
-    } else if (isLeader) {
-      return visibleOrders.filter(o => (o.stage === 'agent_pending' || !o.stage)).length;
-    }
-    return visibleOrders.filter(o => o.status === 'pending').length;
-  }, [visibleOrders, isAdmin, isLeader]);
+    return visibleOrders.filter(o => o.stage === 'finance_pending' || o.status === 'pending').length;
+  }, [visibleOrders]);
 
   // Approved orders (role-based) without search filters
   const approvedOrdersAll = useMemo(() => {
-    if (isAdmin) return visibleOrders.filter(o => o.stage === 'admin_approved');
-    if (isLeader) return visibleOrders.filter(o => o.stage === 'leader_approved');
-    return visibleOrders.filter(o => o.status === 'approved');
-  }, [visibleOrders, isAdmin, isLeader]);
+    return visibleOrders.filter(o => o.status === 'approved' || o.stage === 'admin_approved');
+  }, [visibleOrders]);
 
   // Approved this month count based on system date
   const approvedThisMonthCount = useMemo(() => {
@@ -143,16 +95,10 @@ export default function OrdersPage() {
 
   // Map legacy status + stage to a clearer label for display
   const getStatusLabel = (order: Order) => {
-    // For admin view, ensure we always show "Pending (Admin Review)" for leader_approved orders
-    if (order.stage === 'leader_approved') return 'Pending (Admin Review)';
-    // Orders pending leader review should show "Pending (Leader Review)"
-    if (order.stage === 'agent_pending' || !order.stage) return 'Pending (Leader Review)';
-    if (order.stage === 'admin_approved') return 'Approved';
-    if (order.stage === 'leader_rejected') return 'Rejected (Leader)';
-    if (order.stage === 'admin_rejected') return 'Rejected (Admin)';
-    // Fallback: if status is pending but no stage, return Pending (Leader Review)
-    // This should only happen for orders that haven't been processed yet
-    return order.status === 'pending' ? 'Pending (Leader Review)' : order.status;
+    if (order.stage === 'finance_pending' || order.status === 'pending') return 'Pending Finance Review';
+    if (order.stage === 'admin_approved' || order.status === 'approved') return 'Approved';
+    if (order.stage === 'admin_rejected' || order.status === 'rejected') return 'Rejected';
+    return order.status;
   };
 
   const getStatusVariant = (order: Order) => {
@@ -195,21 +141,34 @@ export default function OrdersPage() {
   const handleConfirmApprove = async () => {
     if (!orderToApprove) return;
 
+    // Safety check: Block approval of cash/cheque orders without deposit OR without bank details recorded
+    if ((orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE') && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
+      toast({
+        title: 'Cannot Approve',
+        description: orderToApprove.depositId
+          ? 'The team leader must record the deposit details (bank account and reference number) before this order can be approved.'
+          : 'Cash and Cheque orders require a deposit to be recorded by the team leader before they can be approved.',
+        variant: 'destructive',
+        duration: 7000
+      });
+      setApproveDialogOpen(false);
+      setOrderToApprove(null);
+      return;
+    }
+
     try {
-      if (isLeader) {
-        const { data, error } = await supabase.rpc('leader_approve_client_order', {
-          p_order_id: orderToApprove.id,
-          p_leader_id: user?.id
+      if (isAdmin) {
+        await updateOrderStatus(orderToApprove.id, 'approved');
+
+        // Show appropriate success message
+        const successMessage = (orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE') && orderToApprove.depositId
+          ? 'Order approved and deposit verified.'
+          : 'Order approval complete.';
+
+        toast({
+          title: 'Approved',
+          description: successMessage
         });
-        if (error || !data?.success) throw new Error(error?.message || data?.message || 'Leader approve failed');
-        toast({ title: 'Approved', description: 'Leader approval complete. Deducted from leader inventory.' });
-      } else if (isAdmin) {
-        const { data, error } = await supabase.rpc('admin_approve_client_order', {
-          p_order_id: orderToApprove.id,
-          p_admin_id: user?.id
-        });
-        if (error || !data?.success) throw new Error(error?.message || data?.message || 'Admin approve failed');
-        toast({ title: 'Approved', description: 'Admin approval complete. Deducted from main inventory.' });
       } else {
         throw new Error('Not authorized to approve');
       }
@@ -229,29 +188,16 @@ export default function OrdersPage() {
   const handleOpenReject = (order: Order) => {
     setOrderToReject(order);
     setRejectionReason('');
-    setRejectingForRole(isAdmin ? 'admin' : (isLeader ? 'leader' : null));
+    setRejectingForRole('admin');
     setReasonDialogOpen(true);
   };
 
   const handleConfirmRejectWithReason = async () => {
     if (!orderToReject || !rejectingForRole) return;
     try {
-      if (rejectingForRole === 'leader' && isLeader) {
-        const { data, error } = await supabase.rpc('leader_reject_client_order', {
-          p_order_id: orderToReject.id,
-          p_leader_id: user?.id,
-          p_reason: rejectionReason || null
-        });
-        if (error || !data?.success) throw new Error(error?.message || data?.message || 'Leader reject failed');
-        toast({ title: 'Rejected', description: 'Order rejected by leader. Stock returned to agent.' });
-      } else if (rejectingForRole === 'admin' && isAdmin) {
-        const { data, error } = await supabase.rpc('admin_reject_client_order', {
-          p_order_id: orderToReject.id,
-          p_admin_id: user?.id,
-          p_reason: rejectionReason || ''
-        });
-        if (error || !data?.success) throw new Error(error?.message || data?.message || 'Admin reject failed');
-        toast({ title: 'Rejected', description: 'Order sent back to leader with reason.' });
+      if (isAdmin) {
+        await updateOrderStatus(orderToReject.id, 'rejected', rejectionReason);
+        toast({ title: 'Rejected', description: 'Order rejected. Sales agent will be notified.' });
       }
       setReasonDialogOpen(false);
       setOrderToReject(null);
@@ -265,48 +211,13 @@ export default function OrdersPage() {
   const filterOrders = (status?: Order['status']) => {
     let filtered = visibleOrders;
     if (status) {
-      if (isAdmin) {
-        // Admin view tabs - only show orders that need admin action
-        if (status === 'pending') {
-          // STRICTLY only show orders that are pending admin review (leader_approved stage)
-          // Exclude any orders with agent_pending, null stage, undefined stage, or other stages
-          // STRICTLY filter: only show orders with stage === 'leader_approved'
-          // This excludes agent_pending, null, undefined, and all other stages
-          filtered = filtered.filter(o => o.stage === 'leader_approved');
-        } else if (status === 'approved') {
-          // Only show orders that are admin approved
-          filtered = filtered.filter(o => o.stage === 'admin_approved');
-        } else if (status === 'rejected') {
-          // Only show orders that are admin rejected
-          filtered = filtered.filter(o => o.stage === 'admin_rejected');
-        }
-      } else if (isLeader) {
-        // Leader view tabs
-        if (status === 'pending') {
-          // Only show orders that are pending leader review
-          filtered = filtered.filter(o => (o.stage === 'agent_pending' || !o.stage));
-        } else if (status === 'approved') {
-          // Show orders that leader approved (now pending admin review)
-          filtered = filtered.filter(o => o.stage === 'leader_approved');
-        } else if (status === 'rejected') {
-          // Show orders that leader rejected
-          filtered = filtered.filter(o => o.stage === 'leader_rejected');
-        }
-      } else {
-        filtered = filtered.filter(o => o.status === status);
+      if (status === 'pending') {
+        filtered = filtered.filter(o => o.stage === 'finance_pending' || o.status === 'pending');
+      } else if (status === 'approved') {
+        filtered = filtered.filter(o => o.status === 'approved' || o.stage === 'admin_approved');
+      } else if (status === 'rejected') {
+        filtered = filtered.filter(o => o.status === 'rejected' || o.stage === 'admin_rejected');
       }
-    } else {
-      // "All Orders" tab - apply role-based filtering
-      if (isAdmin) {
-        // For admin: exclude orders pending leader review (agent_pending or no stage)
-        // Only show orders that are relevant to admin (pending admin review, approved, rejected, or admin_approved)
-        filtered = filtered.filter(o => {
-          // Exclude orders with stage === 'agent_pending' or !stage (these are pending leader review)
-          // Include all other orders (leader_approved, admin_approved, admin_rejected, leader_rejected)
-          return o.stage !== 'agent_pending' && o.stage !== null && o.stage !== undefined;
-        });
-      }
-      // For leaders and others, show all orders without filtering
     }
     if (searchQuery) {
       filtered = filtered.filter(o =>
@@ -327,10 +238,10 @@ export default function OrdersPage() {
 
   const handleSelectAgentForBulk = (agentId: string) => {
     setSelectedAgentForBulk(agentId);
-    // Filter orders for this agent that are pending admin approval
+    // Filter orders for this agent that are pending finance approval
     const filtered = orders.filter(
       (o) => o.agentId === agentId &&
-        (o.stage === 'leader_approved' || (o.stage === 'agent_pending' && isAdmin))
+        (o.stage === 'finance_pending' || (o.status === 'pending' && isAdmin))
     );
     setAgentOrders(filtered);
   };
@@ -344,7 +255,7 @@ export default function OrdersPage() {
     try {
       const { data, error } = await supabase
         .from('clients')
-        .select('*')
+        .select('id, name, email, phone, company, address')
         .eq('id', order.clientId)
         .single();
 
@@ -361,25 +272,37 @@ export default function OrdersPage() {
   const handleBulkApprove = async () => {
     if (agentOrders.length === 0) return;
 
+    // Check for cash/cheque orders without deposits OR without bank details recorded
+    const ordersWithoutDeposit = agentOrders.filter(
+      order => (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (!order.depositId || !order.depositBankAccount)
+    );
+
+    if (ordersWithoutDeposit.length > 0) {
+      toast({
+        title: 'Cannot Approve',
+        description: `${ordersWithoutDeposit.length} cash/cheque order(s) cannot be approved. The team leader must record the deposit details (bank account and reference number) first.`,
+        variant: 'destructive',
+        duration: 7000
+      });
+      return;
+    }
+
     setProcessingBulkApproval(true);
     try {
       let successCount = 0;
       let failCount = 0;
+      let skippedCash = 0;
 
       for (const order of agentOrders) {
         try {
-          const newStage = isAdmin ? 'admin_approved' : 'leader_approved';
-          const { error } = await supabase
-            .from('client_orders')
-            .update({
-              stage: newStage,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', order.id);
+          // Double-check cash/cheque orders before approval (safety net)
+          if ((order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (!order.depositId || !order.depositBankAccount)) {
+            console.warn(`Skipping cash/cheque order ${order.orderNumber} - deposit not recorded or bank details missing`);
+            skippedCash++;
+            continue;
+          }
 
-          if (error) throw error;
-
-          await updateOrderStatus(order.id, newStage as any);
+          await updateOrderStatus(order.id, 'approved');
           successCount++;
         } catch (error) {
           console.error(`Failed to approve order ${order.orderNumber}:`, error);
@@ -389,7 +312,7 @@ export default function OrdersPage() {
 
       toast({
         title: 'Bulk Approval Complete',
-        description: `Successfully approved ${successCount} order(s).${failCount > 0 ? ` Failed: ${failCount}` : ''}`,
+        description: `Successfully approved ${successCount} order(s).${skippedCash > 0 ? ` Skipped ${skippedCash} cash order(s) without deposit.` : ''}${failCount > 0 ? ` Failed: ${failCount}` : ''}`,
       });
 
       setBulkApproveDialogOpen(false);
@@ -442,9 +365,26 @@ export default function OrdersPage() {
                       <div className="text-xs text-muted-foreground">Order #</div>
                       <div className="font-mono font-semibold">{order.orderNumber}</div>
                     </div>
-                    <Badge variant={getStatusVariant(order) as any}>
-                      {getStatusLabel(order)}
-                    </Badge>
+                    <div className="flex flex-col gap-1 items-end">
+                      <Badge variant={getStatusVariant(order) as any}>
+                        {getStatusLabel(order)}
+                      </Badge>
+                      {(order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (order.stage === 'finance_pending' || order.status === 'pending') && (
+                        order.depositId && order.depositBankAccount ? (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                            Deposit Recorded
+                          </Badge>
+                        ) : order.depositId ? (
+                          <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
+                            Details Pending
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+                            Awaiting Deposit
+                          </Badge>
+                        )
+                      )}
+                    </div>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                     <div>
@@ -504,7 +444,24 @@ export default function OrdersPage() {
                         ₱{order.total.toLocaleString()}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
+                          {(order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (order.stage === 'finance_pending' || order.status === 'pending') && (
+                            order.depositId && order.depositBankAccount ? (
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                                Deposit Recorded
+                              </Badge>
+                            ) : order.depositId ? (
+                              <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
+                                Details Pending
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+                                Awaiting Deposit
+                              </Badge>
+                            )
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
                         <Button
@@ -581,6 +538,14 @@ export default function OrdersPage() {
       </>
     );
   };
+  if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'super_admin')) {
+    return (
+      <div className="p-8 text-center">
+        <h1 className="text-2xl font-bold text-red-600">Access Denied</h1>
+        <p className="text-muted-foreground">You do not have permission to view this page.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 space-y-6">
@@ -589,7 +554,7 @@ export default function OrdersPage() {
           <h1 className="text-3xl font-bold">Order Management</h1>
           <p className="text-muted-foreground">Review and approve purchase orders from sales agents</p>
         </div>
-        {isAdmin && (
+        {isFinance && (
           <Button onClick={handleOpenBulkApprove} className="gap-2">
             <CheckSquare className="h-4 w-4" />
             Bulk Approve Orders
@@ -629,26 +594,7 @@ export default function OrdersPage() {
       </div>
 
       {/* Leader: Team Agents panel */}
-      {isLeader && teamAgentsSummary.length > 0 && (
-        <Card>
-          <CardHeader>
-            <div>
-              <h2 className="text-xl font-semibold">My Team Agents</h2>
-              <p className="text-sm text-muted-foreground">Agents under you with order counts</p>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {teamAgentsSummary.map(a => (
-                <div key={a.agentId} className="p-3 border rounded-lg">
-                  <div className="font-medium">{a.agentName}</div>
-                  <div className="text-sm mt-1">Orders: <span className="font-semibold">{a.orders}</span></div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Team Agents panel removed */}
 
       <Card>
         <CardHeader>
@@ -663,21 +609,17 @@ export default function OrdersPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="pending" className="w-full">
+          <Tabs defaultValue="all" className="w-full">
             <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto p-1 bg-muted">
               <TabsTrigger value="pending" className="data-[state=active]:bg-background">
                 <div className="flex flex-col items-center gap-1 py-1">
-                  <span className="font-semibold text-sm">
-                    {isAdmin ? 'Pending (Admin Review)' : isLeader ? 'Pending (Leader Review)' : 'Pending'}
-                  </span>
+                  <span className="font-semibold text-sm">Pending (Finance Review)</span>
                   <span className="text-xs text-muted-foreground">({filterOrders('pending').length})</span>
                 </div>
               </TabsTrigger>
               <TabsTrigger value="approved" className="data-[state=active]:bg-background">
                 <div className="flex flex-col items-center gap-1 py-1">
-                  <span className="font-semibold text-sm">
-                    {isLeader ? 'Pending (Admin Review)' : 'Approved'}
-                  </span>
+                  <span className="font-semibold text-sm">Approved</span>
                   <span className="text-xs text-muted-foreground">({filterOrders('approved').length})</span>
                 </div>
               </TabsTrigger>
@@ -743,7 +685,7 @@ export default function OrdersPage() {
                       <>
                         <div>Email: {clientDetails?.email || '—'}</div>
                         <div>Phone: {clientDetails?.phone || '—'}</div>
-                        <div>Company: {clientDetails?.company || '—'}</div>
+                        <div>Shop Name: {clientDetails?.company || '—'}</div>
                         <div>Address: {clientDetails?.address || '—'}</div>
                       </>
                     )}
@@ -819,8 +761,14 @@ export default function OrdersPage() {
                       <Label className="text-muted-foreground">Payment Method</Label>
                       <p className="font-medium">
                         {viewingOrder.paymentMethod === 'GCASH' ? 'GCash' :
-                          viewingOrder.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' :
-                            'Cash'}
+                          viewingOrder.paymentMethod === 'BANK_TRANSFER' ? (
+                            <>
+                              Bank Transfer
+                              {viewingOrder.bankType && (
+                                <span className="ml-2 text-sm text-muted-foreground">({viewingOrder.bankType})</span>
+                              )}
+                            </>
+                          ) : viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}
                       </p>
                     </div>
                     {viewingOrder.paymentProofUrl && (
@@ -838,60 +786,115 @@ export default function OrdersPage() {
                         </div>
                       </div>
                     )}
+
+                    {/* CASH/CHEQUE Orders: Show deposit slip if recorded */}
+                    {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositSlipUrl && (
+                      <div className="pt-3 border-t">
+                        <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
+                        {viewingOrder.depositReferenceNumber && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Reference: {viewingOrder.depositReferenceNumber}
+                          </p>
+                        )}
+                        <div className="mt-2 border rounded-lg overflow-hidden bg-white">
+                          <img
+                            src={viewingOrder.depositSlipUrl}
+                            alt="Deposit Slip"
+                            className="w-full h-auto max-h-96 object-contain"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                            }}
+                          />
+                        </div>
+                        <p className="text-xs text-green-700 mt-2 flex items-center gap-1">
+                          <CheckCircle className="h-3 w-3" />
+                          Deposit slip uploaded by team leader
+                        </p>
+                      </div>
+                    )}
+
+                    {/* CASH/CHEQUE Orders: Show message if deposit not recorded yet */}
+                    {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositSlipUrl && viewingOrder.depositId && (
+                      <div className="pt-3 border-t">
+                        <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
+                        <p className="text-sm text-amber-700 mt-2 flex items-center gap-1">
+                          <AlertCircle className="h-4 w-4" />
+                          Waiting for team leader to upload deposit image
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
 
-              {/* Role-based Actions using stage */}
-              {isLeader && (viewingOrder.stage === 'agent_pending' || !viewingOrder.stage) && (
-                <div className="flex gap-3 pt-4 border-t">
-                  <Button
-                    className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                    onClick={() => {
-                      setViewDialogOpen(false);
-                      handleOpenApprove(viewingOrder);
-                    }}
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Leader Approve
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    className="flex-1 bg-red-600 hover:bg-red-700"
-                    onClick={() => {
-                      setViewDialogOpen(false);
-                      handleOpenReject(viewingOrder);
-                    }}
-                  >
-                    <XCircle className="h-4 w-4 mr-2" />
-                    Leader Reject
-                  </Button>
-                </div>
-              )}
-              {isAdmin && viewingOrder.stage === 'leader_approved' && (
-                <div className="flex gap-3 pt-4 border-t">
-                  <Button
-                    className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                    onClick={() => {
-                      setViewDialogOpen(false);
-                      handleOpenApprove(viewingOrder);
-                    }}
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Admin Approve
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    className="flex-1 bg-red-600 hover:bg-red-700"
-                    onClick={() => {
-                      setViewDialogOpen(false);
-                      handleOpenReject(viewingOrder);
-                    }}
-                  >
-                    <XCircle className="h-4 w-4 mr-2" />
-                    Admin Reject
-                  </Button>
-                </div>
+              {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (
+                <>
+                  {/* Show warning if CASH/CHEQUE order without deposit (unlikely if remitted, but good safety) */}
+                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositId && (
+                    <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                      <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-semibold text-amber-900">Deposit Required</p>
+                        <p className="text-sm text-amber-700 mt-1">
+                          This order cannot be approved until the team leader has deposited the payment (cash/cheque) and recorded it in the system.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Show warning if CASH/CHEQUE order with deposit but bank details not recorded yet */}
+                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && !viewingOrder.depositBankAccount && (
+                    <div className="flex items-start gap-3 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                      <AlertCircle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-semibold text-orange-900">Deposit Details Pending</p>
+                        <p className="text-sm text-orange-700 mt-1">
+                          The team leader must record the deposit details (bank account and reference number) before this order can be approved.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Show info if CASH/CHEQUE order with deposit AND bank details recorded */}
+                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && viewingOrder.depositBankAccount && (
+                    <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <CheckCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-semibold text-blue-900">Deposit Recorded</p>
+                        <p className="text-sm text-blue-700 mt-1">
+                          Team leader has deposited the payment to {viewingOrder.depositBankAccount}. Approving this order will also verify the deposit.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3 pt-4 border-t">
+                    <Button
+                      className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                      onClick={() => {
+                        setViewDialogOpen(false);
+                        handleOpenApprove(viewingOrder);
+                      }}
+                      disabled={(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && (!viewingOrder.depositId || !viewingOrder.depositBankAccount)}
+                    >
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && viewingOrder.depositBankAccount
+                        ? 'Approve Order & Verify Deposit'
+                        : 'Finance Approve'}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      className="flex-1 bg-red-600 hover:bg-red-700"
+                      onClick={() => {
+                        setViewDialogOpen(false);
+                        handleOpenReject(viewingOrder);
+                      }}
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      Finance Deny
+                    </Button>
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -912,7 +915,7 @@ export default function OrdersPage() {
               <br />
               ⚠️ This action will:
               <br />
-              • Deduct stock quantities from main inventory
+              • Deduct stock quantities from inventory
               <br />
               • Create inventory transaction records
               <br />
@@ -948,7 +951,7 @@ export default function OrdersPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmRejectWithReason} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Reject Order
+              Deny Order
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -974,7 +977,7 @@ export default function OrdersPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {Array.from(new Set(orders
-                    .filter(o => o.stage === 'leader_approved' || (o.stage === 'agent_pending' && isAdmin))
+                    .filter(o => o.stage === 'finance_pending' || (o.status === 'pending' && isAdmin))
                     .map(o => o.agentId)))
                     .map(agentId => {
                       const order = orders.find(o => o.agentId === agentId);
@@ -1124,7 +1127,7 @@ export default function OrdersPage() {
                     )}
                     {bulkClientDetails.company && (
                       <div>
-                        <span className="text-muted-foreground">Company:</span>{' '}
+                        <span className="text-muted-foreground">Shop Name:</span>{' '}
                         {bulkClientDetails.company}
                       </div>
                     )}
@@ -1180,7 +1183,19 @@ export default function OrdersPage() {
                   <h3 className="font-semibold">Payment Information</h3>
                   <div>
                     <Label>Payment Method</Label>
-                    <p className="text-sm font-medium">{viewingOrderInBulk.paymentMethod}</p>
+                    <p className="text-sm font-medium">
+                      {viewingOrderInBulk.paymentMethod === 'GCASH' ? 'GCash' :
+                        viewingOrderInBulk.paymentMethod === 'BANK_TRANSFER' ? (
+                          <>
+                            Bank Transfer
+                            {viewingOrderInBulk.bankType && (
+                              <span className="ml-2 text-muted-foreground">({viewingOrderInBulk.bankType})</span>
+                            )}
+                          </>
+                        ) :
+                          viewingOrderInBulk.paymentMethod === 'CASH' ? 'Cash' :
+                            viewingOrderInBulk.paymentMethod}
+                    </p>
                   </div>
                   {viewingOrderInBulk.paymentProofUrl && (
                     <div>
@@ -1190,6 +1205,38 @@ export default function OrdersPage() {
                         alt="Payment Proof"
                         className="mt-2 max-w-full h-auto rounded border"
                       />
+                    </div>
+                  )}
+
+                  {/* CASH Orders: Show deposit slip if recorded */}
+                  {viewingOrderInBulk.paymentMethod === 'CASH' && viewingOrderInBulk.depositSlipUrl && (
+                    <div className="pt-3 border-t">
+                      <Label>Cash Deposit Slip</Label>
+                      {viewingOrderInBulk.depositReferenceNumber && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Reference: {viewingOrderInBulk.depositReferenceNumber}
+                        </p>
+                      )}
+                      <img
+                        src={viewingOrderInBulk.depositSlipUrl}
+                        alt="Deposit Slip"
+                        className="mt-2 max-w-full h-auto rounded border"
+                      />
+                      <p className="text-xs text-green-700 mt-2 flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3" />
+                        Deposit slip uploaded by team leader
+                      </p>
+                    </div>
+                  )}
+
+                  {/* CASH Orders: Show message if deposit not recorded yet */}
+                  {viewingOrderInBulk.paymentMethod === 'CASH' && !viewingOrderInBulk.depositSlipUrl && viewingOrderInBulk.depositId && (
+                    <div className="pt-3 border-t">
+                      <Label>Cash Deposit Slip</Label>
+                      <p className="text-sm text-amber-700 mt-2 flex items-center gap-1">
+                        <AlertCircle className="h-4 w-4" />
+                        Waiting for team leader to upload deposit slip
+                      </p>
                     </div>
                   )}
                 </div>

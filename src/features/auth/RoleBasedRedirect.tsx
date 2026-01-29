@@ -7,6 +7,13 @@ import { useAuth } from './hooks';
 export function RoleBasedRedirect() {
   const { user, isLoading } = useAuth();
 
+  // Check if we just logged out - if so, redirect to login immediately
+  const justLoggedOut = localStorage.getItem('just_logged_out');
+  if (justLoggedOut === 'true') {
+    localStorage.removeItem('just_logged_out');
+    return <Navigate to="/login" replace />;
+  }
+
   // Show loading while checking auth
   if (isLoading) {
     return (

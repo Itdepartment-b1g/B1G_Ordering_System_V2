@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Plus, Building2, User, Mail, Calendar, Eye, Badge as BadgeIcon } from 'lucide-react';
+import { Loader2, Plus, Building2, User, Mail, Calendar, Eye, Badge as BadgeIcon, LayoutGrid } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
     Table,
@@ -45,14 +45,20 @@ export default function SystemAdminPage() {
     });
 
     useEffect(() => {
-        fetchCompanies();
-    }, []);
+        if (user?.role === 'system_administrator') {
+            fetchCompanies();
+        }
+    }, [user?.role]);
+
+    if (user?.role !== 'system_administrator') {
+        return <div className="p-8 text-center text-red-500 font-bold">Access Denied: System Administrators Only</div>;
+    }
 
     const fetchCompanies = async () => {
         try {
             const { data, error } = await supabase
                 .from('companies')
-                .select('*')
+                .select('id, company_name, company_email, super_admin_name, super_admin_email, role, status, created_at, updated_at')
                 .order('created_at', { ascending: false });
 
             if (error) throw error;
@@ -176,88 +182,106 @@ export default function SystemAdminPage() {
     }
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
-            <div className="flex justify-between items-center">
-                <div>
-                    <h1 className="text-3xl font-bold">System Administration</h1>
-                    <p className="text-muted-foreground mt-2">
-                        Manage all companies and their super administrators
+        <div className="container mx-auto p-4 md:p-8 space-y-12">
+            <div className="flex flex-col md:flex-row items-end justify-between gap-8 pb-4 border-b">
+                <div className="space-y-4">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold uppercase tracking-wider">
+                        <Building2 className="h-3 w-3" />
+                        Infrastructure Control
+                    </div>
+                    <h1 className="text-4xl md:text-5xl font-black tracking-tighter uppercase italic">
+                        Company <span className="text-primary not-italic">Management</span>
+                    </h1>
+                    <p className="text-xl text-muted-foreground max-w-2xl leading-relaxed">
+                        Register, audit, and provision new company environments. Oversee the deployment of multi-tenant foundations and super-administrator accounts.
                     </p>
                 </div>
-                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                    <DialogTrigger asChild>
-                        <Button>
-                            <Plus className="mr-2 h-4 w-4" />
-                            Add Company
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-2xl">
-                        <DialogHeader>
-                            <DialogTitle>Create New Company</DialogTitle>
-                            <DialogDescription>
-                                Add a new company and create their super administrator account. The super admin will be able to manage their company's data.
-                            </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-6 py-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="company_name">Company Name *</Label>
-                                <Input
-                                    id="company_name"
-                                    value={newCompany.company_name}
-                                    onChange={(e) => setNewCompany({ ...newCompany, company_name: e.target.value })}
-                                    placeholder="e.g. Acme Corporation"
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="company_email">Company Email *</Label>
-                                <Input
-                                    id="company_email"
-                                    type="email"
-                                    value={newCompany.company_email}
-                                    onChange={(e) => setNewCompany({ ...newCompany, company_email: e.target.value })}
-                                    placeholder="info@acmecorp.com"
-                                />
-                            </div>
-                            <div className="border-t pt-6">
-                                <h3 className="text-sm font-semibold mb-5">Super Administrator Details</h3>
-                                <div className="space-y-5">
-                                    <div className="space-y-2">
-                                        <Label htmlFor="super_admin_name">Super Admin Name *</Label>
-                                        <Input
-                                            id="super_admin_name"
-                                            value={newCompany.super_admin_name}
-                                            onChange={(e) => setNewCompany({ ...newCompany, super_admin_name: e.target.value })}
-                                            placeholder="Full Name"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label htmlFor="super_admin_email">Super Admin Email *</Label>
-                                        <Input
-                                            id="super_admin_email"
-                                            type="email"
-                                            value={newCompany.super_admin_email}
-                                            onChange={(e) => setNewCompany({ ...newCompany, super_admin_email: e.target.value })}
-                                            placeholder="admin@acmecorp.com"
-                                        />
+
+                <div className="flex items-center gap-4">
+                    <Button
+                        size="lg"
+                        className="rounded-2xl h-14 px-8 font-black uppercase italic tracking-tighter shadow-xl shadow-primary/20 border-b-4 border-primary-foreground/20 active:border-b-0 active:translate-y-1 transition-all"
+                        onClick={() => window.location.href = '/system-management'}
+                    >
+                        <LayoutGrid className="mr-3 h-5 w-5" />
+                        Management Portal
+                    </Button>
+
+                    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button size="lg" className="rounded-2xl h-14 px-6 bg-muted hover:bg-muted/80 text-foreground border-b-4 border-foreground/10 active:border-b-0 active:translate-y-1 transition-all">
+                                <Plus className="mr-2 h-5 w-5" />
+                                Add Foundation
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-2xl">
+                            <DialogHeader>
+                                <DialogTitle>Create New Company</DialogTitle>
+                                <DialogDescription>
+                                    Add a new company and create their super administrator account. The super admin will be able to manage their company's data.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="space-y-6 py-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="company_name">Company Name *</Label>
+                                    <Input
+                                        id="company_name"
+                                        value={newCompany.company_name}
+                                        onChange={(e) => setNewCompany({ ...newCompany, company_name: e.target.value })}
+                                        placeholder="e.g. Acme Corporation"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="company_email">Company Email *</Label>
+                                    <Input
+                                        id="company_email"
+                                        type="email"
+                                        value={newCompany.company_email}
+                                        onChange={(e) => setNewCompany({ ...newCompany, company_email: e.target.value })}
+                                        placeholder="info@acmecorp.com"
+                                    />
+                                </div>
+                                <div className="border-t pt-6">
+                                    <h3 className="text-sm font-semibold mb-5">Super Administrator Details</h3>
+                                    <div className="space-y-5">
+                                        <div className="space-y-2">
+                                            <Label htmlFor="super_admin_name">Super Admin Name *</Label>
+                                            <Input
+                                                id="super_admin_name"
+                                                value={newCompany.super_admin_name}
+                                                onChange={(e) => setNewCompany({ ...newCompany, super_admin_name: e.target.value })}
+                                                placeholder="Full Name"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label htmlFor="super_admin_email">Super Admin Email *</Label>
+                                            <Input
+                                                id="super_admin_email"
+                                                type="email"
+                                                value={newCompany.super_admin_email}
+                                                onChange={(e) => setNewCompany({ ...newCompany, super_admin_email: e.target.value })}
+                                                placeholder="admin@acmecorp.com"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                        <DialogFooter>
-                            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>
-                                Cancel
-                            </Button>
-                            <Button onClick={handleCreateCompany} disabled={isCreating}>
-                                {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                Create Company
-                            </Button>
-                        </DialogFooter>
-                    </DialogContent>
-                </Dialog>
-            </div>
+                            <DialogFooter>
+                                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>
+                                    Cancel
+                                </Button>
+                                <Button onClick={handleCreateCompany} disabled={isCreating}>
+                                    {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    Create Company
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+                </div>
+            </div >
 
             {/* Summary Cards */}
-            <div className="grid gap-6 md:grid-cols-3">
+            < div className="grid gap-6 md:grid-cols-3" >
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
                         <CardTitle className="text-sm font-medium">Total Companies</CardTitle>
@@ -292,10 +316,10 @@ export default function SystemAdminPage() {
                         <p className="text-xs text-muted-foreground mt-1">Currently inactive</p>
                     </CardContent>
                 </Card>
-            </div>
+            </div >
 
             {/* Companies Table */}
-            <Card>
+            < Card >
                 <CardHeader className="pb-4">
                     <CardTitle>All Companies</CardTitle>
                 </CardHeader>
@@ -361,10 +385,10 @@ export default function SystemAdminPage() {
                         </div>
                     )}
                 </CardContent>
-            </Card>
+            </Card >
 
             {/* Company Details Dialog */}
-            <Dialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen}>
+            < Dialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen} >
                 <DialogContent className="max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Company Details</DialogTitle>
@@ -404,7 +428,7 @@ export default function SystemAdminPage() {
                                 <div>
                                     <Label className="text-sm font-semibold">Updated At</Label>
                                     <p className="text-sm mt-1">
-                                        {selectedCompany.updated_at 
+                                        {selectedCompany.updated_at
                                             ? new Date(selectedCompany.updated_at).toLocaleString()
                                             : 'N/A'}
                                     </p>
@@ -422,7 +446,7 @@ export default function SystemAdminPage() {
                         </Button>
                     </DialogFooter>
                 </DialogContent>
-            </Dialog>
-        </div>
+            </Dialog >
+        </div >
     );
 }

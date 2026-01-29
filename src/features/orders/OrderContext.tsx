@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -8,7 +8,7 @@ export interface OrderItem {
   id: string;
   brandName: string;
   variantName: string;
-  variantType: 'flavor' | 'battery';
+  variantType: 'flavor' | 'battery' | 'posm';
   quantity: number;
   unitPrice: number;
   sellingPrice?: number;
@@ -34,17 +34,24 @@ export interface Order {
   total: number;
   notes: string;
   status: 'pending' | 'approved' | 'rejected';
-  stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected';
+  stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected' | 'finance_pending';
   signatureUrl?: string;
-  paymentMethod?: 'GCASH' | 'BANK_TRANSFER' | 'CASH';
+  paymentMethod?: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
+  bankType?: 'Unionbank' | 'BPI' | 'PBCOM';
   paymentProofUrl?: string;
+  pricingStrategy?: 'rsp' | 'dsp' | 'special';
+  depositId?: string; // Links to cash_deposits table for CASH payment orders
+  depositStatus?: 'pending_verification' | 'verified'; // Status of the linked cash deposit
+  depositBankAccount?: string; // Bank account used for the deposit (null if not recorded yet)
+  depositSlipUrl?: string; // URL of the deposit slip image uploaded by team leader
+  depositReferenceNumber?: string; // Reference number for the cash deposit
 }
 
 interface OrderContextType {
   orders: Order[];
   loading: boolean;
-  addOrder: (order: Order) => Promise<string>; // Returns the generated order number
-  updateOrderStatus: (orderId: string, status: 'pending' | 'approved' | 'rejected') => void;
+  addOrder: (order: Order, orderNumber?: string) => Promise<string>; // Returns the generated order number, accepts optional pre-generated number
+  updateOrderStatus: (orderId: string, status: 'pending' | 'approved' | 'rejected', reason?: string) => void;
   getOrdersByAgent: (agentId: string) => Order[];
   getAllOrders: () => Order[];
 }
@@ -55,12 +62,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Use the user from AuthContext instead of listening to onAuthStateChange directly
+  // This ensures we only fetch orders AFTER the profile has been fully loaded and the user is "ready"
+  const { user } = useContext(AuthContext) || {};
+
   // Fetch orders from Supabase
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     try {
       setLoading(true);
 
-      const { data: ordersData, error } = await supabase
+      // Build the query
+      let query = supabase
         .from('client_orders')
         .select(`
           id,
@@ -78,10 +90,15 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           notes,
           signature_url,
           payment_method,
+          bank_type,
           payment_proof_url,
           stage,
+          pricing_strategy,
+          deposit_id,
+          created_at,
           agent:profiles!client_orders_agent_id_fkey(full_name),
           client:clients(name, email),
+          cash_deposit:cash_deposits(status, bank_account, reference_number, deposit_slip_url),
           items:client_order_items(
             id,
             quantity,
@@ -99,8 +116,14 @@ export function OrderProvider({ children }: { children: ReactNode }) {
               brand:brands(name)
             )
           )
-        `)
-        .order('created_at', { ascending: false });
+        `);
+
+      // For mobile sales agents, only fetch their own orders
+      if (user && (user.role === 'mobile_sales' || user.role === 'sales_agent')) {
+        query = query.eq('agent_id', user.id);
+      }
+
+      const { data: ordersData, error } = await query.order('created_at', { ascending: false });
 
       if (error) throw error;
 
@@ -195,6 +218,16 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
         const approvedTotal = items.reduce((sum: number, it: any) => sum + it.total, 0);
 
+        // Get cash deposit info if linked
+        const cashDeposit = order.cash_deposit;
+
+        // Only consider deposit "recorded" if bank_account is NOT 'Cash Remittance' (placeholder) OR 'Cheque Remittance'
+        // 'Cash Remittance' / 'Cheque Remittance' means the deposit was created during remittance but leader hasn't recorded details yet
+        const hasBankDetails = cashDeposit?.bank_account &&
+          !cashDeposit.bank_account.includes('Cash Remittance') &&
+          !cashDeposit.bank_account.includes('Cheque Remittance') &&
+          cashDeposit.bank_account.trim() !== '';
+
         return {
           id: order.id,
           orderNumber: order.order_number,
@@ -214,7 +247,14 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           stage: order.stage,
           signatureUrl: order.signature_url || undefined,
           paymentMethod: order.payment_method || undefined,
+          bankType: order.bank_type || undefined,
           paymentProofUrl: order.payment_proof_url || undefined,
+          pricingStrategy: order.pricing_strategy || undefined,
+          depositId: order.deposit_id || undefined,
+          depositStatus: cashDeposit?.status || undefined,
+          depositBankAccount: hasBankDetails ? cashDeposit.bank_account : undefined,
+          depositSlipUrl: cashDeposit?.deposit_slip_url || undefined,
+          depositReferenceNumber: cashDeposit?.reference_number || undefined,
         };
       });
 
@@ -224,11 +264,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Use the user from AuthContext instead of listening to onAuthStateChange directly
-  // This ensures we only fetch orders AFTER the profile has been fully loaded and the user is "ready"
-  const { user } = useContext(AuthContext) || {};
+  }, [user]); // Include user since we now filter based on user role and id
 
   useEffect(() => {
     // Only fetch orders if we have a user (deferred until after auth)
@@ -250,9 +286,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           table: 'client_orders',
         },
         (payload) => {
-          console.log('📬 Order change detected:', payload.eventType);
+          console.log('📬 Order change detected:', payload.eventType, payload.new || payload.old);
           // Refetch orders when any change occurs
-          fetchOrders();
+          // Use a small delay to ensure all related data (items, etc.) is committed
+          setTimeout(() => {
+            fetchOrders();
+          }, 100);
         }
       )
       .on(
@@ -265,24 +304,51 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         (payload) => {
           console.log('📬 Order item change detected:', payload.eventType);
           // Refetch orders when items change too
-          fetchOrders();
+          setTimeout(() => {
+            fetchOrders();
+          }, 100);
         }
       )
-      .subscribe();
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'cash_deposits',
+        },
+        (payload) => {
+          console.log('💰 Cash deposit change detected:', payload.eventType, payload.new || payload.old);
+          // When deposit is recorded/updated, refetch orders to update deposit info
+          // This allows finance to see when a deposit becomes approvable
+          setTimeout(() => {
+            fetchOrders();
+          }, 100);
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription active: client_orders, client_order_items, cash_deposits');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error');
+        } else {
+          console.log('🔄 Real-time subscription status:', status);
+        }
+      });
 
     return () => {
+      console.log('🔌 Cleaning up real-time subscription');
       supabase.removeChannel(channel);
     };
-  }, [user]); // Depend on user from AuthContext
+  }, [user, fetchOrders]); // Depend on user and fetchOrders
 
-  const addOrder = async (order: Order) => {
+  const addOrder = async (order: Order, preGeneratedOrderNumber?: string) => {
     try {
       console.log('📝 Creating order:', order);
 
       // 1. Fetch client's account_type
       const { data: clientData, error: clientError } = await supabase
         .from('clients')
-        .select('account_type')
+        .select('account_type, company_id')
         .eq('id', order.clientId)
         .single();
 
@@ -292,24 +358,36 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       }
 
       const clientAccountType = clientData?.account_type || 'Standard Accounts';
-      console.log('👤 Client account type:', clientAccountType);
+      const companyId = clientData?.company_id;
+      console.log('👤 Client account type:', clientAccountType, 'Company ID:', companyId);
 
-      // 2. Generate unique order number from database function
-      const { data: orderNumberData, error: numberError } = await supabase
-        .rpc('generate_order_number');
-
-      if (numberError) {
-        console.error('Error generating order number:', numberError);
-        throw numberError;
+      if (!companyId) {
+        throw new Error('Could not determine company_id for the order');
       }
 
-      const generatedOrderNumber = orderNumberData as string;
-      console.log('🔢 Generated order number:', generatedOrderNumber);
+      // 2. Generate unique order number from database function (or use pre-generated one)
+      let generatedOrderNumber: string;
+      if (preGeneratedOrderNumber) {
+        generatedOrderNumber = preGeneratedOrderNumber;
+        console.log('🔢 Using pre-generated order number:', generatedOrderNumber);
+      } else {
+        const { data: orderNumberData, error: numberError } = await supabase
+          .rpc('generate_order_number');
+
+        if (numberError) {
+          console.error('Error generating order number:', numberError);
+          throw numberError;
+        }
+
+        generatedOrderNumber = orderNumberData as string;
+        console.log('🔢 Generated order number:', generatedOrderNumber);
+      }
 
       // 3. Insert into client_orders table
       const { data: newOrder, error: orderError } = await supabase
         .from('client_orders')
         .insert({
+          company_id: companyId,
           order_number: generatedOrderNumber, // Use database-generated number
           agent_id: order.agentId,
           client_id: order.clientId,
@@ -323,9 +401,11 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           notes: order.notes,
           signature_url: (order as any).signatureUrl || null, // Include signature URL if provided
           payment_method: (order as any).paymentMethod || null, // Include payment method if provided
+          bank_type: (order as any).bankType || null, // Include bank type if payment method is BANK_TRANSFER
           payment_proof_url: (order as any).paymentProofUrl || null, // Include payment proof URL if provided
           status: 'pending',
-          stage: 'agent_pending' // Set stage explicitly for two-stage approval
+          stage: 'agent_pending', // Set stage explicitly for two-stage approval
+          pricing_strategy: (order as any).pricingStrategy || 'rsp'
         } as any)
         .select('id, order_number')
         .single();
@@ -341,28 +421,35 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
       console.log('✅ Order created with ID:', newOrder.id, 'Number:', newOrder.order_number);
 
-      // 3. Fetch agent inventory prices for each item to capture selling_price, dsp_price, and rsp_price
-      const orderItemsWithPrices = await Promise.all(
-        order.items.map(async (item) => {
-          // Fetch agent inventory to get the prices at time of order
-          const { data: agentInv } = await supabase
-            .from('agent_inventory')
-            .select('selling_price, dsp_price, rsp_price, allocated_price')
-            .eq('agent_id', order.agentId)
-            .eq('variant_id', item.id)
-            .maybeSingle();
+      // 3. Batch fetch agent inventory prices for all items
+      const variantIds = order.items.map(i => i.id);
+      const { data: agentInventoryItems } = await supabase
+        .from('agent_inventory')
+        .select('variant_id, selling_price, dsp_price, rsp_price, allocated_price')
+        .eq('agent_id', order.agentId)
+        .in('variant_id', variantIds);
 
-          return {
-            client_order_id: newOrder.id,
-            variant_id: item.id,
-            quantity: item.quantity,
-            unit_price: item.unitPrice,
-            selling_price: item.sellingPrice ?? agentInv?.selling_price ?? null,
-            dsp_price: item.dspPrice ?? agentInv?.dsp_price ?? null,
-            rsp_price: item.rspPrice ?? agentInv?.rsp_price ?? null
-          };
-        })
-      );
+      // Create lookup map for O(1) access
+      const inventoryMap = new Map();
+      (agentInventoryItems || []).forEach((item: any) => {
+        inventoryMap.set(item.variant_id, item);
+      });
+
+      const orderItemsWithPrices = order.items.map((item) => {
+        const agentInv = inventoryMap.get(item.id);
+
+        return {
+          company_id: companyId,
+          client_order_id: newOrder.id,
+          variant_id: item.id,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          selling_price: item.sellingPrice ?? agentInv?.selling_price ?? null,
+          dsp_price: item.dspPrice ?? agentInv?.dsp_price ?? null,
+          rsp_price: item.rspPrice ?? agentInv?.rsp_price ?? null,
+          total_price: item.total
+        };
+      });
 
       const { error: itemsError } = await supabase
         .from('client_order_items')
@@ -425,6 +512,41 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
       console.log('✅ All agent inventory updates complete');
 
+      // Optimistically add the order to local state immediately
+      // This ensures the order shows up right away without waiting for real-time subscription
+      const optimisticOrder: Order = {
+        id: newOrder.id,
+        orderNumber: generatedOrderNumber,
+        agentId: order.agentId,
+        agentName: order.agentName || 'You',
+        clientId: order.clientId,
+        clientName: order.clientName,
+        clientAccountType: clientAccountType,
+        date: order.date,
+        items: order.items,
+        subtotal: order.subtotal,
+        tax: order.tax,
+        discount: order.discount,
+        total: order.total,
+        notes: order.notes || '',
+        status: 'pending',
+        stage: 'agent_pending',
+        signatureUrl: (order as any).signatureUrl,
+        paymentMethod: (order as any).paymentMethod,
+        bankType: (order as any).bankType,
+        paymentProofUrl: (order as any).paymentProofUrl,
+        pricingStrategy: (order as any).pricingStrategy,
+      };
+
+      // Add to local state immediately
+      setOrders(prev => [optimisticOrder, ...prev]);
+
+      // Also trigger a refetch to ensure we have the complete order data with all relations
+      // This will replace the optimistic order with the full data from the database
+      setTimeout(() => {
+        fetchOrders();
+      }, 500);
+
       // Return the generated order number so the UI can show it
       return newOrder.order_number;
     } catch (err) {
@@ -433,7 +555,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateOrderStatus = async (orderId: string, status: 'pending' | 'approved' | 'rejected') => {
+  const updateOrderStatus = async (orderId: string, status: 'pending' | 'approved' | 'rejected', reason?: string) => {
     try {
       console.log(`📋 Updating order ${orderId} to status: ${status}`);
 
@@ -442,11 +564,12 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       if (!user) throw new Error('User not authenticated');
 
       if (status === 'approved') {
-        // Use database function for approval (handles inventory deduction)
+        // Use new database function that handles:
+        // 1. Order approval & inventory deduction
+        // 2. Cash deposit verification (for CASH orders with deposit_id)
         const { data, error } = await supabase
-          .rpc('approve_client_order', {
-            p_order_id: orderId,
-            p_approver_id: user.id
+          .rpc('approve_order_and_verify_deposit', {
+            p_order_id: orderId
           });
 
         if (error) {
@@ -455,17 +578,22 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         }
 
         if (!data || !data.success) {
-          throw new Error(data?.error || 'Failed to approve order');
+          throw new Error(data?.message || 'Failed to approve order');
         }
 
         console.log('✅ Order approved:', data);
+
+        // Log if deposit was verified
+        if (data.deposit_verified) {
+          console.log('💰 Cash deposit verified as part of order approval');
+        }
       } else if (status === 'rejected') {
         // Use database function for rejection (handles inventory return)
         const { data, error } = await supabase
           .rpc('reject_client_order', {
             p_order_id: orderId,
             p_approver_id: user.id,
-            p_reason: null
+            p_reason: reason || null
           });
 
         if (error) {

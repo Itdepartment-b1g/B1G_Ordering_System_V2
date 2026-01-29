@@ -89,7 +89,7 @@ interface TeamMember {
   id: string;
   full_name: string;
   email: string;
-  position: string;
+  role: string;
 }
 
 export default function TasksPage() {
@@ -102,14 +102,14 @@ export default function TasksPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
-  
+
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  
+
   // Form states
   const [formData, setFormData] = useState({
     agent_id: '',
@@ -138,7 +138,7 @@ export default function TasksPage() {
   };
 
   // Check if user is a leader
-  const isLeader = user?.position === 'Leader';
+  const isLeader = user?.role === 'team_leader';
 
   const toggleAgentExpansion = (agentId: string) => {
     setExpandedAgents(prev => {
@@ -162,17 +162,17 @@ export default function TasksPage() {
   const fetchTasks = async () => {
     try {
       setLoading(true);
-      
+
       // Get today's date range
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      
+
       // First try to fetch from task_details view
       let { data, error } = await supabase
         .from('task_details')
-        .select('*')
+        .select('id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, attachment_url, urgency_status')
         .eq('leader_id', user?.id)
         .gte('due_date', today.toISOString())
         .lt('due_date', tomorrow.toISOString())
@@ -184,7 +184,7 @@ export default function TasksPage() {
         const tasksQuery = await supabase
           .from('tasks')
           .select(`
-            *,
+            id, leader_id, agent_id, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, attachment_url,
             leader:profiles!tasks_leader_id_fkey(full_name, email),
             agent:profiles!tasks_agent_id_fkey(full_name, email)
           `)
@@ -194,19 +194,19 @@ export default function TasksPage() {
           .order('created_at', { ascending: false });
 
         if (tasksQuery.error) throw tasksQuery.error;
-        
+
         // Transform the data to match the expected format
         data = tasksQuery.data?.map(task => ({
           ...task,
-          leader_name: task.leader?.full_name || 'Unknown Leader',
-          leader_email: task.leader?.email || '',
-          agent_name: task.agent?.full_name || 'Unknown Agent',
-          agent_email: task.agent?.email || '',
-          urgency_status: task.due_date && task.due_date < new Date().toISOString() && task.status !== 'completed' 
-            ? 'overdue' 
+          leader_name: (task.leader as any)?.full_name || 'Unknown Leader',
+          leader_email: (task.leader as any)?.email || '',
+          agent_name: (task.agent as any)?.full_name || 'Unknown Agent',
+          agent_email: (task.agent as any)?.email || '',
+          urgency_status: task.due_date && task.due_date < new Date().toISOString() && task.status !== 'completed'
+            ? 'overdue'
             : task.due_date && new Date(task.due_date) <= new Date(Date.now() + 24 * 60 * 60 * 1000) && task.status !== 'completed'
-            ? 'due_soon'
-            : 'on_time'
+              ? 'due_soon'
+              : 'on_time'
         })) || [];
       } else if (error) {
         throw error;
@@ -236,7 +236,7 @@ export default function TasksPage() {
             id,
             full_name,
             email,
-            position
+            role
           )
         `)
         .eq('leader_id', user?.id);
@@ -247,7 +247,7 @@ export default function TasksPage() {
         id: (item.profiles as any).id,
         full_name: (item.profiles as any).full_name,
         email: (item.profiles as any).email,
-        position: (item.profiles as any).position
+        role: (item.profiles as any).role
       })) || [];
 
       setTeamMembers(members);
@@ -337,7 +337,7 @@ export default function TasksPage() {
     setSelectedTask(task);
     const dueDate = task.due_date ? task.due_date.split('T')[0] : '';
     const dueTime = task.time || '09:00';
-    
+
     setFormData({
       agent_id: task.agent_id,
       title: task.title,
@@ -405,7 +405,7 @@ export default function TasksPage() {
 
   const groupTasksByAgent = (tasks: Task[]): AgentWithTasks[] => {
     const grouped = new Map<string, AgentWithTasks>();
-    
+
     tasks.forEach(task => {
       if (!grouped.has(task.agent_id)) {
         grouped.set(task.agent_id, {
@@ -417,7 +417,7 @@ export default function TasksPage() {
       }
       grouped.get(task.agent_id)!.tasks.push(task);
     });
-    
+
     return Array.from(grouped.values());
   };
 
@@ -463,10 +463,10 @@ export default function TasksPage() {
 
   const filteredTasks = tasks.filter(task => {
     const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         task.agent_name.toLowerCase().includes(searchQuery.toLowerCase());
+      task.agent_name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
     const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
-    
+
     return matchesSearch && matchesStatus && matchesPriority;
   });
 
@@ -493,7 +493,7 @@ export default function TasksPage() {
           <h1 className="text-3xl font-bold">Task Management</h1>
           <p className="text-gray-600">Manage tasks for your team members</p>
         </div>
-        
+
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -508,11 +508,11 @@ export default function TasksPage() {
                 Assign a new task to one of your team members
               </DialogDescription>
             </DialogHeader>
-            
+
             <div className="space-y-4">
               <div>
                 <Label htmlFor="agent">Team Member</Label>
-                <Select value={formData.agent_id} onValueChange={(value) => setFormData({...formData, agent_id: value})}>
+                <Select value={formData.agent_id} onValueChange={(value) => setFormData({ ...formData, agent_id: value })}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select team member" />
                   </SelectTrigger>
@@ -531,7 +531,7 @@ export default function TasksPage() {
                 <Input
                   id="title"
                   value={formData.title}
-                  onChange={(e) => setFormData({...formData, title: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   placeholder="Enter task title"
                 />
               </div>
@@ -541,7 +541,7 @@ export default function TasksPage() {
                 <Textarea
                   id="description"
                   value={formData.description}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Enter task description"
                   rows={3}
                 />
@@ -550,7 +550,7 @@ export default function TasksPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="priority">Priority</Label>
-                  <Select value={formData.priority} onValueChange={(value: any) => setFormData({...formData, priority: value})}>
+                  <Select value={formData.priority} onValueChange={(value: any) => setFormData({ ...formData, priority: value })}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -584,7 +584,7 @@ export default function TasksPage() {
                     id="due_time"
                     type="time"
                     value={formData.due_time}
-                    onChange={(e) => setFormData({...formData, due_time: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, due_time: e.target.value })}
                   />
                 </div>
               </div>
@@ -594,7 +594,7 @@ export default function TasksPage() {
                 <Textarea
                   id="notes"
                   value={formData.notes}
-                  onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   placeholder="Additional notes (optional)"
                   rows={2}
                 />
@@ -628,7 +628,7 @@ export default function TasksPage() {
                 />
               </div>
             </div>
-            
+
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-40">
                 <SelectValue placeholder="Status" />
@@ -687,11 +687,11 @@ export default function TasksPage() {
                 {filteredTasks.length === 0 && tasks.length > 0
                   ? "No tasks match your current search or filters. Try adjusting your filters or search query."
                   : filteredTasks.length === 0
-                  ? "You don't have any tasks scheduled for today. Create a task to get started!"
-                  : "Great job! Your team has no tasks due today."}
+                    ? "You don't have any tasks scheduled for today. Create a task to get started!"
+                    : "Great job! Your team has no tasks due today."}
               </p>
               {filteredTasks.length === 0 && (
-                <Button 
+                <Button
                   onClick={() => setCreateDialogOpen(true)}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg shadow-sm hover:shadow-md transition-all"
                 >
@@ -705,7 +705,7 @@ export default function TasksPage() {
               {agentsWithTasks.map((agent) => (
                 <div key={agent.agent_id} className="border rounded-lg overflow-hidden">
                   {/* Agent Header */}
-                  <div 
+                  <div
                     className="flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
                     onClick={() => toggleAgentExpansion(agent.agent_id)}
                   >
@@ -725,7 +725,7 @@ export default function TasksPage() {
                       {agent.tasks.length} {agent.tasks.length === 1 ? 'task' : 'tasks'}
                     </Badge>
                   </div>
-                  
+
                   {/* Agent Tasks Subtable */}
                   {expandedAgents.has(agent.agent_id) && (
                     <div className="border-t bg-white">
@@ -814,7 +814,7 @@ export default function TasksPage() {
               View complete task information
             </DialogDescription>
           </DialogHeader>
-          
+
           {selectedTask && (
             <div className="space-y-6 py-4">
               {/* Task Title & Status */}
@@ -866,8 +866,8 @@ export default function TasksPage() {
                 <div>
                   <Label className="text-sm font-semibold">Completed</Label>
                   <div className="mt-2 text-sm text-gray-600">
-                    {selectedTask.completed_at 
-                      ? new Date(selectedTask.completed_at).toLocaleString() 
+                    {selectedTask.completed_at
+                      ? new Date(selectedTask.completed_at).toLocaleString()
                       : 'Not completed'}
                   </div>
                 </div>
@@ -944,14 +944,14 @@ export default function TasksPage() {
               Update task details
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="space-y-4">
             <div>
               <Label htmlFor="edit-title">Task Title</Label>
               <Input
                 id="edit-title"
                 value={formData.title}
-                onChange={(e) => setFormData({...formData, title: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 placeholder="Enter task title"
               />
             </div>
@@ -961,7 +961,7 @@ export default function TasksPage() {
               <Textarea
                 id="edit-description"
                 value={formData.description}
-                onChange={(e) => setFormData({...formData, description: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="Enter task description"
                 rows={3}
               />
@@ -970,7 +970,7 @@ export default function TasksPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="edit-priority">Priority</Label>
-                <Select value={formData.priority} onValueChange={(value: any) => setFormData({...formData, priority: value})}>
+                <Select value={formData.priority} onValueChange={(value: any) => setFormData({ ...formData, priority: value })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -989,7 +989,7 @@ export default function TasksPage() {
                   id="edit-due_date"
                   type="date"
                   value={formData.due_date}
-                  onChange={(e) => setFormData({...formData, due_date: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
                 />
               </div>
 
@@ -999,7 +999,7 @@ export default function TasksPage() {
                   id="edit-due_time"
                   type="time"
                   value={formData.due_time}
-                  onChange={(e) => setFormData({...formData, due_time: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, due_time: e.target.value })}
                 />
               </div>
             </div>
@@ -1009,7 +1009,7 @@ export default function TasksPage() {
               <Textarea
                 id="edit-notes"
                 value={formData.notes}
-                onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 placeholder="Additional notes (optional)"
                 rows={2}
               />
@@ -1036,12 +1036,12 @@ export default function TasksPage() {
               Delete Task
             </DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-4 py-4">
             <p className="text-muted-foreground">
               Are you sure you want to delete this task? This action cannot be undone.
             </p>
-            
+
             {selectedTask && (
               <div className="bg-gray-50 p-3 rounded-lg">
                 <h4 className="font-medium text-sm text-gray-700 mb-1">Task Details:</h4>
@@ -1052,15 +1052,15 @@ export default function TasksPage() {
                 )}
               </div>
             )}
-            
+
             <div className="flex justify-end gap-3">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => setDeleteConfirmOpen(false)}
               >
                 Cancel
               </Button>
-              <Button 
+              <Button
                 variant="destructive"
                 onClick={confirmDeleteTask}
               >

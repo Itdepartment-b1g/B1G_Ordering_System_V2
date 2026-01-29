@@ -21,11 +21,18 @@ export default function SuperAdminDashboardPage() {
   useEffect(() => {
     if (user?.company_id) {
       fetchDashboardData();
+    } else if (user) {
+      // User exists but no company_id - stop loading to prevent infinite loading state
+      console.warn('⚠️ [SuperAdminDashboard] User has no company_id, skipping data fetch');
+      setIsLoading(false);
     }
   }, [user]);
 
   const fetchDashboardData = async () => {
-    if (!user?.company_id) return;
+    if (!user?.company_id) {
+      setIsLoading(false);
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -33,7 +40,7 @@ export default function SuperAdminDashboardPage() {
       // Fetch users in the company
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, company_id, full_name, email, role, status, created_at, updated_at')
         .eq('company_id', user.company_id)
         .order('created_at', { ascending: false });
 
@@ -117,7 +124,7 @@ export default function SuperAdminDashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{stats.activeUsers}</div>
             <p className="text-xs text-muted-foreground">
-              {stats.totalUsers > 0 
+              {stats.totalUsers > 0
                 ? `${Math.round((stats.activeUsers / stats.totalUsers) * 100)}% of total`
                 : 'No users yet'}
             </p>

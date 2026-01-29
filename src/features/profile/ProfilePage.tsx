@@ -4,17 +4,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { 
-  AlertDialog, 
-  AlertDialogAction, 
-  AlertDialogCancel, 
-  AlertDialogContent, 
-  AlertDialogDescription, 
-  AlertDialogFooter, 
-  AlertDialogHeader, 
-  AlertDialogTitle 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
 } from '@/components/ui/alert-dialog';
-import { UserCircle, Mail, Phone, MapPin, Save, Eye, EyeOff } from 'lucide-react';
+import { UserCircle, Mail, Phone, MapPin, Save, Eye, EyeOff, Building2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -44,24 +44,33 @@ export default function ProfilePage() {
     city: '',
     country: '',
     region: '',
-    position: '',
     role: '',
   });
   const [assignedCities, setAssignedCities] = useState<string[]>([]);
   const [isAgentOrLeader, setIsAgentOrLeader] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<{
+    company_name: string;
+    company_email: string;
+  } | null>(null);
 
   useEffect(() => {
     if (user?.id) {
-      fetchProfile(); 
+      fetchProfile();
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.company_id) {
+      fetchCompanyInfo();
+    }
+  }, [user?.company_id]);
 
   const fetchProfile = async () => {
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('full_name, email, phone, address, city, country, region, role')
         .eq('id', user?.id)
         .single();
 
@@ -76,16 +85,15 @@ export default function ProfilePage() {
           city: data.city || '',
           country: data.country || '',
           region: data.region || '',
-          position: data.position || '',
           role: data.role || '',
         });
-        
+
         // Parse assigned cities from comma-separated string
-        const cities = data.city 
+        const cities = data.city
           ? data.city.split(',').map(c => c.trim()).filter(c => c.length > 0)
           : [];
         setAssignedCities(cities);
-        
+
         // Check if user is agent or leader (not admin)
         const isAgentOrLeaderUser = data.role !== 'admin';
         setIsAgentOrLeader(isAgentOrLeaderUser);
@@ -102,10 +110,39 @@ export default function ProfilePage() {
     }
   };
 
+  const fetchCompanyInfo = async () => {
+    try {
+      if (!user?.company_id) {
+        console.warn('No company_id found for user');
+        return;
+      }
+
+      console.log('Fetching company info for company_id:', user.company_id);
+
+      const { data, error } = await supabase
+        .from('companies')
+        .select('company_name, company_email')
+        .eq('id', user.company_id)
+        .single();
+
+      if (error) throw error;
+
+      console.log('Company info fetched:', data);
+      setCompanyInfo(data);
+    } catch (error) {
+      console.error('Error fetching company info:', error);
+      toast({
+        title: 'Warning',
+        description: 'Could not load company information',
+        variant: 'default'
+      });
+    }
+  };
+
   const handleSave = async () => {
     try {
       setSaving(true);
-      
+
       // Prepare update data - exclude city if user is agent or leader
       const updateData: any = {
         full_name: profile.full_name,
@@ -114,12 +151,12 @@ export default function ProfilePage() {
         country: profile.country,
         region: profile.region,
       };
-      
+
       // Only allow city update for admins
       if (!isAgentOrLeader) {
         updateData.city = profile.city;
       }
-      
+
       const { error } = await supabase
         .from('profiles')
         .update(updateData)
@@ -127,9 +164,9 @@ export default function ProfilePage() {
 
       if (error) throw error;
 
-      toast({ 
-        title: 'Success', 
-        description: 'Profile updated successfully' 
+      toast({
+        title: 'Success',
+        description: 'Profile updated successfully'
       });
     } catch (error) {
       console.error('Error updating profile:', error);
@@ -190,16 +227,34 @@ export default function ProfilePage() {
                     case 'mobile_sales':
                       return 'SALES AGENT';
                     default:
-                      // Fallback: check position for leader
-                      if ((profile.position || '').toLowerCase().includes('leader')) {
-                        return 'LEADER';
-                      }
                       return 'SALES AGENT';
                   }
                 })()}
               </Badge>
             </div>
-            <div className="space-y-3 pt-4">
+
+            {/* Company Information */}
+            {companyInfo && (
+              <div className="pt-4 border-t space-y-3">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Building2 className="h-4 w-4 text-primary" />
+                  <span>Company</span>
+                </div>
+                <div className="space-y-2 pl-6">
+                  <div className="text-sm">
+                    <p className="font-medium">{companyInfo.company_name}</p>
+                  </div>
+                  {companyInfo.company_email && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Mail className="h-3 w-3" />
+                      <span className="truncate">{companyInfo.company_email}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-3 pt-4 border-t">
               <div className="flex items-center gap-2 text-sm">
                 <Mail className="h-4 w-4 text-muted-foreground" />
                 <span className="truncate">{profile.email}</span>
@@ -272,7 +327,7 @@ export default function ProfilePage() {
                   maxLength={17}
                 />
               </div>
-              {user?.role === 'sales_agent' && (
+              {user?.role === 'mobile_sales' && (
                 <div className="space-y-2">
                   <Label htmlFor="region">Region</Label>
                   <Input
@@ -350,8 +405,8 @@ export default function ProfilePage() {
               <div className="space-y-2">
                 <Label htmlFor="current-password">Current Password</Label>
                 <div className="relative">
-                  <Input 
-                    id="current-password" 
+                  <Input
+                    id="current-password"
                     type={showCurrent ? 'text' : 'password'}
                     value={passwords.current}
                     onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
@@ -370,8 +425,8 @@ export default function ProfilePage() {
               <div className="space-y-2">
                 <Label htmlFor="new-password">New Password</Label>
                 <div className="relative">
-                  <Input 
-                    id="new-password" 
+                  <Input
+                    id="new-password"
                     type={showNew ? 'text' : 'password'}
                     value={passwords.new}
                     onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
@@ -390,8 +445,8 @@ export default function ProfilePage() {
               <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="confirm-password">Confirm New Password</Label>
                 <div className="relative">
-                  <Input 
-                    id="confirm-password" 
+                  <Input
+                    id="confirm-password"
                     type={showConfirm ? 'text' : 'password'}
                     value={passwords.confirm}
                     onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
@@ -409,8 +464,8 @@ export default function ProfilePage() {
               </div>
             </div>
             <div className="flex justify-end">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="w-full sm:w-auto"
                 onClick={() => {
                   // Validate passwords
@@ -472,7 +527,7 @@ export default function ProfilePage() {
               onClick={async () => {
                 try {
                   setUpdatingPassword(true);
-                  
+
                   // First, verify current password by attempting to sign in
                   const { error: signInError } = await supabase.auth.signInWithPassword({
                     email: user?.email || '',

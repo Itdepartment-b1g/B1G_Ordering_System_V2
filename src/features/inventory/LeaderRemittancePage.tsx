@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -12,7 +14,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
-import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { canLeadTeam } from '@/lib/roleUtils';
 
 interface RemittanceLog {
   id: string;
@@ -40,31 +42,99 @@ export default function LeaderRemittancePage() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [remittanceOrders, setRemittanceOrders] = useState<any[]>([]);
+  const [unsoldItems, setUnsoldItems] = useState<any[]>([]);
+  const [loadingUnsoldItems, setLoadingUnsoldItems] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Mobile detection
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   useEffect(() => {
-    if (user?.role === 'sales_agent' && user?.position === 'Leader') {
-      fetchTeamRemittances();
-    }
+    if (!user?.id || !['team_leader', 'manager'].includes(user?.role || '')) return;
 
-    // Real-time subscriptions for remittances and orders
-    const channels = [
-      subscribeToTable('remittances_log', () => {
-        console.log('🔄 Real-time: Team remittance updated');
-        if (user?.role === 'sales_agent' && user?.position === 'Leader') {
-          fetchTeamRemittances();
-        }
-      }),
-      subscribeToTable('client_orders', () => {
-        console.log('🔄 Real-time: Orders updated, refreshing remittance details');
-        // Refresh if viewing details
+    // Initial fetch
+    fetchTeamRemittances();
+
+    // Debounce timers for smooth real-time updates
+    let remittanceTimer: NodeJS.Timeout | null = null;
+    let ordersTimer: NodeJS.Timeout | null = null;
+
+    const debouncedRemittanceRefresh = () => {
+      if (remittanceTimer) clearTimeout(remittanceTimer);
+      remittanceTimer = setTimeout(() => {
+        console.log('🔄 Real-time update: Refreshing team remittances...');
+        fetchTeamRemittances();
+      }, 300);
+    };
+
+    const debouncedOrdersRefresh = () => {
+      if (ordersTimer) clearTimeout(ordersTimer);
+      ordersTimer = setTimeout(() => {
+        console.log('🔄 Real-time update: Refreshing remittance order details...');
         if (selectedRemittance && selectedRemittance.order_ids.length > 0) {
           fetchOrderDetails(selectedRemittance.order_ids);
         }
-      })
-    ];
+      }, 300);
+    };
 
-    return () => channels.forEach(unsubscribe);
-  }, [user, selectedDate]);
+    // Subscribe to remittances_log changes
+    const remittancesChannel = supabase
+      .channel(`remittances-changes-${user.id}`)
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'remittances_log',
+        },
+        (payload) => {
+          console.log('🔔 Remittance change detected:', payload.eventType, payload);
+          debouncedRemittanceRefresh();
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription active for remittances_log');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error for remittances_log');
+        }
+      });
+
+    // Subscribe to client_orders changes (for order details when viewing)
+    const ordersChannel = supabase
+      .channel(`remittance-orders-changes-${user.id}`)
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'client_orders',
+        },
+        (payload) => {
+          console.log('🔔 Order change detected (remittance view):', payload.eventType, payload);
+          debouncedOrdersRefresh();
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Real-time subscription active for client_orders (remittance view)');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Real-time subscription error for client_orders');
+        }
+      });
+
+    return () => {
+      if (remittanceTimer) clearTimeout(remittanceTimer);
+      if (ordersTimer) clearTimeout(ordersTimer);
+      supabase.removeChannel(remittancesChannel);
+      supabase.removeChannel(ordersChannel);
+    };
+  }, [user?.id, user?.role, selectedDate, selectedRemittance]);
 
   const fetchTeamRemittances = async () => {
     if (!user?.id) return;
@@ -107,7 +177,11 @@ export default function LeaderRemittancePage() {
         agent_name: item.agent?.full_name || 'Unknown Agent'
       }));
 
-      setRemittances(formattedData);
+      if (!formattedData.length) {
+        setRemittances([]);
+      } else {
+        setRemittances(formattedData);
+      }
     } catch (error: any) {
       console.error('Error fetching team remittances:', error);
       toast({
@@ -172,9 +246,26 @@ export default function LeaderRemittancePage() {
     }
   };
 
+  const fetchUnsoldItems = async (remittance: RemittanceLog) => {
+    // NEW BEHAVIOR: Agents now keep their unsold inventory
+    // No inventory is transferred during remittance, so unsold items section shows informational message
+    setLoadingUnsoldItems(false);
+    setUnsoldItems([]);
+  };
+
+  // Helper to check for missing orders
+  useEffect(() => {
+    if (!loadingDetails && remittanceOrders.length === 0 && selectedRemittance && selectedRemittance.orders_count > 0) {
+      console.warn(`Mismatch detected: Remittance has ${selectedRemittance.orders_count} orders but 0 were fetched. This is likely an RLS issue.`);
+    }
+  }, [loadingDetails, remittanceOrders, selectedRemittance]);
+
   const handleViewDetails = async (remittance: RemittanceLog) => {
     setSelectedRemittance(remittance);
     setViewDialogOpen(true);
+
+    // Fetch unsold items (always fetch, even if 0 items)
+    await fetchUnsoldItems(remittance);
 
     // Fetch order details if there are any
     if (remittance.order_ids && remittance.order_ids.length > 0) {
@@ -190,14 +281,14 @@ export default function LeaderRemittancePage() {
   const totalRevenue = remittances.reduce((sum, r) => sum + r.total_revenue, 0);
   const totalOrders = remittances.reduce((sum, r) => sum + r.orders_count, 0);
 
-  if (user?.role !== 'sales_agent' || user?.position !== 'Leader') {
+  if (!canLeadTeam(user?.role)) {
     return (
       <div className="container mx-auto p-6">
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center gap-2 text-muted-foreground">
               <AlertCircle className="h-5 w-5" />
-              <p>This page is only available for leaders.</p>
+              <p>This page is only available for team leaders and managers.</p>
             </div>
           </CardContent>
         </Card>
@@ -206,22 +297,22 @@ export default function LeaderRemittancePage() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="container mx-auto p-4 md:p-6 space-y-4 md:space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Team Remittances</h1>
-          <p className="text-muted-foreground mt-1">
-            View remitted stocks from your team agents
+          <h1 className="text-2xl md:text-3xl font-bold">Team Remittances</h1>
+          <p className="text-sm md:text-base text-muted-foreground mt-1">
+            Track team remittances
           </p>
         </div>
 
         {/* Date Filter */}
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="w-[240px] justify-start text-left font-normal">
-              <CalendarIcon className="mr-2 h-4 w-4" />
-              {selectedDate ? format(selectedDate, 'PPP') : <span>Filter by date</span>}
+            <Button variant="outline" className="w-full md:w-[240px] justify-start text-left font-normal h-9 md:h-10 text-sm">
+              <CalendarIcon className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+              {selectedDate ? format(selectedDate, 'MMM dd, yyyy') : <span>Filter by date</span>}
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="end">
@@ -235,7 +326,7 @@ export default function LeaderRemittancePage() {
               <div className="p-3 border-t">
                 <Button
                   variant="ghost"
-                  className="w-full"
+                  className="w-full text-xs md:text-sm"
                   onClick={() => setSelectedDate(undefined)}
                 >
                   Clear filter
@@ -247,55 +338,55 @@ export default function LeaderRemittancePage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-3 md:gap-4 grid-cols-2 md:grid-cols-4">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Remittances</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+            <CardTitle className="text-xs md:text-sm font-medium truncate">Remittances</CardTitle>
+            <Package className="h-3 w-3 md:h-4 md:w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalRemittances}</div>
-            <p className="text-xs text-muted-foreground">
-              From team agents
+          <CardContent className="p-3 md:p-6 pt-0">
+            <div className="text-lg md:text-2xl font-bold">{totalRemittances}</div>
+            <p className="text-[10px] md:text-xs text-muted-foreground truncate">
+              From team
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Items Returned</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+            <CardTitle className="text-xs md:text-sm font-medium truncate">Items</CardTitle>
+            <Package className="h-3 w-3 md:h-4 md:w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalItems}</div>
-            <p className="text-xs text-muted-foreground">
-              {totalUnits} units total
+          <CardContent className="p-3 md:p-6 pt-0">
+            <div className="text-lg md:text-2xl font-bold">{totalItems}</div>
+            <p className="text-[10px] md:text-xs text-muted-foreground truncate">
+              {totalUnits} units
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Orders Sold</CardTitle>
-            <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+            <CardTitle className="text-xs md:text-sm font-medium truncate">Orders</CardTitle>
+            <ShoppingCart className="h-3 w-3 md:h-4 md:w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalOrders}</div>
-            <p className="text-xs text-muted-foreground">
-              Completed orders
+          <CardContent className="p-3 md:p-6 pt-0">
+            <div className="text-lg md:text-2xl font-bold">{totalOrders}</div>
+            <p className="text-[10px] md:text-xs text-muted-foreground truncate">
+              Completed
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-            <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-3 md:p-6">
+            <CardTitle className="text-xs md:text-sm font-medium truncate">Revenue</CardTitle>
+            <ShoppingCart className="h-3 w-3 md:h-4 md:w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">₱{totalRevenue.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">
-              From remitted orders
+          <CardContent className="p-3 md:p-6 pt-0">
+            <div className="text-lg md:text-2xl font-bold">₱{(totalRevenue / 1000).toFixed(0)}k</div>
+            <p className="text-[10px] md:text-xs text-muted-foreground truncate">
+              Remitted
             </p>
           </CardContent>
         </Card>
@@ -303,25 +394,76 @@ export default function LeaderRemittancePage() {
 
       {/* Remittances Table */}
       <Card>
-        <CardHeader>
-          <CardTitle>Team Remittances</CardTitle>
+        <CardHeader className="p-4 md:p-6">
+          <CardTitle className="text-base md:text-lg">Team Remittances</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 md:p-6">
           {loading ? (
             <div className="text-center py-8 text-muted-foreground">
-              Loading remittances...
+              <Loader2 className="h-8 w-8 mx-auto mb-2 animate-spin" />
+              <p className="text-sm">Loading...</p>
             </div>
           ) : remittances.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p>No remittances found</p>
+              <Package className="h-10 w-10 md:h-12 md:w-12 mx-auto mb-2 opacity-50" />
+              <p className="text-sm md:text-base">No remittances found</p>
               {selectedDate && (
-                <p className="text-sm mt-2">
+                <p className="text-xs md:text-sm mt-2">
                   Try selecting a different date or clear the filter
                 </p>
               )}
             </div>
+          ) : isMobile ? (
+            // Mobile Cards View
+            <div className="space-y-3">
+              {remittances.map((remittance) => (
+                <Card key={remittance.id} className="hover:shadow-md transition-shadow">
+                  <CardContent className="p-3">
+                    {/* Header */}
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm truncate">{remittance.agent_name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {format(new Date(remittance.remitted_at), 'MMM dd, yyyy • hh:mm a')}
+                        </div>
+                      </div>
+                      <Badge variant="secondary" className="ml-2 text-[10px] h-5 flex-shrink-0">
+                        {remittance.items_remitted} items
+                      </Badge>
+                    </div>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-3 gap-2 mb-3 text-center text-xs">
+                      <div className="p-2 rounded-lg bg-muted/50">
+                        <div className="text-[10px] text-muted-foreground">Units</div>
+                        <div className="font-semibold">{remittance.total_units}</div>
+                      </div>
+                      <div className="p-2 rounded-lg bg-muted/50">
+                        <div className="text-[10px] text-muted-foreground">Orders</div>
+                        <div className="font-semibold">{remittance.orders_count}</div>
+                      </div>
+                      <div className="p-2 rounded-lg bg-green-50 border border-green-200">
+                        <div className="text-[10px] text-muted-foreground">Revenue</div>
+                        <div className="font-semibold text-green-600">₱{(remittance.total_revenue / 1000).toFixed(0)}k</div>
+                      </div>
+                    </div>
+
+                    {/* View Button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full h-8 text-xs"
+                      onClick={() => handleViewDetails(remittance)}
+                    >
+                      <Eye className="mr-2 h-3 w-3" />
+                      View Details
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           ) : (
+            // Desktop Table View
             <Table>
               <TableHeader>
                 <TableRow>
@@ -382,116 +524,322 @@ export default function LeaderRemittancePage() {
       </Card>
 
       {/* View Details Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Remittance Details</DialogTitle>
-          </DialogHeader>
+      {isMobile ? (
+        <Sheet open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <SheetContent side="bottom" className="h-[90vh] p-0">
+            <ScrollArea className="h-full">
+              <div className="p-4 space-y-4">
+                <SheetHeader>
+                  <SheetTitle className="text-base">Cash Remittance Details</SheetTitle>
+                  <SheetDescription className="text-xs">
+                    CASH deposit details and orders
+                  </SheetDescription>
+                </SheetHeader>
 
-          {selectedRemittance && (
-            <div className="space-y-4">
-              {/* Header Info */}
-              <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
-                <div>
-                  <p className="text-sm text-muted-foreground">Agent</p>
-                  <p className="font-semibold">{selectedRemittance.agent_name}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Date & Time</p>
-                  <p className="font-semibold">
-                    {format(new Date(selectedRemittance.remitted_at), 'PPP p')}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Remittance ID</p>
-                  <p className="font-mono text-xs">{selectedRemittance.id.slice(0, 8)}...</p>
-                </div>
-              </div>
-
-              {/* Tabs for Details */}
-              <Tabs defaultValue="summary" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="summary">
-                    📊 Summary
-                  </TabsTrigger>
-                  <TabsTrigger value="orders">
-                    🛒 Sold Orders ({selectedRemittance.orders_count})
-                  </TabsTrigger>
-                  <TabsTrigger value="signature">
-                    ✍️ Signature
-                  </TabsTrigger>
-                </TabsList>
-
-                {/* Summary Tab */}
-                <TabsContent value="summary" className="space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Items Returned</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{selectedRemittance.items_remitted}</div>
-                        <p className="text-xs text-muted-foreground">Unique items</p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Total Units</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{selectedRemittance.total_units}</div>
-                        <p className="text-xs text-muted-foreground">Quantity</p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Orders Sold</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">{selectedRemittance.orders_count}</div>
-                        <p className="text-xs text-muted-foreground">Completed</p>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Revenue</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold">₱{selectedRemittance.total_revenue.toLocaleString()}</div>
-                        <p className="text-xs text-muted-foreground">Total</p>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  <div className="border rounded-lg p-4 bg-blue-50 border-blue-200">
-                    <h4 className="font-semibold mb-2 text-blue-900">Remittance Summary</h4>
-                    <ul className="text-sm space-y-1 text-blue-800">
-                      <li>✓ {selectedRemittance.items_remitted} items ({selectedRemittance.total_units} units) returned as unsold</li>
-                      <li>✓ {selectedRemittance.orders_count} orders sold totaling ₱{selectedRemittance.total_revenue.toLocaleString()}</li>
-                      <li>✓ Signature captured and verified</li>
-                      <li>✓ Agent inventory cleared</li>
-                    </ul>
-                  </div>
-                </TabsContent>
-
-                {/* Orders Tab */}
-                <TabsContent value="orders" className="space-y-4">
-                  {loadingDetails ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="h-8 w-8 animate-spin" />
+                {selectedRemittance && (
+                  <div className="space-y-4">
+                    {/* Header Info */}
+                    <div className="grid grid-cols-2 gap-2 p-3 bg-muted rounded-lg text-xs">
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">Agent</p>
+                        <p className="font-semibold text-xs truncate">{selectedRemittance.agent_name}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">Date</p>
+                        <p className="font-semibold text-xs">
+                          {format(new Date(selectedRemittance.remitted_at), 'MMM dd, yyyy')}
+                        </p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-[10px] text-muted-foreground">Time</p>
+                        <p className="font-semibold text-xs">
+                          {format(new Date(selectedRemittance.remitted_at), 'hh:mm a')}
+                        </p>
+                      </div>
                     </div>
-                  ) : remittanceOrders.length > 0 ? (
-                    <>
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-sm">Order Details</CardTitle>
+
+                    {/* Tabs for Details */}
+                    <Tabs defaultValue="summary" className="w-full">
+                      <TabsList className="grid w-full grid-cols-3 h-auto">
+                        <TabsTrigger value="summary" className="text-[10px] py-2">
+                          Summary
+                        </TabsTrigger>
+                        <TabsTrigger value="orders" className="text-[10px] py-2">
+                          Orders ({selectedRemittance.orders_count})
+                        </TabsTrigger>
+                        <TabsTrigger value="signature" className="text-[10px] py-2">
+                          Signature
+                        </TabsTrigger>
+                      </TabsList>
+
+                      {/* Summary Tab */}
+                      <TabsContent value="summary" className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2">
+                          <Card className="bg-green-50 border-green-200">
+                            <CardContent className="p-3">
+                              <div className="text-[10px] text-green-600 mb-1">Orders</div>
+                              <div className="text-lg font-bold text-green-700">{selectedRemittance.orders_count}</div>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="bg-green-50 border-green-200">
+                            <CardContent className="p-3">
+                              <div className="text-[10px] text-green-600 mb-1">Revenue</div>
+                              <div className="text-lg font-bold text-green-700">₱{(selectedRemittance.total_revenue / 1000).toFixed(0)}k</div>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="bg-blue-50 border-blue-200 col-span-2">
+                            <CardContent className="p-3">
+                              <div className="text-[10px] text-blue-600 mb-1">Policy</div>
+                              <div className="text-xs font-medium text-blue-700">Cash Only - Stock Retained</div>
+                            </CardContent>
+                          </Card>
+                        </div>
+
+                        <div className="border rounded-lg p-3 bg-blue-50 border-blue-200">
+                          <h4 className="font-semibold text-xs mb-2 text-blue-900">Summary</h4>
+                          <ul className="text-[10px] space-y-1 text-blue-800">
+                            <li>✓ {selectedRemittance.items_remitted} items ({selectedRemittance.total_units} units) returned</li>
+                            <li>✓ {selectedRemittance.orders_count} orders • ₱{selectedRemittance.total_revenue.toLocaleString()}</li>
+                            <li>✓ Signature verified</li>
+                          </ul>
+                        </div>
+                      </TabsContent>
+
+
+                      {/* Orders Tab */}
+                      <TabsContent value="orders" className="space-y-3">
+                        {loadingDetails ? (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="h-6 w-6 animate-spin" />
+                          </div>
+                        ) : remittanceOrders.length > 0 ? (
+                          <>
+                            <div className="space-y-2">
+                              {/* Group orders by orderId */}
+                              {Array.from(new Set(remittanceOrders.map(o => o.orderId))).map((orderId) => {
+                                const orderItems = remittanceOrders.filter(o => o.orderId === orderId);
+                                const firstItem = orderItems[0];
+                                
+                                return (
+                                  <Card key={orderId} className="border">
+                                    <CardContent className="p-3">
+                                      {/* Header */}
+                                      <div className="flex justify-between items-start mb-2 pb-2 border-b">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="font-mono text-[10px] text-muted-foreground">
+                                            {firstItem.orderNumber}
+                                          </div>
+                                          <div className="font-medium text-xs truncate">{firstItem.clientName}</div>
+                                        </div>
+                                        <div className="text-sm font-bold text-green-600 ml-2 flex-shrink-0">
+                                          ₱{firstItem.totalAmount.toFixed(2)}
+                                        </div>
+                                      </div>
+
+                                      {/* Items */}
+                                      <div className="space-y-1">
+                                        {orderItems.map((item, idx) => (
+                                          <div key={idx} className="flex justify-between text-[10px]">
+                                            <span className="truncate flex-1">{item.brandName} - {item.variantName}</span>
+                                            <span className="ml-2 font-medium flex-shrink-0">×{item.quantity}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </CardContent>
+                                  </Card>
+                                );
+                              })}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="border rounded-lg p-3 text-center">
+                                <p className="text-[10px] text-muted-foreground">Orders</p>
+                                <p className="text-lg font-bold">{new Set(remittanceOrders.map(o => o.orderId)).size}</p>
+                              </div>
+                              <div className="border rounded-lg p-3 text-center">
+                                <p className="text-[10px] text-muted-foreground">Revenue</p>
+                                <p className="text-lg font-bold text-green-600">
+                                  ₱{(Array.from(new Set(remittanceOrders.map(o => o.orderId)))
+                                    .reduce((sum, orderId) => {
+                                      const order = remittanceOrders.find(o => o.orderId === orderId);
+                                      return sum + (order?.totalAmount || 0);
+                                    }, 0) / 1000).toFixed(0)}k
+                                </p>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <ShoppingCart className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                            <p className="text-xs">No orders found</p>
+                          </div>
+                        )}
+                      </TabsContent>
+
+                      {/* Signature Tab */}
+                      <TabsContent value="signature" className="space-y-3">
+                        {selectedRemittance.signature_url ? (
+                          <div className="space-y-3">
+                            <div className="border rounded-lg p-3 bg-green-50 border-green-200">
+                              <div className="flex items-center gap-2 text-green-700 mb-1">
+                                <FileSignature className="h-4 w-4" />
+                                <span className="text-xs font-semibold">Signature Verified</span>
+                              </div>
+                              <p className="text-[10px] text-green-600">
+                                Agent signature captured on {format(new Date(selectedRemittance.remitted_at), 'MMM dd, yyyy')}
+                              </p>
+                            </div>
+
+                            <div className="flex justify-center items-center border rounded-lg p-4 bg-background">
+                              <img
+                                src={selectedRemittance.signature_url}
+                                alt="Agent Signature"
+                                className="max-h-40 max-w-full object-contain"
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <AlertCircle className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                            <p className="text-xs">No signature available</p>
+                          </div>
+                        )}
+                      </TabsContent>
+                    </Tabs>
+
+                    {/* Close Button */}
+                    <div className="sticky bottom-0 bg-background pt-4 border-t">
+                      <Button
+                        variant="outline"
+                        onClick={() => setViewDialogOpen(false)}
+                        className="w-full h-10 text-xs"
+                      >
+                        Close
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Cash Remittance Details</DialogTitle>
+              <DialogDescription>
+                Showing CASH deposit details and orders remitted by the agent
+              </DialogDescription>
+            </DialogHeader>
+
+            {selectedRemittance && (
+              <div className="space-y-4">
+                {/* Header Info */}
+                <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Agent</p>
+                    <p className="font-semibold">{selectedRemittance.agent_name}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Date & Time</p>
+                    <p className="font-semibold">
+                      {format(new Date(selectedRemittance.remitted_at), 'PPP p')}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Remittance ID</p>
+                    <p className="font-mono text-xs">{selectedRemittance.id.slice(0, 8)}...</p>
+                  </div>
+                </div>
+
+                {/* Tabs for Details */}
+                <Tabs defaultValue="summary" className="w-full">
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="summary">
+                      📊 Summary
+                    </TabsTrigger>
+                    <TabsTrigger value="orders">
+                      💰 Cash Orders ({selectedRemittance.orders_count})
+                    </TabsTrigger>
+                    <TabsTrigger value="signature">
+                      ✍️ Signature
+                    </TabsTrigger>
+                  </TabsList>
+
+                  {/* Summary Tab */}
+                  <TabsContent value="summary" className="space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <Card className="bg-blue-50 border-blue-200">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm">Inventory Status</CardTitle>
                         </CardHeader>
                         <CardContent>
-                          <div className="border rounded-lg max-h-96 overflow-y-auto">
-                            <Table>
+                          <div className="text-lg font-bold text-blue-700">Retained</div>
+                          <p className="text-xs text-blue-600">Agent keeps unsold stock</p>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="bg-blue-50 border-blue-200">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm">New Policy</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-sm font-medium text-blue-700">Cash Only</div>
+                          <p className="text-xs text-blue-600">Only cash proceeds remitted</p>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="bg-green-50 border-green-200">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm">Cash Orders</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-2xl font-bold text-green-700">{selectedRemittance.orders_count}</div>
+                          <p className="text-xs text-green-600">Transactions</p>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="bg-green-50 border-green-200">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm">Cash Revenue</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-2xl font-bold text-green-700">₱{selectedRemittance.total_revenue.toLocaleString()}</div>
+                          <p className="text-xs text-green-600">To be deposited</p>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    <div className="border rounded-lg p-4 bg-blue-50 border-blue-200">
+                      <h4 className="font-semibold mb-2 text-blue-900">Remittance Summary</h4>
+                      <ul className="text-sm space-y-1 text-blue-800">
+                        <li>✓ {selectedRemittance.items_remitted} items ({selectedRemittance.total_units} units) returned as unsold</li>
+                        <li>✓ {selectedRemittance.orders_count} orders sold totaling ₱{selectedRemittance.total_revenue.toLocaleString()}</li>
+                        <li>✓ Signature captured and verified</li>
+                        <li>✓ Agent inventory cleared</li>
+                      </ul>
+                    </div>
+                  </TabsContent>
+
+
+                  {/* Orders Tab */}
+                  <TabsContent value="orders" className="space-y-4">
+                    {loadingDetails ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-8 w-8 animate-spin" />
+                      </div>
+                    ) : remittanceOrders.length > 0 ? (
+                      <>
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-sm">Order Details</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="border rounded-lg max-h-96 overflow-y-auto">
+                              <Table>
                               <TableHeader>
                                 <TableRow>
                                   <TableHead>Order#</TableHead>
@@ -592,11 +940,12 @@ export default function LeaderRemittancePage() {
                     </div>
                   )}
                 </TabsContent>
-              </Tabs>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+                </Tabs>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

@@ -105,6 +105,51 @@ export default function VoidedClientsPage() {
     };
   }, [roleResolved, isAdmin, user?.id]);
 
+  // Helper function to convert photo URL to signed URL if needed
+  const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<string | null> => {
+    if (!photoUrl) return null;
+    
+    // If it's already a signed URL, return as-is
+    if (photoUrl.includes('?token=')) {
+      return photoUrl;
+    }
+    
+    // If it's a public URL, extract the path and generate signed URL
+    // Public URL format: https://[project].supabase.co/storage/v1/object/public/client-photos/[path]
+    const publicUrlMatch = photoUrl.match(/\/storage\/v1\/object\/public\/client-photos\/(.+)$/);
+    if (publicUrlMatch) {
+      const filePath = publicUrlMatch[1];
+      const { data, error } = await supabase.storage
+        .from('client-photos')
+        .createSignedUrl(filePath, 3600); // 1 hour expiry
+      
+      if (!error && data?.signedUrl) {
+        return data.signedUrl;
+      }
+    }
+    
+    // Try to extract path from any URL format and generate signed URL
+    try {
+      const url = new URL(photoUrl);
+      const pathParts = url.pathname.split('/client-photos/');
+      if (pathParts.length > 1) {
+        const filePath = pathParts[1];
+        const { data, error } = await supabase.storage
+          .from('client-photos')
+          .createSignedUrl(filePath, 3600);
+        
+        if (!error && data?.signedUrl) {
+          return data.signedUrl;
+        }
+      }
+    } catch (e) {
+      // URL parsing failed, return original
+    }
+    
+    // If all else fails, return original URL
+    return photoUrl;
+  };
+
   const fetchVoidedClients = async () => {
     try {
       setLoading(true);
@@ -150,7 +195,18 @@ export default function VoidedClientsPage() {
         }, {});
       }
 
-      const clientsWithStats = (data || []).map((client: any) => ({
+      // Convert photo URLs to signed URLs
+      const clientsWithSignedPhotos = await Promise.all(
+        (data || []).map(async (client: any) => {
+          const signedPhotoUrl = await getSignedPhotoUrl(client.photo_url);
+          return {
+            ...client,
+            photo_url: signedPhotoUrl
+          };
+        })
+      );
+
+      const clientsWithStats = clientsWithSignedPhotos.map((client: any) => ({
         id: client.id,
         agent_id: client.agent_id,
         agent_name: client.profiles?.full_name || null,
@@ -457,7 +513,7 @@ export default function VoidedClientsPage() {
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
                   <TableHead className="text-center">Name</TableHead>
-                  <TableHead className="text-center">Company</TableHead>
+                  <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
                   <TableHead className="text-center">Agent</TableHead>
@@ -565,7 +621,7 @@ export default function VoidedClientsPage() {
                 )}
                 <div>
                   <h3 className="text-xl font-semibold">{viewingClient.name}</h3>
-                  <p className="text-muted-foreground">{viewingClient.company || 'No company'}</p>
+                  <p className="text-muted-foreground">{viewingClient.company || 'No shop name'}</p>
                   <Badge variant="destructive" className="mt-1">Voided</Badge>
                 </div>
               </div>
