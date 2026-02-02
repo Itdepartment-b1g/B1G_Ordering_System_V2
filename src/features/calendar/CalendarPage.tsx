@@ -110,6 +110,9 @@ interface CalendarEvent {
   taskData?: Task; // For tasks from database
   visitData?: VisitLogWithClient; // For visit logs
   attachment_url?: string | null; // For task attachments
+  agentColorClass?: string; // Color class for tasks by agent (team leaders)
+  agentId?: string;
+  agentName?: string;
 }
 
 interface CalendarDay {
@@ -141,6 +144,10 @@ export default function CalendarPage() {
   const [visits, setVisits] = useState<VisitLogWithClient[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+
+  // Team-leader specific state
+  const [teamAgents, setTeamAgents] = useState<Array<{ id: string; full_name: string }>>([]);
+  const [selectedAgentFilter, setSelectedAgentFilter] = useState<string>('all');
 
   // Daily task creation states
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
@@ -205,9 +212,37 @@ export default function CalendarPage() {
 
   const { toast } = useToast();
   const { user } = useAuth();
+  const isLeader = user?.role === 'team_leader';
 
   // Convert tasks from database to calendar events
   const allEvents = useMemo(() => {
+    // When a team leader is viewing the calendar, assign each agent a unique color
+    const agentColorPalette = [
+      'bg-blue-100 text-blue-800 border-blue-200',
+      'bg-emerald-100 text-emerald-800 border-emerald-200',
+      'bg-amber-100 text-amber-800 border-amber-200',
+      'bg-rose-100 text-rose-800 border-rose-200',
+      'bg-violet-100 text-violet-800 border-violet-200',
+      'bg-cyan-100 text-cyan-800 border-cyan-200',
+      'bg-lime-100 text-lime-800 border-lime-200',
+      'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200'
+    ];
+
+    let agentColorMap: Record<string, string> = {};
+
+    if (isLeader) {
+      const uniqueAgentIds: string[] = [];
+      tasks.forEach(task => {
+        if (task.agent_id && !uniqueAgentIds.includes(task.agent_id)) {
+          uniqueAgentIds.push(task.agent_id);
+        }
+      });
+
+      uniqueAgentIds.forEach((agentId, index) => {
+        agentColorMap[agentId] = agentColorPalette[index % agentColorPalette.length];
+      });
+    }
+
     const taskEvents: CalendarEvent[] = tasks.map(task => {
       // Use the separate time field if available, otherwise default to 09:00
       let startTime = '09:00';
@@ -239,7 +274,10 @@ export default function CalendarPage() {
         priority: task.priority === 'urgent' ? 'high' : task.priority === 'high' ? 'high' : task.priority === 'medium' ? 'medium' : 'low',
         status: task.status === 'completed' ? 'completed' : task.status === 'cancelled' ? 'cancelled' : 'scheduled',
         taskData: task,
-        attachment_url: task.attachment_url || null
+        attachment_url: task.attachment_url || null,
+        agentColorClass: isLeader ? agentColorMap[task.agent_id] : undefined,
+        agentId: task.agent_id,
+        agentName: task.agent_name
       };
     });
 
@@ -271,7 +309,7 @@ export default function CalendarPage() {
     });
 
     return [...taskEvents, ...visitEvents];
-  }, [tasks, visits]);
+  }, [tasks, visits, isLeader]);
 
   // Update current time every minute
   useEffect(() => {
@@ -304,11 +342,15 @@ export default function CalendarPage() {
     }
   }, []);
 
-  // Fetch tasks for the current user
+  // Fetch tasks / visits for the current user (or team, for leaders)
   useEffect(() => {
     if (user?.id) {
       fetchTasks();
       fetchVisits();
+
+      if (isLeader) {
+        fetchTeamAgents();
+      }
     }
 
     // Cleanup subscriptions on unmount
@@ -317,11 +359,15 @@ export default function CalendarPage() {
         supabase.removeAllChannels();
       }
     };
-  }, [user?.id]);
+  }, [user?.id, isLeader]);
 
   // Setup real-time subscriptions for tasks
   const setupRealtimeSubscriptions = () => {
     if (!user?.id) return;
+
+    const taskFilter = isLeader
+      ? `leader_id=eq.${user.id}`
+      : `agent_id=eq.${user.id}`;
 
     // Subscribe to task changes
     const tasksSubscription = supabase
@@ -332,7 +378,7 @@ export default function CalendarPage() {
           event: '*',
           schema: 'public',
           table: 'tasks',
-          filter: `agent_id=eq.${user.id}`
+          filter: taskFilter
         },
         (payload) => {
           console.log('Real-time task update:', payload);
@@ -350,22 +396,8 @@ export default function CalendarPage() {
               break;
 
             case 'UPDATE': {
-              // Task updated
-              const updatedTask = payload.new as Task;
-              if (updatedTask.status === 'completed') {
-                toast({
-                  title: 'Task Completed',
-                  description: 'Great job! Task marked as completed',
-                  duration: 2000
-                });
-              } else if (updatedTask.status === 'in_progress') {
-                toast({
-                  title: 'Task Started',
-                  description: 'Task is now in progress',
-                  duration: 2000
-                });
-              }
-              fetchTasks(); // Refresh tasks
+              // Task updated - just refresh tasks, no status toasts
+              fetchTasks();
               break;
             }
 
@@ -392,7 +424,7 @@ export default function CalendarPage() {
           event: '*',
           schema: 'public',
           table: 'task_details',
-          filter: `agent_id=eq.${user.id}`
+          filter: taskFilter
         },
         (payload) => {
           console.log('Real-time task_details update:', payload);
@@ -414,13 +446,70 @@ export default function CalendarPage() {
         setLoadingTasks(true);
       }
 
-      const { data, error } = await supabase
-        .from('task_details')
-        .select('id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, urgency_status, attachment_url')
-        .eq('agent_id', user?.id)
-        .order('created_at', { ascending: false });
+      let data: Task[] | null = null;
 
-      if (error) throw error;
+      if (isLeader) {
+        // Team leaders should see:
+        // - tasks they created for their team (leader_id = user.id)
+        // - tasks created by mobile sales in their team (agent_id in their team)
+
+        // 1) Tasks created by the leader
+        const { data: leaderTasks, error: leaderError } = await supabase
+          .from('task_details')
+          .select(
+            'id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, urgency_status, attachment_url'
+          )
+          .eq('leader_id', user?.id)
+          .order('created_at', { ascending: false });
+
+        if (leaderError) throw leaderError;
+
+        let merged: Task[] = (leaderTasks as Task[] | null) || [];
+
+        // 2) Tasks created by team agents themselves (leader_id can be null)
+        const { data: teamRows, error: teamError } = await supabase
+          .from('leader_teams')
+          .select('agent_id')
+          .eq('leader_id', user?.id);
+
+        if (teamError) throw teamError;
+
+        const agentIds = (teamRows || []).map(row => row.agent_id).filter(Boolean);
+
+        if (agentIds.length > 0) {
+          const { data: agentTasks, error: agentError } = await supabase
+            .from('task_details')
+            .select(
+              'id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, urgency_status, attachment_url'
+            )
+            .in('agent_id', agentIds)
+            .order('created_at', { ascending: false });
+
+          if (agentError) throw agentError;
+
+          const existingIds = new Set(merged.map(t => t.id));
+          (agentTasks as Task[] | null)?.forEach(task => {
+            if (!existingIds.has(task.id)) {
+              merged.push(task as Task);
+            }
+          });
+        }
+
+        data = merged;
+      } else {
+        // Mobile sales see only their own tasks
+        const { data: agentTasks, error } = await supabase
+          .from('task_details')
+          .select(
+            'id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, urgency_status, attachment_url'
+          )
+          .eq('agent_id', user?.id)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        data = agentTasks as Task[] | null;
+      }
+
       setTasks(data || []);
 
       // Enable real-time subscriptions after initial load
@@ -462,49 +551,44 @@ export default function CalendarPage() {
     }
   };
 
-  const handleStartTask = async (taskId: string) => {
+  // Fetch team agents for a leader (mobile sales under this leader)
+  const fetchTeamAgents = async () => {
+    if (!isLeader || !user?.id) return;
+
     try {
-      // Optimistic update - update UI immediately
-      setTasks(prevTasks =>
-        prevTasks.map(task =>
-          task.id === taskId
-            ? { ...task, status: 'in_progress', updated_at: new Date().toISOString() }
-            : task
-        )
-      );
-
-      const { error } = await supabase
-        .from('tasks')
-        .update({
-          status: 'in_progress',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', taskId);
-
-      if (error) {
-        // Revert optimistic update on error
-        setTasks(prevTasks =>
-          prevTasks.map(task =>
-            task.id === taskId
-              ? { ...task, status: 'pending' }
-              : task
+      const { data, error } = await supabase
+        .from('leader_teams')
+        .select(`
+          agent_id,
+          profiles!leader_teams_agent_id_fkey (
+            id,
+            full_name
           )
-        );
-        throw error;
-      }
+        `)
+        .eq('leader_id', user.id);
 
-      toast({
-        title: 'Success',
-        description: 'Task started successfully'
-      });
+      if (error) throw error;
+
+      const agents =
+        data?.map(item => ({
+          id: (item.profiles as any).id,
+          full_name: (item.profiles as any).full_name || 'Mobile Sales',
+        })) || [];
+
+      setTeamAgents(agents);
     } catch (error) {
-      console.error('Error starting task:', error);
+      console.error('Error fetching team agents for calendar:', error);
       toast({
         title: 'Error',
-        description: 'Failed to start task',
-        variant: 'destructive'
+        description: 'Failed to load team members for calendar view',
+        variant: 'destructive',
       });
     }
+  };
+
+  // Deprecated: tasks are auto-completed for agent-created tasks; explicit "start" is no longer used in calendar.
+  const handleStartTask = async (_taskId: string) => {
+    return;
   };
 
   const handleCompleteTask = async (taskId: string) => {
@@ -581,6 +665,13 @@ export default function CalendarPage() {
 
     setIsUploading(true);
     try {
+      // Auto-capture current date & time for agent-created tasks
+      const now = new Date();
+      const isoNow = now.toISOString();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const timeStr = `${hours}:${minutes}:00`;
+
       // Create task in database
       const { data: taskData, error: taskError } = await supabase
         .from('tasks')
@@ -590,11 +681,12 @@ export default function CalendarPage() {
           client_id: selectedClient?.id || null, // Optional client link
           title: dailyTaskForm.title,
           description: dailyTaskForm.description || null,
-          due_date: dailyTaskForm.date || null,
-          time: dailyTaskForm.time || null,
+          due_date: isoNow,
+          time: timeStr,
           notes: dailyTaskForm.notes || null,
           priority: dailyTaskForm.priority,
-          status: 'pending'
+          status: 'completed',
+          completed_at: new Date().toISOString()
         })
         .select()
         .single();
@@ -950,6 +1042,12 @@ export default function CalendarPage() {
       const priorityMatch = priorityFilter === 'all' ||
         (event.taskData && event.taskData.priority === priorityFilter);
 
+      // Agent filter (team leaders only, tasks only)
+      const agentMatch =
+        !isLeader ||
+        selectedAgentFilter === 'all' ||
+        (event.taskData && event.taskData.agent_id === selectedAgentFilter);
+
       // Mobile tab filter
       let mobileMatch = true;
       if (isMobile && mobileTab !== 'all') {
@@ -962,7 +1060,7 @@ export default function CalendarPage() {
         }
       }
 
-      return statusMatch && searchMatch && priorityMatch && mobileMatch;
+      return statusMatch && searchMatch && priorityMatch && agentMatch && mobileMatch;
     });
   };
 
@@ -1038,15 +1136,19 @@ export default function CalendarPage() {
     }).sort((a, b) => a.startTime.localeCompare(b.startTime));
   };
 
-  // Event type colors
-  const getEventTypeColor = (type: CalendarEvent['type']) => {
+  // Event colors (type-based, but tasks can be colored per-agent for leaders)
+  const getEventTypeColor = (event: CalendarEvent) => {
+    if (isLeader && event.type === 'task' && event.agentColorClass) {
+      return event.agentColorClass;
+    }
+
     const colors = {
       meeting: 'bg-blue-100 text-blue-800 border-blue-200',
       appointment: 'bg-green-100 text-green-800 border-green-200',
       task: 'bg-yellow-100 text-yellow-800 border-yellow-200',
       reminder: 'bg-purple-100 text-purple-800 border-purple-200'
     };
-    return colors[type];
+    return colors[event.type];
   };
 
   // Priority colors
@@ -1453,24 +1555,9 @@ export default function CalendarPage() {
                     />
                   </div>
 
-                  {/* Date and Time */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Date</Label>
-                      <Input
-                        type="date"
-                        value={dailyTaskForm.date}
-                        onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, date: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Time</Label>
-                      <Input
-                        type="time"
-                        value={dailyTaskForm.time}
-                        onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, time: e.target.value })}
-                      />
-                    </div>
+                  {/* Date and Time (auto-set to now for mobile sales; no manual selection) */}
+                  <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                    Date and time will be set automatically when you create this task.
                   </div>
 
                   <div className="space-y-2">
@@ -1600,7 +1687,7 @@ export default function CalendarPage() {
             </>
           )}
 
-          {/* Filter */}
+          {/* Status Filter */}
           <Select value={filterType} onValueChange={setFilterType}>
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -1613,6 +1700,23 @@ export default function CalendarPage() {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* Agent Filter (Team Leaders) */}
+          {isLeader && (
+            <Select value={selectedAgentFilter} onValueChange={setSelectedAgentFilter}>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Filter by agent" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Mobile Sales</SelectItem>
+                {teamAgents.map(agent => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.full_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
         </div>
       </div>
@@ -1742,7 +1846,7 @@ export default function CalendarPage() {
                                 {hourEvents.map(event => (
                                   <div
                                     key={event.id}
-                                    className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 p-2 sm:px-3 sm:py-2 rounded border ${getEventTypeColor(event.type)} cursor-pointer active:opacity-80 transition-opacity min-h-[44px]`}
+                                    className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 p-2 sm:px-3 sm:py-2 rounded border ${getEventTypeColor(event)} cursor-pointer active:opacity-80 transition-opacity min-h-[44px]`}
                                     onClick={() => handleEventClick(event)}
                                   >
                                     <div className="font-semibold text-xs sm:text-sm truncate flex-1 min-w-0">{event.title}</div>
@@ -1750,34 +1854,7 @@ export default function CalendarPage() {
                                       <div className="text-[10px] sm:text-xs opacity-75 truncate">{event.startTime} - {event.endTime}</div>
                                       {event.type === 'task' && event.taskData && (
                                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                          {event.taskData.status === 'pending' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleStartTask(event.taskData!.id)}
-                                              className="h-8 w-8 p-0 min-h-[44px] min-w-[44px]"
-                                              aria-label="Start task"
-                                            >
-                                              <Play className="h-3.5 w-3.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'in_progress' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleCompleteTask(event.taskData!.id)}
-                                              className="h-8 w-8 p-0 min-h-[44px] min-w-[44px]"
-                                              aria-label="Complete task"
-                                            >
-                                              <CheckCircle className="h-3.5 w-3.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'completed' && (
-                                            <div className="flex items-center gap-1 text-green-600 text-[10px] sm:text-xs font-medium">
-                                              <CheckCircle className="h-3.5 w-3.5" />
-                                              <span className="hidden sm:inline">Completed</span>
-                                            </div>
-                                          )}
+                                      {/* Task actions hidden in calendar view */}
                                         </div>
                                       )}
                                     </div>
@@ -1895,8 +1972,7 @@ export default function CalendarPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <h4 className={`font-medium text-sm leading-tight truncate ${event.taskData?.status === 'completed' ? 'line-through text-muted-foreground' : ''
-                                  }`}>
+                                <h4 className="font-medium text-sm leading-tight truncate">
                                   {event.title}
                                 </h4>
                                 <Badge variant={
@@ -1906,15 +1982,6 @@ export default function CalendarPage() {
                                 } className="text-[10px] px-1.5 py-0 h-5 shrink-0">
                                   {event.taskData?.priority}
                                 </Badge>
-                                {event.taskData?.status === 'completed' && (
-                                  <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
-                                )}
-                                {event.taskData?.status === 'in_progress' && (
-                                  <Play className="h-4 w-4 text-blue-600 shrink-0" />
-                                )}
-                                {event.taskData?.status === 'pending' && (
-                                  <Clock className="h-4 w-4 text-gray-600 shrink-0" />
-                                )}
                               </div>
                               {event.taskData?.description && (
                                 <p className="text-xs text-gray-600 line-clamp-1">
@@ -1965,21 +2032,7 @@ export default function CalendarPage() {
                           {/* Action Buttons - Compact */}
                           <div className="flex items-center justify-between pt-2 border-t border-gray-200">
                             <div className="flex items-center gap-2">
-                              {event.taskData?.status === 'pending' && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleStartTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <Play className="h-3 w-3 mr-1" />
-                                  Start
-                                </Button>
-                              )}
-                              {event.taskData?.status === 'in_progress' && (
+                              {event.taskData && event.taskData.status !== 'completed' && (
                                 <Button
                                   size="sm"
                                   className="h-7 px-2 text-xs"
@@ -2064,7 +2117,7 @@ export default function CalendarPage() {
                       {day.events.slice(0, 3).map(event => (
                         <div
                           key={event.id}
-                          className={`text-xs p-1 rounded border ${getEventTypeColor(event.type)} cursor-pointer hover:opacity-80 transition-opacity`}
+                          className={`text-xs p-1 rounded border ${getEventTypeColor(event)} cursor-pointer hover:opacity-80 transition-opacity`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleEventClick(event);
@@ -2075,17 +2128,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {event.taskData.status === 'pending' && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleStartTask(event.taskData!.id)}
-                                    className="h-4 px-1 text-xs"
-                                  >
-                                    <Play className="h-2 w-2" />
-                                  </Button>
-                                )}
-                                {event.taskData.status === 'in_progress' && (
+                                {event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2142,7 +2185,7 @@ export default function CalendarPage() {
                       {day.events.map(event => (
                         <div
                           key={event.id}
-                          className={`text-xs p-2 rounded border ${getEventTypeColor(event.type)} cursor-pointer hover:opacity-80 transition-opacity`}
+                          className={`text-xs p-2 rounded border ${getEventTypeColor(event)} cursor-pointer hover:opacity-80 transition-opacity`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleEventClick(event);
@@ -2153,17 +2196,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {event.taskData.status === 'pending' && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleStartTask(event.taskData!.id)}
-                                    className="h-4 px-1 text-xs"
-                                  >
-                                    <Play className="h-2 w-2" />
-                                  </Button>
-                                )}
-                                {event.taskData.status === 'in_progress' && (
+                                {event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2229,7 +2262,7 @@ export default function CalendarPage() {
                                 hourEvents.map(event => (
                                   <div
                                     key={event.id}
-                                    className={`text-[10px] sm:text-xs p-1.5 sm:p-2 rounded border cursor-pointer active:opacity-80 transition-opacity ${getEventTypeColor(event.type)}`}
+                                    className={`text-[10px] sm:text-xs p-1.5 sm:p-2 rounded border cursor-pointer active:opacity-80 transition-opacity ${getEventTypeColor(event)}`}
                                     onClick={() => handleEventClick(event)}
                                   >
                                     <div className="font-medium truncate text-xs sm:text-sm">{event.title}</div>
@@ -2239,17 +2272,7 @@ export default function CalendarPage() {
                                       </div>
                                       {event.type === 'task' && event.taskData && (
                                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                          {event.taskData.status === 'pending' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleStartTask(event.taskData!.id)}
-                                              className="h-5 w-5 p-0"
-                                            >
-                                              <Play className="h-2.5 w-2.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'in_progress' && (
+                                          {event.taskData.status !== 'completed' && (
                                             <Button
                                               variant="outline"
                                               size="sm"
@@ -2320,7 +2343,7 @@ export default function CalendarPage() {
                             {hourEvents.map(event => (
                               <div
                                 key={event.id}
-                                className={`text-xs p-2 rounded border cursor-pointer hover:opacity-80 transition-opacity ${getEventTypeColor(event.type)}`}
+                                className={`text-xs p-2 rounded border cursor-pointer hover:opacity-80 transition-opacity ${getEventTypeColor(event)}`}
                                 onClick={() => handleEventClick(event)}
                               >
                                 <div className="font-medium truncate">{event.title}</div>
@@ -2328,17 +2351,7 @@ export default function CalendarPage() {
                                   <div className="text-xs opacity-75">{event.startTime} - {event.endTime}</div>
                                   {event.type === 'task' && event.taskData && (
                                     <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                      {event.taskData.status === 'pending' && (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => handleStartTask(event.taskData!.id)}
-                                          className="h-4 px-1 text-xs"
-                                        >
-                                          <Play className="h-2 w-2" />
-                                        </Button>
-                                      )}
-                                      {event.taskData.status === 'in_progress' && (
+                                      {event.taskData.status !== 'completed' && (
                                         <Button
                                           variant="outline"
                                           size="sm"
@@ -2487,18 +2500,6 @@ export default function CalendarPage() {
                               </div>
 
                               <div className="flex items-center justify-between pt-2 border-t">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-6 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleStartTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <Play className="h-3 w-3 mr-1" />
-                                  Start
-                                </Button>
                                 <span className="text-xs text-gray-500">
                                   {new Date(event.taskData?.created_at || '').toLocaleDateString()}
                                 </span>
@@ -2736,14 +2737,11 @@ export default function CalendarPage() {
               {/* Event Header */}
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
-                  <Badge className={getEventTypeColor(selectedEvent.type)}>
+                  <Badge className={getEventTypeColor(selectedEvent)}>
                     {selectedEvent.type}
                   </Badge>
                   <Badge variant="outline" className={getPriorityColor(selectedEvent.priority)}>
                     {selectedEvent.priority} priority
-                  </Badge>
-                  <Badge variant="outline" className="bg-gray-100 text-gray-600">
-                    {selectedEvent.status}
                   </Badge>
                 </div>
 
@@ -2792,45 +2790,7 @@ export default function CalendarPage() {
                   </div>
                 </div>
 
-                {/* Task Completion Info */}
-                {selectedEvent.type === 'task' && selectedEvent.taskData && (
-                  <div className="space-y-3">
-                    <h3 className="font-semibold text-lg flex items-center gap-2">
-                      <CheckCircle className="h-5 w-5" />
-                      Task Status
-                    </h3>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Status:</span>
-                        <Badge variant="outline" className={
-                          selectedEvent.taskData.status === 'completed' ? 'bg-green-100 text-green-600' :
-                            selectedEvent.taskData.status === 'in_progress' ? 'bg-blue-100 text-blue-600' :
-                              selectedEvent.taskData.status === 'pending' ? 'bg-yellow-100 text-yellow-600' :
-                                'bg-gray-100 text-gray-600'
-                        }>
-                          {selectedEvent.taskData.status.replace('_', ' ')}
-                        </Badge>
-                      </div>
-                      {selectedEvent.taskData.completed_at && (
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">Completed:</span>
-                          <span>{new Date(selectedEvent.taskData.completed_at).toLocaleString('en-US', {
-                            weekday: 'long',
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Assigned by:</span>
-                        <span>{selectedEvent.taskData.leader_name}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {/* Task status intentionally hidden in calendar view */}
 
                 {/* Task Attachment/Photo */}
                 {selectedEvent.type === 'task' && selectedEvent.taskData?.attachment_url && (
@@ -2983,37 +2943,7 @@ export default function CalendarPage() {
                   Close
                 </Button>
 
-                {/* Task-specific actions */}
-                {selectedEvent.type === 'task' && selectedEvent.taskData && (
-                  <>
-                    {selectedEvent.taskData.status === 'pending' && (
-                      <Button
-                        variant="default"
-                        onClick={() => handleStartTask(selectedEvent.taskData!.id)}
-                        className="flex items-center gap-2"
-                      >
-                        <Play className="h-4 w-4" />
-                        Start Task
-                      </Button>
-                    )}
-                    {selectedEvent.taskData.status === 'in_progress' && (
-                      <Button
-                        variant="default"
-                        onClick={handleCompleteTaskWithConfirmation}
-                        className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
-                      >
-                        <CheckCircle className="h-4 w-4" />
-                        Complete Task
-                      </Button>
-                    )}
-                    {selectedEvent.taskData.status === 'completed' && (
-                      <div className="flex items-center gap-2 text-green-600 font-medium">
-                        <CheckCircle className="h-4 w-4" />
-                        Task Completed
-                      </div>
-                    )}
-                  </>
-                )}
+                {/* Task-specific actions hidden in calendar view */}
 
                 {/* General event actions (for non-task events) */}
                 {selectedEvent.type !== 'task' && (

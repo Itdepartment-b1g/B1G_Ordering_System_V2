@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, ChevronLeft, ChevronRight, BarChart3 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -78,6 +79,7 @@ interface Agent {
 
 export default function ClientsPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
   const [allClientsRevenue, setAllClientsRevenue] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -3241,7 +3243,17 @@ export default function ClientsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      <DropdownMenu>
+                      <div className="flex items-center justify-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-xs"
+                          onClick={() => handleOpenView(client)}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1" />
+                          View Details
+                        </Button>
+                        <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon">
                             <MoreHorizontal className="h-4 w-4" />
@@ -3270,6 +3282,7 @@ export default function ClientsPage() {
                           )}
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -3433,6 +3446,9 @@ export default function ClientsPage() {
                 </div>
               </div>
 
+          
+
+
               {/* Compliance Checklist */}
               <div className="space-y-3">
                 <h4 className="font-semibold text-sm text-gray-900">Compliance Status</h4>
@@ -3480,6 +3496,14 @@ export default function ClientsPage() {
                   <span className="ml-2 font-medium text-foreground">{new Date(viewingClient.updated_at).toLocaleString()}</span>
                 </div>
               </div>
+                  {(isAdmin || isSuperAdmin) && (
+                <div className="flex justify-end pt-2">
+                  <Button variant="default" className="w-full sm:w-auto" onClick={() => navigate(`/analytics/client/${viewingClient.id}`)}>
+                    <BarChart3 className="h-4 w-4 mr-2" />
+                    In depth Analytics
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>

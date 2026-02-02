@@ -63,7 +63,6 @@ interface CityPerformance {
   clients: number;
   growth: number;
   visits: number;
-  agents: string[]; // Array of agent names assigned to this city
 }
 
 interface ProductPerformance {
@@ -128,10 +127,10 @@ interface ClientMetrics {
   company: string;
   city: string;
   totalOrders: number;
+  totalOrders: number;
   totalRevenue: number;
   totalVisits: number;
   lastOrderDate: string | null;
-  agentName?: string; // Agent assigned to this client
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
@@ -188,8 +187,6 @@ export default function AnalyticsPage() {
           name, 
           company, 
           city,
-          agent_id,
-          profiles:agent_id(full_name),
           visit_logs (count),
           client_orders (
             id,
@@ -230,9 +227,7 @@ export default function AnalyticsPage() {
           totalRevenue,
           // @ts-ignore
           totalVisits: client.visit_logs?.[0]?.count || 0,
-          lastOrderDate,
-          // @ts-ignore
-          agentName: client.profiles?.full_name || null
+          lastOrderDate
         };
       });
 
@@ -357,7 +352,7 @@ export default function AnalyticsPage() {
 
   const fetchCityPerformance = async () => {
     try {
-      // Get all completed orders with client city and agent information
+      // Get all completed orders with client city information
       const { data: orders, error: ordersError } = await supabase
         .from('client_orders')
         .select(`
@@ -368,9 +363,7 @@ export default function AnalyticsPage() {
           client_id,
           clients!inner(
             id,
-            city,
-            agent_id,
-            profiles:agent_id(full_name)
+            city
           )
         `)
         .eq('stage', 'admin_approved');
@@ -389,13 +382,10 @@ export default function AnalyticsPage() {
         visits: number;
         currentMonthRevenue: number;
         prevMonthRevenue: number;
-        agents: Set<string>; // Track unique agent names
       }>();
 
       orders?.forEach((order: any) => {
         const city = order.clients?.city || 'Unknown';
-        const agentName = order.clients?.profiles?.full_name || null;
-        
         if (!cityMap.has(city)) {
           cityMap.set(city, {
             orders: 0,
@@ -403,8 +393,7 @@ export default function AnalyticsPage() {
             clients: new Set(),
             visits: 0,
             currentMonthRevenue: 0,
-            prevMonthRevenue: 0,
-            agents: new Set()
+            prevMonthRevenue: 0
           });
         }
 
@@ -412,11 +401,6 @@ export default function AnalyticsPage() {
         cityData.clients.add(order.client_id);
         cityData.orders += 1;
         cityData.revenue += order.total_amount || 0;
-        
-        // Add agent name if available
-        if (agentName) {
-          cityData.agents.add(agentName);
-        }
 
         const orderDate = new Date(order.created_at);
         if (orderDate >= currentMonthStart) {
@@ -431,18 +415,12 @@ export default function AnalyticsPage() {
         .from('visit_logs')
         .select(`
           id,
-          clients!inner(
-            city,
-            agent_id,
-            profiles:agent_id(full_name)
-          )
+          clients!inner(city)
         `);
 
       if (!visitsError && visits) {
         visits.forEach((visit: any) => {
           const city = visit.clients?.city || 'Unknown';
-          const agentName = visit.clients?.profiles?.full_name || null;
-          
           if (!cityMap.has(city)) {
              // If city has visits but no orders yet, initialize it
              cityMap.set(city, {
@@ -451,49 +429,11 @@ export default function AnalyticsPage() {
                 clients: new Set(),
                 visits: 0,
                 currentMonthRevenue: 0,
-                prevMonthRevenue: 0,
-                agents: new Set()
+                prevMonthRevenue: 0
              });
           }
           const cityData = cityMap.get(city)!;
           cityData.visits += 1;
-          
-          // Add agent name if available
-          if (agentName) {
-            cityData.agents.add(agentName);
-          }
-        });
-      }
-
-      // Also fetch clients directly to ensure we capture all agents assigned to cities
-      const { data: allClients, error: clientsError } = await supabase
-        .from('clients')
-        .select(`
-          city,
-          agent_id,
-          profiles:agent_id(full_name)
-        `)
-        .not('city', 'is', null);
-
-      if (!clientsError && allClients) {
-        allClients.forEach((client: any) => {
-          const city = client.city || 'Unknown';
-          const agentName = client.profiles?.full_name || null;
-          
-          if (city && agentName) {
-            if (!cityMap.has(city)) {
-              cityMap.set(city, {
-                orders: 0,
-                revenue: 0,
-                clients: new Set(),
-                visits: 0,
-                currentMonthRevenue: 0,
-                prevMonthRevenue: 0,
-                agents: new Set()
-              });
-            }
-            cityMap.get(city)!.agents.add(agentName);
-          }
         });
       }
 
@@ -509,8 +449,7 @@ export default function AnalyticsPage() {
           revenue: data.revenue,
           clients: data.clients.size,
           visits: data.visits,
-          growth,
-          agents: Array.from(data.agents).sort() // Sort alphabetically for consistency
+          growth
         };
       });
 
@@ -971,22 +910,7 @@ export default function AnalyticsPage() {
 
       if (ordersError) throw ordersError;
 
-      // 3. Fetch visit counts for these clients
-      const { data: visits, error: visitsError } = await supabase
-        .from('visit_logs')
-        .select('client_id')
-        .in('client_id', clientIds);
-
-      // Count visits per client
-      const visitCounts = new Map<string, number>();
-      if (!visitsError && visits) {
-        visits.forEach((visit: any) => {
-          const count = visitCounts.get(visit.client_id) || 0;
-          visitCounts.set(visit.client_id, count + 1);
-        });
-      }
-
-      // 4. Process data to build metrics
+      // 3. Process data to build metrics
       const clientStats = new Map<string, { orders: number; revenue: number; lastOrder: string | null }>();
 
       orders?.forEach(order => {
@@ -1003,7 +927,7 @@ export default function AnalyticsPage() {
         clientStats.set(order.client_id, current);
       });
 
-      // 5. Combine client info with stats
+      // 4. Combine client info with stats
       const metrics: ClientMetrics[] = clients.map(client => {
         const stats = clientStats.get(client.id) || { orders: 0, revenue: 0, lastOrder: null };
         return {
@@ -1013,7 +937,6 @@ export default function AnalyticsPage() {
           city: client.city || '—',
           totalOrders: stats.orders,
           totalRevenue: stats.revenue,
-          totalVisits: visitCounts.get(client.id) || 0,
           lastOrderDate: stats.lastOrder
         };
       });
@@ -1290,6 +1213,202 @@ export default function AnalyticsPage() {
   }
 
 
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Agent Performance Chart */}
+      <Card className="col-span-1 lg:col-span-2">
+        <CardHeader>
+          <CardTitle>Agent Revenue Performance</CardTitle>
+          <CardDescription>Top performing sales agents</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {agentKPIs.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={agentKPIs.slice(0, 10)}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-45} textAnchor="end" height={80} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
+                <Bar dataKey="revenue" fill="#8b5cf6" name="Revenue (₱)" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+              <Users className="h-10 w-10 opacity-50 mb-2" />
+              <p>No agent revenue data available</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Agent KPI Table */}
+      <Card className="col-span-1 lg:col-span-2">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Agent Key Performance Indicators</CardTitle>
+              <CardDescription>Comprehensive agent metrics and ratings</CardDescription>
+            </div>
+            {isLeader && (
+              <Button
+                variant="outline"
+                onClick={handleOpenTargetDialog}
+                className="gap-2"
+              >
+                <Target className="h-4 w-4" />
+                Set Targets
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead rowSpan={2} className="text-center align-middle">Agent</TableHead>
+                    <TableHead colSpan={3} className="text-center bg-blue-50">Target</TableHead>
+                    <TableHead colSpan={3} className="text-center bg-green-50">Actual</TableHead>
+                    <TableHead colSpan={3} className="text-center bg-yellow-50">Achievement</TableHead>
+                    <TableHead rowSpan={2} className="text-center align-middle">Actions</TableHead>
+                  </TableRow>
+                  <TableRow>
+                    {/* Target columns */}
+                    <TableHead className="text-center bg-blue-50">Clients</TableHead>
+                    <TableHead className="text-center bg-blue-50">Revenue</TableHead>
+                    <TableHead className="text-center bg-blue-50">Qty</TableHead>
+                    {/* Actual columns */}
+                    <TableHead className="text-center bg-green-50">Clients</TableHead>
+                    <TableHead className="text-center bg-green-50">Revenue</TableHead>
+                    <TableHead className="text-center bg-green-50">Qty</TableHead>
+                    {/* Achievement columns */}
+                    <TableHead className="text-center bg-yellow-50">Clients %</TableHead>
+                    <TableHead className="text-center bg-yellow-50">Revenue %</TableHead>
+                    <TableHead className="text-center bg-yellow-50">Qty %</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {agentKPIs.map((agent, index) => (
+                    <TableRow key={agent.id}>
+                      <TableCell className="font-medium text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          {index < 3 && <Award className="h-4 w-4 text-yellow-500" />}
+                          {agent.name}
+                        </div>
+                      </TableCell>
+                      {/* Target values */}
+                      <TableCell className="text-center bg-blue-50/30">
+                        <span className="text-sm font-medium">
+                          {agent.targetClients ?? '-'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-center bg-blue-50/30">
+                        <span className="text-sm font-medium">
+                          {agent.targetRevenue ? `₱${Math.floor(agent.targetRevenue).toLocaleString()}` : '-'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-center bg-blue-50/30">
+                        <span className="text-sm font-medium">
+                          {agent.targetQty ?? '-'}
+                        </span>
+                      </TableCell>
+                      {/* Actual values */}
+                      <TableCell className="text-center bg-green-50/30">
+                        <span className="text-sm">{agent.actualClients ?? 0}</span>
+                      </TableCell>
+                      <TableCell className="text-center bg-green-50/30">
+                        <span className="text-sm font-semibold">
+                          ₱{agent.actualRevenue ? Math.floor(agent.actualRevenue).toLocaleString() : '0'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-center bg-green-50/30">
+                        <span className="text-sm">{agent.actualQty ?? 0}</span>
+                      </TableCell>
+                      {/* Achievement percentages */}
+                      <TableCell className="text-center bg-yellow-50/30">
+                        {renderAchievementPercentage(agent.achievementClients)}
+                      </TableCell>
+                      <TableCell className="text-center bg-yellow-50/30">
+                        {renderAchievementPercentage(agent.achievementRevenue)}
+                      </TableCell>
+                      <TableCell className="text-center bg-yellow-50/30">
+                        {renderAchievementPercentage(agent.achievementQty)}
+                      </TableCell>
+                      {/* Actions */}
+                      <TableCell className="text-center">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleViewAgentDetails(agent)}
+                          className="gap-2"
+                        >
+                          <Eye className="h-4 w-4" />
+                          View
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {agentKPIs.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                        {isLeader ? 'No agents assigned to your team yet.' : 'No agent data available'}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+
+
+  const renderAgentScatterChart = () => (
+    <Card className="col-span-1 lg:col-span-2 mt-4">
+      <CardHeader>
+        <CardTitle>Agent Efficiency Matrix</CardTitle>
+        <CardDescription>
+          Client Volume vs. Value Extraction (Avg Order Value).
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ResponsiveContainer width="100%" height={400}>
+          <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+            <CartesianGrid />
+            <XAxis type="number" dataKey="clients" name="Active Clients">
+               <Label value="Active Clients" offset={-10} position="insideBottom" />
+            </XAxis>
+            <YAxis type="number" dataKey="avgOrderValue" name="Avg Order Value" unit="₱">
+              <Label value="Avg Order Value" angle={-90} position="insideLeft" />
+            </YAxis>
+            <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ active, payload }) => {
+              if (active && payload && payload.length) {
+                const data = payload[0].payload;
+                return (
+                  <div className="bg-white p-2 border rounded shadow text-sm">
+                    <p className="font-bold">{data.name}</p>
+                    <p>Clients: {data.clients}</p>
+                    <p>Avg Order: ₱{data.avgOrderValue.toLocaleString()}</p>
+                  </div>
+                );
+              }
+              return null;
+            }} />
+            <Legend />
+            <Scatter name="Agents" data={agentKPIs} fill="#82ca9d" onClick={(data) => handleViewAgentDetails(data)}>
+              {agentKPIs.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+              ))}
+            </Scatter>
+          </ScatterChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
@@ -1424,7 +1543,6 @@ export default function AnalyticsPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>City</TableHead>
-                        <TableHead>Agent(s)</TableHead>
                         <TableHead className="text-right">Orders</TableHead>
                         <TableHead className="text-right">Revenue</TableHead>
                         <TableHead className="text-right">Clients</TableHead>
@@ -1439,20 +1557,6 @@ export default function AnalyticsPage() {
                               <MapPin className="h-4 w-4 text-primary" />
                               {city.city}
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            {city.agents && city.agents.length > 0 ? (
-                              <div className="flex flex-wrap gap-1">
-                                {city.agents.map((agent, idx) => (
-                                  <Badge key={idx} variant="outline" className="text-xs">
-                                    <Award className="h-3 w-3 mr-1" />
-                                    {agent}
-                                  </Badge>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">—</span>
-                            )}
                           </TableCell>
                           <TableCell className="text-right">{city.orders}</TableCell>
                           <TableCell className="text-right font-semibold">
@@ -1475,7 +1579,7 @@ export default function AnalyticsPage() {
                       ))}
                       {cityPerformance.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                             No city data available
                           </TableCell>
                         </TableRow>
@@ -2030,7 +2134,6 @@ export default function AnalyticsPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Client</TableHead>
-                          <TableHead>Agent</TableHead>
                           <TableHead className="text-right">Revenue</TableHead>
                           <TableHead className="text-right">Orders</TableHead>
                           <TableHead className="text-right">Visits</TableHead>
@@ -2047,16 +2150,6 @@ export default function AnalyticsPage() {
                              <TableCell>
                                <div className="font-medium">{client.clientName}</div>
                                <div className="text-xs text-muted-foreground">{client.company}</div>
-                             </TableCell>
-                             <TableCell>
-                               {client.agentName ? (
-                                 <Badge variant="outline" className="text-xs">
-                                   <Award className="h-3 w-3 mr-1" />
-                                   {client.agentName}
-                                 </Badge>
-                               ) : (
-                                 <span className="text-muted-foreground text-sm">—</span>
-                               )}
                              </TableCell>
                              <TableCell className="text-right">₱{client.totalRevenue.toLocaleString()}</TableCell>
                              <TableCell className="text-right">{client.totalOrders}</TableCell>
