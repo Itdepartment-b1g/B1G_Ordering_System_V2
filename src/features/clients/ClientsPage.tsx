@@ -31,6 +31,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 
 interface Client {
   id: string;
@@ -1369,6 +1370,41 @@ export default function ClientsPage() {
         title: 'Success',
         description: `${clientToDelete.name} has been voided successfully`
       });
+
+      // Notify agent and leader (non-blocking)
+      try {
+        if (clientToDelete.agent_id && user?.company_id) {
+          await sendNotification({
+            userId: clientToDelete.agent_id,
+            companyId: user.company_id,
+            type: 'system_message',
+            title: 'Client Voided',
+            message: `Your client "${clientToDelete.name}" has been voided by Admin.`,
+            referenceType: 'client',
+            referenceId: clientToDelete.id
+          });
+
+          const { data: leaderRow } = await supabase
+            .from('leader_teams')
+            .select('leader_id')
+            .eq('agent_id', clientToDelete.agent_id)
+            .maybeSingle();
+
+          if (leaderRow?.leader_id) {
+            await sendNotification({
+              userId: leaderRow.leader_id,
+              companyId: user.company_id,
+              type: 'system_message',
+              title: 'Client Voided',
+              message: `A client "${clientToDelete.name}" from your team has been voided by Admin.`,
+              referenceType: 'client',
+              referenceId: clientToDelete.id
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Client void notification failed (non-blocking):', e);
+      }
 
       setDeleteDialogOpen(false);
       setClientToDelete(null);

@@ -115,6 +115,7 @@ interface CalendarEvent {
   agentColorClass?: string;
   agentId?: string;
   agentName?: string;
+  location?: string;
 }
 
 interface CalendarDay {
@@ -213,8 +214,8 @@ export default function CalendarPage() {
 
   const { toast } = useToast();
   const { user } = useAuth();
-  // Check if user is a leader or mobile sales
-  const isLeader = user?.role === 'team_leader' || user?.role === 'admin' || user?.role === 'manager';
+  // Role helpers: managers (and admins) can see their full team; others only see their own tasks
+  const isManager = user?.role === 'manager' || user?.role === 'admin';
   const isMobileSales = user?.role === 'mobile_sales';
 
   // Convert tasks from database to calendar events
@@ -233,7 +234,7 @@ export default function CalendarPage() {
 
     let agentColorMap: Record<string, string> = {};
 
-    if (isLeader) {
+    if (isManager) {
       const uniqueAgentIds: string[] = [];
       tasks.forEach(task => {
         if (task.agent_id && !uniqueAgentIds.includes(task.agent_id)) {
@@ -286,7 +287,7 @@ export default function CalendarPage() {
           }
         } : undefined,
         attachment_url: task.attachment_url || null,
-        agentColorClass: isLeader ? agentColorMap[task.agent_id] : undefined,
+        agentColorClass: isManager ? agentColorMap[task.agent_id] : undefined,
         agentId: task.agent_id,
         agentName: task.agent_name
       };
@@ -310,9 +311,9 @@ export default function CalendarPage() {
         startTime,
         endTime,
         date: visit.visited_at.split('T')[0],
-        type: 'meeting' as const,
+        type: 'visit' as const,
         priority: 'medium',
-        status: visit.is_within_radius ? 'verified' : 'unverified',
+        status: visit.is_within_radius ? 'completed' : 'pending',
         visitData: visit,
         location: visit.address,
         attachment_url: visit.photo_url
@@ -320,7 +321,7 @@ export default function CalendarPage() {
     });
 
     return [...taskEvents, ...visitEvents];
-  }, [tasks, visits, isLeader]);
+  }, [tasks, visits, isManager]);
 
   // Update current time every minute
   useEffect(() => {
@@ -353,13 +354,13 @@ export default function CalendarPage() {
     }
   }, []);
 
-  // Fetch tasks / visits for the current user (or team, for leaders)
+  // Fetch tasks / visits for the current user (or team, for managers)
   useEffect(() => {
     if (user?.id) {
       fetchTasks();
       fetchVisits();
 
-      if (isLeader) {
+      if (isManager) {
         fetchTeamAgents();
       }
     }
@@ -370,13 +371,13 @@ export default function CalendarPage() {
         supabase.removeAllChannels();
       }
     };
-  }, [user?.id, isLeader]);
+  }, [user?.id, isManager]);
 
   // Setup real-time subscriptions for tasks
   const setupRealtimeSubscriptions = () => {
     if (!user?.id) return;
 
-    const taskFilter = isLeader
+    const taskFilter = isManager
       ? `leader_id=eq.${user.id}`
       : `agent_id=eq.${user.id}`;
 
@@ -450,6 +451,45 @@ export default function CalendarPage() {
       taskDetailsSubscription.unsubscribe();
     };
   };
+
+  /**
+   * Helper: for managers, resolve all team member ids (team leaders + mobile sales)
+   * using the sub_teams_overview hierarchy view.
+   */
+  const getManagerTeamAgentIds = async (): Promise<string[]> => {
+    if (!user?.id) return [];
+
+    try {
+      const { data, error } = await supabase
+        .from('sub_teams_overview')
+        .select('leader_id, member_ids')
+        .eq('manager_id', user.id);
+
+      if (error) {
+        console.error('Error fetching manager sub-teams for calendar:', error);
+        return [user.id];
+      }
+
+      const idSet = new Set<string>();
+
+      (data || []).forEach((st: any) => {
+        if (st.leader_id) idSet.add(st.leader_id);
+        if (Array.isArray(st.member_ids)) {
+          st.member_ids.forEach((memberId: string | null) => {
+            if (memberId) idSet.add(memberId);
+          });
+        }
+      });
+
+      // Always include manager themselves
+      idSet.add(user.id);
+
+      return Array.from(idSet);
+    } catch (err) {
+      console.error('Error resolving manager team agent ids:', err);
+      return [user.id];
+    }
+  };
   const fetchTasks = async () => {
     try {
       // Only show loading on initial load, not on real-time updates
@@ -459,55 +499,21 @@ export default function CalendarPage() {
 
       let data: Task[] | null = null;
 
-      if (isLeader) {
-        // Team leaders should see:
-        // - tasks they created for their team (leader_id = user.id)
-        // - tasks created by mobile sales in their team (agent_id in their team)
+      if (isManager) {
+        // Managers: show tasks for all team members in their managed sub-teams (leaders + mobile sales)
+        const teamAgentIds = await getManagerTeamAgentIds();
 
-        // 1) Tasks created by the leader
-        const { data: leaderTasks, error: leaderError } = await supabase
+        const { data: managerViewTasks, error: managerTasksError } = await supabase
           .from('tasks')
           .select(
             '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, location_latitude, location_longitude), visit_logs(*)'
           )
-          .eq('leader_id', user?.id)
+          .in('agent_id', teamAgentIds)
           .order('created_at', { ascending: false });
 
-        if (leaderError) throw leaderError;
+        if (managerTasksError) throw managerTasksError;
 
-        let merged: Task[] = (leaderTasks as Task[] | null) || [];
-
-        // 2) Tasks created by team agents themselves (leader_id can be null)
-        const { data: teamRows, error: teamError } = await supabase
-          .from('leader_teams')
-          .select('agent_id')
-          .eq('leader_id', user?.id);
-
-        if (teamError) throw teamError;
-
-        const agentIds = (teamRows || []).map(row => row.agent_id).filter(Boolean);
-
-        if (agentIds.length > 0) {
-          const { data: agentTasks, error: agentError } = await supabase
-            .from('tasks')
-            .select(
-              '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, location_latitude, location_longitude), visit_logs(*)'
-            )
-            .in('agent_id', agentIds)
-            .order('created_at', { ascending: false });
-
-          if (agentError) throw agentError;
-
-          const existingIds = new Set(merged.map(t => t.id));
-          (agentTasks as any[] | null)?.forEach(task => {
-            if (!existingIds.has(task.id)) {
-              merged.push(task);
-            }
-          });
-        }
-
-        // Transform merged leader tasks
-        data = merged.map((task: any) => ({
+        data = (managerViewTasks as any[] | null)?.map(task => ({
           ...task,
           client_name: task.client?.name || '',
           client_company: task.client?.company || '',
@@ -517,7 +523,7 @@ export default function CalendarPage() {
           leader_email: task.leader?.email || '',
           agent_name: task.agent?.full_name || 'Unassigned',
           agent_email: task.agent?.email || '',
-        }));
+        })) || [];
       } else {
         // Mobile sales see only their own tasks
         const { data: agentTasks, error } = await supabase
@@ -560,6 +566,15 @@ export default function CalendarPage() {
 
   const fetchVisits = async () => {
     try {
+      if (!user?.id) return;
+
+      const isManagerRole = user.role === 'manager' || user.role === 'admin';
+
+      let agentIds: string[] = [user.id];
+      if (isManagerRole) {
+        agentIds = await getManagerTeamAgentIds();
+      }
+
       const { data, error } = await supabase
         .from('visit_logs')
         .select(`
@@ -570,7 +585,7 @@ export default function CalendarPage() {
             location_longitude
           )
         `)
-        .eq('agent_id', user?.id)
+        .in('agent_id', agentIds)
         .order('visited_at', { ascending: false });
 
       if (error) throw error;
@@ -580,31 +595,62 @@ export default function CalendarPage() {
     }
   };
 
-  // Fetch team agents for a leader (mobile sales under this leader)
+  // Fetch team agents for filters
   const fetchTeamAgents = async () => {
-    if (!isLeader || !user?.id) return;
+    if (!user?.id) return;
 
     try {
-      const { data, error } = await supabase
-        .from('leader_teams')
-        .select(`
-          agent_id,
-          profiles!leader_teams_agent_id_fkey (
-            id,
-            full_name
-          )
-        `)
-        .eq('leader_id', user.id);
+      if (isManager) {
+        // Managers: derive leaders + mobile sales from sub_teams_overview
+        const { data, error } = await supabase
+          .from('sub_teams_overview')
+          .select('leader_id, leader_name, member_ids, members_details')
+          .eq('manager_id', user.id);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      const agents =
-        data?.map(item => ({
-          id: (item.profiles as any).id,
-          full_name: (item.profiles as any).full_name || 'Mobile Sales',
-        })) || [];
+        const map = new Map<string, { id: string; full_name: string }>();
 
-      setTeamAgents(agents);
+        (data || []).forEach((st: any) => {
+          if (st.leader_id && st.leader_name) {
+            map.set(st.leader_id, { id: st.leader_id, full_name: st.leader_name });
+          }
+          if (Array.isArray(st.member_ids)) {
+            st.member_ids.forEach((memberId: string | null, idx: number) => {
+              if (!memberId) return;
+              const memberName =
+                st.members_details?.[idx]?.name ||
+                st.members_details?.[idx]?.full_name ||
+                'Team Member';
+              map.set(memberId, { id: memberId, full_name: memberName });
+            });
+          }
+        });
+
+        setTeamAgents(Array.from(map.values()));
+      } else {
+        // Team leaders: mobile sales directly under them via leader_teams
+        const { data, error } = await supabase
+          .from('leader_teams')
+          .select(`
+            agent_id,
+            profiles!leader_teams_agent_id_fkey (
+              id,
+              full_name
+            )
+          `)
+          .eq('leader_id', user.id);
+
+        if (error) throw error;
+
+        const agents =
+          data?.map(item => ({
+            id: (item.profiles as any).id,
+            full_name: (item.profiles as any).full_name || 'Mobile Sales',
+          })) || [];
+
+        setTeamAgents(agents);
+      }
     } catch (error) {
       console.error('Error fetching team agents for calendar:', error);
       toast({
@@ -1093,9 +1139,9 @@ export default function CalendarPage() {
       const priorityMatch = priorityFilter === 'all' ||
         (event.taskData && event.taskData.priority === priorityFilter);
 
-      // Agent filter (team leaders only, tasks only)
+      // Agent filter (managers only, tasks only)
       const agentMatch =
-        !isLeader ||
+        !isManager ||
         selectedAgentFilter === 'all' ||
         (event.taskData && event.taskData.agent_id === selectedAgentFilter);
 
@@ -1189,7 +1235,7 @@ export default function CalendarPage() {
 
   // Event colors (type-based, but tasks can be colored per-agent for leaders)
   const getEventTypeColor = (event: CalendarEvent) => {
-    if (isLeader && event.type === 'task' && event.agentColorClass) {
+    if (isManager && event.type === 'task' && event.agentColorClass) {
       return event.agentColorClass;
     }
 
@@ -1319,6 +1365,7 @@ export default function CalendarPage() {
             <h1 className="text-2xl font-bold tracking-tight">Calendar & Visits</h1>
             <p className="text-muted-foreground">Manage your schedule and record client visits.</p>
           </div>
+          {!isManager && (
           <div className="flex gap-2 w-full sm:w-auto">
             {/* Record Visit Button */}
             <Dialog open={showRecordVisitDialog} onOpenChange={(open) => {
@@ -1657,6 +1704,7 @@ export default function CalendarPage() {
               </DialogContent>
             </Dialog>
           </div>
+          )}
         </div>
         <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4">
           {/* Mobile Tab Navigation */}
@@ -1759,14 +1807,14 @@ export default function CalendarPage() {
             </SelectContent>
           </Select>
 
-          {/* Agent Filter (Team Leaders) */}
-          {isLeader && (
+          {/* Agent Filter (Managers) */}
+          {isManager && (
             <Select value={selectedAgentFilter} onValueChange={setSelectedAgentFilter}>
               <SelectTrigger className="w-44">
                 <SelectValue placeholder="Filter by agent" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Mobile Sales</SelectItem>
+                <SelectItem value="all">All Team Members</SelectItem>
                 {teamAgents.map(agent => (
                   <SelectItem key={agent.id} value={agent.id}>
                     {agent.full_name}
@@ -3036,8 +3084,8 @@ export default function CalendarPage() {
 
                 {/* Right Column: Actions & Meta (md:col-span-5) */}
                 <div className="md:col-span-5 space-y-6 flex flex-col h-full">
-                  {/* Event Actions - Hidden for Completed Tasks */}
-                  {!(selectedEvent.type === 'task' && selectedEvent.taskData?.status === 'completed') && (
+                  {/* Event Actions - hidden for managers and completed tasks */}
+                  {!isManager && !(selectedEvent.type === 'task' && selectedEvent.taskData?.status === 'completed') && (
                     <div className="bg-gray-50/50 p-4 rounded-xl border space-y-4">
                       <h3 className="text-sm font-semibold text-gray-900">Event Actions</h3>
 

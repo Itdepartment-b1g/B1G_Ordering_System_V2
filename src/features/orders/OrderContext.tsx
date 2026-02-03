@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { AuthContext } from '@/features/auth/hooks';
+import { sendNotification, sendNotificationToCompanyRoles } from '@/features/shared/lib/notification.helpers';
 
 export interface OrderItem {
   id: string;
@@ -421,6 +422,41 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
       console.log('✅ Order created with ID:', newOrder.id, 'Number:', newOrder.order_number);
 
+      // Notifications: order created (non-blocking)
+      try {
+        // Notify admins/finance/super admins in this company
+        await sendNotificationToCompanyRoles({
+          companyId,
+          roles: ['admin', 'finance', 'super_admin', 'system_administrator'],
+          type: 'order_created',
+          title: 'New Order Created',
+          message: `${order.agentName || 'A sales agent'} created order #${newOrder.order_number}.`,
+          referenceType: 'client_order',
+          referenceId: newOrder.id,
+        });
+
+        // Notify leader (if any)
+        const { data: leaderRow } = await supabase
+          .from('leader_teams')
+          .select('leader_id')
+          .eq('agent_id', order.agentId)
+          .maybeSingle();
+
+        if (leaderRow?.leader_id) {
+          await sendNotification({
+            userId: leaderRow.leader_id,
+            companyId,
+            type: 'order_created',
+            title: 'New Order Created',
+            message: `${order.agentName || 'Your team member'} created order #${newOrder.order_number}.`,
+            referenceType: 'client_order',
+            referenceId: newOrder.id,
+          });
+        }
+      } catch (e) {
+        console.warn('Order created notification failed (non-blocking):', e);
+      }
+
       // 3. Batch fetch agent inventory prices for all items
       const variantIds = order.items.map(i => i.id);
       const { data: agentInventoryItems } = await supabase
@@ -624,6 +660,43 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       }
 
       console.log(`✅ Order ${orderId} status updated to ${status}`);
+
+      // Notifications: order approved/rejected (notify agent) - non-blocking
+      try {
+        if (status === 'approved' || status === 'rejected') {
+          const { data: orderRow, error: orderErr } = await supabase
+            .from('client_orders')
+            .select('id, company_id, agent_id, order_number')
+            .eq('id', orderId)
+            .maybeSingle();
+
+          if (!orderErr && orderRow?.agent_id && orderRow?.company_id) {
+            if (status === 'approved') {
+              await sendNotification({
+                userId: orderRow.agent_id,
+                companyId: orderRow.company_id,
+                type: 'order_approved',
+                title: 'Order Approved',
+                message: `Your order${orderRow.order_number ? ` #${orderRow.order_number}` : ''} has been approved.`,
+                referenceType: 'client_order',
+                referenceId: orderId,
+              });
+            } else {
+              await sendNotification({
+                userId: orderRow.agent_id,
+                companyId: orderRow.company_id,
+                type: 'order_rejected',
+                title: 'Order Rejected',
+                message: `Your order${orderRow.order_number ? ` #${orderRow.order_number}` : ''} has been rejected${reason ? `: ${reason}` : '.'}`,
+                referenceType: 'client_order',
+                referenceId: orderId,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Order status notification failed (non-blocking):', e);
+      }
 
       // Optimistically update local state so UI reflects changes immediately
       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));

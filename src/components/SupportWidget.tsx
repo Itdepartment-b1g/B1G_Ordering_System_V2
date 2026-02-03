@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/features/auth";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { getPagesListForRole } from "@/lib/roleMenuHelper";
+import { getPagesListForRole, getPageKnowledgeBaseForRole } from "@/lib/roleMenuHelper";
 
 interface ChatMessage {
   id: string;
@@ -45,6 +45,17 @@ export function SupportWidget() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Also scroll to bottom whenever the widget is opened (for long histories)
+  useEffect(() => {
+    if (isOpen) {
+      // Use a small timeout to ensure layout is painted before scrolling
+      const id = window.setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+      return () => window.clearTimeout(id);
+    }
+  }, [isOpen]);
+
   // Show widget for all authenticated users (check after all hooks)
   if (!user) return null;
 
@@ -65,11 +76,16 @@ export function SupportWidget() {
     try {
       // Get available pages for user's role
       const availablePages = getPagesListForRole(userRole);
+      const pageKnowledgeBase = getPageKnowledgeBaseForRole(userRole);
       
-      // Create system prompt with role-aware context
+      // Create system prompt with role-aware context and page knowledge base
       const systemPrompt = `You are a helpful IT Support assistant for a B2B Ordering System. The user is a ${userRole} with the following available pages and features:
 
 ${availablePages}
+
+Here is a knowledge base describing what each of their pages does:
+
+${pageKnowledgeBase}
 
 Your role:
 - Help users navigate to the correct pages
@@ -171,16 +187,20 @@ Provide a helpful response:`;
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
           >
-            <Card className="w-[350px] overflow-hidden shadow-2xl border-white/20 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
+            <Card className="w-[380px] md:w-[420px] overflow-hidden shadow-2xl border-border/40 bg-gradient-to-b from-background/95 to-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/70">
               <CardHeader className="p-0">
-                <div className="bg-gradient-to-r from-primary to-primary/80 p-4 flex justify-between items-center">
+                <div className="bg-gradient-to-r from-primary via-primary/90 to-primary/70 p-4 flex justify-between items-center">
                   <div className="flex items-center gap-3 text-primary-foreground">
                     <div className="bg-white/20 p-2 rounded-full backdrop-blur-sm">
                       <Bot className="h-5 w-5" />
                     </div>
                     <div>
-                      <CardTitle className="text-base font-semibold leading-none">IT Support</CardTitle>
-                      <p className="text-[10px] opacity-80 mt-1 font-medium">Always here to help</p>
+                      <CardTitle className="text-base font-semibold leading-none tracking-tight">
+                        IT Support Assistant
+                      </CardTitle>
+                      <p className="text-[11px] opacity-85 mt-1 font-medium">
+                        Ask about pages, features, or issues in your workspace.
+                      </p>
                     </div>
                   </div>
                   <Button 
@@ -194,13 +214,9 @@ Provide a helpful response:`;
                 </div>
               </CardHeader>
               
-              <CardContent className="h-[380px] p-4 overflow-y-auto flex flex-col gap-3">
-                <div className="flex justify-center my-2">
-                    <span className="text-[10px] text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase tracking-wider font-semibold">Today</span>
-                </div>
-
+              <CardContent className="h-[420px] p-4 flex flex-col gap-3">
                 {/* Messages */}
-                <div className="flex flex-col gap-3 flex-1">
+                <div className="flex flex-col gap-3 flex-1 overflow-y-auto pr-1">
                   {messages.map((msg) => (
                     <motion.div
                       key={msg.id}
@@ -211,12 +227,14 @@ Provide a helpful response:`;
                         msg.role === 'user' ? "flex-row-reverse" : "flex-row"
                       )}
                     >
-                      <Avatar className={cn(
-                        "h-8 w-8 border-2 shrink-0",
-                        msg.role === 'user' 
-                          ? "border-primary/20" 
-                          : "border-primary/10"
-                      )}>
+                      <Avatar
+                        className={cn(
+                          "h-8 w-8 border-2 shrink-0 shadow-sm",
+                          msg.role === 'user' 
+                            ? "border-primary/30" 
+                            : "border-primary/10"
+                        )}
+                      >
                         <AvatarFallback className={cn(
                           msg.role === 'user'
                             ? "bg-primary/10 text-primary"
@@ -229,13 +247,17 @@ Provide a helpful response:`;
                           )}
                         </AvatarFallback>
                       </Avatar>
-                      <div className={cn(
-                        "p-3 rounded-2xl text-sm max-w-[85%] shadow-sm border",
-                        msg.role === 'user'
-                          ? "bg-primary text-primary-foreground rounded-tr-none"
-                          : "bg-muted/50 text-foreground rounded-tl-none border-border/50"
-                      )}>
-                        <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                      <div
+                        className={cn(
+                          "p-3 rounded-2xl text-sm max-w-[85%] shadow-sm border",
+                          msg.role === 'user'
+                            ? "bg-primary text-primary-foreground rounded-tr-none"
+                            : "bg-background/90 text-foreground rounded-tl-none border-border/60"
+                        )}
+                      >
+                        <p className="whitespace-pre-wrap break-words leading-relaxed">
+                          {msg.content}
+                        </p>
                         <span className={cn(
                           "text-[10px] mt-1 block opacity-70",
                           msg.role === 'user' ? "text-primary-foreground/70" : "text-muted-foreground"
