@@ -20,12 +20,15 @@ import {
 import { 
   LineChart, 
   Line, 
+  BarChart,
+  Bar,
   XAxis, 
   YAxis, 
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer,
-  Legend
+  Legend,
+  Cell
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -72,6 +75,35 @@ interface AgentInfo {
 interface TimeSeriesDataPoint {
   period: string;
   [agentId: string]: string | number; // period is string, agent values are numbers
+}
+
+interface ClientVisitData {
+  clientId: string;
+  clientName: string;
+  shopName: string;
+  city: string;
+  visits: number;
+}
+
+interface MonthlyVisitData {
+  month: number;
+  monthName: string;
+  totalVisits: number;
+  clients: ClientVisitData[];
+}
+
+interface WeeklyVisitData {
+  week: number;
+  weekLabel: string;
+  totalVisits: number;
+  clients: ClientVisitData[];
+}
+
+interface DailyVisitData {
+  day: number;
+  dayLabel: string;
+  totalVisits: number;
+  clients: ClientVisitData[];
 }
 
 type MetricType = 'revenue' | 'clients' | 'orders';
@@ -151,6 +183,21 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
 
+  // Visit Log State
+  const [visitLogData, setVisitLogData] = useState<ClientVisitData[]>([]);
+  const [monthlyVisitData, setMonthlyVisitData] = useState<MonthlyVisitData[]>([]);
+  const [weeklyVisitData, setWeeklyVisitData] = useState<WeeklyVisitData[]>([]);
+  const [dailyVisitData, setDailyVisitData] = useState<DailyVisitData[]>([]);
+  const [loadingVisitLog, setLoadingVisitLog] = useState(false);
+  const [visitLogYear, setVisitLogYear] = useState<number>(new Date().getFullYear());
+  const [visitLogMonth, setVisitLogMonth] = useState<number | 'all'>('all');
+  const [visitLogWeek, setVisitLogWeek] = useState<number | 'all'>('all');
+  const [visitClientDialog, setVisitClientDialog] = useState(false);
+  const [selectedVisitClient, setSelectedVisitClient] = useState<ClientVisitData | null>(null);
+  const [selectedMonthData, setSelectedMonthData] = useState<MonthlyVisitData | null>(null);
+  const [selectedWeekData, setSelectedWeekData] = useState<WeeklyVisitData | null>(null);
+  const [selectedDayData, setSelectedDayData] = useState<DailyVisitData | null>(null);
+
   useEffect(() => {
     fetchAvailablePeople();
   }, [selectedRole, userId]);
@@ -158,6 +205,15 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
   useEffect(() => {
     fetchPerformanceData();
   }, [selectedMetric, selectedRole, selectedPerson, selectedYear, selectedMonth, selectedWeek, userId]);
+
+  // Fetch visit log data when a specific person is selected or visit log filters change
+  useEffect(() => {
+    if (selectedPerson !== 'all') {
+      fetchVisitLogData(selectedPerson);
+    } else {
+      setVisitLogData([]);
+    }
+  }, [selectedPerson, visitLogYear, visitLogMonth, visitLogWeek]);
 
   const fetchAvailablePeople = async () => {
     try {
@@ -362,6 +418,228 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
       });
     } finally {
       setLoadingPerformance(false);
+    }
+  };
+
+  const fetchVisitLogData = async (agentId: string) => {
+    setLoadingVisitLog(true);
+    try {
+      // First, fetch ALL clients assigned to this agent
+      const { data: agentClients, error: clientsError } = await supabase
+        .from('clients')
+        .select('id, name, company, city')
+        .eq('agent_id', agentId);
+
+      if (clientsError) throw clientsError;
+
+      if (!agentClients || agentClients.length === 0) {
+        setVisitLogData([]);
+        setMonthlyVisitData([]);
+        return;
+      }
+
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'];
+
+      if (visitLogMonth === 'all') {
+        // When "All Months" is selected, build monthly breakdown
+        const yearStart = startOfYear(new Date(visitLogYear, 0, 1));
+        const yearEnd = endOfYear(yearStart);
+
+        // Fetch all visits for this year
+        const { data: visits, error: visitsError } = await supabase
+          .from('visit_logs')
+          .select('id, client_id, visited_at')
+          .eq('agent_id', agentId)
+          .gte('visited_at', yearStart.toISOString())
+          .lte('visited_at', yearEnd.toISOString());
+
+        if (visitsError) throw visitsError;
+
+        // Build monthly breakdown
+        const monthlyData: MonthlyVisitData[] = monthNames.map((monthName, index) => {
+          const monthStart = startOfMonth(new Date(visitLogYear, index, 1));
+          const monthEnd = endOfMonth(monthStart);
+          
+          // Count visits per client for this month
+          const clientVisitMap = new Map<string, number>();
+          (visits || []).forEach((visit: any) => {
+            const visitDate = new Date(visit.visited_at);
+            if (visitDate >= monthStart && visitDate <= monthEnd) {
+              const count = clientVisitMap.get(visit.client_id) || 0;
+              clientVisitMap.set(visit.client_id, count + 1);
+            }
+          });
+
+          // Build client data for this month
+          const clients: ClientVisitData[] = agentClients.map((client: any) => ({
+            clientId: client.id,
+            clientName: client.name || 'Unknown Client',
+            shopName: client.company || '-',
+            city: client.city || 'Unknown',
+            visits: clientVisitMap.get(client.id) || 0
+          }));
+
+          // Sort clients by visits (descending)
+          clients.sort((a, b) => b.visits - a.visits);
+
+          const totalVisits = clients.reduce((sum, c) => sum + c.visits, 0);
+
+          return {
+            month: index + 1,
+            monthName,
+            totalVisits,
+            clients
+          };
+        });
+
+        setMonthlyVisitData(monthlyData);
+        setWeeklyVisitData([]);
+        setVisitLogData([]);
+      } else if (visitLogMonth !== 'all' && visitLogWeek === 'all') {
+        // Month selected but All Weeks - show weekly breakdown (Week 1-4)
+        const monthStart = startOfMonth(new Date(visitLogYear, (visitLogMonth as number) - 1, 1));
+        const monthEnd = endOfMonth(monthStart);
+        const weeksInMonth = getWeeksInMonth(monthStart);
+
+        // Fetch all visits for this month
+        const { data: visits, error: visitsError } = await supabase
+          .from('visit_logs')
+          .select('id, client_id, visited_at')
+          .eq('agent_id', agentId)
+          .gte('visited_at', monthStart.toISOString())
+          .lte('visited_at', monthEnd.toISOString());
+
+        if (visitsError) throw visitsError;
+
+        // Build weekly breakdown
+        const weeklyData: WeeklyVisitData[] = [];
+        for (let weekNum = 1; weekNum <= weeksInMonth; weekNum++) {
+          // Calculate week boundaries within the month
+          const weekStartDay = (weekNum - 1) * 7 + 1;
+          const weekEndDay = Math.min(weekNum * 7, new Date(visitLogYear, (visitLogMonth as number), 0).getDate());
+          
+          const weekStart = new Date(visitLogYear, (visitLogMonth as number) - 1, weekStartDay);
+          const weekEnd = new Date(visitLogYear, (visitLogMonth as number) - 1, weekEndDay, 23, 59, 59);
+
+          // Count visits per client for this week
+          const clientVisitMap = new Map<string, number>();
+          (visits || []).forEach((visit: any) => {
+            const visitDate = new Date(visit.visited_at);
+            if (visitDate >= weekStart && visitDate <= weekEnd) {
+              const count = clientVisitMap.get(visit.client_id) || 0;
+              clientVisitMap.set(visit.client_id, count + 1);
+            }
+          });
+
+          // Build client data for this week
+          const clients: ClientVisitData[] = agentClients.map((client: any) => ({
+            clientId: client.id,
+            clientName: client.name || 'Unknown Client',
+            shopName: client.company || '-',
+            city: client.city || 'Unknown',
+            visits: clientVisitMap.get(client.id) || 0
+          }));
+
+          clients.sort((a, b) => b.visits - a.visits);
+          const totalVisits = clients.reduce((sum, c) => sum + c.visits, 0);
+
+          // Format ordinal suffix for dates (1st, 2nd, 3rd, etc.)
+          const ordinal = (n: number) => {
+            const s = ['th', 'st', 'nd', 'rd'];
+            const v = n % 100;
+            return n + (s[(v - 20) % 10] || s[v] || s[0]);
+          };
+
+          weeklyData.push({
+            week: weekNum,
+            weekLabel: `Week ${weekNum} (${ordinal(weekStartDay)} - ${ordinal(weekEndDay)})`,
+            totalVisits,
+            clients
+          });
+        }
+
+        setWeeklyVisitData(weeklyData);
+        setDailyVisitData([]);
+        setMonthlyVisitData([]);
+        setVisitLogData([]);
+      } else {
+        // Specific week selected - show daily breakdown
+        const weekNum = visitLogWeek as number;
+        const daysInMonth = new Date(visitLogYear, visitLogMonth as number, 0).getDate();
+        const weekStartDay = (weekNum - 1) * 7 + 1;
+        const weekEndDay = Math.min(weekNum * 7, daysInMonth);
+        
+        const dateStart = new Date(visitLogYear, (visitLogMonth as number) - 1, weekStartDay);
+        const dateEnd = new Date(visitLogYear, (visitLogMonth as number) - 1, weekEndDay, 23, 59, 59);
+
+        // Fetch visits within date range
+        const { data: visits, error: visitsError } = await supabase
+          .from('visit_logs')
+          .select('id, client_id, visited_at')
+          .eq('agent_id', agentId)
+          .gte('visited_at', dateStart.toISOString())
+          .lte('visited_at', dateEnd.toISOString());
+
+        if (visitsError) throw visitsError;
+
+        // Format ordinal suffix for dates
+        const ordinal = (n: number) => {
+          const s = ['th', 'st', 'nd', 'rd'];
+          const v = n % 100;
+          return n + (s[(v - 20) % 10] || s[v] || s[0]);
+        };
+
+        // Build daily breakdown
+        const dailyData: DailyVisitData[] = [];
+        for (let day = weekStartDay; day <= weekEndDay; day++) {
+          const dayStart = new Date(visitLogYear, (visitLogMonth as number) - 1, day);
+          const dayEnd = new Date(visitLogYear, (visitLogMonth as number) - 1, day, 23, 59, 59);
+
+          // Count visits per client for this day
+          const clientVisitMap = new Map<string, number>();
+          (visits || []).forEach((visit: any) => {
+            const visitDate = new Date(visit.visited_at);
+            if (visitDate >= dayStart && visitDate <= dayEnd) {
+              const count = clientVisitMap.get(visit.client_id) || 0;
+              clientVisitMap.set(visit.client_id, count + 1);
+            }
+          });
+
+          // Build client data for this day
+          const clients: ClientVisitData[] = agentClients.map((client: any) => ({
+            clientId: client.id,
+            clientName: client.name || 'Unknown Client',
+            shopName: client.company || '-',
+            city: client.city || 'Unknown',
+            visits: clientVisitMap.get(client.id) || 0
+          }));
+
+          clients.sort((a, b) => b.visits - a.visits);
+          const totalVisits = clients.reduce((sum, c) => sum + c.visits, 0);
+
+          dailyData.push({
+            day,
+            dayLabel: ordinal(day),
+            totalVisits,
+            clients
+          });
+        }
+
+        setDailyVisitData(dailyData);
+        setVisitLogData([]);
+        setMonthlyVisitData([]);
+        setWeeklyVisitData([]);
+      }
+    } catch (error) {
+      console.error('Error fetching visit log data:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load visit log data',
+        variant: 'destructive'
+      });
+    } finally {
+      setLoadingVisitLog(false);
     }
   };
 
@@ -592,6 +870,31 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
     }))
   ] : [];
 
+  // Generate week options for visit log filters
+  const visitLogWeeksInMonth = visitLogMonth !== 'all' ? getWeeksInMonth(new Date(visitLogYear, visitLogMonth - 1)) : 0;
+  const visitLogWeekOptions = visitLogMonth !== 'all' ? [
+    { value: 'all', label: 'All Weeks' },
+    ...Array.from({ length: visitLogWeeksInMonth }, (_, i) => ({
+      value: i + 1,
+      label: `Week ${i + 1}`
+    }))
+  ] : [];
+
+  // Helper to get date range label for selected week
+  const getWeekDateRangeLabel = () => {
+    if (visitLogMonth === 'all' || visitLogWeek === 'all') return '';
+    const weekNum = visitLogWeek as number;
+    const daysInMonth = new Date(visitLogYear, visitLogMonth as number, 0).getDate();
+    const weekStartDay = (weekNum - 1) * 7 + 1;
+    const weekEndDay = Math.min(weekNum * 7, daysInMonth);
+    const ordinal = (n: number) => {
+      const s = ['th', 'st', 'nd', 'rd'];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
+    return `(${ordinal(weekStartDay)} - ${ordinal(weekEndDay)})`;
+  };
+
   const getMetricLabel = () => {
     switch (selectedMetric) {
       case 'revenue': return 'Revenue (₱)';
@@ -790,8 +1093,323 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
               )}
             </div>
           </div>
+
+          {/* Visit Log Section - Only show when specific person is selected */}
+          {selectedPerson !== 'all' && (
+            <div className="mt-6">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between flex-wrap gap-4">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <MapPin className="h-5 w-5 text-primary" />
+                        Client Visit Log
+                      </CardTitle>
+                      <CardDescription className="mt-1">
+                        Visit counts for {availablePeople.find(p => p.id === selectedPerson)?.name || 'selected agent'}
+                      </CardDescription>
+                    </div>
+                    
+                    {/* Visit Log Filters */}
+                    <div className="flex gap-2 flex-wrap">
+                      {/* Year Filter */}
+                      <Select value={visitLogYear.toString()} onValueChange={(value) => setVisitLogYear(parseInt(value))}>
+                        <SelectTrigger className="w-[100px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {yearOptions.map(year => (
+                            <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Month Filter */}
+                      <Select value={visitLogMonth.toString()} onValueChange={(value) => {
+                        const newMonth = value === 'all' ? 'all' : parseInt(value);
+                        setVisitLogMonth(newMonth);
+                        if (newMonth === 'all') {
+                          setVisitLogWeek('all');
+                        }
+                      }}>
+                        <SelectTrigger className="w-[130px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {monthOptions.map(month => (
+                            <SelectItem key={month.value} value={month.value.toString()}>{month.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Week Filter - only show when specific month selected */}
+                      {visitLogMonth !== 'all' && (
+                        <Select 
+                          value={visitLogWeek.toString()} 
+                          onValueChange={(value) => setVisitLogWeek(value === 'all' ? 'all' : parseInt(value))}
+                        >
+                          <SelectTrigger className="w-[110px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {visitLogWeekOptions.map(week => (
+                              <SelectItem key={week.value} value={week.value.toString()}>{week.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {loadingVisitLog ? (
+                    <div className="flex justify-center py-8">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  ) : visitLogMonth === 'all' && monthlyVisitData.length > 0 ? (
+                    // Monthly breakdown view (Jan - Dec)
+                    <div className="h-[400px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={monthlyVisitData}
+                          margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis 
+                            dataKey="monthName" 
+                            tick={{ fontSize: 11 }}
+                            angle={-45}
+                            textAnchor="end"
+                            height={60}
+                          />
+                          <YAxis 
+                            allowDecimals={false}
+                            tick={{ fontSize: 12 }}
+                          />
+                          <Tooltip 
+                            content={({ active, payload, label }) => {
+                              if (active && payload && payload.length) {
+                                return (
+                                  <div className="bg-background border rounded-lg p-3 shadow-lg">
+                                    <p className="font-semibold">{label} {visitLogYear}</p>
+                                    <p className="text-sm text-primary">
+                                      {payload[0].value} total visits
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Click to see client details
+                                    </p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Legend />
+                          <Bar 
+                            dataKey="totalVisits" 
+                            fill="#8b5cf6" 
+                            name={`Visits ${visitLogYear}`}
+                            radius={[4, 4, 0, 0]}
+                            cursor="pointer"
+                            onClick={(data: any) => {
+                              if (data && data.payload) {
+                                setSelectedMonthData(data.payload);
+                                setVisitClientDialog(true);
+                              }
+                            }}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : visitLogMonth !== 'all' && visitLogWeek === 'all' && weeklyVisitData.length > 0 ? (
+                    // Weekly breakdown view (Week 1 - Week 4)
+                    <div className="h-[400px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={weeklyVisitData}
+                          margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis 
+                            dataKey="weekLabel" 
+                            tick={{ fontSize: 12 }}
+                          />
+                          <YAxis 
+                            allowDecimals={false}
+                            tick={{ fontSize: 12 }}
+                          />
+                          <Tooltip 
+                            content={({ active, payload, label }) => {
+                              if (active && payload && payload.length) {
+                                return (
+                                  <div className="bg-background border rounded-lg p-3 shadow-lg">
+                                    <p className="font-semibold">{label} - {monthOptions.find(m => m.value === visitLogMonth)?.label} {visitLogYear}</p>
+                                    <p className="text-sm text-primary">
+                                      {payload[0].value} total visits
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Click to see client details
+                                    </p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Legend />
+                          <Bar 
+                            dataKey="totalVisits" 
+                            fill="#8b5cf6" 
+                            name={`Visits - ${monthOptions.find(m => m.value === visitLogMonth)?.label} ${visitLogYear}`}
+                            radius={[4, 4, 0, 0]}
+                            cursor="pointer"
+                            onClick={(data: any) => {
+                              if (data && data.payload) {
+                                setSelectedWeekData(data.payload);
+                                setSelectedMonthData(null);
+                                setVisitClientDialog(true);
+                              }
+                            }}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : dailyVisitData.length > 0 ? (
+                    // Daily breakdown view (specific week - shows each day)
+                    <div className="h-[400px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={dailyVisitData}
+                          margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis 
+                            dataKey="dayLabel" 
+                            tick={{ fontSize: 12 }}
+                          />
+                          <YAxis 
+                            allowDecimals={false}
+                            tick={{ fontSize: 12 }}
+                          />
+                          <Tooltip 
+                            content={({ active, payload, label }) => {
+                              if (active && payload && payload.length) {
+                                return (
+                                  <div className="bg-background border rounded-lg p-3 shadow-lg">
+                                    <p className="font-semibold">{label} {monthOptions.find(m => m.value === visitLogMonth)?.label} {visitLogYear}</p>
+                                    <p className="text-sm text-primary">
+                                      {payload[0].value} total visits
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Click to see client details
+                                    </p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Legend />
+                          <Bar 
+                            dataKey="totalVisits" 
+                            fill="#8b5cf6" 
+                            name={`Week ${visitLogWeek} ${getWeekDateRangeLabel()} - ${monthOptions.find(m => m.value === visitLogMonth)?.label} ${visitLogYear}`}
+                            radius={[4, 4, 0, 0]}
+                            cursor="pointer"
+                            onClick={(data: any) => {
+                              if (data && data.payload) {
+                                setSelectedDayData(data.payload);
+                                setSelectedWeekData(null);
+                                setSelectedMonthData(null);
+                                setVisitClientDialog(true);
+                              }
+                            }}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
+                      <MapPin className="h-12 w-12 text-muted-foreground/50 mb-4" />
+                      <p className="text-sm text-muted-foreground">
+                        No visit data found for this agent in {visitLogYear}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      {/* Client Visit Dialog */}
+      <Dialog open={visitClientDialog} onOpenChange={setVisitClientDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-primary" />
+              {selectedMonthData 
+                ? `${selectedMonthData.monthName} ${visitLogYear} - Client Visits`
+                : selectedWeekData
+                  ? `${selectedWeekData.weekLabel} - ${monthOptions.find(m => m.value === visitLogMonth)?.label} ${visitLogYear} - Client Visits`
+                  : selectedDayData
+                    ? `${selectedDayData.dayLabel} - Client Visits`
+                    : 'Client Visits Comparison'}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedMonthData 
+                ? `${selectedMonthData.totalVisits} total visits by ${availablePeople.find(p => p.id === selectedPerson)?.name || 'agent'}`
+                : selectedWeekData
+                  ? `${selectedWeekData.totalVisits} total visits by ${availablePeople.find(p => p.id === selectedPerson)?.name || 'agent'}`
+                  : selectedDayData
+                    ? `${selectedDayData.totalVisits} total visits on ${selectedDayData.dayLabel}`
+                    : `All clients visited by ${availablePeople.find(p => p.id === selectedPerson)?.name || 'agent'} — Week ${visitLogWeek}, ${monthOptions.find(m => m.value === visitLogMonth)?.label} ${visitLogYear}`
+              }
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="border rounded-lg overflow-hidden mt-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Client Name</TableHead>
+                  <TableHead>Shop Name</TableHead>
+                  <TableHead>City</TableHead>
+                  <TableHead className="text-right">Visits</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(selectedMonthData ? selectedMonthData.clients : selectedWeekData ? selectedWeekData.clients : selectedDayData ? selectedDayData.clients : visitLogData).map((client) => (
+                  <TableRow 
+                    key={client.clientId}
+                    className={selectedVisitClient?.clientId === client.clientId ? 'bg-primary/10' : ''}
+                  >
+                    <TableCell className="font-medium">
+                      {client.clientName}
+                      {selectedVisitClient?.clientId === client.clientId && (
+                        <Badge variant="outline" className="ml-2 text-xs">Selected</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{client.shopName}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <MapPin className="h-3 w-3 text-muted-foreground" />
+                        {client.city}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant={client.visits > 0 ? (selectedVisitClient?.clientId === client.clientId ? 'default' : 'secondary') : 'outline'}>
+                        {client.visits}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Agent Detail Dialog */}
       <Dialog open={agentDetailDialogOpen} onOpenChange={setAgentDetailDialogOpen}>
