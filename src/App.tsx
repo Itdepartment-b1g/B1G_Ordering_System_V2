@@ -34,6 +34,7 @@ import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components";
+import { SupportWidget } from "@/components/SupportWidget";
 
 import { PrefetchController } from "@/features/core/PrefetchController";
 
@@ -52,6 +53,7 @@ const App = () => (
                 <Toaster />
                 <Sonner />
                 <AgentRemittanceReminder />
+                <SupportWidget />
                 <BrowserRouter>
                   <Routes>
                     <Route path="/" element={<RoleBasedRedirect />} />
