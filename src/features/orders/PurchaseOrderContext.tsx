@@ -165,12 +165,31 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       // Generate PO number
       const year = new Date().getFullYear();
-      const { count } = await supabase
+      
+      // Get the last PO number for this company and year
+      const { data: lastPO, error: fetchError } = await supabase
         .from('purchase_orders')
-        .select('*', { count: 'exact', head: true })
-        .like('po_number', `PO-${year}-%`);
+        .select('po_number')
+        .eq('company_id', user.company_id)
+        .like('po_number', `PO-${year}-%`)
+        .order('id', { ascending: false }) // id is serial/increasing, or use created_at
+        .limit(1)
+        .maybeSingle();
 
-      const poNumber = `PO-${year}-${String((count || 0) + 1001).padStart(4, '0')}`;
+      if (fetchError) throw fetchError;
+
+      let nextSequence = 1001; 
+      if (lastPO && lastPO.po_number) {
+        const parts = lastPO.po_number.split('-');
+        if (parts.length === 3) {
+          const lastSeq = parseInt(parts[2], 10);
+          if (!isNaN(lastSeq)) {
+            nextSequence = lastSeq + 1;
+          }
+        }
+      }
+
+      const poNumber = `PO-${year}-${String(nextSequence).padStart(4, '0')}`;
 
       // Insert purchase order
       const { data: newPO, error: poError } = await supabase
