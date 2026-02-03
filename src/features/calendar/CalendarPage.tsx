@@ -29,7 +29,8 @@ import {
   Search,
   BarChart3,
   Camera,
-  X
+  X,
+  RotateCcw
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
@@ -1428,6 +1429,13 @@ export default function CalendarPage() {
                             className="rounded-full w-16 h-16 p-0 flex items-center justify-center bg-white hover:bg-gray-200 border-4 border-gray-300"
                           >
                             <div className="w-12 h-12 rounded-full bg-red-500"></div>
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={switchCamera}
+                            className="rounded-full w-12 h-12 p-0 flex items-center justify-center bg-gray-800/50 hover:bg-gray-800/70 text-white backdrop-blur-sm border border-white/20"
+                          >
+                            <RotateCcw className="h-5 w-5" />
                           </Button>
                         </div>
                       </div>
