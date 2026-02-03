@@ -146,103 +146,121 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     discount: number;
     notes: string;
   }) => {
-    try {
-      if (!user) {
-        return { success: false, error: 'User not authenticated' };
-      }
+    // Retry configuration
+    const MAX_RETRIES = 3;
+    let attempt = 0;
 
-      if (!user.company_id) {
-        return { success: false, error: 'User company information not found' };
-      }
+    while (attempt < MAX_RETRIES) {
+      try {
+        if (!user) {
+          return { success: false, error: 'User not authenticated' };
+        }
 
-      // Calculate totals
-      const subtotal = orderData.items.reduce(
-        (sum, item) => sum + item.quantity * item.unit_price,
-        0
-      );
-      const tax_amount = (subtotal * orderData.tax_rate) / 100;
-      const total_amount = subtotal + tax_amount - orderData.discount;
+        if (!user.company_id) {
+          return { success: false, error: 'User company information not found' };
+        }
 
-      // Generate PO number
-      const year = new Date().getFullYear();
-      
-      // Get the last PO number for this company and year
-      const { data: lastPO, error: fetchError } = await supabase
-        .from('purchase_orders')
-        .select('po_number')
-        .eq('company_id', user.company_id)
-        .like('po_number', `PO-${year}-%`)
-        .order('id', { ascending: false }) // id is serial/increasing, or use created_at
-        .limit(1)
-        .maybeSingle();
+        // Calculate totals
+        const subtotal = orderData.items.reduce(
+          (sum, item) => sum + item.quantity * item.unit_price,
+          0
+        );
+        const tax_amount = (subtotal * orderData.tax_rate) / 100;
+        const total_amount = subtotal + tax_amount - orderData.discount;
 
-      if (fetchError) throw fetchError;
+        // Generate PO number
+        const year = new Date().getFullYear();
+        
+        // Get the last PO number for this company and year
+        // Sort by created_at DESC to ensure we get the latest even if IDs are out of order
+        const { data: lastPO, error: fetchError } = await supabase
+          .from('purchase_orders')
+          .select('po_number')
+          .eq('company_id', user.company_id)
+          .like('po_number', `PO-${year}-%`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      let nextSequence = 1001; 
-      if (lastPO && lastPO.po_number) {
-        const parts = lastPO.po_number.split('-');
-        if (parts.length === 3) {
-          const lastSeq = parseInt(parts[2], 10);
-          if (!isNaN(lastSeq)) {
-            nextSequence = lastSeq + 1;
+        if (fetchError) throw fetchError;
+
+        let nextSequence = 1001; 
+        if (lastPO && lastPO.po_number) {
+          const parts = lastPO.po_number.split('-');
+          if (parts.length === 3) {
+            const lastSeq = parseInt(parts[2], 10);
+            if (!isNaN(lastSeq)) {
+              nextSequence = lastSeq + 1;
+            }
           }
         }
-      }
 
-      const poNumber = `PO-${year}-${String(nextSequence).padStart(4, '0')}`;
+        const poNumber = `PO-${year}-${String(nextSequence).padStart(4, '0')}`;
 
-      // Insert purchase order
-      const { data: newPO, error: poError } = await supabase
-        .from('purchase_orders')
-        .insert({
+        // Insert purchase order
+        const { data: newPO, error: poError } = await supabase
+          .from('purchase_orders')
+          .insert({
+            company_id: user.company_id,
+            po_number: poNumber,
+            supplier_id: orderData.supplier_id,
+            order_date: orderData.order_date,
+            expected_delivery_date: orderData.expected_delivery_date,
+            subtotal,
+            tax_rate: orderData.tax_rate,
+            tax_amount,
+            discount: orderData.discount,
+            total_amount,
+            status: 'pending',
+            notes: orderData.notes,
+            created_by: user.id,
+          })
+          .select()
+          .single();
+
+        if (poError) {
+          // Check for unique constraint violation (duplicate PO number)
+          if (poError.code === '23505') {
+            console.warn(`Duplicate PO number ${poNumber} detected. Retrying... (Attempt ${attempt + 1}/${MAX_RETRIES})`);
+            attempt++;
+            continue; // Retry the loop
+          }
+          throw poError;
+        }
+
+        // Insert purchase order items (calculate total_price)
+        const itemsToInsert = orderData.items.map((item) => ({
           company_id: user.company_id,
-          po_number: poNumber,
-          supplier_id: orderData.supplier_id,
-          order_date: orderData.order_date,
-          expected_delivery_date: orderData.expected_delivery_date,
-          subtotal,
-          tax_rate: orderData.tax_rate,
-          tax_amount,
-          discount: orderData.discount,
-          total_amount,
-          status: 'pending',
-          notes: orderData.notes,
-          created_by: user.id,
-        })
-        .select()
-        .single();
+          purchase_order_id: newPO.id,
+          variant_id: item.variant_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.quantity * item.unit_price,
+        }));
 
-      if (poError) throw poError;
+        const { error: itemsError } = await supabase
+          .from('purchase_order_items')
+          .insert(itemsToInsert);
 
-      // Insert purchase order items (calculate total_price)
-      const itemsToInsert = orderData.items.map((item) => ({
-        company_id: user.company_id,
-        purchase_order_id: newPO.id,
-        variant_id: item.variant_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        total_price: item.quantity * item.unit_price,
-      }));
+        if (itemsError) throw itemsError;
 
-      const { error: itemsError } = await supabase
-        .from('purchase_order_items')
-        .insert(itemsToInsert);
+        toast({
+          title: 'Success',
+          description: `Purchase Order ${poNumber} created successfully`,
+        });
 
-      if (itemsError) throw itemsError;
+        // Refresh the list
+        await fetchPurchaseOrders();
 
-      toast({
-        title: 'Success',
-        description: `Purchase Order ${poNumber} created successfully`,
-      });
-
-      // Refresh the list
-      await fetchPurchaseOrders();
-
-      return { success: true };
-    } catch (error: any) {
-      console.error('Error creating purchase order:', error);
-      return { success: false, error: error.message };
+        return { success: true };
+      } catch (error: any) {
+        // If we exhausted retries or hit a different error
+        console.error('Error creating purchase order:', error);
+        return { success: false, error: error.message };
+      }
     }
+
+    return { success: false, error: 'Failed to generate a unique PO Number after multiple attempts. Please try again.' };
   };
 
   // Approve a purchase order
