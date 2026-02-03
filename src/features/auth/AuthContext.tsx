@@ -14,7 +14,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [impersonatedCompany, setImpersonatedCompany] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialized, setIsInitialized] = useState(false);
-  const [isOffline, setIsOffline] = useState(false); // NEW: Track offline state
+  const [isOffline, setIsOffline] = useState(false);
   const { toast } = useToast();
   const userRef = useRef<User | null>(null);
 
@@ -27,7 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [impersonatedCompany]);
 
-  // NEW: Network status monitoring
+  // Network status monitoring
   useEffect(() => {
     const handleOnline = () => {
       console.log('🌐 [AuthContext] Network restored');
@@ -89,12 +89,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
+      // FIX 1: Tightened onAuthStateChange handler.
+      // Previously this swallowed TOKEN_REFRESHED and other valid events on
+      // browser reopen because the flag survived in localStorage.
+      // Now we only block events that are genuinely post-logout noise
+      // (i.e. not SIGNED_IN and not SIGNED_OUT and not TOKEN_REFRESHED).
       const justLoggedOut = localStorage.getItem('just_logged_out');
       if (justLoggedOut === 'true') {
         if (event === 'SIGNED_IN') {
+          // Real new login — clear the flag and let it through.
           console.log('✅ [AuthContext] New login detected, clearing logout flag');
           localStorage.removeItem('just_logged_out');
-        } else if (event !== 'SIGNED_OUT') {
+        } else if (event === 'TOKEN_REFRESHED') {
+          // Token refresh on reopen — not a logout event, clear flag and let it through.
+          console.log('✅ [AuthContext] Token refreshed after reopen, clearing logout flag');
+          localStorage.removeItem('just_logged_out');
+        } else if (event === 'SIGNED_OUT') {
+          // Actual sign-out — let it fall through to the handler below.
+        } else {
+          // Anything else (e.g. USER_UPDATED right after a real logout) — ignore.
           console.log('🚫 [AuthContext] Ignoring auth event after logout:', event);
           return;
         }
@@ -137,7 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [toast]);
 
-  // NEW: Session monitoring effect (Interval, Visibility, Focus)
+  // Session monitoring effect (Interval, Visibility, Focus)
   useEffect(() => {
     const companyStatusCheckInterval = setInterval(async () => {
       const currentUser = userRef.current;
@@ -163,7 +176,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .eq('id', currentUser.company_id)
             .single();
 
-          // NEW: Handle network errors gracefully
           if (companyError) {
             console.warn('⚠️ [AuthContext] Failed to check company status:', companyError);
             // Don't log out on network errors, just skip this check
@@ -195,7 +207,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
           if (sessionError || !session) {
-            // NEW: graceful handling of network errors on wake
             if (isNetworkError(sessionError)) {
               console.warn('⚠️ [AuthContext] Network error after wake, entering offline mode');
               setIsOffline(true);
@@ -288,9 +299,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('focus', handleFocus);
 
     return () => {
-      // subscription is handled in the other effect
       clearInterval(companyStatusCheckInterval);
-      // stopTokenMonitoring is handled in the other effect (or safely callable here too, but let's keep it separate)
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
@@ -304,24 +313,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsInitialized(true);
         if (isLoading) setIsLoading(false);
       }
-    }, 5000); // Increased timeout for network issues
+    }, 5000);
 
     try {
-      // Check if we just logged out
+      // FIX 2: Session-aware just_logged_out check.
+      // Previously this returned immediately if the flag was set, even when a
+      // valid Supabase session still existed (e.g. after closing and reopening
+      // the browser). Now we actually verify the session before honoring the flag.
       const justLoggedOut = localStorage.getItem('just_logged_out');
       if (justLoggedOut === 'true') {
-        console.log('🚫 [AuthContext] Just logged out, skipping session restoration');
-        if (mounted) {
-          setUser(null);
-          userRef.current = null;
-          setIsLoading(false);
+        try {
+          const { data, error } = await supabase.auth.getSession();
+
+          if (!error && data.session?.user) {
+            // Valid session exists — the flag is stale (browser was closed, not a real logout).
+            // Clear it and fall through to normal init below.
+            console.log('✅ [AuthContext] just_logged_out flag is stale — valid session found, clearing flag and continuing');
+            localStorage.removeItem('just_logged_out');
+          } else {
+            // No valid session — this was a real logout. Honor the flag and exit.
+            console.log('🚫 [AuthContext] just_logged_out confirmed, no active session');
+            if (mounted) {
+              setUser(null);
+              userRef.current = null;
+              setIsLoading(false);
+              localStorage.removeItem('just_logged_out');
+              setIsInitialized(true);
+            }
+            return;
+          }
+        } catch (err) {
+          // Network error while checking — clear the flag and let the rest of
+          // initializeAuth handle it (it already has network/cache logic).
+          console.warn('⚠️ [AuthContext] Network error while verifying session for just_logged_out, continuing init');
           localStorage.removeItem('just_logged_out');
-          setIsInitialized(true);
         }
-        return;
       }
 
-      // NEW: Wrap session check in try-catch for network errors
+      // Attempt to get session (with network error handling)
       let session;
       try {
         const { data, error: sessionError } = await supabase.auth.getSession();
@@ -424,7 +453,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('❌ [AuthContext] Auth initialization error:', error);
 
-      // NEW: Try to gracefully handle with cache
+      // Try to gracefully handle with cache
       const cachedProfile = getCachedProfile();
       if (cachedProfile) {
         console.log('⚡ [AuthContext] Using cached profile after init error');
@@ -492,7 +521,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) {
         console.error('⚠️ [AuthContext] Profile fetch failed:', error);
 
-        // NEW: Check if it's a network error
         if (error.message?.includes('fetch') || error.message?.includes('Failed to fetch')) {
           console.log('🌐 [AuthContext] Network error, keeping cached profile');
           setIsOffline(true);
@@ -586,7 +614,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error: any) {
       console.error('❌ [AuthContext] Profile fetch exception:', error);
 
-      // NEW: Network error handling
       if (error.message?.includes('fetch') || error.message?.includes('network')) {
         console.log('🌐 [AuthContext] Network error, using cached profile');
         setIsOffline(true);
@@ -642,7 +669,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('Login error:', error);
         setIsLoading(false);
 
-        // NEW: Better error messages for network issues
         if (error.message?.includes('fetch') || error.message?.includes('network')) {
           return { success: false, error: 'network_error' };
         }
@@ -764,7 +790,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Refresh profile error:', error);
 
-      // NEW: Handle network errors gracefully
       if (error instanceof Error &&
         (error.message?.includes('fetch') || error.message?.includes('network'))) {
         setIsOffline(true);
@@ -789,7 +814,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: !!user,
       isLoading,
       isInitialized,
-      isOffline, // NEW: Expose offline state
+      isOffline,
     } as any}>
       {!isInitialized ? (
         <div className="flex h-screen w-full items-center justify-center bg-background">
@@ -802,7 +827,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         </div>
       ) : (
         <>
-          {/* NEW: Offline indicator */}
+          {/* Offline indicator */}
           {isOffline && (
             <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-white px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
               <WifiOff className="h-4 w-4" />
