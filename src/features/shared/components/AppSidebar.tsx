@@ -1,5 +1,5 @@
 import { useAuth } from '@/features/auth';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useState, useMemo } from 'react';
 import {
   LayoutDashboard,
@@ -295,6 +295,7 @@ const superAdminMenuItems: MenuItem[] = [
 ];
 
 export function AppSidebar() {
+  const navigate = useNavigate();
   const { user, logout, impersonatedCompany, stopImpersonation } = useAuth();
   const { state, setOpenMobile } = useSidebar();
   const { checkPermission } = usePermissions();
@@ -485,7 +486,10 @@ export function AppSidebar() {
           <Button
             variant="default"
             className="w-full justify-start bg-primary hover:bg-primary/90 text-primary-foreground mb-2 shadow-lg shadow-primary/20 nav-allow"
-            onClick={stopImpersonation}
+            onClick={() => {
+              stopImpersonation();
+              navigate('/sys-admin-dashboard');
+            }}
           >
             <ArrowLeft className="h-4 w-4 mr-2 nav-allow" />
             {!isCollapsed && <span className="nav-allow">Exit Live View</span>}
