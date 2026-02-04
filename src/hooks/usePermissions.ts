@@ -30,6 +30,15 @@ export function usePermissions() {
       return systemAdminRoutes.includes(route) || route.startsWith('/sys-admin');
     }
 
+    // Executive has read-only access to specific routes
+    if (user?.role === 'executive') {
+      const executiveRoutes = [
+        '/executive-dashboard',
+        '/profile',
+      ];
+      return executiveRoutes.includes(route);
+    }
+
     // For other roles, you can add specific route checks here
     // Restrict /orders to admin and finance roles
     if (route === '/orders') {
@@ -60,6 +69,7 @@ export function usePermissions() {
     checkFeature,
     isSuperAdmin: user?.role === 'super_admin',
     isSystemAdmin: user?.role === 'system_administrator',
+    isExecutive: user?.role === 'executive',
   };
 }
 

@@ -6,6 +6,7 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
 import { DashboardPage, AdminHistoryPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
+import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage";
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
 import { SystemSettingsPage } from "@/features/settings";
@@ -106,6 +107,7 @@ const App = () => (
                     <Route path="/system-management" element={<ProtectedRoute><ManagementPortal /></ProtectedRoute>} />
                     <Route path="/sys-admin-dashboard" element={<ProtectedRoute><SysAdDashboardPage /></ProtectedRoute>} />
                     <Route path="/super-admin-dashboard" element={<ProtectedRoute><SuperAdminDashboardPage /></ProtectedRoute>} />
+                    <Route path="/executive-dashboard" element={<ProtectedRoute><ExecutiveDashboardPage /></ProtectedRoute>} />
                     {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                     <Route path="*" element={<NotFound />} />
                   </Routes>

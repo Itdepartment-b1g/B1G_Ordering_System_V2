@@ -27,7 +27,8 @@ import {
   Map,
   LayoutGrid,
   Activity,
-  Settings
+  Settings,
+  ShieldCheck
 } from 'lucide-react';
 import {
   Sidebar,
@@ -170,8 +171,14 @@ const leaderMenuItems: MenuItem[] = [
 
 const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', icon: LayoutDashboard },
+  { title: 'Executive Account', url: '/system-admin', icon: ShieldCheck },
   { title: 'Management Portal', url: '/system-management', icon: LayoutGrid },
   { title: 'System History', url: '/system-history', icon: History },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
+const executiveMenuItems: MenuItem[] = [
+  { title: 'Executive Dashboard', url: '/executive-dashboard', icon: LayoutDashboard },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -332,6 +339,8 @@ export function AppSidebar() {
       baseMenuItems = superAdminMenuItems;
     } else if (user?.role === 'system_administrator') {
       baseMenuItems = systemAdminMenuItems;
+    } else if (user?.role === 'executive') {
+      baseMenuItems = executiveMenuItems;
     } else if (user?.role === 'super_admin') {
       baseMenuItems = superAdminMenuItems;
     } else if (user?.role === 'admin') {

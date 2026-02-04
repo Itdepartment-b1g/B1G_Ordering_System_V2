@@ -33,6 +33,8 @@ export default function LoginPage() {
         navigate('/sys-admin-dashboard', { replace: true });
       } else if (user.role === 'super_admin') {
         navigate('/super-admin-dashboard', { replace: true });
+      } else if (user.role === 'executive') {
+        navigate('/executive-dashboard', { replace: true });
       } else {
         navigate('/dashboard', { replace: true });
       }

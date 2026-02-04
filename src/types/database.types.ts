@@ -1,7 +1,7 @@
 // B1G Ordering System - Database Types
 // Auto-generated TypeScript types for Supabase tables
 
-export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent';
+export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent' | 'executive';
 export type UserStatus = 'active' | 'inactive';
 export type VariantType = 'flavor' | 'battery' | 'posm';
 export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
@@ -86,7 +86,7 @@ export const PRICING_OPTIONS = {
 
 export interface Profile {
   id: string;
-  company_id: string;
+  company_id: string | null; // Null for executives and system_administrator
   email: string;
   full_name: string;
   role: UserRole;
@@ -99,6 +99,19 @@ export interface Profile {
   avatar_url?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ExecutiveCompanyAssignment {
+  id: string;
+  executive_id: string;
+  company_id: string;
+  assigned_by?: string;
+  created_at: string;
+  updated_at: string;
+  // For joined queries
+  company?: Company;
+  executive?: Profile;
+  assigner?: Profile;
 }
 
 export interface Brand {
