@@ -13,6 +13,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { format } from 'date-fns';
 import { canViewCashDeposits } from '@/lib/roleUtils';
+import { sendNotificationToCompanyRoles } from '@/features/shared/lib/notification.helpers';
 import {
   BanknoteIcon,
   AlertCircle,
@@ -334,6 +335,23 @@ export default function LeaderCashDepositsPage() {
       if (updateError) throw updateError;
 
       toast({ title: "Success", description: `${depositType === 'CASH' ? 'Cash' : 'Cheque'} deposit details recorded successfully! Awaiting verification.` });
+
+      // Notify finance/admin roles that a new deposit is ready for verification (non-blocking)
+      if (user?.company_id) {
+        try {
+          await sendNotificationToCompanyRoles({
+            companyId: user.company_id,
+            roles: ['admin', 'finance', 'super_admin', 'system_administrator'],
+            type: 'system_message',
+            title: 'New Cash/Cheque Deposit Pending Verification',
+            message: `${user.full_name || 'A team leader'} recorded a ${depositType === 'CASH' ? 'cash' : 'cheque'} deposit for ${selectedPendingDeposit.agentName}.`,
+            referenceType: 'cash_deposit',
+            referenceId: selectedPendingDeposit.id,
+          });
+        } catch (e) {
+          console.warn('Cash deposit notification failed (non-blocking):', e);
+        }
+      }
       setDepositDialogOpen(false);
       stopCamera(); // Clean up camera if it's still running
       fetchData();

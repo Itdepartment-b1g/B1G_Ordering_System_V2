@@ -199,6 +199,7 @@ const managerMenuItems: MenuItem[] = [
   },
   { title: 'Team Clients', url: '/manager-clients', icon: ShoppingBag },
   { title: 'Team Activity', url: '/system-history', icon: History },
+  { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 

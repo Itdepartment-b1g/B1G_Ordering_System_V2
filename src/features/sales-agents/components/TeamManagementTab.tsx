@@ -44,6 +44,7 @@ import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useAuth } from '@/features/auth';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 
 // Database interfaces
 interface Agent {
@@ -419,6 +420,38 @@ export function TeamManagementTab({
         description: 'Agent has been assigned to the team successfully'
       });
 
+      // Notify leader and agent (non-blocking)
+      try {
+        const assignedAgent = agents.find(a => a.id === selectedAgent);
+        const assignedLeader = leaders.find(l => l.id === selectedLeader);
+
+        if (user?.company_id && assignedAgent && assignedLeader) {
+          // Notify the mobile sales agent
+          await sendNotification({
+            userId: assignedAgent.id,
+            companyId: user.company_id,
+            type: 'system_message',
+            title: 'Assigned to Team Leader',
+            message: `You have been assigned to ${assignedLeader.name}'s team.`,
+            referenceType: 'leader_team',
+            referenceId: selectedLeader,
+          });
+
+          // Notify the team leader
+          await sendNotification({
+            userId: assignedLeader.id,
+            companyId: user.company_id,
+            type: 'system_message',
+            title: 'New Team Member Assigned',
+            message: `${assignedAgent.name} has been assigned to your team.`,
+            referenceType: 'leader_team',
+            referenceId: selectedAgent,
+          });
+        }
+      } catch (e) {
+        console.warn('Team assignment notification failed (non-blocking):', e);
+      }
+
       // Refresh data
       await fetchData();
 
@@ -495,6 +528,58 @@ export function TeamManagementTab({
         title: 'Success',
         description: `${agent?.name} has been unassigned from the team`
       });
+
+      // Notify agent, their leader, and manager (if part of a sub-team) - non-blocking
+      try {
+        if (agent && user?.company_id) {
+          // Notify the mobile sales agent
+          await sendNotification({
+            userId: agent.id,
+            companyId: user.company_id,
+            type: 'system_message',
+            title: 'Removed from Team',
+            message: `You have been removed from your team leader's team.`,
+            referenceType: 'leader_team',
+            referenceId: agent.id,
+          });
+
+          // Notify the team leader if we know them
+          if (agent.leaderId) {
+            await sendNotification({
+              userId: agent.leaderId,
+              companyId: user.company_id,
+              type: 'system_message',
+              title: 'Team Member Removed',
+              message: `${agent.name} has been removed from your team.`,
+              referenceType: 'leader_team',
+              referenceId: agent.id,
+            });
+          }
+
+          // Notify the manager overseeing the sub-team, if applicable
+          if (agent.subTeamId) {
+            const { data: subTeamRow, error: subTeamError } = await supabase
+              .from('sub_teams')
+              .select('manager_id')
+              .eq('id', agent.subTeamId)
+              .maybeSingle();
+
+            if (!subTeamError && subTeamRow?.manager_id) {
+              await sendNotification({
+                userId: subTeamRow.manager_id,
+                companyId: user.company_id,
+                type: 'system_message',
+                title: 'Sub-Team Member Removed',
+                message: `${agent.name} has been removed from one of your sub-teams.`,
+                referenceType: 'sub_team',
+                referenceId: agent.subTeamId,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Team unassignment notification failed (non-blocking):', e);
+      }
 
       // Refresh data
       await fetchData();

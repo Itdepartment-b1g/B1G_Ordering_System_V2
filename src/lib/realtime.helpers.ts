@@ -70,11 +70,16 @@ export function subscribeToTable<T = any>(
       if (status === 'SUBSCRIBED') {
         console.log(`✅ Successfully subscribed to ${table}${filter ? ` (${filter.column}=${filter.value})` : ''}`);
       } else if (status === 'CHANNEL_ERROR') {
-        console.error(`❌ Failed to subscribe to ${table}. Make sure Realtime is enabled in Supabase.`);
+        // CHANNEL_ERROR can occur for multiple reasons:
+        // 1. Realtime not enabled (but user confirmed it is)
+        // 2. RLS policies blocking subscription
+        // 3. Invalid filter syntax
+        // 4. Permission issues
+        console.warn(`⚠️ Subscription to ${table} encountered an error. This may be due to RLS policies or permissions. Realtime updates may not work, but regular queries will still function.`);
       } else if (status === 'TIMED_OUT') {
-        console.error(`⏱️ Subscription to ${table} timed out. Check your connection.`);
+        console.warn(`⏱️ Subscription to ${table} timed out. Check your connection.`);
       } else if (status === 'CLOSED') {
-        console.warn(`🔌 Subscription to ${table} was closed.`);
+        console.log(`🔌 Subscription to ${table} was closed.`);
       }
     });
 

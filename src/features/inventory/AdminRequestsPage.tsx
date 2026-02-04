@@ -13,6 +13,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 
 interface PendingRequest {
   id: string;
@@ -326,6 +327,42 @@ export default function AdminRequestsPage() {
             title: 'Success',
             description: `Request approved! ${totalQty} units allocated (Agent: ${selectedRequest.requested_quantity}, Leader: ${selectedRequest.leader_additional_quantity || 0})`,
           });
+
+          // Notify agent (and their leader if known) - non-blocking
+          if (user?.company_id) {
+            try {
+              await sendNotification({
+                userId: selectedRequest.agent_id,
+                companyId: (user as any).company_id,
+                type: 'stock_request_approved',
+                title: 'Stock Request Approved',
+                message: `Your stock request has been approved by Admin.`,
+                referenceType: 'stock_request',
+                referenceId: selectedRequest.id,
+              });
+
+              const { data: leaderRow } = await supabase
+                .from('leader_teams')
+                .select('leader_id')
+                .eq('agent_id', selectedRequest.agent_id)
+                .maybeSingle();
+
+              if (leaderRow?.leader_id) {
+                await sendNotification({
+                  userId: leaderRow.leader_id,
+                  companyId: (user as any).company_id,
+                  type: 'stock_request_approved',
+                  title: 'Stock Request Approved',
+                  message: `A stock request from your team was approved by Admin.`,
+                  referenceType: 'stock_request',
+                  referenceId: selectedRequest.id,
+                });
+              }
+            } catch (e) {
+              console.warn('Admin stock approval notification failed (non-blocking):', e);
+            }
+          }
+
           setReviewDialogOpen(false);
           fetchRequests();
         } else {
@@ -350,6 +387,42 @@ export default function AdminRequestsPage() {
             title: 'Success',
             description: data.message || 'Request denied',
           });
+
+          // Notify agent (and their leader if known) - non-blocking
+          if (user?.company_id) {
+            try {
+              await sendNotification({
+                userId: selectedRequest.agent_id,
+                companyId: (user as any).company_id,
+                type: 'stock_request_rejected',
+                title: 'Stock Request Denied',
+                message: `Your stock request was denied by Admin${denialReason ? `: ${denialReason}` : '.'}`,
+                referenceType: 'stock_request',
+                referenceId: selectedRequest.id,
+              });
+
+              const { data: leaderRow } = await supabase
+                .from('leader_teams')
+                .select('leader_id')
+                .eq('agent_id', selectedRequest.agent_id)
+                .maybeSingle();
+
+              if (leaderRow?.leader_id) {
+                await sendNotification({
+                  userId: leaderRow.leader_id,
+                  companyId: (user as any).company_id,
+                  type: 'stock_request_rejected',
+                  title: 'Stock Request Denied',
+                  message: `A stock request from your team was denied by Admin.`,
+                  referenceType: 'stock_request',
+                  referenceId: selectedRequest.id,
+                });
+              }
+            } catch (e) {
+              console.warn('Admin stock denial notification failed (non-blocking):', e);
+            }
+          }
+
           setReviewDialogOpen(false);
           fetchRequests();
         } else {

@@ -41,6 +41,46 @@ export async function sendNotification(params: SendNotificationParams) {
 }
 
 /**
+ * Notify all company users whose roles match the provided list.
+ * Useful for events like "order created" that should reach admins/finance.
+ */
+export async function sendNotificationToCompanyRoles(params: Omit<SendNotificationParams, 'userId'> & { roles: string[] }) {
+    try {
+        const { data: users, error: usersError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('company_id', params.companyId)
+            .in('role', params.roles);
+
+        if (usersError) throw usersError;
+
+        const userIds = (users || []).map(u => u.id).filter(Boolean);
+        if (userIds.length === 0) {
+            return { success: true };
+        }
+
+        const notifications = userIds.map(userId => ({
+            user_id: userId,
+            company_id: params.companyId,
+            notification_type: params.type,
+            title: params.title,
+            message: params.message,
+            reference_type: params.referenceType,
+            reference_id: params.referenceId,
+            is_read: false
+        }));
+
+        const { error } = await supabase.from('notifications').insert(notifications);
+        if (error) throw error;
+
+        return { success: true };
+    } catch (err) {
+        console.error('Failed to send notification to company roles:', err);
+        return { success: false, error: err };
+    }
+}
+
+/**
  * Creates notifications for audit events to inform relevant users about system changes.
  * This is used for critical audit events that require user attention.
  */

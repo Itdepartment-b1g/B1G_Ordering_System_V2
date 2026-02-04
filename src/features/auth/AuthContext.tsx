@@ -1,21 +1,21 @@
-import { useState, useEffect, ReactNode, useRef, useMemo } from 'react';
+import { useState, useEffect, ReactNode, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
-import { getCachedProfile, setCachedProfile, clearProfileCache, isCacheStale } from '@/lib/profileCache';
-import { startTokenMonitoring, stopTokenMonitoring, cleanupLocalStorage, logSecurityEvent, getAuthTokenInfo } from '@/lib/security';
-import { shouldCheckSession, isNetworkError, resetSessionCheckCooldown } from '@/lib/networkUtils';
+import { withTimeout } from '@/lib/networkUtils';
+import { getCachedProfile, setCachedProfile, isCacheStale, clearProfileCache } from '@/lib/profileCache';
 import { AuthContext } from './hooks';
 import type { User, LoginResult } from './types';
-import { Loader2, WifiOff } from 'lucide-react';
+import type { Company } from '@/types/database.types';
+import { Loader2 } from 'lucide-react';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [impersonatedCompany, setImpersonatedCompany] = useState<any | null>(null);
+  const [impersonatedCompany, setImpersonatedCompany] = useState<Company | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [isOffline, setIsOffline] = useState(false); // NEW: Track offline state
   const { toast } = useToast();
+  const companyChannelRef = useRef<any>(null);
+  const profileChannelRef = useRef<any>(null);
   const userRef = useRef<User | null>(null);
 
   // Handle global read-only mode for impersonation
@@ -27,520 +27,277 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [impersonatedCompany]);
 
-  // NEW: Network status monitoring
+  // Load impersonation from sessionStorage on mount
   useEffect(() => {
-    const handleOnline = () => {
-      console.log('🌐 [AuthContext] Network restored');
-      setIsOffline(false);
-
-      // Refresh profile when back online
-      if (userRef.current) {
-        refreshProfile();
+    const savedImpersonation = sessionStorage.getItem('impersonated_company');
+    if (savedImpersonation) {
+      try {
+        setImpersonatedCompany(JSON.parse(savedImpersonation));
+      } catch (e) {
+        console.error('Failed to parse saved impersonation', e);
       }
-    };
+    }
+  }, []);
 
-    const handleOffline = () => {
-      console.log('📡 [AuthContext] Network lost');
-      setIsOffline(true);
-      toast({
-        title: 'Connection Lost',
-        description: 'You are offline. Some features may be limited.',
-        variant: 'destructive',
-      });
-    };
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [toast]);
-
-  // Load user session on mount
+  // Initialize auth: Check for existing session with instant cache load
   useEffect(() => {
     let mounted = true;
 
-    const init = async () => {
-      console.log('🚀 [AuthContext] Initializing auth...');
-      
-      // Clean up deprecated localStorage items
-      cleanupLocalStorage();
+    // INSTANT LOAD: Try cached profile first for zero-delay UI
+    const cachedProfile = getCachedProfile();
+    if (cachedProfile) {
+      console.log('⚡ [AuthContext] Instant load from cache:', cachedProfile.id);
+      setUser(cachedProfile);
+      userRef.current = cachedProfile;
+      setIsLoading(false); // Show UI immediately
+    }
 
-      // Load impersonation from sessionStorage
-      const savedImpersonation = sessionStorage.getItem('impersonated_company');
-      if (savedImpersonation) {
-        try {
-          if (mounted) setImpersonatedCompany(JSON.parse(savedImpersonation));
-        } catch (e) {
-          console.error('Failed to parse saved impersonation', e);
+    // Check for existing session on mount
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!mounted) return;
+
+      console.log('🔐 [AuthContext] Initial getSession result:', session ? `user ${session.user.id}` : 'no session');
+      
+      if (session?.user) {
+        // If we have cached profile and it matches, refresh in background
+        if (cachedProfile && cachedProfile.id === session.user.id && !isCacheStale()) {
+          console.log('🔄 [AuthContext] Cache is fresh, refreshing in background');
+          // Refresh in background without blocking UI
+          loadUserProfile(session.user).catch(err => {
+            console.warn('⚠️ [AuthContext] Background refresh failed:', err);
+            // Keep using cached profile
+          });
+        } else {
+          // No cache or stale cache - load profile (will update UI when done)
+          await loadUserProfile(session.user);
+        }
+      } else {
+        // No session - check cache one more time, then show login
+        if (!cachedProfile) {
+          // No cache and no session - safe to show login page immediately
+          setIsLoading(false);
+        } else {
+          // We have cache but no session - clear cache and show login
+          console.warn('⚠️ [AuthContext] Session expired, clearing cache');
+          setUser(null);
+          userRef.current = null;
+          setIsLoading(false);
         }
       }
+    }).catch((error) => {
+      console.error('❌ [AuthContext] getSession failed on mount:', error);
+      if (mounted) {
+        // On error, if we have cache, keep using it
+        if (cachedProfile) {
+          console.log('✅ [AuthContext] Using cache after getSession error');
+          // Cache already loaded above, just ensure loading is false
+          setIsLoading(false);
+        } else {
+          setIsLoading(false);
+        }
+      }
+    });
 
-      // Initialize auth state
-      await initializeAuth(mounted);
-    };
-
-    init();
-
+    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
-      
+
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
-      const justLoggedOut = localStorage.getItem('just_logged_out');
-      if (justLoggedOut === 'true') {
-        if (event === 'SIGNED_IN') {
-          console.log('✅ [AuthContext] New login detected, clearing logout flag');
-          localStorage.removeItem('just_logged_out');
-        } else if (event !== 'SIGNED_OUT') {
-          console.log('🚫 [AuthContext] Ignoring auth event after logout:', event);
-          return;
-        }
-      }
-
       if (session?.user) {
-        // Skip profile reload for token refresh events
-        if (event === 'TOKEN_REFRESHED' && userRef.current?.id === session.user.id) {
-          console.log('🔄 [AuthContext] Token refreshed, skipping profile reload');
-          return;
-        }
-
-        // Skip profile reload for same user (unless it's a new sign-in)
-        if (userRef.current?.id === session.user.id && event !== 'SIGNED_IN') {
-          console.log('🔄 [AuthContext] Session updated for same user, skipping profile reload');
-          return;
-        }
-
-        // Load profile for SIGNED_IN events or new users
-        if (event === 'SIGNED_IN' || !userRef.current) {
-          await loadUserProfile(session);
+        // Only load profile for SIGNED_IN events or when user changes
+        // Skip TOKEN_REFRESHED and other events if we already have the same user loaded
+        if (event === 'SIGNED_IN' || !userRef.current || userRef.current.id !== session.user.id) {
+          await loadUserProfile(session.user);
+        } else {
+          // User already loaded, just ensure loading is false (in case of tab switch)
+          console.log('✅ [AuthContext] User already loaded, skipping profile reload');
+          if (isLoading) {
+            setIsLoading(false);
+          }
         }
       } else if (event === 'SIGNED_OUT') {
-        console.log('👋 [AuthContext] User signed out, clearing user');
-        if ((window as any).companyStatusChannel) {
-          unsubscribe((window as any).companyStatusChannel);
-          (window as any).companyStatusChannel = null;
-        }
+        // Clear user on explicit sign out
         setUser(null);
         userRef.current = null;
         setIsLoading(false);
-        localStorage.setItem('just_logged_out', 'true');
+        
+        // Clean up real-time subscriptions
+        if (companyChannelRef.current) {
+          unsubscribe(companyChannelRef.current);
+          companyChannelRef.current = null;
+        }
+        if (profileChannelRef.current) {
+          unsubscribe(profileChannelRef.current);
+          profileChannelRef.current = null;
+        }
+      } else if (event === 'TOKEN_REFRESHED') {
+        // On token refresh, verify session is still valid but don't reload profile
+        // If we already have a user, keep them and just ensure loading is false
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (!currentSession) {
+          setUser(null);
+          userRef.current = null;
+          setIsLoading(false);
+        } else if (userRef.current) {
+          // User already loaded, just ensure loading is false
+          setIsLoading(false);
+        }
       }
     });
 
     return () => {
       mounted = false;
       subscription.unsubscribe();
-      stopTokenMonitoring();
+      if (companyChannelRef.current) {
+        unsubscribe(companyChannelRef.current);
+      }
+      if (profileChannelRef.current) {
+        unsubscribe(profileChannelRef.current);
+      }
     };
-  }, [toast]);
+  }, []); // Empty deps - only run on mount
 
-  // NEW: Session monitoring effect (Interval, Visibility, Focus)
+  // Real-time subscription for profile status changes
   useEffect(() => {
-    const companyStatusCheckInterval = setInterval(async () => {
-      const currentUser = userRef.current;
-      if (currentUser?.company_id && currentUser.role !== 'system_administrator') {
-        try {
-          // Verify session is still valid
-          const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
-          if (sessionError || !session) {
-            console.warn('⚠️ [AuthContext] Session expired or invalid during periodic check');
-            await logout();
-            toast({
-              title: 'Session Expired',
-              description: 'Your session has expired. Please log in again.',
-              variant: 'destructive',
-            });
-            return;
-          }
-
-          const { data: company, error: companyError } = await supabase
-            .from('companies')
-            .select('status')
-            .eq('id', currentUser.company_id)
-            .single();
-
-          // NEW: Handle network errors gracefully
-          if (companyError) {
-            console.warn('⚠️ [AuthContext] Failed to check company status:', companyError);
-            // Don't log out on network errors, just skip this check
-            return;
-          }
-
-          if (company && company.status === 'inactive') {
-            console.warn('❌ [AuthContext] Company status check: Company is inactive, logging out');
-            await logout();
-            toast({
-              title: "Access Denied",
-              description: "Your company account has been deactivated. Please contact your system administrator.",
-              variant: "destructive",
-            });
-          }
-        } catch (error) {
-          console.warn('⚠️ [AuthContext] Company status check failed:', error);
-          // Don't log out on errors, could be network issues
-        }
+    if (!user?.id) {
+      if (profileChannelRef.current) {
+        unsubscribe(profileChannelRef.current);
+        profileChannelRef.current = null;
       }
-    }, 60000);
-
-    // Handle page visibility change (laptop sleep/wake)
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'visible' && userRef.current) {
-        console.log('👁️ [AuthContext] Page became visible, verifying session...');
-
-        try {
-          const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
-          if (sessionError || !session) {
-            // NEW: graceful handling of network errors on wake
-            if (isNetworkError(sessionError)) {
-              console.warn('⚠️ [AuthContext] Network error after wake, entering offline mode');
-              setIsOffline(true);
-              return;
-            }
-
-            console.warn('⚠️ [AuthContext] Session expired after wake from sleep');
-            toast({
-              title: 'Session Expired',
-              description: 'Your session expired while your device was asleep. Please log in again.',
-              variant: 'destructive',
-            });
-            await logout();
-            return;
-          }
-
-          const expiresAt = session.expires_at;
-          if (expiresAt) {
-            const expiresIn = expiresAt - Math.floor(Date.now() / 1000);
-            if (expiresIn < 300) {
-              console.log('🔄 [AuthContext] Token expiring soon, refreshing...');
-              const { error: refreshError } = await supabase.auth.refreshSession();
-              if (refreshError) {
-                console.error('❌ [AuthContext] Failed to refresh session:', refreshError);
-                toast({
-                  title: 'Session Expired',
-                  description: 'Unable to refresh your session. Please log in again.',
-                  variant: 'destructive',
-                });
-                await logout();
-              } else {
-                console.log('✅ [AuthContext] Session refreshed successfully');
-              }
-            }
-          }
-        } catch (error) {
-           if (isNetworkError(error)) {
-             console.warn('⚠️ [AuthContext] Network error during visibility check');
-             setIsOffline(true);
-           } else {
-             console.error('❌ [AuthContext] Visibility change check failed:', error);
-           }
-        }
-      }
-    };
-
-    // Handle window focus with cooldown to prevent spamming
-    const handleFocus = async () => {
-      if (!userRef.current) return;
-
-      // Check cooldown to prevent excessive session checks
-      if (!shouldCheckSession()) {
-        return; // Skip if checked recently
-      }
-
-      console.log('🎯 [AuthContext] Window focused, checking session...');
-
-      try {
-        const tokenInfo = getAuthTokenInfo();
-        console.log('🔑 [AuthContext] Current token info:', tokenInfo);
-
-        const { data: { session }, error } = await supabase.auth.getSession();
-
-        if (error) {
-          if (isNetworkError(error)) {
-            console.warn('⚠️ [AuthContext] Network error during focus check, staying offline');
-            setIsOffline(true);
-            return; // Don't logout on network errors
-          }
-          console.warn('⚠️ [AuthContext] Session error on focus:', error);
-        }
-
-        if (!session) {
-          console.warn('⚠️ [AuthContext] No session on focus');
-          await logout();
-        } else {
-          resetSessionCheckCooldown();
-        }
-      } catch (error) {
-        if (isNetworkError(error)) {
-          console.warn('⚠️ [AuthContext] Network error during focus check');
-          setIsOffline(true);
-        } else {
-          console.error('❌ [AuthContext] Focus check failed:', error);
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
-
-    return () => {
-      // subscription is handled in the other effect
-      clearInterval(companyStatusCheckInterval);
-      // stopTokenMonitoring is handled in the other effect (or safely callable here too, but let's keep it separate)
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [toast]);
-
-  const initializeAuth = async (mounted = true) => {
-    let flowCompleted = false;
-    const safetyTimer = setTimeout(() => {
-      if (!flowCompleted && mounted) {
-        console.warn('⚠️ [AuthContext] Init timeout - forcing app load');
-        setIsInitialized(true);
-        if (isLoading) setIsLoading(false);
-      }
-    }, 5000); // Increased timeout for network issues
-
-    try {
-      // Check if we just logged out
-      const justLoggedOut = localStorage.getItem('just_logged_out');
-      if (justLoggedOut === 'true') {
-        console.log('🚫 [AuthContext] Just logged out, skipping session restoration');
-        if (mounted) {
-          setUser(null);
-          userRef.current = null;
-          setIsLoading(false);
-          localStorage.removeItem('just_logged_out');
-          setIsInitialized(true);
-        }
-        return;
-      }
-
-      // NEW: Wrap session check in try-catch for network errors
-      let session;
-      try {
-        const { data, error: sessionError } = await supabase.auth.getSession();
-
-        if (sessionError) {
-          throw sessionError;
-        }
-
-        session = data.session;
-      } catch (error: any) {
-        console.error('❌ [AuthContext] Failed to get session:', error);
-
-        // Check if it's a network error
-        if (error.message?.includes('fetch') || error.message?.includes('network')) {
-          console.log('🌐 [AuthContext] Network error during init, using cached profile');
-          if (mounted) setIsOffline(true);
-
-          // Try to use cached profile for offline access
-          const cachedProfile = getCachedProfile();
-          if (cachedProfile && mounted) {
-            console.log('✅ [AuthContext] Using cached profile in offline mode');
-            setUser(cachedProfile);
-            userRef.current = cachedProfile;
-            setIsLoading(false);
-            setIsInitialized(true);
-
-            toast({
-              title: 'Offline Mode',
-              description: 'You are offline. Some features may be limited.',
-              variant: 'default',
-            });
-            return;
-          }
-        }
-
-        // No session and no cache - show login
-        console.log('🚫 [AuthContext] No session and no cache available');
-        clearProfileCache();
-        if (mounted) {
-          setUser(null);
-          userRef.current = null;
-          setIsLoading(false);
-          setIsInitialized(true);
-        }
-        return;
-      }
-
-      if (!session?.user) {
-        console.log('🚫 [AuthContext] No valid session, clearing any stale cache');
-        clearProfileCache();
-        if (mounted) {
-          setUser(null);
-          userRef.current = null;
-          setIsLoading(false);
-          setIsInitialized(true);
-        }
-        return;
-      }
-
-      // Session is valid - check cache
-      const cachedProfile = getCachedProfile();
-      if (cachedProfile && cachedProfile.id === session.user.id && !isCacheStale()) {
-        console.log('⚡ [AuthContext] Using fresh cached profile');
-        if (mounted) {
-          setUser(cachedProfile);
-          userRef.current = cachedProfile;
-          setIsLoading(false);
-          setIsInitialized(true);
-        }
-
-        startTokenMonitoring(() => {
-          logSecurityEvent('Token tampering detected');
-          toast({
-            title: 'Security Alert',
-            description: 'Suspicious activity detected. Please log in again.',
-            variant: 'destructive'
-          });
-          logout();
-        });
-
-        return;
-      }
-
-      // Fetch fresh profile
-      console.log('🔍 [AuthContext] Fetching fresh profile from database...');
-      if (mounted) setIsLoading(true);
-
-      await loadUserProfile(session);
-
-      startTokenMonitoring(() => {
-        logSecurityEvent('Token tampering detected');
-        toast({
-          title: 'Security Alert',
-          description: 'Suspicious activity detected. Please log in again.',
-          variant: 'destructive'
-        });
-        logout();
-      });
-
-    } catch (error) {
-      console.error('❌ [AuthContext] Auth initialization error:', error);
-
-      // NEW: Try to gracefully handle with cache
-      const cachedProfile = getCachedProfile();
-      if (cachedProfile) {
-        console.log('⚡ [AuthContext] Using cached profile after init error');
-        if (mounted) {
-          setUser(cachedProfile);
-          userRef.current = cachedProfile;
-          setIsOffline(true);
-        }
-      } else {
-        if (mounted) {
-          setUser(null);
-          userRef.current = null;
-        }
-      }
-
-      if (mounted) setIsLoading(false);
-    } finally {
-      flowCompleted = true;
-      clearTimeout(safetyTimer);
-      if (mounted) setIsInitialized(true);
-    }
-  };
-
-  const loadUserProfile = async (session: any, forceRefresh = false) => {
-    const userId = session.user.id;
-
-    // Memory cache check
-    if (!forceRefresh && userRef.current?.id === userId) {
-      console.log('✅ [AuthContext] User already in memory');
-      setIsLoading(false);
       return;
     }
 
-    // Persistent cache check
-    const cached = getCachedProfile();
-    const shouldFetch = forceRefresh || !cached || isCacheStale();
+    // Subscribe to profile updates
+    const profileChannel = subscribeToTable('profiles', (payload: any) => {
+      if (payload.new && payload.new.id === user.id) {
+        console.log('Profile updated:', payload);
+        
+        // Check if status changed to inactive
+        if (payload.new.status === 'inactive') {
+          console.log('⚠️ Your account has been set to inactive. Logging out...');
+          logout();
+        } else {
+          // Update user profile if other fields changed
+          setUser((prev) => prev ? { ...prev, ...payload.new } : null);
+        }
+      }
+    }, '*', { column: 'id', value: user.id });
 
-    if (cached && cached.id === userId) {
-      console.log('✅ [AuthContext] Using cached profile (Instant Load)');
-      setUser(cached);
-      userRef.current = cached;
-      setIsLoading(false);
+    profileChannelRef.current = profileChannel;
 
-      if (!shouldFetch) {
+    return () => {
+      if (profileChannelRef.current) {
+        unsubscribe(profileChannelRef.current);
+        profileChannelRef.current = null;
+      }
+    };
+  }, [user?.id]);
+
+  // Real-time subscription for company status changes
+  useEffect(() => {
+    if (!user?.company_id || user.role === 'system_administrator') {
+      if (companyChannelRef.current) {
+        unsubscribe(companyChannelRef.current);
+        companyChannelRef.current = null;
+      }
+      return;
+    }
+
+    // Subscribe to company status updates
+    const companyChannel = subscribeToTable('companies', (payload: any) => {
+      if (payload.new && payload.new.id === user.company_id) {
+        console.log('Company status updated:', payload);
+        
+        if (payload.new.status === 'inactive') {
+          console.warn('❌ Company is inactive, logging out');
+          logout();
+          toast({
+            title: "Access Denied",
+            description: "Your company account has been deactivated. Please contact your system administrator.",
+            variant: "destructive",
+          });
+        }
+      }
+    }, '*', { column: 'id', value: user.company_id });
+
+    companyChannelRef.current = companyChannel;
+
+    return () => {
+      if (companyChannelRef.current) {
+        unsubscribe(companyChannelRef.current);
+        companyChannelRef.current = null;
+      }
+    };
+  }, [user?.company_id, user?.role]);
+
+  const loadUserProfile = async (authUser: any): Promise<void> => {
+    try {
+      console.log('👤 [AuthContext] Loading user profile for', authUser.id);
+      
+      // If we already have this user loaded, skip the fetch but ensure loading is false
+      if (userRef.current?.id === authUser.id) {
+        console.log('✅ [AuthContext] User already in memory, skipping fetch');
+        // Don't set loading to false here - it should already be false
+        // But ensure user state is set (in case of race condition)
+        if (!user) {
+          setUser(userRef.current);
+        }
         return;
       }
 
-      console.log('🔄 [AuthContext] Cache is stale, refreshing in background...');
-    } else {
-      console.log('🔍 [AuthContext] No cache found, fetching from DB...');
+      // Set loading to true only if we're actually going to fetch
       setIsLoading(true);
-    }
 
-    // DB Fetch with network error handling
-    try {
-      const { data: profileData, error } = await supabase
+      // Run profile query with a safety timeout so we never hang forever
+      // Reduced timeout to 5 seconds for faster fallback on slow connections
+      const profilePromise = supabase
         .from('profiles')
         .select(`
           id, email, full_name, role, status, company_id, phone, region, city, address, country, avatar_url, created_at, updated_at,
           companies (status)
         `)
-        .eq('id', userId)
+        .eq('id', authUser.id)
         .maybeSingle();
+
+      const { data: profileData, error } = await withTimeout(
+        profilePromise as unknown as Promise<{ data: any; error: any }>,
+        5000, // Reduced from 8000 to 5000 for faster recovery
+        '[AuthContext] Profile fetch timed out'
+      );
 
       if (error) {
         console.error('⚠️ [AuthContext] Profile fetch failed:', error);
 
-        // NEW: Check if it's a network error
-        if (error.message?.includes('fetch') || error.message?.includes('Failed to fetch')) {
-          console.log('🌐 [AuthContext] Network error, keeping cached profile');
-          setIsOffline(true);
+        // Fallback: if we at least have the auth user, create a minimal profile
+        const metadata = authUser.user_metadata || {};
+        const basicUser: User = {
+          id: authUser.id,
+          email: authUser.email || '',
+          full_name: metadata.full_name || metadata.name || 'User',
+          role: metadata.role || 'mobile_sales',
+          status: 'active',
+          company_id: metadata.company_id,
+          phone: metadata.phone,
+          region: metadata.region,
+          city: metadata.city,
+          address: metadata.address,
+          country: metadata.country,
+          avatar_url: metadata.avatar_url,
+          created_at: authUser.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as User;
 
-          // Keep using cached profile if available
-          if (cached) {
-            setIsLoading(false);
-            return;
-          }
-        }
-
-        // Fallback to basic user from session metadata
-        if (!userRef.current) {
-          const metadata = session.user.user_metadata;
-          const basicUser: User = {
-            id: userId,
-            email: session.user.email || '',
-            role: metadata?.role || 'mobile_sales',
-            status: 'active',
-            full_name: metadata?.full_name || 'User',
-            company_id: metadata?.company_id || undefined,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          setUser(basicUser);
-          userRef.current = basicUser;
-        }
+        console.warn('⚠️ [AuthContext] Using basic auth user as fallback profile');
+        setUser(basicUser);
+        userRef.current = basicUser;
+        setCachedProfile(basicUser); // Cache fallback too
         setIsLoading(false);
         return;
       }
 
       if (!profileData) {
         console.warn('⚠️ [AuthContext] Profile not found');
-        if (!userRef.current) {
-          const metadata = session.user.user_metadata;
-          const basicUser: User = {
-            id: userId,
-            email: session.user.email || '',
-            role: metadata?.role || 'mobile_sales',
-            status: 'active',
-            full_name: metadata?.full_name || 'User',
-            company_id: metadata?.company_id || undefined,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          setUser(basicUser);
-          userRef.current = basicUser;
-        }
         setIsLoading(false);
         return;
       }
@@ -552,7 +309,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         userRef.current = null;
         setIsLoading(false);
         await supabase.auth.signOut();
-        toast({ title: "Access Denied", description: "Your account is not active.", variant: "destructive" });
+        toast({ 
+          title: "Access Denied", 
+          description: "Your account is not active.", 
+          variant: "destructive" 
+        });
         return;
       }
 
@@ -565,73 +326,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
           userRef.current = null;
           setIsLoading(false);
-          toast({ title: "Access Denied", description: "Company account deactivated.", variant: "destructive" });
+          toast({ 
+            title: "Access Denied", 
+            description: "Company account deactivated.", 
+            variant: "destructive" 
+          });
           return;
         }
       }
 
       // Valid profile - update state and cache
-      console.log('✅ [AuthContext] Profile refreshed from DB');
       const { companies, ...profile } = profileData;
       const updatedUser = profile as User;
 
+      console.log('✅ [AuthContext] Profile loaded for', updatedUser.id, 'role', updatedUser.role);
       setUser(updatedUser);
       userRef.current = updatedUser;
-      setCachedProfile(updatedUser);
-      setupCompanyListener(updatedUser);
-
-      // Clear offline state if we successfully fetched
-      setIsOffline(false);
-
-    } catch (error: any) {
-      console.error('❌ [AuthContext] Profile fetch exception:', error);
-
-      // NEW: Network error handling
-      if (error.message?.includes('fetch') || error.message?.includes('network')) {
-        console.log('🌐 [AuthContext] Network error, using cached profile');
-        setIsOffline(true);
-
-        if (cached) {
-          // Keep using cached profile
-          setIsLoading(false);
-          return;
-        }
-      }
-    } finally {
+      setCachedProfile(updatedUser); // Cache for next time
       setIsLoading(false);
-    }
-  };
-
-  const setupCompanyListener = (user: User) => {
-    if (user.company_id && user.role !== 'system_administrator') {
-      if ((window as any).companyStatusChannel) {
-        unsubscribe((window as any).companyStatusChannel);
-      }
-
-      try {
-        const companyChannel = subscribeToTable('companies', async (payload: any) => {
-          if (payload.new?.id === user.company_id || payload.old?.id === user.company_id) {
-            if (payload.new?.status === 'inactive') {
-              console.warn('❌ [AuthContext] Company inactive via real-time, logging out');
-              await supabase.auth.signOut();
-              setUser(null);
-              userRef.current = null;
-              window.location.href = '/login';
-            }
-          }
-        });
-        (window as any).companyStatusChannel = companyChannel;
-      } catch (error) {
-        console.warn('⚠️ [AuthContext] Failed to setup realtime listener:', error);
-        // Don't fail the whole auth flow if realtime fails
-      }
+    } catch (error) {
+      console.error('❌ [AuthContext] Profile fetch exception:', error);
+      setIsLoading(false);
     }
   };
 
   const login = async (email: string, password: string): Promise<LoginResult> => {
     try {
       setIsLoading(true);
-      localStorage.removeItem('just_logged_out');
 
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -642,7 +363,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('Login error:', error);
         setIsLoading(false);
 
-        // NEW: Better error messages for network issues
         if (error.message?.includes('fetch') || error.message?.includes('network')) {
           return { success: false, error: 'network_error' };
         }
@@ -659,7 +379,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (profileError) {
           console.error('Error fetching profile during login:', profileError);
-        } else if (profile) {
+          setIsLoading(false);
+          return { success: false, error: 'invalid_credentials' };
+        }
+
+        if (profile) {
           if (profile.status !== 'active') {
             await supabase.auth.signOut();
             setIsLoading(false);
@@ -677,6 +401,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Profile will be loaded by onAuthStateChange handler
       return { success: true };
     } catch (error) {
       console.error('Login exception:', error);
@@ -686,47 +411,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    console.group('🚪 [AuthContext] Logout initiated');
-    console.trace('Logout caller trace');
-    console.groupEnd();
-
     try {
-      localStorage.setItem('just_logged_out', 'true');
-
-      if ((window as any).companyStatusChannel) {
-        unsubscribe((window as any).companyStatusChannel);
-        (window as any).companyStatusChannel = null;
+      // Clean up real-time subscriptions
+      if (companyChannelRef.current) {
+        unsubscribe(companyChannelRef.current);
+        companyChannelRef.current = null;
       }
-
-      clearProfileCache();
-      stopTokenMonitoring();
+      if (profileChannelRef.current) {
+        unsubscribe(profileChannelRef.current);
+        profileChannelRef.current = null;
+      }
 
       setUser(null);
       userRef.current = null;
       setIsLoading(false);
+      setImpersonatedCompany(null);
+      sessionStorage.removeItem('impersonated_company');
+      clearProfileCache(); // Clear cached profile on logout
 
-      // Clear Supabase auth tokens (let Supabase manage its own keys)
-      console.log('🚪 [AuthContext] Calling supabase.auth.signOut()...');
-      await supabase.auth.signOut({ scope: 'local' });
-      console.log('✅ [AuthContext] SignOut complete');
-
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      console.log('👋 [AuthContext] Logout complete, redirecting...');
+      await supabase.auth.signOut();
       window.location.href = '/login';
     } catch (error) {
       console.error('❌ [AuthContext] Logout error:', error);
-
       setUser(null);
       userRef.current = null;
-      clearProfileCache();
-
-      localStorage.setItem('just_logged_out', 'true');
+      setIsLoading(false);
       window.location.href = '/login';
     }
   };
 
-  const startImpersonation = (company: any) => {
+  const startImpersonation = (company: Company) => {
     setImpersonatedCompany(company);
     sessionStorage.setItem('impersonated_company', JSON.stringify(company));
     toast({
@@ -759,21 +473,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        await loadUserProfile(session, true);
+        await loadUserProfile(session.user);
       }
     } catch (error) {
       console.error('Refresh profile error:', error);
-
-      // NEW: Handle network errors gracefully
-      if (error instanceof Error &&
-        (error.message?.includes('fetch') || error.message?.includes('network'))) {
-        setIsOffline(true);
-        toast({
-          title: 'Connection Lost',
-          description: 'Unable to refresh profile. You may be offline.',
-          variant: 'destructive',
-        });
-      }
     }
   };
 
@@ -788,30 +491,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       stopImpersonation,
       isAuthenticated: !!user,
       isLoading,
-      isInitialized,
-      isOffline, // NEW: Expose offline state
+      isInitialized: !isLoading, // Backward compatibility
+      isOffline: false,
     } as any}>
-      {!isInitialized ? (
-        <div className="flex h-screen w-full items-center justify-center bg-background">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm font-medium text-muted-foreground animate-pulse">
-              Initializing application...
-            </p>
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* NEW: Offline indicator */}
-          {isOffline && (
-            <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500 text-white px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
-              <WifiOff className="h-4 w-4" />
-              You are offline. Some features may be limited.
-            </div>
-          )}
-          {children}
-        </>
-      )}
+      {children}
     </AuthContext.Provider>
   );
 }
