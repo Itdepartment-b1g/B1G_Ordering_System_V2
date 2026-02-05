@@ -9,6 +9,10 @@ export interface WarRoomClient {
   company: string;
   account_type: 'Key Accounts' | 'Standard Accounts';
   has_forge: boolean;
+  // Brands this client is holding (from clients.brand_ids)
+  brand_ids: string[];
+  // Owning agent's role (for filtering by team level)
+  agent_role?: string | null;
   location_latitude: number;
   location_longitude: number;
   address: string;
@@ -18,6 +22,7 @@ export interface WarRoomClient {
   phone: string;
   total_orders: number;
   total_spent: number;
+  total_visits: number;
 }
 
 export function useWarRoomClients() {
@@ -36,7 +41,23 @@ export function useWarRoomClients() {
       try {
         const { data, error: fetchError } = await supabase
           .from('clients')
-          .select('id, name, company, account_type, has_forge, location_latitude, location_longitude, address, email, phone, total_orders, total_spent')
+          .select(`
+            id,
+            name,
+            company,
+            account_type,
+            has_forge,
+            brand_ids,
+            location_latitude,
+            location_longitude,
+            address,
+            email,
+            phone,
+            total_orders,
+            total_spent,
+            visit_logs (count),
+            agent:profiles!clients_agent_id_fkey (role)
+          `)
           .eq('company_id', user.company_id)
           .eq('status', 'active')
           .eq('approval_status', 'approved')
@@ -51,6 +72,8 @@ export function useWarRoomClients() {
           const addressParts = client.address?.split(',').map(s => s.trim()) || [];
           const city = addressParts.length > 1 ? addressParts[addressParts.length - 2] : 'Unknown';
           const region = addressParts.length > 0 ? addressParts[addressParts.length - 1] : 'Unknown';
+          const totalVisits = client.visit_logs?.[0]?.count || 0;
+          const agentRole = client.agent?.role || null;
 
           return {
             id: client.id,
@@ -58,6 +81,8 @@ export function useWarRoomClients() {
             company: client.company || 'N/A',
             account_type: client.account_type,
             has_forge: client.has_forge,
+            brand_ids: client.brand_ids || [],
+            agent_role: agentRole,
             location_latitude: client.location_latitude!,
             location_longitude: client.location_longitude!,
             address: client.address || 'No address provided',
@@ -67,6 +92,7 @@ export function useWarRoomClients() {
             phone: client.phone || 'N/A',
             total_orders: client.total_orders || 0,
             total_spent: client.total_spent || 0,
+            total_visits: totalVisits,
           };
         });
 

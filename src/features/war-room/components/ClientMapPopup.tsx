@@ -1,6 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Building2, MapPin, Mail, Phone, Package, DollarSign, Flame } from 'lucide-react';
+import { Building2, MapPin, Mail, Phone, Package, DollarSign, Flame, Footprints } from 'lucide-react';
 import { WarRoomClient } from '../hooks/useWarRoomClients';
 
 interface ClientMapPopupProps {
@@ -77,8 +77,8 @@ export function ClientMapPopup({ client, open, onOpenChange }: ClientMapPopupPro
           </div>
 
           {/* Statistics */}
-          {(client.total_orders !== undefined || client.total_spent !== undefined) && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {(client.total_orders !== undefined || client.total_spent !== undefined || client.total_visits !== undefined) && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {client.total_orders !== undefined && (
                 <div className="bg-blue-50 p-4 rounded-lg">
                   <div className="flex items-center gap-2 text-blue-700">
@@ -97,6 +97,17 @@ export function ClientMapPopup({ client, open, onOpenChange }: ClientMapPopupPro
                     <div>
                       <p className="text-2xl font-bold">{formatCurrency(client.total_spent)}</p>
                       <p className="text-sm">Total Spent</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {client.total_visits !== undefined && (
+                <div className="bg-purple-50 p-4 rounded-lg">
+                  <div className="flex items-center gap-2 text-purple-700">
+                    <Footprints className="h-5 w-5" />
+                    <div>
+                      <p className="text-2xl font-bold">{client.total_visits}</p>
+                      <p className="text-sm">Total Visits</p>
                     </div>
                   </div>
                 </div>

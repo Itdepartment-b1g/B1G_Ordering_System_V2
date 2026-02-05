@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { WarRoomMap } from './components/WarRoomMap';
 import { WarRoomFilters } from './components/WarRoomFilters';
@@ -7,16 +7,54 @@ import { WarRoomStats } from './components/WarRoomStats';
 import { ClientMapPopup } from './components/ClientMapPopup';
 import { useWarRoomClients, WarRoomClient } from './hooks/useWarRoomClients';
 import { Card } from '@/components/ui/card';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/features/auth';
 
 export function WarRoomPage() {
   const { clients, loading, error } = useWarRoomClients();
+  const { user } = useAuth();
   const [selectedClient, setSelectedClient] = useState<WarRoomClient | null>(null);
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   
   // Filter states
   const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | 'Key Accounts' | 'Standard Accounts'>('all');
-  const [hasForgeFilter, setHasForgeFilter] = useState<'all' | 'yes' | 'no'>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'mobile_sales' | 'team_leader' | 'manager'>('all');
+  const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
+  const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Fetch all brands for this company for the brands filter
+  useEffect(() => {
+    if (!user?.company_id) return;
+
+    let cancelled = false;
+
+    const fetchBrands = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('brands')
+          .select('id, name')
+          .eq('company_id', user.company_id)
+          .order('name');
+
+        if (error) throw error;
+        if (!cancelled) {
+          setBrands(data || []);
+        }
+      } catch (err) {
+        console.error('Error fetching brands for War Room filter:', err);
+        if (!cancelled) {
+          setBrands([]);
+        }
+      }
+    };
+
+    fetchBrands();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.company_id]);
 
   // Filter clients based on all filters
   const filteredClients = useMemo(() => {
@@ -26,12 +64,23 @@ export function WarRoomPage() {
         return false;
       }
 
-      // Has forge filter
-      if (hasForgeFilter === 'yes' && !client.has_forge) {
-        return false;
+      // Team role filter (based on owning agent's role)
+      if (roleFilter !== 'all') {
+        const role = (client.agent_role || '').toLowerCase();
+        if (role !== roleFilter) {
+          return false;
+        }
       }
-      if (hasForgeFilter === 'no' && client.has_forge) {
-        return false;
+
+      // Brands filter: client must carry at least one of the selected brands
+      if (selectedBrandIds.length > 0) {
+        const clientBrands = client.brand_ids || [];
+        const hasAnySelectedBrand = clientBrands.some((id) =>
+          selectedBrandIds.includes(id)
+        );
+        if (!hasAnySelectedBrand) {
+          return false;
+        }
       }
 
       // Search query filter
@@ -49,7 +98,7 @@ export function WarRoomPage() {
 
       return true;
     });
-  }, [clients, accountTypeFilter, hasForgeFilter, searchQuery]);
+  }, [clients, accountTypeFilter, roleFilter, selectedBrandIds, searchQuery]);
 
   const handleClientClick = (client: WarRoomClient) => {
     setSelectedClient(client);
@@ -141,10 +190,17 @@ export function WarRoomPage() {
             <div className="lg:col-span-3 overflow-y-auto">
               <WarRoomFilters
                 accountTypeFilter={accountTypeFilter}
-                hasForgeFilter={hasForgeFilter}
+                roleFilter={roleFilter}
+                brands={brands}
+                selectedBrandIds={selectedBrandIds}
                 searchQuery={searchQuery}
                 onAccountTypeChange={setAccountTypeFilter}
-                onHasForgeChange={setHasForgeFilter}
+                onRoleChange={setRoleFilter}
+                onBrandToggle={(brandId, checked) => {
+                  setSelectedBrandIds((prev) =>
+                    checked ? [...prev, brandId] : prev.filter((id) => id !== brandId)
+                  );
+                }}
                 onSearchChange={setSearchQuery}
               />
             </div>

@@ -2,23 +2,30 @@ import { Card } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Search } from 'lucide-react';
 
 interface WarRoomFiltersProps {
   accountTypeFilter: 'all' | 'Key Accounts' | 'Standard Accounts';
-  hasForgeFilter: 'all' | 'yes' | 'no';
+  roleFilter: 'all' | 'mobile_sales' | 'team_leader' | 'manager';
+  brands: { id: string; name: string }[];
+  selectedBrandIds: string[];
   searchQuery: string;
   onAccountTypeChange: (value: 'all' | 'Key Accounts' | 'Standard Accounts') => void;
-  onHasForgeChange: (value: 'all' | 'yes' | 'no') => void;
+  onRoleChange: (value: 'all' | 'mobile_sales' | 'team_leader' | 'manager') => void;
+  onBrandToggle: (brandId: string, checked: boolean) => void;
   onSearchChange: (value: string) => void;
 }
 
 export function WarRoomFilters({
   accountTypeFilter,
-  hasForgeFilter,
+  roleFilter,
+  brands,
+  selectedBrandIds,
   searchQuery,
   onAccountTypeChange,
-  onHasForgeChange,
+  onRoleChange,
+  onBrandToggle,
   onSearchChange
 }: WarRoomFiltersProps) {
   return (
@@ -62,26 +69,58 @@ export function WarRoomFilters({
         </RadioGroup>
       </div>
 
-      {/* Has Forge Filter */}
+      {/* Brands Filter */}
       <div>
-        <Label className="mb-2 block">Forge Status</Label>
-        <RadioGroup value={hasForgeFilter} onValueChange={onHasForgeChange}>
+        <Label className="mb-2 block">Brands Client is Holding</Label>
+        {brands.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No brands configured for this company.</p>
+        ) : (
+          <div className="space-y-2 max-h-40 overflow-y-auto border rounded-md p-3">
+            {brands.map((brand) => (
+              <div key={brand.id} className="flex items-center space-x-2">
+                <Checkbox
+                  id={`warroom-brand-${brand.id}`}
+                  checked={selectedBrandIds.includes(brand.id)}
+                  onCheckedChange={(checked) => onBrandToggle(brand.id, !!checked)}
+                />
+                <Label
+                  htmlFor={`warroom-brand-${brand.id}`}
+                  className="font-normal text-sm cursor-pointer"
+                >
+                  {brand.name}
+                </Label>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Team Role Filter */}
+      <div>
+        <Label className="mb-2 block">Team Role</Label>
+        <RadioGroup value={roleFilter} onValueChange={onRoleChange}>
           <div className="flex items-center space-x-2">
-            <RadioGroupItem value="all" id="forge-all" />
-            <Label htmlFor="forge-all" className="font-normal cursor-pointer">
-              All Status
+            <RadioGroupItem value="all" id="role-all" />
+            <Label htmlFor="role-all" className="font-normal cursor-pointer">
+              All Roles
             </Label>
           </div>
           <div className="flex items-center space-x-2">
-            <RadioGroupItem value="yes" id="forge-yes" />
-            <Label htmlFor="forge-yes" className="font-normal cursor-pointer">
-              Has Forge
+            <RadioGroupItem value="mobile_sales" id="role-mobile" />
+            <Label htmlFor="role-mobile" className="font-normal cursor-pointer">
+              Mobile Sales
             </Label>
           </div>
           <div className="flex items-center space-x-2">
-            <RadioGroupItem value="no" id="forge-no" />
-            <Label htmlFor="forge-no" className="font-normal cursor-pointer">
-              No Forge
+            <RadioGroupItem value="team_leader" id="role-leader" />
+            <Label htmlFor="role-leader" className="font-normal cursor-pointer">
+              Team Leaders
+            </Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="manager" id="role-manager" />
+            <Label htmlFor="role-manager" className="font-normal cursor-pointer">
+              Managers
             </Label>
           </div>
         </RadioGroup>
