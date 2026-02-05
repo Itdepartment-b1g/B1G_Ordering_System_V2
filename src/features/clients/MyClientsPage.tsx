@@ -42,6 +42,7 @@ export default function MyClientsPage() {
     .filter((c) => c.length > 0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
@@ -104,6 +105,8 @@ export default function MyClientsPage() {
 
   // Update Confirmation States
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
@@ -166,9 +169,11 @@ export default function MyClientsPage() {
     setUpdateConfirmOpen(true);
   };
 
-  const handleConfirmUpdate = async () => {
+  const handleConfirmUpdate = async (e: React.MouseEvent) => {
+    e.preventDefault();
     if (!editingClient) return;
 
+    setIsUpdating(true);
     try {
       // Handle photo upload if there's a new photo
       let photoUrl = editForm.photo;
@@ -220,7 +225,6 @@ export default function MyClientsPage() {
         }
 
         photoUrl = urlData.signedUrl;
-        photoUrl = null;
       }
 
       // Handle COR Upload if new photo is selected (reuse logic or add similar block)
@@ -293,6 +297,8 @@ export default function MyClientsPage() {
         description: 'Failed to update client. Please try again.',
         variant: 'destructive'
       });
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -301,9 +307,11 @@ export default function MyClientsPage() {
     setDeleteDialogOpen(true);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async (e: React.MouseEvent) => {
+    e.preventDefault();
     if (!clientToDelete) return;
 
+    setIsDeleting(true);
     try {
       const { error } = await supabase
         .from('clients')
@@ -328,6 +336,8 @@ export default function MyClientsPage() {
         description: 'Failed to delete client. Please try again.',
         variant: 'destructive'
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -1215,6 +1225,7 @@ export default function MyClientsPage() {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       // Upload photo to Supabase Storage
       let photoUrl = null;
@@ -1398,6 +1409,8 @@ export default function MyClientsPage() {
         description: errorMessage,
         variant: 'destructive'
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1835,8 +1848,15 @@ export default function MyClientsPage() {
                 )}
               </div>
 
-              <Button className="w-full" onClick={handleAddClient}>
-                Add Client
+              <Button className="w-full" onClick={handleAddClient} disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Adding Client...
+                  </>
+                ) : (
+                  'Add Client'
+                )}
               </Button>
             </div>
           </DialogContent>
@@ -2594,8 +2614,15 @@ export default function MyClientsPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmUpdate}>
-              Confirm Update
+            <AlertDialogAction onClick={handleConfirmUpdate} disabled={isUpdating}>
+              {isUpdating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                'Confirm Update'
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2613,8 +2640,15 @@ export default function MyClientsPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Remove Client
+            <AlertDialogAction onClick={handleConfirmDelete} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Removing...
+                </>
+              ) : (
+                'Remove Client'
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
