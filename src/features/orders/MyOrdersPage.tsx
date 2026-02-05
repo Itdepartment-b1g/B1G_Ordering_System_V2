@@ -976,7 +976,8 @@ export default function MyOrdersPage() {
           paymentMethod: paymentMethod,
           paymentProofUrl: paymentProofUrl,
           pricingStrategy: pricingType,
-          requestSalesInvoice: requestSalesInvoice
+          requestSalesInvoice: requestSalesInvoice,
+          companyId: user.company_id
         });
 
         setEmailSentSuccessfully(true);

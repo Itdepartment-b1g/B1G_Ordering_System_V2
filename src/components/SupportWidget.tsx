@@ -267,27 +267,27 @@ Provide a helpful response:`;
                             minute: '2-digit' 
                           })}
                         </span>
-                      </div>
+                </div>
                     </motion.div>
                   ))}
-                  
+
                   {isLoading && (
-                    <motion.div
+                <motion.div 
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="flex gap-3 items-start"
-                    >
+                  className="flex gap-3 items-start"
+                >
                       <Avatar className="h-8 w-8 border-2 border-primary/10 shrink-0">
-                        <AvatarFallback className="bg-primary/10 text-primary">
-                          <Bot className="h-4 w-4" />
-                        </AvatarFallback>
-                      </Avatar>
+                    <AvatarFallback className="bg-primary/10 text-primary">
+                        <Bot className="h-4 w-4" />
+                    </AvatarFallback>
+                  </Avatar>
                       <div className="bg-muted/50 p-3 rounded-2xl rounded-tl-none text-sm border border-border/50">
                         <Loader2 className="h-4 w-4 animate-spin" />
-                      </div>
-                    </motion.div>
+                  </div>
+                </motion.div>
                   )}
-                  
+                
                   <div ref={messagesEndRef} />
                 </div>
               </CardContent>
@@ -315,7 +315,7 @@ Provide a helpful response:`;
                     {isLoading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
-                      <Send className="h-4 w-4" />
+                    <Send className="h-4 w-4" />
                     )}
                   </Button>
                 </div>

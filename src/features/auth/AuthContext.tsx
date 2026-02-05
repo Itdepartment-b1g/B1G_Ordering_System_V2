@@ -101,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
-
+      
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
       if (session?.user) {
@@ -165,8 +165,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         unsubscribe(profileChannelRef.current);
         profileChannelRef.current = null;
       }
-      return;
-    }
+              return;
+            }
 
     // Subscribe to profile updates
     const profileChannel = subscribeToTable('profiles', (payload: any) => {
@@ -200,9 +200,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (companyChannelRef.current) {
         unsubscribe(companyChannelRef.current);
         companyChannelRef.current = null;
+        }
+        return;
       }
-      return;
-    }
 
     // Subscribe to company status updates
     const companyChannel = subscribeToTable('companies', (payload: any) => {
@@ -271,12 +271,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Fallback: if we at least have the auth user, create a minimal profile
         const metadata = authUser.user_metadata || {};
-        const basicUser: User = {
+          const basicUser: User = {
           id: authUser.id,
           email: authUser.email || '',
           full_name: metadata.full_name || metadata.name || 'User',
           role: metadata.role || 'mobile_sales',
-          status: 'active',
+            status: 'active',
           company_id: metadata.company_id,
           phone: metadata.phone,
           region: metadata.region,
@@ -285,12 +285,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           country: metadata.country,
           avatar_url: metadata.avatar_url,
           created_at: authUser.created_at || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
         } as User;
 
         console.warn('⚠️ [AuthContext] Using basic auth user as fallback profile');
-        setUser(basicUser);
-        userRef.current = basicUser;
+          setUser(basicUser);
+          userRef.current = basicUser;
         setCachedProfile(basicUser); // Cache fallback too
         setIsLoading(false);
         return;
@@ -494,7 +494,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isInitialized: !isLoading, // Backward compatibility
       isOffline: false,
     } as any}>
-      {children}
+          {children}
     </AuthContext.Provider>
   );
 }

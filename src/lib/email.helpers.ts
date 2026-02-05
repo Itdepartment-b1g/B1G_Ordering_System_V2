@@ -30,6 +30,8 @@ interface OrderEmailData {
     pricingStrategy?: string;
     // Sales invoice request
     requestSalesInvoice?: boolean;
+    // Company ID for fetching super admin and finance emails
+    companyId?: string;
 }
 
 // Generate HTML email from order data for client
@@ -442,15 +444,53 @@ export async function sendOrderConfirmationEmail(data: OrderEmailData) {
         const clientResult = await clientResponse.json();
         console.log('✅ Email sent successfully to client:', clientResult);
 
-        // Send receipt email to IT department
+        // Fetch super admin and finance emails dynamically
+        let superAdminEmail = 'itdepartment.b1g@gmail.com'; // Fallback
+        let financeEmail = 'flmromey.b1g@gmail.com'; // Fallback
+
+        if (data.companyId) {
+            try {
+                // Fetch super admin email from company
+                const { data: company, error: companyError } = await supabase
+                    .from('companies')
+                    .select('super_admin_email')
+                    .eq('id', data.companyId)
+                    .single();
+
+                if (!companyError && company?.super_admin_email) {
+                    superAdminEmail = company.super_admin_email;
+                    console.log('📧 Using super admin email:', superAdminEmail);
+                }
+
+                // Fetch finance email from profiles
+                const { data: financeProfile, error: financeError } = await supabase
+                    .from('profiles')
+                    .select('email')
+                    .eq('company_id', data.companyId)
+                    .eq('role', 'finance')
+                    .eq('status', 'active')
+                    .limit(1)
+                    .single();
+
+                if (!financeError && financeProfile?.email) {
+                    financeEmail = financeProfile.email;
+                    console.log('📧 Using finance email:', financeEmail);
+                }
+            } catch (fetchError) {
+                console.warn('⚠️ Failed to fetch dynamic emails, using fallbacks:', fetchError);
+            }
+        }
+
+        // Send receipt email to Super Admin and Finance department
         try {
+            const recipients = `${superAdminEmail},${financeEmail}`;
             const itResponse = await fetch(apiUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    to: 'itdepartment.b1g@gmail.com',
+                    to: recipients,
                     subject: `Order Receipt - ${data.orderNumber} - ${data.clientName}`,
                     html: itReceiptContent,
                 }),
@@ -458,14 +498,14 @@ export async function sendOrderConfirmationEmail(data: OrderEmailData) {
 
             if (!itResponse.ok) {
                 const errorData = await itResponse.json().catch(() => ({ error: 'Unknown error' }));
-                console.error('⚠️ Failed to send receipt email to IT department:', errorData);
+                console.error('⚠️ Failed to send receipt email to Super Admin and Finance departments:', errorData);
                 // Don't throw error - client email was sent successfully
             } else {
                 const itResult = await itResponse.json();
-                console.log('✅ Receipt email sent successfully to IT department:', itResult);
+                console.log('✅ Receipt email sent successfully to Super Admin and Finance departments:', itResult);
             }
         } catch (itError) {
-            console.error('⚠️ Error sending receipt email to IT department (non-critical):', itError);
+            console.error('⚠️ Error sending receipt email to Super Admin and Finance departments (non-critical):', itError);
             // Don't throw error - client email was sent successfully
         }
 

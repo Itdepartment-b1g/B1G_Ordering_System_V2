@@ -43,7 +43,9 @@ interface NewPOItem {
     brandName: string;
     variantId: string; // 'new' or UUID
     variantName: string;
-    variantType: 'flavor' | 'battery' | 'posm';
+    // Value from `variant_types.name` (e.g. 'flavor', 'battery', 'posm')
+    // Stored as string so UI can handle empty variant type configuration gracefully.
+    variantType: string;
     quantity: number;
     unitPrice: number;
 }
@@ -92,12 +94,17 @@ export function CreatePurchaseOrderDialog({
     const [clearAllOpen, setClearAllOpen] = useState(false);
 
     // Variant Types for new item creation
-    const [variantTypes, setVariantTypes] = useState<{ id: string, name: string }[]>([]);
+    const [variantTypes, setVariantTypes] = useState<{ id: string; name: string; display_name?: string }[]>([]);
 
     useEffect(() => {
         if (open && user?.company_id) {
-            supabase.from('variant_types').select('id, name').eq('company_id', user.company_id)
-                .then(({ data }) => setVariantTypes(data || []));
+            supabase
+                .from('variant_types')
+                .select('id, name, display_name, is_active, sort_order')
+                .eq('company_id', user.company_id)
+                .eq('is_active', true)
+                .order('sort_order', { ascending: true })
+                .then(({ data }) => setVariantTypes((data as any) || []));
         }
     }, [open, user?.company_id]);
 
@@ -120,13 +127,14 @@ export function CreatePurchaseOrderDialog({
 
     // Handlers
     const handleAddItem = () => {
+        const defaultVariantType = variantTypes[0]?.name || '';
         const newItem: NewPOItem = {
             id: crypto.randomUUID(),
             brandId: '',
             brandName: '',
             variantId: '',
             variantName: '',
-            variantType: 'flavor',
+            variantType: defaultVariantType,
             quantity: 0,
             unitPrice: 0,
         };
@@ -300,7 +308,7 @@ export function CreatePurchaseOrderDialog({
                     if (existingVar) {
                         finalVariantId = existingVar.id;
                     } else {
-                        const vt = variantTypes.find(t => t.name.toLowerCase() === item.variantType.toLowerCase());
+                        const vt = variantTypes.find(t => t.name.toLowerCase() === String(item.variantType).toLowerCase());
                         if (!vt) throw new Error(`Variant type ${item.variantType} not found in system`);
 
                         const { data: newVar, error: varErr } = await supabase
@@ -510,14 +518,23 @@ export function CreatePurchaseOrderDialog({
                                                     <Select
                                                         value={item.variantType}
                                                         onValueChange={(val) => updateItem(item.id, 'variantType', val)}
+                                                        disabled={variantTypes.length === 0}
                                                     >
                                                         <SelectTrigger className="h-8">
-                                                            <SelectValue />
+                                                            <SelectValue placeholder={variantTypes.length === 0 ? 'No types' : 'Select type'} />
                                                         </SelectTrigger>
                                                         <SelectContent>
-                                                            <SelectItem value="flavor">Flavor</SelectItem>
-                                                            <SelectItem value="battery">Battery</SelectItem>
-                                                            <SelectItem value="posm">POSM</SelectItem>
+                                                            {variantTypes.length === 0 ? (
+                                                                <div className="px-2 py-2 text-xs text-muted-foreground">
+                                                                    No variant types configured.
+                                                                </div>
+                                                            ) : (
+                                                                variantTypes.map((vt) => (
+                                                                    <SelectItem key={vt.id} value={vt.name}>
+                                                                        {vt.display_name || vt.name}
+                                                                    </SelectItem>
+                                                                ))
+                                                            )}
                                                         </SelectContent>
                                                     </Select>
                                                 </TableCell>

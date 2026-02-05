@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
@@ -48,9 +49,11 @@ export default function MyClientsPage() {
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
-    has_forge: false
+    has_forge: false,
+    brand_ids: [] as string[]
   });
 
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const corFileInputRef = useRef<HTMLInputElement>(null);
   const [newCorPhoto, setNewCorPhoto] = useState<string | null>(null);
@@ -1094,6 +1097,48 @@ export default function MyClientsPage() {
     }
   };
 
+  // Fetch brands for the company
+  const fetchBrands = async () => {
+    if (!user?.company_id) {
+      console.log('No company_id found, cannot fetch brands');
+      setBrands([]);
+      return;
+    }
+    
+    try {
+      console.log('Fetching brands for company_id:', user.company_id);
+      const { data, error } = await supabase
+        .from('brands')
+        .select('id, name')
+        .eq('company_id', user.company_id)
+        .order('name');
+      
+      if (error) {
+        console.error('Error fetching brands:', error);
+        throw error;
+      }
+      
+      console.log('Fetched brands:', data);
+      console.log('Number of brands found:', data?.length || 0);
+      
+      if (data && data.length > 0) {
+        setBrands(data);
+      } else {
+        console.log('No brands found for company_id:', user.company_id);
+        setBrands([]);
+      }
+    } catch (error: any) {
+      console.error('Error fetching brands:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+      setBrands([]);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -1106,7 +1151,8 @@ export default function MyClientsPage() {
       tin: '',
       account_type: 'Standard Accounts',
       category: 'Open',
-      has_forge: false
+      has_forge: false,
+      brand_ids: []
     });
     setNewClientPhoto(null);
     setCapturedLocation(null);
@@ -1332,6 +1378,7 @@ export default function MyClientsPage() {
           account_type: formData.account_type,
           category: formData.category,
           has_forge: formData.has_forge,
+          brand_ids: formData.brand_ids.length > 0 ? formData.brand_ids : null,
           cor_url: corUrl,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
@@ -1426,6 +1473,9 @@ export default function MyClientsPage() {
             startLocationPrewarm();
           } else {
             resetForm();
+          }
+          if (open) {
+            fetchBrands(); // Fetch brands when dialog opens
           }
         }}>
           <DialogTrigger asChild>
@@ -1786,27 +1836,50 @@ export default function MyClientsPage() {
                 </Select>
               </div>
 
-              {/* Has Forge Field */}
-              <div className="space-y-3">
-                <Label>Has Forge?</Label>
-                <RadioGroup
-                  value={formData.has_forge ? 'yes' : 'no'}
-                  onValueChange={(value) => setFormData({ ...formData, has_forge: value === 'yes' })}
-                  className="flex gap-4"
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="yes" id="add-has-forge-yes" />
-                    <Label htmlFor="add-has-forge-yes" className="font-normal cursor-pointer">
-                      Yes
-                    </Label>
+              {/* Brands Selection */}
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
+                <p className="text-xs text-muted-foreground">Select all brands/products this client is currently holding</p>
+                {brands.length > 0 ? (
+                  <>
+                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                      {brands.map((brand) => (
+                        <div key={brand.id} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`brand-${brand.id}`}
+                            checked={formData.brand_ids.includes(brand.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setFormData({
+                                  ...formData,
+                                  brand_ids: [...formData.brand_ids, brand.id]
+                                });
+                              } else {
+                                setFormData({
+                                  ...formData,
+                                  brand_ids: formData.brand_ids.filter(id => id !== brand.id)
+                                });
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`brand-${brand.id}`} className="text-sm font-normal cursor-pointer">
+                            {brand.name}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                    {formData.brand_ids.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {formData.brand_ids.length} {formData.brand_ids.length === 1 ? 'brand' : 'brands'} selected
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="border rounded-lg p-4 text-center text-sm text-muted-foreground">
+                    <p>No brands available for this company.</p>
+                    <p className="text-xs mt-1">Add brands in the inventory section to see them here.</p>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="no" id="add-has-forge-no" />
-                    <Label htmlFor="add-has-forge-no" className="font-normal cursor-pointer">
-                      No
-                    </Label>
-                  </div>
-                </RadioGroup>
+                )}
               </div>
 
               <Button className="w-full" onClick={handleAddClient}>
@@ -1983,9 +2056,9 @@ export default function MyClientsPage() {
                           <Edit className="h-4 w-4" />
                         </Button>
                         {user?.role !== 'mobile_sales' && (
-                          <Button variant="ghost" size="icon" onClick={() => handleOpenDelete(client)} title="Delete">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleOpenDelete(client)} title="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                         )}
                       </div>
                     </TableCell>

@@ -30,6 +30,9 @@ import type { Profile, Company, ExecutiveCompanyAssignment } from '@/types/datab
 import { useAuth } from '@/features/auth';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// System Administration company ID - should be hidden from the companies list
+const SYSTEM_ADMIN_COMPANY_ID = '6a3da573-af53-4def-a665-0f1782c70097';
+
 interface ExecutiveWithAssignments extends Profile {
     assignments?: ExecutiveCompanyAssignment[];
     assignedCompanies?: Company[];
@@ -128,6 +131,7 @@ export function ExecutiveAccountsTab() {
                 .from('companies')
                 .select('*')
                 .eq('status', 'active')
+                .neq('id', SYSTEM_ADMIN_COMPANY_ID) // Exclude System Administration company
                 .order('company_name');
 
             if (error) throw error;
@@ -857,33 +861,41 @@ export function ExecutiveAccountsTab() {
                                 </div>
                                 
                                 <div className="space-y-2 max-h-72 overflow-y-auto border-2 rounded-2xl p-3 md:p-4 bg-gradient-to-br from-muted/20 to-muted/10">
-                                    {companies.map((company) => (
-                                        <div 
-                                            key={company.id} 
-                                            className="flex items-start md:items-center gap-3 p-3 md:p-4 rounded-xl hover:bg-accent/50 transition-all duration-200 border border-transparent hover:border-primary/20 group cursor-pointer"
-                                            onClick={() => toggleCompanySelection(company.id, false)}
-                                        >
-                                            <Checkbox
-                                                id={`edit-company-${company.id}`}
-                                                checked={editExecutive.company_ids.includes(company.id)}
-                                                onCheckedChange={() => toggleCompanySelection(company.id, false)}
-                                                className="mt-0.5 md:mt-0"
-                                            />
-                                            <Label
-                                                htmlFor={`edit-company-${company.id}`}
-                                                className="text-sm cursor-pointer flex-1 min-w-0"
-                                            >
-                                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-1 md:gap-4">
-                                                    <span className="font-semibold text-base truncate group-hover:text-primary transition-colors">
-                                                        {company.company_name}
-                                                    </span>
-                                                    <span className="text-xs text-muted-foreground truncate md:text-right">
-                                                        {company.company_email}
-                                                    </span>
-                                                </div>
-                                            </Label>
+                                    {companies.length === 0 ? (
+                                        <div className="text-center py-12">
+                                            <Building2 className="h-12 w-12 mx-auto mb-3 text-muted-foreground opacity-30" />
+                                            <p className="text-sm text-muted-foreground font-medium">No active companies available</p>
+                                            <p className="text-xs text-muted-foreground mt-1">Companies will appear here once they are created and active</p>
                                         </div>
-                                    ))}
+                                    ) : (
+                                        companies.map((company) => (
+                                            <div 
+                                                key={company.id} 
+                                                className="flex items-start md:items-center gap-3 p-3 md:p-4 rounded-xl hover:bg-accent/50 transition-all duration-200 border border-transparent hover:border-primary/20 group cursor-pointer"
+                                                onClick={() => toggleCompanySelection(company.id, false)}
+                                            >
+                                                <Checkbox
+                                                    id={`edit-company-${company.id}`}
+                                                    checked={editExecutive.company_ids.includes(company.id)}
+                                                    onCheckedChange={() => toggleCompanySelection(company.id, false)}
+                                                    className="mt-0.5 md:mt-0"
+                                                />
+                                                <Label
+                                                    htmlFor={`edit-company-${company.id}`}
+                                                    className="text-sm cursor-pointer flex-1 min-w-0"
+                                                >
+                                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-1 md:gap-4">
+                                                        <span className="font-semibold text-base truncate group-hover:text-primary transition-colors">
+                                                            {company.company_name}
+                                                        </span>
+                                                        <span className="text-xs text-muted-foreground truncate md:text-right">
+                                                            {company.company_email}
+                                                        </span>
+                                                    </div>
+                                                </Label>
+                                            </div>
+                                        ))
+                                    )}
                                 </div>
                                 
                                 {editExecutive.company_ids.length > 0 && (

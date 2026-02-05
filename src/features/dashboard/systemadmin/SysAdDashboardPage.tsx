@@ -44,6 +44,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import type { Company } from '@/types/database.types';
 
+// System Administration company ID - should be hidden from the companies list
+const SYSTEM_ADMIN_COMPANY_ID = '6a3da573-af53-4def-a665-0f1782c70097';
+
 export default function SysAdDashboardPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -74,9 +77,11 @@ export default function SysAdDashboardPage() {
     try {
       setIsLoading(true);
       // SQL Database removed - this will throw an error until database is set up
+      // Exclude the System Administration company from the list
       const { data, error } = await supabase
         .from('companies')
         .select('id, company_name, company_email, super_admin_name, super_admin_email, role, status, created_at, updated_at')
+        .neq('id', SYSTEM_ADMIN_COMPANY_ID) // Exclude System Administration company
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -274,10 +279,12 @@ export default function SysAdDashboardPage() {
 
     try {
       setIsDeleting(true);
-      const { error } = await supabase
-        .from('companies')
-        .delete()
-        .eq('id', selectedCompany.id);
+      
+      // Use the database function to safely delete the company and all related records
+      // This function handles cascading deletes properly, including executive_company_assignments
+      const { error } = await supabase.rpc('delete_company_cascade', {
+        p_company_id: selectedCompany.id,
+      });
 
       if (error) throw error;
 

@@ -15,6 +15,7 @@ import { useAuth } from '@/features/auth';
 import { exportClientsToExcel } from '@/lib/excel.helpers';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,6 +69,7 @@ interface Client {
   approved_by?: string | null;
   visit_count: number; // Added
   tax_status?: 'Tax on Sales' | 'Tax Exempt';
+  brand_ids?: string[];
 }
 
 interface Agent {
@@ -105,7 +107,8 @@ export default function ClientsPage() {
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
-    has_forge: false
+    has_forge: false,
+    brand_ids: [] as string[]
   });
 
   // Delete Confirmation States
@@ -128,9 +131,11 @@ export default function ClientsPage() {
     contact_person: '',
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
-    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
+    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
+    brand_ids: [] as string[]
   });
   const [adding, setAdding] = useState(false);
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
 
   // Add Client Photo States
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
@@ -852,11 +857,13 @@ export default function ClientsPage() {
       tin: client.tin || '',
       account_type: client.account_type || 'Standard Accounts',
       category: client.category || 'Open',
-      has_forge: client.has_forge || false
+      has_forge: client.has_forge || false,
+      brand_ids: client.brand_ids || []
     });
     setEditCorPhoto(null); // Reset COR photo state
     setEditClientPhoto(null); // Reset client photo state
     setEditDialogOpen(true);
+    fetchBrands(); // Fetch brands when opening edit dialog
   };
 
   const handleSaveEdit = () => {
@@ -998,6 +1005,7 @@ export default function ClientsPage() {
         account_type: editForm.account_type,
         category: editForm.category,
         has_forge: editForm.has_forge,
+        brand_ids: editForm.brand_ids.length > 0 ? editForm.brand_ids : null,
         updated_at: new Date().toISOString()
       };
 
@@ -1638,6 +1646,7 @@ export default function ClientsPage() {
           category: addForm.category,
           status: 'active',
           has_forge: addForm.has_forge,
+          brand_ids: addForm.brand_ids.length > 0 ? addForm.brand_ids : null,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           cor_url: corUrl,
@@ -2239,6 +2248,67 @@ export default function ClientsPage() {
     }
   };
 
+  // Fetch brands for the company
+  const fetchBrands = async () => {
+    console.log('🔍 fetchBrands called');
+    console.log('User:', user);
+    
+    if (!user?.company_id) {
+      console.log('❌ No company_id found, cannot fetch brands');
+      setBrands([]);
+      return;
+    }
+    
+    try {
+      console.log('✅ Fetching brands for company_id:', user.company_id);
+      
+      // Fetch brands - RLS should automatically filter by company_id based on user's profile
+      const { data, error } = await supabase
+        .from('brands')
+        .select('id, name')
+        .eq('company_id', user.company_id)
+        .order('name');
+      
+      console.log('📦 Brands query result:', { data, error });
+      
+      if (error) {
+        console.error('❌ Error fetching brands:', error);
+        throw error;
+      }
+      
+      console.log('✅ Fetched brands:', data);
+      console.log('📊 Number of brands found:', data?.length || 0);
+      
+      if (data && data.length > 0) {
+        console.log('✅ Setting brands:', data);
+        setBrands(data);
+      } else {
+        console.log('⚠️ No brands found for company_id:', user.company_id);
+        setBrands([]);
+      }
+    } catch (error: any) {
+      console.error('❌ Error fetching brands:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+      setBrands([]); // Set empty array on error so section still shows
+    }
+  };
+
+  // Fetch brands when component mounts and user is available
+  useEffect(() => {
+    console.log('🔄 useEffect triggered, user:', user);
+    if (user?.company_id) {
+      console.log('🔄 useEffect: Fetching brands on mount for company_id:', user.company_id);
+      fetchBrands();
+    } else {
+      console.log('⚠️ useEffect: No user or company_id yet');
+    }
+  }, [user?.company_id]);
+
   const resetAddForm = () => {
     setAddForm({
       name: '',
@@ -2251,7 +2321,8 @@ export default function ClientsPage() {
       contact_person: '',
       tin: '',
       account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
-      category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
+      category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
+      brand_ids: []
     });
     setNewClientPhoto(null);
     setNewCorPhoto(null);
@@ -2530,9 +2601,12 @@ export default function ClientsPage() {
 
       {/* Add Client Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={(open) => {
+        console.log('🚪 Dialog onOpenChange called, open:', open);
         setAddDialogOpen(open);
         if (open) {
+          console.log('✅ Dialog opening, calling fetchBrands');
           startLocationPrewarm();
+          fetchBrands(); // Fetch brands when dialog opens
         } else {
           resetAddForm();
         }
@@ -2893,27 +2967,50 @@ export default function ClientsPage() {
 
 
 
-            {/* Has Forge Field */}
-            <div className="space-y-3">
-              <Label>Has Forge?</Label>
-              <RadioGroup
-                value={addForm.has_forge ? 'yes' : 'no'}
-                onValueChange={(value) => setAddForm({ ...addForm, has_forge: value === 'yes' })}
-                className="flex gap-4"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="yes" id="has-forge-yes" />
-                  <Label htmlFor="has-forge-yes" className="font-normal cursor-pointer">
-                    Yes
-                  </Label>
+            {/* Brands Selection */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
+              <p className="text-xs text-muted-foreground">Select all brands/products this client is currently holding</p>
+              {brands.length > 0 ? (
+                <>
+                  <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                    {brands.map((brand) => (
+                      <div key={brand.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`brand-${brand.id}`}
+                          checked={addForm.brand_ids.includes(brand.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setAddForm({
+                                ...addForm,
+                                brand_ids: [...addForm.brand_ids, brand.id]
+                              });
+                            } else {
+                              setAddForm({
+                                ...addForm,
+                                brand_ids: addForm.brand_ids.filter(id => id !== brand.id)
+                              });
+                            }
+                          }}
+                        />
+                        <Label htmlFor={`brand-${brand.id}`} className="text-sm font-normal cursor-pointer">
+                          {brand.name}
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                  {addForm.brand_ids.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {addForm.brand_ids.length} {addForm.brand_ids.length === 1 ? 'brand' : 'brands'} selected
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="border rounded-lg p-4 text-center text-sm text-muted-foreground">
+                  <p>No brands available for this company.</p>
+                  <p className="text-xs mt-1">Add brands in the inventory section to see them here.</p>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="no" id="has-forge-no" />
-                  <Label htmlFor="has-forge-no" className="font-normal cursor-pointer">
-                    No
-                  </Label>
-                </div>
-              </RadioGroup>
+              )}
             </div>
 
             <Button className="w-full" onClick={handleAddClient} disabled={adding}>
@@ -3815,27 +3912,48 @@ export default function ClientsPage() {
                     </div>
                     <div className="space-y-2">
                       <Label>Has Forge?</Label>
-                      <RadioGroup
-                        value={editForm.has_forge ? 'yes' : 'no'}
-                        onValueChange={(value) => setEditForm({ ...editForm, has_forge: value === 'yes' })}
-                        className="flex gap-6 pt-2"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="yes" id="edit-has-forge-yes" />
-                          <Label htmlFor="edit-has-forge-yes" className="font-normal cursor-pointer">
-                            Yes
-                          </Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="no" id="edit-has-forge-no" />
-                          <Label htmlFor="edit-has-forge-no" className="font-normal cursor-pointer">
-                            No
-                          </Label>
-                        </div>
-                      </RadioGroup>
                     </div>
                   </div>
                 </div>
+
+                {/* Brands Selection */}
+                {brands.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
+                    <p className="text-xs text-muted-foreground">Select all brands/products this client is currently holding</p>
+                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                      {brands.map((brand) => (
+                        <div key={brand.id} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`edit-brand-${brand.id}`}
+                            checked={editForm.brand_ids.includes(brand.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setEditForm({
+                                  ...editForm,
+                                  brand_ids: [...editForm.brand_ids, brand.id]
+                                });
+                              } else {
+                                setEditForm({
+                                  ...editForm,
+                                  brand_ids: editForm.brand_ids.filter(id => id !== brand.id)
+                                });
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`edit-brand-${brand.id}`} className="text-sm font-normal cursor-pointer">
+                            {brand.name}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                    {editForm.brand_ids.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {editForm.brand_ids.length} {editForm.brand_ids.length === 1 ? 'brand' : 'brands'} selected
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* COR Upload Section for Admin/Super Admin */}
                 {(isAdmin || isSuperAdmin) && (

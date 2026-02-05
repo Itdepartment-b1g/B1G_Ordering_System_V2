@@ -72,6 +72,7 @@ export function SalesAgentsTab() {
   }, []);
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addConfirmDialogOpen, setAddConfirmDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -1620,13 +1621,81 @@ export function SalesAgentsTab() {
               <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleAddAgent} disabled={!isRoleSelected}>
+              <Button onClick={() => setAddConfirmDialogOpen(true)} disabled={!isRoleSelected}>
                 Add User
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Add User Confirmation Dialog */}
+      <AlertDialog open={addConfirmDialogOpen} onOpenChange={setAddConfirmDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm New User</AlertDialogTitle>
+            <AlertDialogDescription>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Please confirm the details below. This will create the user and they’ll be able to log in once set up.
+                </p>
+
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Name</p>
+                      <p className="text-sm font-semibold leading-tight">{newAgent.name || '—'}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Role</p>
+                      <p className="text-sm font-semibold leading-tight">{newAgent.role || '—'}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Email</p>
+                      <p className="text-sm leading-tight break-all">{newAgent.email || '—'}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Phone</p>
+                      <p className="text-sm leading-tight">{newAgent.phone || '—'}</p>
+                    </div>
+
+                    {addDialogRequiresTerritory && (
+                      <>
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">Region</p>
+                          <p className="text-sm leading-tight">{newAgent.region || '—'}</p>
+                        </div>
+                        <div className="space-y-1 sm:col-span-2">
+                          <p className="text-xs font-medium text-muted-foreground">Cities</p>
+                          <p className="text-sm leading-tight">
+                            {newAgent.cities.length > 0 ? newAgent.cities.join(', ') : '—'}
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Double-check the email and role. You can edit user details later if needed.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                setAddConfirmDialogOpen(false);
+                await handleAddAgent();
+              }}
+              className="bg-primary hover:bg-primary/90"
+            >
+              Confirm &amp; Add
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Status Change Confirmation Dialog */}
       <AlertDialog open={statusConfirmDialogOpen} onOpenChange={setStatusConfirmDialogOpen}>
