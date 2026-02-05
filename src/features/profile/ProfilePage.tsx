@@ -24,7 +24,6 @@ export default function ProfilePage() {
   const { user } = useAuth();
   const { toast } = useToast();
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
@@ -54,61 +53,38 @@ export default function ProfilePage() {
   } | null>(null);
 
   useEffect(() => {
-    if (user?.id) {
-      fetchProfile();
-    }
-  }, [user?.id]);
+    // When the authenticated user object changes (kept in sync by AuthContext
+    // via realtime subscriptions to the profiles table), mirror it into this
+    // local editable profile state and assigned cities.
+    if (!user) return;
+
+    setProfile({
+      full_name: user.full_name || '',
+      email: user.email || '',
+      phone: user.phone || '',
+      address: user.address || '',
+      city: user.city || '',
+      country: user.country || '',
+      region: user.region || '',
+      role: user.role || '',
+    });
+
+    const cities = user.city
+      ? user.city.split(',').map(c => c.trim()).filter(c => c.length > 0)
+      : [];
+    setAssignedCities(cities);
+
+    // Agents/leaders vs admin flag for city-editing restrictions
+    const isAgentOrLeaderUser = user.role !== 'admin';
+    setIsAgentOrLeader(isAgentOrLeaderUser);
+  }, [user]);
 
   useEffect(() => {
     if (user?.company_id) {
       fetchCompanyInfo();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.company_id]);
-
-  const fetchProfile = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('full_name, email, phone, address, city, country, region, role')
-        .eq('id', user?.id)
-        .single();
-
-      if (error) throw error;
-
-      if (data) {
-        setProfile({
-          full_name: data.full_name || '',
-          email: data.email || '',
-          phone: data.phone || '',
-          address: data.address || '',
-          city: data.city || '',
-          country: data.country || '',
-          region: data.region || '',
-          role: data.role || '',
-        });
-
-        // Parse assigned cities from comma-separated string
-        const cities = data.city
-          ? data.city.split(',').map(c => c.trim()).filter(c => c.length > 0)
-          : [];
-        setAssignedCities(cities);
-
-        // Check if user is agent or leader (not admin)
-        const isAgentOrLeaderUser = data.role !== 'admin';
-        setIsAgentOrLeader(isAgentOrLeaderUser);
-      }
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load profile',
-        variant: 'destructive'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchCompanyInfo = async () => {
     try {
@@ -179,14 +155,6 @@ export default function ProfilePage() {
       setSaving(false);
     }
   };
-
-  if (loading) {
-    return (
-      <div className="p-4 md:p-8 flex items-center justify-center min-h-[400px]">
-        <div className="text-muted-foreground">Loading profile...</div>
-      </div>
-    );
-  }
 
   return (
     <div className="p-4 md:p-6 lg:p-8 space-y-4 md:space-y-6 max-w-4xl mx-auto">

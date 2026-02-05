@@ -15,7 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
-import { useMyClients, useAgentCities, Client } from './hooks';
+import { useMyClients, Client } from './hooks';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertDialog,
@@ -34,7 +34,12 @@ export default function MyClientsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { data: clients = [], isLoading: loading } = useMyClients();
-  const { data: agentCities = [] } = useAgentCities();
+  // Derive assigned cities directly from the latest profile data.
+  // AuthContext already keeps `user.city` in sync via its own realtime subscription.
+  const agentCities = (user?.city || '')
+    .split(',')
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
