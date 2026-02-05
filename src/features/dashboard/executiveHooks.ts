@@ -461,3 +461,170 @@ export function useExecutiveRecentActivity(startDate?: Date, endDate?: Date, fil
         retry: 2
     });
 }
+
+// ============================================================================
+// BRAND PERFORMANCE
+// ============================================================================
+
+/**
+ * Fetch brand performance metrics (brands, flavors, batteries) across all assigned companies
+ */
+export function useExecutiveBrandPerformance(startDate?: Date, endDate?: Date, filterCompanyIds?: string[], selectedBrandId?: string | null) {
+    const { data: companiesData } = useExecutiveCompanies();
+    const allCompanyIds = companiesData?.companyIds || [];
+    const companyIds = filterCompanyIds || allCompanyIds;
+
+    return useQuery({
+        queryKey: ['executive', 'brand-performance', companyIds, startDate?.toISOString(), endDate?.toISOString(), selectedBrandId],
+        queryFn: async () => {
+            if (!companyIds || companyIds.length === 0) {
+                return {
+                    brands: [],
+                    flavors: [],
+                    batteries: []
+                };
+            }
+
+            // Build query with date filtering
+            let ordersQuery = supabase
+                .from('client_order_items')
+                .select(`
+                    id,
+                    quantity,
+                    total_price,
+                    variant_id,
+                    variant:variants!client_order_items_variant_id_fkey(
+                        id,
+                        name,
+                        variant_type,
+                        brand_id,
+                        brand:brands(id, name)
+                    ),
+                    order:client_orders!client_order_items_client_order_id_fkey(
+                        id,
+                        status,
+                        created_at,
+                        company_id
+                    )
+                `)
+                .in('company_id', companyIds);
+
+            const { data: orderItems } = await ordersQuery;
+
+            // Filter by date and approved status
+            const filteredItems = orderItems?.filter(item => {
+                const order = item.order as any;
+                if (!order || order.status !== 'approved') return false;
+
+                const orderDate = new Date(order.created_at);
+                if (startDate && orderDate < startDate) return false;
+                if (endDate && orderDate > endDate) return false;
+
+                return true;
+            }) || [];
+
+            // Group by brand
+            const brandPerformance: Record<string, {
+                brandId: string;
+                brandName: string;
+                totalRevenue: number;
+                totalQuantity: number;
+            }> = {};
+
+            // Group by flavor (variant_type = 'flavor')
+            const flavorPerformance: Record<string, {
+                variantId: string;
+                variantName: string;
+                brandId: string;
+                brandName: string;
+                totalRevenue: number;
+                totalQuantity: number;
+            }> = {};
+
+            // Group by battery (variant_type = 'battery')
+            const batteryPerformance: Record<string, {
+                variantId: string;
+                variantName: string;
+                brandId: string;
+                brandName: string;
+                totalRevenue: number;
+                totalQuantity: number;
+            }> = {};
+
+            filteredItems.forEach(item => {
+                const variant = item.variant as any;
+                const brand = variant?.brand as any;
+
+                if (!variant || !brand) return;
+
+                const revenue = parseFloat(item.total_price as any) || 0;
+                const quantity = item.quantity || 0;
+
+                // Aggregate by brand
+                if (!brandPerformance[brand.id]) {
+                    brandPerformance[brand.id] = {
+                        brandId: brand.id,
+                        brandName: brand.name,
+                        totalRevenue: 0,
+                        totalQuantity: 0
+                    };
+                }
+                brandPerformance[brand.id].totalRevenue += revenue;
+                brandPerformance[brand.id].totalQuantity += quantity;
+
+                // If brand filter is active, only include items from that brand
+                if (selectedBrandId && brand.id !== selectedBrandId) return;
+
+                // Aggregate by variant type
+                if (variant.variant_type === 'flavor') {
+                    if (!flavorPerformance[variant.id]) {
+                        flavorPerformance[variant.id] = {
+                            variantId: variant.id,
+                            variantName: variant.name,
+                            brandId: brand.id,
+                            brandName: brand.name,
+                            totalRevenue: 0,
+                            totalQuantity: 0
+                        };
+                    }
+                    flavorPerformance[variant.id].totalRevenue += revenue;
+                    flavorPerformance[variant.id].totalQuantity += quantity;
+                } else if (variant.variant_type === 'battery') {
+                    if (!batteryPerformance[variant.id]) {
+                        batteryPerformance[variant.id] = {
+                            variantId: variant.id,
+                            variantName: variant.name,
+                            brandId: brand.id,
+                            brandName: brand.name,
+                            totalRevenue: 0,
+                            totalQuantity: 0
+                        };
+                    }
+                    batteryPerformance[variant.id].totalRevenue += revenue;
+                    batteryPerformance[variant.id].totalQuantity += quantity;
+                }
+            });
+
+            // Convert to arrays and sort by quantity (descending)
+            const brands = Object.values(brandPerformance)
+                .sort((a, b) => b.totalQuantity - a.totalQuantity);
+
+            const flavors = Object.values(flavorPerformance)
+                .sort((a, b) => b.totalQuantity - a.totalQuantity);
+
+            const batteries = Object.values(batteryPerformance)
+                .sort((a, b) => b.totalQuantity - a.totalQuantity);
+
+            return {
+                brands,
+                flavors,
+                batteries
+            };
+        },
+        enabled: companyIds.length > 0,
+        staleTime: 30 * 1000, // 30 seconds
+        refetchInterval: 60 * 1000, // Auto-refetch every 60 seconds
+        refetchOnWindowFocus: true,
+        retry: 2
+    });
+}

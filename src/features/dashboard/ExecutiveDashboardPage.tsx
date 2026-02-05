@@ -45,10 +45,11 @@ import {
     useExecutiveCompanyBreakdown,
     useExecutiveRevenueTrends,
     useExecutiveTopPerformers,
-    useExecutiveRecentActivity
+    useExecutiveRecentActivity,
+    useExecutiveBrandPerformance
 } from './executiveHooks';
 import { useExecutiveRealtime } from './useExecutiveRealtime';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, BarChart, Bar } from 'recharts';
 
 // Date range presets
 type DatePreset = 'all' | 'this_month' | 'last_month' | 'last_3_months' | 'last_6_months' | 'this_year' | 'last_year' | 'custom';
@@ -121,6 +122,7 @@ export default function ExecutiveDashboardPage() {
     const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined);
     const [showCustomPicker, setShowCustomPicker] = useState(false);
     const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+    const [selectedBrandFilter, setSelectedBrandFilter] = useState<string | null>(null);
     
     // Get date range from preset
     const dateRange = getDateRange(datePreset, customStartDate, customEndDate);
@@ -165,12 +167,50 @@ export default function ExecutiveDashboardPage() {
     const { data: trends, isLoading: trendsLoading, refetch: refetchTrends } = useExecutiveRevenueTrends(startDate, endDate, filteredCompanyIds, 30);
     const { data: topPerformers, isLoading: performersLoading, refetch: refetchPerformers } = useExecutiveTopPerformers(startDate, endDate, filteredCompanyIds, 10);
     const { data: activity, isLoading: activityLoading, refetch: refetchActivity } = useExecutiveRecentActivity(startDate, endDate, filteredCompanyIds, 15);
+    const { data: brandPerformance, isLoading: brandPerformanceLoading, refetch: refetchBrandPerformance } = useExecutiveBrandPerformance(startDate, endDate, filteredCompanyIds, selectedBrandFilter);
 
     // Calculate pie chart data
     const pieData = stats ? [
         { name: 'Approved', value: stats.totalRevenue, color: '#16a34a' }, // green-600
         { name: 'Pending', value: stats.pendingRevenue, color: '#f97316' }  // orange-500
     ] : [];
+
+    // Calculate Brand Distribution data for Summary
+    const brandDistributionData = (() => {
+        if (!brandPerformance?.brands || brandPerformance.brands.length === 0) return [];
+        
+        // Take top 4 brands, group rest as "Others"
+        const topBrands = brandPerformance.brands.slice(0, 4);
+        const others = brandPerformance.brands.slice(4);
+        
+        const palette = [
+            '#06b6d4', // Cyan
+            '#8b5cf6', // Violet
+            '#f59e0b', // Amber
+            '#10b981', // Emerald
+            '#f43f5e'  // Rose
+        ];
+
+        const data = topBrands.map((brand, index) => ({
+            name: brand.brandName,
+            value: brand.totalRevenue,
+            quantity: brand.totalQuantity,
+            color: palette[index]
+        }));
+
+        if (others.length > 0) {
+            const othersRevenue = others.reduce((sum, b) => sum + b.totalRevenue, 0);
+            const othersQty = others.reduce((sum, b) => sum + b.totalQuantity, 0);
+            data.push({
+                name: 'Others',
+                value: othersRevenue,
+                quantity: othersQty,
+                color: '#94a3b8' // Slate 400
+            });
+        }
+
+        return data;
+    })();
 
     const formatCurrency = (val: number) => 
         `₱${(val || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -185,7 +225,8 @@ export default function ExecutiveDashboardPage() {
                 refetchBreakdown(),
                 refetchTrends(),
                 refetchPerformers(),
-                refetchActivity()
+                refetchActivity(),
+                refetchBrandPerformance()
             ]);
         } finally {
             setIsRefreshing(false);
@@ -703,6 +744,293 @@ export default function ExecutiveDashboardPage() {
                         ) : (
                             <div className="text-center py-8 text-muted-foreground">
                                 No revenue data available for the selected period
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Brand Performance Section */}
+            <div className="grid gap-6 lg:grid-cols-3">
+                {/* Brand Performance Charts - Left Card */}
+                <Card className="lg:col-span-2">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                        <CardTitle className="flex items-center gap-2">
+                            <Award className="h-5 w-5" />
+                            Brand Performance
+                        </CardTitle>
+                        <div className="flex items-center gap-2">
+                            {selectedBrandFilter && (
+                                <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={() => setSelectedBrandFilter(null)}
+                                    className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                                >
+                                    Clear Filter
+                                </Button>
+                            )}
+                            <Select value={selectedBrandFilter || 'all'} onValueChange={(value) => setSelectedBrandFilter(value === 'all' ? null : value)}>
+                                <SelectTrigger className="w-[180px] h-8 text-xs font-medium">
+                                    <SelectValue placeholder="All Brands" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Brands</SelectItem>
+                                    {brandPerformance?.brands.map((brand) => (
+                                        <SelectItem key={brand.brandId} value={brand.brandId}>
+                                            {brand.brandName}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="pt-6">
+                        {brandPerformanceLoading ? (
+                            <div className="flex justify-center py-12">
+                                <Loader2 className="h-8 w-8 animate-spin" />
+                            </div>
+                        ) : (
+                            <div className="space-y-10">
+                                {/* Flavors Performance */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
+                                            <div className="w-2 h-2 rounded-full bg-cyan-500" />
+                                            Flavors Performance
+                                        </h4>
+                                        {selectedBrandFilter && (
+                                            <Badge variant="secondary" className="text-[10px] font-medium">
+                                                {brandPerformance?.brands.find(b => b.brandId === selectedBrandFilter)?.brandName}
+                                            </Badge>
+                                        )}
+                                    </div>
+                                    {brandPerformance?.flavors && brandPerformance.flavors.length > 0 ? (
+                                        <div className="h-[280px] w-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={brandPerformance.flavors} margin={{ top: 5, right: 10, left: -20, bottom: 40 }}>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted/30" />
+                                                    <XAxis 
+                                                        dataKey="variantName" 
+                                                        angle={-45}
+                                                        textAnchor="end"
+                                                        height={60}
+                                                        interval={0}
+                                                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                                                    />
+                                                    <YAxis 
+                                                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                                                        width={45}
+                                                    />
+                                                    <Tooltip 
+                                                        cursor={{ fill: 'hsl(var(--muted))', opacity: 0.1 }}
+                                                        contentStyle={{ 
+                                                            backgroundColor: 'hsl(var(--background))',
+                                                            border: '1px solid hsl(var(--border))',
+                                                            borderRadius: '8px',
+                                                            fontSize: '12px'
+                                                        }}
+                                                        formatter={(value: any) => [value.toLocaleString(), 'Sold']}
+                                                    />
+                                                    <Bar 
+                                                        dataKey="totalQuantity" 
+                                                        fill="#06b6d4" 
+                                                        radius={[4, 4, 0, 0]}
+                                                        barSize={30}
+                                                    />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center py-12 border border-dashed rounded-lg bg-muted/5">
+                                            <Activity className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                                            <p className="text-sm text-muted-foreground font-medium">No flavor performance data</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Batteries Performance */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
+                                            <div className="w-2 h-2 rounded-full bg-amber-500" />
+                                            Batteries Performance
+                                        </h4>
+                                    </div>
+                                    {brandPerformance?.batteries && brandPerformance.batteries.length > 0 ? (
+                                        <div className="h-[280px] w-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={brandPerformance.batteries} margin={{ top: 5, right: 10, left: -20, bottom: 40 }}>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted/30" />
+                                                    <XAxis 
+                                                        dataKey="variantName" 
+                                                        angle={-45}
+                                                        textAnchor="end"
+                                                        height={60}
+                                                        interval={0}
+                                                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                                                    />
+                                                    <YAxis 
+                                                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+                                                        width={45}
+                                                    />
+                                                    <Tooltip 
+                                                        cursor={{ fill: 'hsl(var(--muted))', opacity: 0.1 }}
+                                                        contentStyle={{ 
+                                                            backgroundColor: 'hsl(var(--background))',
+                                                            border: '1px solid hsl(var(--border))',
+                                                            borderRadius: '8px',
+                                                            fontSize: '12px'
+                                                        }}
+                                                        formatter={(value: any) => [value.toLocaleString(), 'Sold']}
+                                                    />
+                                                    <Bar 
+                                                        dataKey="totalQuantity" 
+                                                        fill="#f59e0b" 
+                                                        radius={[4, 4, 0, 0]}
+                                                        barSize={30}
+                                                    />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center py-12 border border-dashed rounded-lg bg-muted/5">
+                                            <Activity className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                                            <p className="text-sm text-muted-foreground font-medium">No battery performance data</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+
+                <Card className="lg:col-span-1">
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                            <Activity className="h-5 w-5" />
+                            Performance Summary
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                        {/* Brand Distribution Pie Chart */}
+                        <div className="flex flex-col items-center">
+                            <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2 self-start">
+                                Brand Revenue Share
+                            </h4>
+                            <div className="w-full h-[200px] relative">
+                                {brandDistributionData.length > 0 ? (
+                                    <>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <PieChart>
+                                                <Pie
+                                                    data={brandDistributionData}
+                                                    cx="50%"
+                                                    cy="50%"
+                                                    innerRadius={55}
+                                                    outerRadius={80}
+                                                    paddingAngle={2}
+                                                    dataKey="value"
+                                                    stroke="none"
+                                                >
+                                                    {brandDistributionData.map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={entry.color} />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip 
+                                                    formatter={(value: any) => [formatCurrency(value), 'Revenue']}
+                                                    contentStyle={{ 
+                                                        backgroundColor: 'hsl(var(--background))',
+                                                        border: '1px solid hsl(var(--border))',
+                                                        borderRadius: '8px',
+                                                        fontSize: '11px'
+                                                    }}
+                                                />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                        {/* Center Text */}
+                                        <div className="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">
+                                            <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-tighter">Total</span>
+                                            <span className="font-bold text-sm text-foreground">
+                                                {brandPerformance?.brands.length || 0}
+                                            </span>
+                                            <span className="text-[9px] text-muted-foreground font-semibold uppercase">Brands</span>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex items-center justify-center h-full text-muted-foreground text-xs italic">
+                                        No distribution data
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Breakdown Metrics / Legend - Mirroring the reference image logic */}
+                        <div className="space-y-3">
+                            {brandDistributionData.map((brand) => (
+                                <div 
+                                    key={brand.name} 
+                                    className="flex flex-col p-3 rounded-lg border bg-muted/5 transition-all hover:bg-muted/10"
+                                    style={{ borderColor: `${brand.color}20` }}
+                                >
+                                    <div className="flex items-center justify-between mb-1">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: brand.color }} />
+                                            <div className="text-xs font-bold text-foreground truncate max-w-[120px]">{brand.name}</div>
+                                        </div>
+                                        <Badge variant="outline" className="text-[9px] h-4 px-1 font-bold bg-white/50">
+                                            {brand.value > 0 && stats?.totalRevenue ? `${((brand.value / stats.totalRevenue) * 100).toFixed(1)}%` : '0%'}
+                                        </Badge>
+                                    </div>
+                                    <div className="flex items-center justify-between text-[10px]">
+                                        <div className="text-muted-foreground font-medium">
+                                            {brand.quantity.toLocaleString()} Units Sold
+                                        </div>
+                                        <div className="font-bold tabular-nums" style={{ color: brand.color }}>
+                                            {formatCurrency(brand.value)}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Category Totals - Flavors/Batteries */}
+                        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-dashed">
+                            <div className="flex flex-col gap-1">
+                                <span className="text-[10px] font-semibold text-muted-foreground uppercase">Flavors</span>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1 h-3 rounded-full bg-cyan-500" />
+                                    <span className="text-sm font-bold">{brandPerformance?.flavors.length || 0}</span>
+                                </div>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                <span className="text-[10px] font-semibold text-muted-foreground uppercase">Batteries</span>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1 h-3 rounded-full bg-amber-500" />
+                                    <span className="text-sm font-bold">{brandPerformance?.batteries.length || 0}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Focus Brand Highlight (Filtered State) */}
+                        {selectedBrandFilter && brandPerformance?.brands.find(b => b.brandId === selectedBrandFilter) && (
+                            <div className="mt-4 pt-4 border-t border-dashed">
+                                <div className="flex flex-col gap-3 p-4 rounded-xl border-2 border-primary bg-primary/5 shadow-sm">
+                                    <div className="flex items-center gap-2">
+                                        <Activity className="h-4 w-4 text-primary" />
+                                        <div className="text-xs font-bold text-primary uppercase tracking-tight">
+                                            Selected: {brandPerformance.brands.find(b => b.brandId === selectedBrandFilter)?.brandName}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-end justify-between">
+                                        <div className="text-2xl font-bold text-foreground tabular-nums">
+                                            {formatCurrency(brandPerformance.brands.find(b => b.brandId === selectedBrandFilter)?.totalRevenue || 0)}
+                                        </div>
+                                        <div className="text-sm font-bold text-primary tabular-nums">
+                                            {brandPerformance.brands.find(b => b.brandId === selectedBrandFilter)?.totalQuantity.toLocaleString() || 0} Units
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         )}
                     </CardContent>
