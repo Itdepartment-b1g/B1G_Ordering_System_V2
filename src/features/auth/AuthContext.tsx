@@ -430,6 +430,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearProfileCache(); // Clear cached profile on logout
 
       await supabase.auth.signOut();
+
+      // Hard-clear any persisted auth token in case the client library leaves it behind
+      try {
+        window.localStorage.removeItem('supabase.auth.token');
+      } catch (e) {
+        console.warn('Unable to clear supabase.auth.token from localStorage:', e);
+      }
+
       window.location.href = '/login';
     } catch (error) {
       console.error('❌ [AuthContext] Logout error:', error);
