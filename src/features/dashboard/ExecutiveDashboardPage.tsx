@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, Fragment } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -214,6 +214,92 @@ export default function ExecutiveDashboardPage() {
 
     const formatCurrency = (val: number) => 
         `₱${(val || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    
+    // Process data for the new "Total Brand Performance" section
+    const detailedBrandData = (() => {
+        if (!brandPerformance) return [];
+        
+        const aggregated: any[] = [];
+        
+        // Brand-specific type mapping to match image
+        const getTypeLabel = (brandName: string, type: string) => {
+            const b = brandName?.toUpperCase();
+            if (b?.includes('FORGE') || b?.includes('XFORGE')) {
+                return type === 'flavor' ? 'Pods' : 'Device';
+            }
+            if (b?.includes('CHILLAX') || b?.includes('AMZ')) {
+                return 'Set';
+            }
+            return type === 'flavor' ? 'Flavor' : 'Battery';
+        };
+
+        const getPieLabel = (brandName: string, type: string) => {
+            const b = brandName?.toUpperCase();
+            if (b?.includes('FORGE') || b?.includes('XFORGE')) {
+                return type === 'flavor' ? 'FORGE PODS' : 'FORGE BATT';
+            }
+            return brandName; // Just brand name for others as per image
+        };
+
+        const brands = new Set([
+            ...brandPerformance.flavors.map(f => f.brandId),
+            ...brandPerformance.batteries.map(b => b.brandId)
+        ]);
+
+        brands.forEach(brandId => {
+            const brandFlavors = brandPerformance.flavors.filter(f => f.brandId === brandId);
+            const brandBatteries = brandPerformance.batteries.filter(b => b.brandId === brandId);
+            
+            const brandName = brandFlavors[0]?.brandName || brandBatteries[0]?.brandName || 'Unknown';
+            
+            const types: any[] = [];
+            
+            if (brandFlavors.length > 0) {
+                const qty = brandFlavors.reduce((sum, f) => sum + f.totalQuantity, 0);
+                const rev = brandFlavors.reduce((sum, f) => sum + f.totalRevenue, 0);
+                types.push({
+                    type: 'flavor',
+                    label: getTypeLabel(brandName, 'flavor'),
+                    pieLabel: getPieLabel(brandName, 'flavor'),
+                    qty,
+                    rev,
+                    unitCost: qty > 0 ? rev / qty : 0
+                });
+            }
+            
+            if (brandBatteries.length > 0) {
+                const qty = brandBatteries.reduce((sum, b) => sum + b.totalQuantity, 0);
+                const rev = brandBatteries.reduce((sum, b) => sum + b.totalRevenue, 0);
+                types.push({
+                    type: 'battery',
+                    label: getTypeLabel(brandName, 'battery'),
+                    pieLabel: getPieLabel(brandName, 'battery'),
+                    qty,
+                    rev,
+                    unitCost: qty > 0 ? rev / qty : 0
+                });
+            }
+            
+            if (types.length > 0) {
+                aggregated.push({
+                    brandId,
+                    brandName: brandName.toUpperCase().includes('XFORGE') ? 'XFORGE' : brandName,
+                    types
+                });
+            }
+        });
+        
+        return aggregated;
+    })();
+
+    const getPieColor = (label: string) => {
+        const l = label.toUpperCase();
+        if (l.includes('BATT')) return '#4FD1C5'; // Teal
+        if (l.includes('PODS')) return '#38BDF8'; // Cyan
+        if (l.includes('CHILLAX')) return '#F59E0B'; // Amber
+        if (l.includes('AMZ')) return '#8B5CF6'; // Violet
+        return '#CBD5E1'; // Slate
+    };
     
     // Manual refresh function
     const handleRefresh = async () => {
@@ -750,292 +836,317 @@ export default function ExecutiveDashboardPage() {
                 </Card>
             </div>
 
-            {/* Brand Performance Section */}
-            <div className="grid gap-6 lg:grid-cols-3">
-                {/* Brand Performance Charts - Left Card */}
-                <Card className="lg:col-span-2">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                        <CardTitle className="flex items-center gap-2">
-                            <Award className="h-5 w-5" />
-                            Brand Performance
-                        </CardTitle>
-                        <div className="flex items-center gap-2">
-                            {selectedBrandFilter && (
-                                <Button 
-                                    variant="ghost" 
-                                    size="sm"
-                                    onClick={() => setSelectedBrandFilter(null)}
-                                    className="h-8 text-xs text-muted-foreground hover:text-foreground"
-                                >
-                                    Clear Filter
-                                </Button>
-                            )}
-                            <Select value={selectedBrandFilter || 'all'} onValueChange={(value) => setSelectedBrandFilter(value === 'all' ? null : value)}>
-                                <SelectTrigger className="w-[180px] h-8 text-xs font-medium">
-                                    <SelectValue placeholder="All Brands" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Brands</SelectItem>
-                                    {brandPerformance?.brands.map((brand) => (
-                                        <SelectItem key={brand.brandId} value={brand.brandId}>
-                                            {brand.brandName}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="pt-6">
-                        {brandPerformanceLoading ? (
-                            <div className="flex justify-center py-12">
-                                <Loader2 className="h-8 w-8 animate-spin" />
-                            </div>
-                        ) : (
-                            <div className="space-y-10">
-                                {/* Flavors Performance */}
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
-                                            <div className="w-2 h-2 rounded-full bg-cyan-500" />
-                                            Flavors Performance
-                                        </h4>
-                                        {selectedBrandFilter && (
-                                            <Badge variant="secondary" className="text-[10px] font-medium">
-                                                {brandPerformance?.brands.find(b => b.brandId === selectedBrandFilter)?.brandName}
-                                            </Badge>
-                                        )}
-                                    </div>
-                                    {brandPerformance?.flavors && brandPerformance.flavors.length > 0 ? (
-                                        <div className="h-[280px] w-full">
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <BarChart data={brandPerformance.flavors} margin={{ top: 5, right: 10, left: -20, bottom: 40 }}>
-                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted/30" />
-                                                    <XAxis 
-                                                        dataKey="variantName" 
-                                                        angle={-45}
-                                                        textAnchor="end"
-                                                        height={60}
-                                                        interval={0}
-                                                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-                                                    />
-                                                    <YAxis 
-                                                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-                                                        width={45}
-                                                    />
-                                                    <Tooltip 
-                                                        cursor={{ fill: 'hsl(var(--muted))', opacity: 0.1 }}
-                                                        contentStyle={{ 
-                                                            backgroundColor: 'hsl(var(--background))',
-                                                            border: '1px solid hsl(var(--border))',
-                                                            borderRadius: '8px',
-                                                            fontSize: '12px'
-                                                        }}
-                                                        formatter={(value: any) => [value.toLocaleString(), 'Sold']}
-                                                    />
-                                                    <Bar 
-                                                        dataKey="totalQuantity" 
-                                                        fill="#06b6d4" 
-                                                        radius={[4, 4, 0, 0]}
-                                                        barSize={30}
-                                                    />
-                                                </BarChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-col items-center justify-center py-12 border border-dashed rounded-lg bg-muted/5">
-                                            <Activity className="h-8 w-8 text-muted-foreground/30 mb-2" />
-                                            <p className="text-sm text-muted-foreground font-medium">No flavor performance data</p>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Batteries Performance */}
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
-                                            <div className="w-2 h-2 rounded-full bg-amber-500" />
-                                            Batteries Performance
-                                        </h4>
-                                    </div>
-                                    {brandPerformance?.batteries && brandPerformance.batteries.length > 0 ? (
-                                        <div className="h-[280px] w-full">
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <BarChart data={brandPerformance.batteries} margin={{ top: 5, right: 10, left: -20, bottom: 40 }}>
-                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted/30" />
-                                                    <XAxis 
-                                                        dataKey="variantName" 
-                                                        angle={-45}
-                                                        textAnchor="end"
-                                                        height={60}
-                                                        interval={0}
-                                                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-                                                    />
-                                                    <YAxis 
-                                                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-                                                        width={45}
-                                                    />
-                                                    <Tooltip 
-                                                        cursor={{ fill: 'hsl(var(--muted))', opacity: 0.1 }}
-                                                        contentStyle={{ 
-                                                            backgroundColor: 'hsl(var(--background))',
-                                                            border: '1px solid hsl(var(--border))',
-                                                            borderRadius: '8px',
-                                                            fontSize: '12px'
-                                                        }}
-                                                        formatter={(value: any) => [value.toLocaleString(), 'Sold']}
-                                                    />
-                                                    <Bar 
-                                                        dataKey="totalQuantity" 
-                                                        fill="#f59e0b" 
-                                                        radius={[4, 4, 0, 0]}
-                                                        barSize={30}
-                                                    />
-                                                </BarChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-col items-center justify-center py-12 border border-dashed rounded-lg bg-muted/5">
-                                            <Activity className="h-8 w-8 text-muted-foreground/30 mb-2" />
-                                            <p className="text-sm text-muted-foreground font-medium">No battery performance data</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+            {/* Total Brand Performance Section - New Unified View */}
+            <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                    <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                        <Award className="h-5 w-5" />
+                        Total Brand Performance
+                    </CardTitle>
+                    <div className="flex items-center gap-2">
+                        {selectedBrandFilter && (
+                            <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => setSelectedBrandFilter(null)}
+                                className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                            >
+                                Clear
+                            </Button>
                         )}
-                    </CardContent>
-                </Card>
+                        <Select value={selectedBrandFilter || 'all'} onValueChange={(value) => setSelectedBrandFilter(value === 'all' ? null : value)}>
+                            <SelectTrigger className="w-[180px] h-8 text-xs font-medium">
+                                <SelectValue placeholder="All Brands" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All Brands</SelectItem>
+                                {brandPerformance?.brands.map((brand) => (
+                                    <SelectItem key={brand.brandId} value={brand.brandId}>
+                                        {brand.brandName}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </CardHeader>
+                
+                <CardContent className="p-0">
+                    {brandPerformanceLoading ? (
+                        <div className="flex justify-center py-20">
+                            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+                        </div>
+                    ) : (
+                        <div className="grid lg:grid-cols-12 gap-0">
+                            {/* Left: Detailed Performance Table */}
+                            <div className="lg:col-span-7 p-6">
+                                <div className="rounded-md border">
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead className="w-[200px]">Brand / Variant</TableHead>
+                                                <TableHead className="text-center">Qty Sold</TableHead>
+                                                <TableHead className="text-right">Amount</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {(() => {
+                                                const brandColors: Record<string, string> = {
+                                                    'XFORGE': 'bg-cyan-500',
+                                                    'CHILLAX': 'bg-orange-500',
+                                                    'AMZ': 'bg-purple-500'
+                                                };
+                                                
+                                                let grandTotalQty = 0;
+                                                let grandTotalAmount = 0;
 
-                <Card className="lg:col-span-1">
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-base font-semibold">
-                            <Activity className="h-5 w-5" />
-                            Performance Summary
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-6">
-                        {/* Brand Distribution Pie Chart */}
-                        <div className="flex flex-col items-center">
-                            <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2 self-start">
-                                Brand Revenue Share
-                            </h4>
-                            <div className="w-full h-[200px] relative">
-                                {brandDistributionData.length > 0 ? (
-                                    <>
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <PieChart>
-                                                <Pie
-                                                    data={brandDistributionData}
-                                                    cx="50%"
-                                                    cy="50%"
-                                                    innerRadius={55}
-                                                    outerRadius={80}
-                                                    paddingAngle={2}
-                                                    dataKey="value"
-                                                    stroke="none"
-                                                >
-                                                    {brandDistributionData.map((entry, index) => (
-                                                        <Cell key={`cell-${index}`} fill={entry.color} />
-                                                    ))}
-                                                </Pie>
-                                                <Tooltip 
-                                                    formatter={(value: any) => [formatCurrency(value), 'Revenue']}
-                                                    contentStyle={{ 
-                                                        backgroundColor: 'hsl(var(--background))',
-                                                        border: '1px solid hsl(var(--border))',
-                                                        borderRadius: '8px',
-                                                        fontSize: '11px'
-                                                    }}
-                                                />
-                                            </PieChart>
-                                        </ResponsiveContainer>
-                                        {/* Center Text */}
-                                        <div className="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">
-                                            <span className="text-[9px] text-muted-foreground font-semibold uppercase tracking-tighter">Total</span>
-                                            <span className="font-bold text-sm text-foreground">
-                                                {brandPerformance?.brands.length || 0}
+                                                return (
+                                                    <Fragment>
+                                                        {detailedBrandData.map((brand) => {
+                                                            const brandTotalAmount = brand.types.reduce((sum: number, t: any) => sum + t.rev, 0);
+                                                            grandTotalQty += brand.types.reduce((sum: number, t: any) => sum + t.qty, 0);
+                                                            grandTotalAmount += brandTotalAmount;
+
+                                                            return (
+                                                                <Fragment key={brand.brandId}>
+                                                                    <TableRow className="bg-muted/30">
+                                                                        <TableCell className="font-bold py-2">
+                                                                            <div className="flex items-center gap-2">
+                                                                                <div className={`w-1.5 h-1.5 rounded-full ${brandColors[brand.brandName] || 'bg-muted-foreground'}`} />
+                                                                                {brand.brandName}
+                                                                            </div>
+                                                                        </TableCell>
+                                                                        <TableCell className="bg-muted/30" />
+                                                                        <TableCell className="text-right font-bold py-2">
+                                                                            {formatCurrency(brandTotalAmount)}
+                                                                        </TableCell>
+                                                                    </TableRow>
+                                                                    {brand.types.map((type: any, idx: number) => (
+                                                                        <TableRow key={`${brand.brandId}-${idx}`}>
+                                                                            <TableCell className="pl-6 text-xs text-muted-foreground font-medium">
+                                                                                {type.label}
+                                                                            </TableCell>
+                                                                            <TableCell className="text-center text-xs">
+                                                                                {type.qty.toLocaleString()}
+                                                                            </TableCell>
+                                                                            <TableCell className="text-right text-xs font-semibold">
+                                                                                {formatCurrency(type.rev)}
+                                                                            </TableCell>
+                                                                        </TableRow>
+                                                                    ))}
+                                                                </Fragment>
+                                                            );
+                                                        })}
+                                                        <TableRow className="border-t-2 font-bold bg-muted/10">
+                                                            <TableCell>Total</TableCell>
+                                                            <TableCell className="text-center">{grandTotalQty.toLocaleString()}</TableCell>
+                                                            <TableCell className="text-right text-primary">
+                                                                {formatCurrency(grandTotalAmount)}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    </Fragment>
+                                                );
+                                            })()}
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            </div>
+
+                            {/* Right: Pie Chart Section */}
+                            <div className="lg:col-span-5 p-6 border-l flex flex-col items-center justify-center">
+                                <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-6 self-start">
+                                    Brand Revenue Distribution
+                                </h4>
+
+                                <div className="w-full h-[450px] relative">
+                                    {(() => {
+                                        const pieChartData = detailedBrandData.flatMap(brand => 
+                                            brand.types.map((type: any) => ({
+                                                name: type.pieLabel,
+                                                value: type.qty,
+                                                revenue: type.rev,
+                                                color: getPieColor(type.pieLabel)
+                                            }))
+                                        );
+
+                                        return (
+                                            <>
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <PieChart>
+                                                        <Pie
+                                                            data={pieChartData}
+                                                            cx="50%"
+                                                            cy="50%"
+                                                            innerRadius={60}
+                                                            outerRadius={100}
+                                                            paddingAngle={3}
+                                                            dataKey="value"
+                                                            stroke="none"
+                                                            isAnimationActive={true}
+                                                            activeShape={false}
+                                                            labelLine={{ stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1.5, strokeOpacity: 0.3 }}
+                                                            label={(props) => {
+                                                                const { cx, cy, midAngle, outerRadius, name, percent } = props;
+                                                                const RADIAN = Math.PI / 180;
+                                                                const radius = outerRadius + 35;
+                                                                const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                                                                const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                                                                
+                                                                return (
+                                                                    <text 
+                                                                        x={x} 
+                                                                        y={y} 
+                                                                        fill="hsl(var(--foreground))" 
+                                                                        textAnchor={x > cx ? 'start' : 'end'} 
+                                                                        dominantBaseline="central"
+                                                                        className="text-[13px] font-black uppercase tracking-tighter"
+                                                                    >
+                                                                        <tspan x={x} dy="-0.7em" className="fill-foreground">{name}</tspan>
+                                                                        <tspan x={x} dy="1.4em" className="fill-muted-foreground text-[11px] font-bold">{(percent * 100).toFixed(0)}% SHARE</tspan>
+                                                                    </text>
+                                                                );
+                                                            }}
+                                                        >
+                                                            {pieChartData.map((entry, index) => (
+                                                                <Cell key={`cell-${index}`} fill={entry.color} style={{ outline: 'none' }} />
+                                                            ))}
+                                                        </Pie>
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                                {/* Center Label */}
+                                                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                                                    <span className="text-[10px] text-muted-foreground font-bold uppercase">Total Units</span>
+                                                    <span className="text-2xl font-bold">{pieChartData.reduce((sum, item) => sum + item.value, 0).toLocaleString()}</span>
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* Product Performance Insight - Minimalist Refined */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <TrendingUp className="h-5 w-5" />
+                        Product Performance Breakdown
+                        {selectedBrandFilter && (
+                            <span className="text-muted-foreground font-normal text-base">
+                                — {brandPerformance?.brands.find(b => b.brandId === selectedBrandFilter)?.brandName}
+                            </span>
+                        )}
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    {brandPerformanceLoading ? (
+                        <div className="flex justify-center py-20">
+                            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                        </div>
+                    ) : brandPerformance ? (
+                        <div className="space-y-4 md:space-y-6">
+                            {/* The Main Chart Area */}
+                            <div className="h-[280px] md:h-[360px] w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart
+                                        data={[...brandPerformance.flavors, ...brandPerformance.batteries]
+                                            .sort((a, b) => b.totalQuantity - a.totalQuantity)
+                                            .slice(0, window.innerWidth < 768 ? 10 : 15)
+                                        }
+                                        margin={{ top: 10, right: 5, left: 5, bottom: 70 }}
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--muted))" />
+                                        <XAxis 
+                                            dataKey="variantName" 
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tick={(props) => {
+                                                const { x, y, payload } = props;
+                                                const item = [...brandPerformance.flavors, ...brandPerformance.batteries]
+                                                    .sort((a, b) => b.totalQuantity - a.totalQuantity)
+                                                    .slice(0, window.innerWidth < 768 ? 10 : 15)
+                                                    .find(d => d.variantName === payload.value);
+                                                
+                                                return (
+                                                    <g transform={`translate(${x},${y})`}>
+                                                        <text
+                                                            x={0}
+                                                            y={0}
+                                                            dy={8}
+                                                            textAnchor="end"
+                                                            fill="hsl(var(--muted-foreground))"
+                                                            fontSize={window.innerWidth < 768 ? 11 : 12}
+                                                            fontWeight={600}
+                                                            transform="rotate(-45)"
+                                                        >
+                                                            {`${payload.value} (${item?.totalQuantity.toLocaleString() || 0})`}
+                                                        </text>
+                                                    </g>
+                                                );
+                                            }}
+                                            height={70}
+                                            interval={0}
+                                        />
+                                        <YAxis 
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 9 }}
+                                            width={25}
+                                        />
+                                        <Tooltip 
+                                            cursor={{ fill: 'hsl(var(--muted)/0.3)' }}
+                                            contentStyle={{ 
+                                                backgroundColor: 'hsl(var(--background))', 
+                                                border: '1px solid hsl(var(--border))',
+                                                borderRadius: '8px',
+                                                fontSize: '11px'
+                                            }}
+                                        />
+                                        <Bar 
+                                            dataKey="totalQuantity" 
+                                            fill="hsl(var(--primary))" 
+                                            barSize={32}
+                                            radius={[4, 4, 0, 0]}
+                                            opacity={0.85}
+                                        />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                            {/* Minimalist Summary */}
+                            <div className="flex justify-center md:justify-end mt-2">
+                                <div className="rounded-lg border bg-background overflow-hidden shadow-sm w-full max-w-[280px] md:max-w-none md:min-w-[220px]">
+                                    <div className="px-4 py-2 bg-muted/40 border-b">
+                                        <span className="text-xs font-bold text-foreground uppercase tracking-wide">
+                                            {selectedBrandFilter ? brandPerformance?.brands.find(b => b.brandId === selectedBrandFilter)?.brandName : 'Total'} Summary
+                                        </span>
+                                    </div>
+                                    <div className="divide-y divide-border/50">
+                                        <div className="flex items-center justify-between px-4 py-3 gap-6 md:gap-8">
+                                            <span className="text-xs font-medium text-muted-foreground">Pods</span>
+                                            <span className="text-base font-bold tabular-nums">
+                                                {brandPerformance.flavors.reduce((sum, f) => sum + f.totalQuantity, 0).toLocaleString()}
                                             </span>
-                                            <span className="text-[9px] text-muted-foreground font-semibold uppercase">Brands</span>
                                         </div>
-                                    </>
-                                ) : (
-                                    <div className="flex items-center justify-center h-full text-muted-foreground text-xs italic">
-                                        No distribution data
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Breakdown Metrics / Legend - Mirroring the reference image logic */}
-                        <div className="space-y-3">
-                            {brandDistributionData.map((brand) => (
-                                <div 
-                                    key={brand.name} 
-                                    className="flex flex-col p-3 rounded-lg border bg-muted/5 transition-all hover:bg-muted/10"
-                                    style={{ borderColor: `${brand.color}20` }}
-                                >
-                                    <div className="flex items-center justify-between mb-1">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: brand.color }} />
-                                            <div className="text-xs font-bold text-foreground truncate max-w-[120px]">{brand.name}</div>
-                                        </div>
-                                        <Badge variant="outline" className="text-[9px] h-4 px-1 font-bold bg-white/50">
-                                            {brand.value > 0 && stats?.totalRevenue ? `${((brand.value / stats.totalRevenue) * 100).toFixed(1)}%` : '0%'}
-                                        </Badge>
-                                    </div>
-                                    <div className="flex items-center justify-between text-[10px]">
-                                        <div className="text-muted-foreground font-medium">
-                                            {brand.quantity.toLocaleString()} Units Sold
-                                        </div>
-                                        <div className="font-bold tabular-nums" style={{ color: brand.color }}>
-                                            {formatCurrency(brand.value)}
+                                        <div className="flex items-center justify-between px-4 py-3 gap-6 md:gap-8">
+                                            <span className="text-xs font-medium text-muted-foreground">Devices</span>
+                                            <span className="text-base font-bold tabular-nums">
+                                                {brandPerformance.batteries.reduce((sum, b) => sum + b.totalQuantity, 0).toLocaleString()}
+                                            </span>
                                         </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* Category Totals - Flavors/Batteries */}
-                        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-dashed">
-                            <div className="flex flex-col gap-1">
-                                <span className="text-[10px] font-semibold text-muted-foreground uppercase">Flavors</span>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-1 h-3 rounded-full bg-cyan-500" />
-                                    <span className="text-sm font-bold">{brandPerformance?.flavors.length || 0}</span>
-                                </div>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                                <span className="text-[10px] font-semibold text-muted-foreground uppercase">Batteries</span>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-1 h-3 rounded-full bg-amber-500" />
-                                    <span className="text-sm font-bold">{brandPerformance?.batteries.length || 0}</span>
                                 </div>
                             </div>
                         </div>
-
-                        {/* Focus Brand Highlight (Filtered State) */}
-                        {selectedBrandFilter && brandPerformance?.brands.find(b => b.brandId === selectedBrandFilter) && (
-                            <div className="mt-4 pt-4 border-t border-dashed">
-                                <div className="flex flex-col gap-3 p-4 rounded-xl border-2 border-primary bg-primary/5 shadow-sm">
-                                    <div className="flex items-center gap-2">
-                                        <Activity className="h-4 w-4 text-primary" />
-                                        <div className="text-xs font-bold text-primary uppercase tracking-tight">
-                                            Selected: {brandPerformance.brands.find(b => b.brandId === selectedBrandFilter)?.brandName}
-                                        </div>
-                                    </div>
-                                    <div className="flex items-end justify-between">
-                                        <div className="text-2xl font-bold text-foreground tabular-nums">
-                                            {formatCurrency(brandPerformance.brands.find(b => b.brandId === selectedBrandFilter)?.totalRevenue || 0)}
-                                        </div>
-                                        <div className="text-sm font-bold text-primary tabular-nums">
-                                            {brandPerformance.brands.find(b => b.brandId === selectedBrandFilter)?.totalQuantity.toLocaleString() || 0} Units
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-            </div>
+                    ) : (
+                        <div className="text-center py-20 text-muted-foreground">
+                            No product performance data available
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
 
             {/* Company Breakdown */}
             <Card>
