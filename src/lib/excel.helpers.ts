@@ -29,11 +29,30 @@ export async function exportClientsToExcel(
     // Create CSV content
     const csvRows = [];
 
-    // Add header row
-    // Capitalize and replace underscores for better readability
-    const formattedHeaders = headers.map(h =>
-        h.charAt(0).toUpperCase() + h.slice(1).replace(/_/g, ' ')
-    );
+    // Add header row: human-readable labels (acronyms and common names)
+    const headerLabels: Record<string, string> = {
+        id: 'ID',
+        tin: 'TIN',
+        trade_name: 'Trade Name',
+        shop_name: 'Shop Name',
+        contact_person: 'Contact Person',
+        agent_name: 'Agent Name',
+        account_type: 'Account Type',
+        total_orders: 'Total Orders',
+        total_spent: 'Total Spent',
+        visit_count: 'Visit Count',
+        last_order_date: 'Last Order Date',
+        approval_status: 'Approval Status',
+        created_at: 'Created At',
+        updated_at: 'Updated At',
+        location_latitude: 'Location Latitude',
+        location_longitude: 'Location Longitude',
+        location_accuracy: 'Location Accuracy',
+        location_captured_at: 'Location Captured At',
+    };
+    const formatHeader = (h: string) =>
+        headerLabels[h] ?? (h.charAt(0).toUpperCase() + h.slice(1).replace(/_/g, ' '));
+    const formattedHeaders = headers.map(formatHeader);
     csvRows.push(formattedHeaders.join(','));
 
     // Add data rows

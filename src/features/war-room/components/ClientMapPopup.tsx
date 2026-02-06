@@ -37,13 +37,18 @@ export function ClientMapPopup({ client, open, onOpenChange }: ClientMapPopupPro
             >
               {client.account_type}
             </Badge>
-            <Badge
-              variant={client.has_forge ? 'default' : 'outline'}
-              className={client.has_forge ? 'bg-orange-500 hover:bg-orange-600' : ''}
-            >
-              <Flame className="h-3 w-3 mr-1" />
-              {client.has_forge ? 'Has Forge' : 'No Forge'}
-            </Badge>
+            {/* Brands */}
+            {client.brand_names && client.brand_names.length > 0 ? (
+              client.brand_names.map((brand, index) => (
+                <Badge key={index} variant="secondary" className="ml-2">
+                  {brand}
+                </Badge>
+              ))
+            ) : (
+              <Badge variant="outline" className="ml-2 text-muted-foreground">
+                No Brands
+              </Badge>
+            )}
           </div>
 
           {/* Location Details */}

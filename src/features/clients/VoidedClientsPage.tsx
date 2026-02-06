@@ -548,7 +548,7 @@ export default function VoidedClientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
-                  <TableHead className="text-center">Name</TableHead>
+                  <TableHead className="text-center">Trade Name</TableHead>
                   <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>

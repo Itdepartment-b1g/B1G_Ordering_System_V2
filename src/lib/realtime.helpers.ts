@@ -29,6 +29,7 @@ type TableName =
   | 'inventory_requests'
   | 'stock_requests'
   | 'leader_teams'
+  | 'sub_teams'
   | 'cash_deposits';
 
 type ChangeEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';

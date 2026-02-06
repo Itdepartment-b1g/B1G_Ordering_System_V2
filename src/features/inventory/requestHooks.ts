@@ -114,3 +114,80 @@ export function useInventoryBaseData() {
         staleTime: 1000 * 60 * 60, // 1 hour
     });
 }
+
+export function useLeaderInventorySummary(leaderId: string | null) {
+    const { user } = useAuth();
+    const queryClient = useQueryClient();
+
+    const query = useQuery({
+        queryKey: ['leader_inventory_summary', leaderId],
+        enabled: !!leaderId && !!user?.company_id,
+        queryFn: async () => {
+            if (!leaderId || !user?.company_id) return { brands: [], variants: [] };
+
+            // Fetch leader's actual inventory items
+            const { data: inventoryData, error: inventoryError } = await supabase
+                .from('agent_inventory')
+                .select(`
+                    variant_id,
+                    stock,
+                    variants (
+                        id,
+                        name,
+                        variant_type,
+                        brand_id,
+                        brand:brands(id, name)
+                    )
+                `)
+                .eq('agent_id', leaderId)
+                .eq('company_id', user.company_id)
+                .gt('stock', 0);
+
+            if (inventoryError) throw inventoryError;
+
+            // Extract unique brands and variants
+            const brandsMap = new Map();
+            const variantsSet = new Set();
+            const formattedVariants: any[] = [];
+
+            inventoryData?.forEach((item: any) => {
+                const v = item.variants;
+                if (!v) return;
+
+                if (!variantsSet.has(v.id)) {
+                    variantsSet.add(v.id);
+                    formattedVariants.push({
+                        ...v,
+                        brand: v.brand
+                    });
+                }
+
+                if (v.brand && !brandsMap.has(v.brand.id)) {
+                    brandsMap.set(v.brand.id, v.brand);
+                }
+            });
+
+            return {
+                brands: Array.from(brandsMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+                variants: formattedVariants.sort((a, b) => a.name.localeCompare(b.name))
+            };
+        },
+        staleTime: 1000 * 60 * 2, // 2 minutes (shorter than global data)
+    });
+
+    useEffect(() => {
+        if (!leaderId) return;
+
+        console.log(`🎧 Subscribing to leader inventory changes (leader: ${leaderId})`);
+        const channel = subscribeToTable('agent_inventory', (payload) => {
+            console.log('🔔 Leader inventory update detected:', payload.eventType);
+            queryClient.invalidateQueries({ queryKey: ['leader_inventory_summary', leaderId] });
+        }, '*', { column: 'agent_id', value: leaderId });
+
+        return () => {
+            unsubscribe(channel);
+        };
+    }, [leaderId, queryClient]);
+
+    return query;
+}
