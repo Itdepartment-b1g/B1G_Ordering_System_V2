@@ -24,6 +24,7 @@ interface OrderEmailData {
     agentPhone?: string;
     leaderName?: string;
     paymentMethod?: string;
+    bankName?: string;
     paymentProofUrl?: string;
     pricingStrategy?: string;
     requestSalesInvoice?: boolean;
@@ -69,7 +70,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                         <p style="margin: 0 0 16px 0; color: #666; font-size: 14px;">Order confirmation</p>
                         <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 600; color: #111;">${orderData.orderNumber}</h2>
                         <p style="margin: 0 0 4px 0; color: #666;">Hi ${orderData.clientName},</p>
-                        <p style="margin: 0 0 24px 0; color: #333;">We've received your order and it's waiting for approval. You'll get another email once we've reviewed it.</p>
+                        <p style="margin: 0 0 24px 0; color: #333;">This email serves as your official e-receipt. Thank you for your transaction with B1G Corporation.</p>
                     </div>
 
                     <!-- Order Details -->
@@ -135,7 +136,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
 
                     ${orderData.requestSalesInvoice ? `
                     <div style="margin-bottom: 24px; padding: 12px; background: #fffbeb; border-left: 3px solid #f59e0b;">
-                        <p style="margin: 0; font-size: 14px; color: #78350f;">Sales invoice requested — we'll send it separately once the order is approved.</p>
+                        <p style="margin: 0; font-size: 14px; color: #78350f;">Sales invoice requested — We’ll provide your agent with a copy of the sales invoice. Please contact your agent for the copy.</p>
                     </div>
                     ` : ''}
 
@@ -230,7 +231,9 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method</td>
-                                <td style="padding: 4px 0; color: #111;">${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}</td>
+                                <td style="padding: 4px 0; color: #111;">
+                                    ${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}${orderData.bankName ? ` (${orderData.bankName})` : ''}
+                                </td>
                             </tr>
                         </table>
                     </div>
