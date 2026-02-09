@@ -974,6 +974,7 @@ export default function MyOrdersPage() {
           agentPhone: agentPhone,
           leaderName: leaderName,
           paymentMethod: paymentMethod,
+          selectedBank: selectedBank?.name,
           paymentProofUrl: paymentProofUrl,
           pricingStrategy: pricingType,
           requestSalesInvoice: requestSalesInvoice,
