@@ -24,7 +24,7 @@ interface OrderEmailData {
     agentPhone?: string;
     leaderName?: string;
     paymentMethod?: string;
-    bankName?: string;
+    selectedBank?: string;
     paymentProofUrl?: string;
     pricingStrategy?: string;
     requestSalesInvoice?: boolean;
@@ -97,7 +97,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method:</td>
-                                <td style="padding: 4px 0; text-align: right; color: #111;">${formatPaymentMethod(orderData.paymentMethod, orderData.bankName)}</td>
+                                <td style="padding: 4px 0; text-align: right; color: #111;">${formatPaymentMethod(orderData.paymentMethod, orderData.selectedBank)}</td>
                             </tr>
                         </table>
                     </div>
@@ -196,12 +196,12 @@ function generateEmailHTML(orderData: OrderEmailData): string {
 function generateITReceiptHTML(orderData: OrderEmailData): string {
     const formatPrice = (price: number) => `₱${price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     
-    const formatPaymentMethod = (method: string, bankName?: string) => {
+    const formatPaymentMethod = (method: string, selectedBank?: string) => {
         if (!method) return 'Cash';
         
         // Handle enum values
         if (method === 'BANK_TRANSFER') {
-            return bankName ? `Bank Transfer (${bankName})` : 'Bank Transfer';
+            return selectedBank ? `Bank Transfer (${selectedBank})` : 'Bank Transfer';
         }
         if (method === 'GCASH') return 'GCash';
         if (method === 'CHEQUE') return 'Cheque';
@@ -261,7 +261,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method:</td>
-                                <td style="padding: 4px 0; color: #111;">${formatPaymentMethod(orderData.paymentMethod, orderData.bankName)}</td>
+                                <td style="padding: 4px 0; color: #111;">${formatPaymentMethod(orderData.paymentMethod, orderData.selectedBank)}</td>
                             </tr>
                         </table>
                     </div>
