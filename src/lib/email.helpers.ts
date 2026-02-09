@@ -56,12 +56,12 @@ function generateEmailHTML(orderData: OrderEmailData): string {
 <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.5; color: #333; background: #fafafa;">
     <table role="presentation" style="width: 100%; border-collapse: collapse;">
         <tr>
-            <td style="padding: 40px 20px;">
+            <td align="center" style="padding: 40px 20px;">
                 <div style="max-width: 600px; background: #fff; border: 1px solid #e5e5e5; padding: 32px;">
                     
                     <!-- Header -->
                     <div style="border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 24px;">
-                        <h1 style="margin: 0; font-size: 16px; font-weight: 600; color: #111;">B1G Corporation</h1>
+                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">B1G Corporation</h1>
                     </div>
 
                     <!-- Main Content -->
@@ -82,10 +82,6 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method</td>
                                 <td style="padding: 4px 0; text-align: right; color: #111;">${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}</td>
-                            </tr>
-                            <tr>
-                                <td style="padding: 4px 0; color: #666;">Status</td>
-                                <td style="padding: 4px 0; text-align: right; color: #666; font-weight: 500;">Pending approval</td>
                             </tr>
                         </table>
                     </div>
@@ -207,12 +203,12 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
 <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.5; color: #333; background: #fafafa;">
     <table role="presentation" style="width: 100%; border-collapse: collapse;">
         <tr>
-            <td style="padding: 40px 20px;">
+            <td align="center" style="padding: 40px 20px;">
                 <div style="max-width: 700px; background: #fff; border: 1px solid #e5e5e5; padding: 32px;">
                     
                     <!-- Header -->
                     <div style="border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 24px;">
-                        <h1 style="margin: 0; font-size: 16px; font-weight: 600; color: #111;">B1G Corporation · Internal Receipt</h1>
+                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">B1G Corporation · Internal Receipt</h1>
                     </div>
 
                     <!-- Alert -->
@@ -227,10 +223,6 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                             <tr>
                                 <td style="padding: 4px 0; color: #666; width: 140px;">Order date</td>
                                 <td style="padding: 4px 0; color: #111;">${new Date(orderData.orderDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
-                            </tr>
-                            <tr>
-                                <td style="padding: 4px 0; color: #666;">Status</td>
-                                <td style="padding: 4px 0; color: #666; font-weight: 500;">Pending approval</td>
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Pricing strategy</td>
