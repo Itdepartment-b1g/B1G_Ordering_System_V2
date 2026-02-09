@@ -66,12 +66,18 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                         </td>
                     </tr>
                     <tr>
+                        <td style="padding: 20px 40px 0;">
+                            <div style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);">
+                                📧 CLIENT COPY
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
                         <td style="padding: 30px 40px;">
                             <p style="margin: 0 0 16px; color: #6b7280; font-size: 14px; line-height: 1.6;">Dear ${orderData.clientName},</p>
                             <p style="margin: 0 0 16px; color: #374151; font-size: 15px; line-height: 1.6;">Thank you for your order with B1G Corporation. Your order has been received and is pending approval.</p>
                             <div style="padding: 15px; background-color: #f3f4f6; border-radius: 5px; margin-top: 20px;">
-                                <p style="margin: 0; font-size: 14px; color: #4b5563;"><strong>Pricing Strategy:</strong> ${orderData.pricingStrategy === 'special' ? 'Special Pricing (Allocated)' : (orderData.pricingStrategy?.toUpperCase() || 'RSP') + ' Pricing'}</p>
-                                <p style="margin: 5px 0 0 0; font-size: 14px; color: #4b5563;"><strong>Payment Method:</strong> ${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}</p>
+                                <p style="margin: 0; font-size: 14px; color: #4b5563;"><strong>Payment Method:</strong> ${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}</p>
                             </div>
                         </td>
                     </tr>
@@ -237,6 +243,18 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                         <td style="padding: 40px 40px 20px; background-color: #1f2937; border-radius: 8px 8px 0 0;">
                             <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">B1G Corporation</h1>
                             <p style="margin: 8px 0 0; color: #d1d5db; font-size: 14px;">Order Receipt - Internal Confirmation</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 20px 40px 0;">
+                            <div>
+                                <span style="display: inline-block; background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%); color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; box-shadow: 0 2px 4px rgba(124, 58, 237, 0.3); margin-right: 8px; margin-bottom: 8px;">
+                                    👑 SYSTEM ADMIN COPY
+                                </span>
+                                <span style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3); margin-bottom: 8px;">
+                                    💰 FINANCE DEPT COPY
+                                </span>
+                            </div>
                         </td>
                     </tr>
                     <tr>
