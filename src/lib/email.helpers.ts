@@ -82,7 +82,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method</td>
-                                <td style="padding: 4px 0; text-align: right; color: #111;">${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}</td>
+                                <td style="padding: 4px 0; text-align: right; color: #111;">${orderData.paymentMethod || 'Cash'}</td>
                             </tr>
                         </table>
                     </div>
@@ -231,9 +231,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method</td>
-                                <td style="padding: 4px 0; color: #111;">
-                                    ${orderData.paymentMethod === 'GCASH' ? 'GCash' : orderData.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : orderData.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}${orderData.bankName ? ` (${orderData.bankName})` : ''}
-                                </td>
+                                <td style="padding: 4px 0; color: #111;">${orderData.paymentMethod || 'Cash'}</td>
                             </tr>
                         </table>
                     </div>
