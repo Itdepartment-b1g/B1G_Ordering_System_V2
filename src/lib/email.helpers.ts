@@ -77,11 +77,11 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                     <div style="margin-bottom: 24px; padding: 16px; background: #fafafa; border-left: 3px solid #111;">
                         <table style="width: 100%; font-size: 14px;">
                             <tr>
-                                <td style="padding: 4px 0; color: #666;">Order date</td>
+                                <td style="padding: 4px 0; color: #666;">Order date:</td>
                                 <td style="padding: 4px 0; text-align: right; color: #111;">${new Date(orderData.orderDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
                             </tr>
                             <tr>
-                                <td style="padding: 4px 0; color: #666;">Payment method</td>
+                                <td style="padding: 4px 0; color: #666;">Payment method:</td>
                                 <td style="padding: 4px 0; text-align: right; color: #111;">${orderData.paymentMethod || 'Cash'}</td>
                             </tr>
                         </table>
@@ -222,15 +222,15 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                         <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 600; color: #111;">${orderData.orderNumber}</h2>
                         <table style="width: 100%; font-size: 14px;">
                             <tr>
-                                <td style="padding: 4px 0; color: #666; width: 140px;">Order date</td>
+                                <td style="padding: 4px 0; color: #666; width: 140px;">Order date:</td>
                                 <td style="padding: 4px 0; color: #111;">${new Date(orderData.orderDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
                             </tr>
                             <tr>
-                                <td style="padding: 4px 0; color: #666;">Pricing strategy</td>
+                                <td style="padding: 4px 0; color: #666;">Pricing strategy:</td>
                                 <td style="padding: 4px 0; color: #111; font-weight: 500;">${orderData.pricingStrategy === 'special' ? 'Special (Allocated)' : (orderData.pricingStrategy?.toUpperCase() || 'RSP')}</td>
                             </tr>
                             <tr>
-                                <td style="padding: 4px 0; color: #666;">Payment method</td>
+                                <td style="padding: 4px 0; color: #666;">Payment method:</td>
                                 <td style="padding: 4px 0; color: #111;">${orderData.paymentMethod || 'Cash'}</td>
                             </tr>
                         </table>
