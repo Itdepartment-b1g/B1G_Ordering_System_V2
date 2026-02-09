@@ -84,8 +84,8 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                     <div style="margin-bottom: 24px;">
                         <p style="margin: 0 0 16px 0; color: #666; font-size: 14px;">Order confirmation</p>
                         <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 600; color: #111;">${orderData.orderNumber}</h2>
-                        <p style="margin: 0 0 4px 0; color: #666;">Hi ${orderData.clientName},</p>
-                        <p style="margin: 0 0 24px 0; color: #333;">This email serves as your official e-receipt. Thank you for your transaction with B1G Corporation.</p>
+                        <p style="margin: 0 0 4px 0; color: #666; text-align: left;">Hi <strong>${orderData.clientName}</strong>,</p>
+                        <p style="margin: 0 0 24px 0; color: #333; text-align: left;">This email serves as your official e-receipt. Thank you for your transaction with B1G Corporation.</p>
                     </div>
 
                     <!-- Order Details -->
