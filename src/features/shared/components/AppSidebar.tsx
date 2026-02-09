@@ -185,6 +185,7 @@ const executiveMenuItems: MenuItem[] = [
 const managerMenuItems: MenuItem[] = [
   { title: 'Manager Dashboard', url: '/manager-dashboard', icon: LayoutDashboard },
   { title: 'My Team', url: '/manager-teams', icon: Users },
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   {
     title: 'Inventory',
     url: '/inventory',
