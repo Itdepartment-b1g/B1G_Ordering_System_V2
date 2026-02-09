@@ -216,7 +216,9 @@ export default function CalendarPage() {
   const { user } = useAuth();
   // Role helpers: managers (and admins) can see their full team; others only see their own tasks
   const isManager = user?.role === 'manager' || user?.role === 'admin';
+  const isTeamLeader = user?.role === 'team_leader';
   const isMobileSales = user?.role === 'mobile_sales';
+  const hasTeamView = isManager || isTeamLeader;
 
   // Convert tasks from database to calendar events
   const allEvents = useMemo(() => {
@@ -234,7 +236,7 @@ export default function CalendarPage() {
 
     let agentColorMap: Record<string, string> = {};
 
-    if (isManager) {
+    if (hasTeamView) {
       const uniqueAgentIds: string[] = [];
       tasks.forEach(task => {
         if (task.agent_id && !uniqueAgentIds.includes(task.agent_id)) {
@@ -252,7 +254,19 @@ export default function CalendarPage() {
       let startTime = '09:00';
       let endTime = '10:00';
 
-      if (task.time) {
+      if (task.status === 'completed' && task.completed_at) {
+        // If completed, show at actual completion time
+        const completedDate = new Date(task.completed_at);
+        const hours = completedDate.getHours().toString().padStart(2, '0');
+        const minutes = completedDate.getMinutes().toString().padStart(2, '0');
+        startTime = `${hours}:${minutes}`;
+
+        // Set end time to +30 mins
+        const endDate = new Date(completedDate.getTime() + 30 * 60000);
+        const endHourStr = endDate.getHours().toString().padStart(2, '0');
+        const endMinuteStr = endDate.getMinutes().toString().padStart(2, '0');
+        endTime = `${endHourStr}:${endMinuteStr}`;
+      } else if (task.time) {
         // Extract hours and minutes from time field (format: HH:MM:SS)
         const timeParts = task.time.split(':');
         const hours = timeParts[0].padStart(2, '0');
@@ -273,7 +287,9 @@ export default function CalendarPage() {
         description: task.description,
         startTime,
         endTime,
-        date: task.due_date ? task.due_date.split('T')[0] : task.given_at.split('T')[0],
+        date: (task.status === 'completed' && task.completed_at)
+          ? task.completed_at.split('T')[0]
+          : (task.due_date ? task.due_date.split('T')[0] : task.given_at.split('T')[0]),
         type: 'task' as const,
         priority: task.priority === 'urgent' ? 'high' : task.priority === 'high' ? 'high' : task.priority === 'medium' ? 'medium' : 'low',
         status: task.status === 'completed' ? 'completed' : task.status === 'cancelled' ? 'cancelled' : 'scheduled',
@@ -287,13 +303,19 @@ export default function CalendarPage() {
           }
         } : undefined,
         attachment_url: task.attachment_url || null,
-        agentColorClass: isManager ? agentColorMap[task.agent_id] : undefined,
+        agentColorClass: hasTeamView ? agentColorMap[task.agent_id] : undefined,
         agentId: task.agent_id,
         agentName: task.agent_name
       };
     });
 
-    const visitEvents: CalendarEvent[] = visits.map(visit => {
+    const visitEvents: CalendarEvent[] = visits
+      .filter(visit => {
+         // Exclude visits that are already linked to a task in the list
+         // This prevents "double" events since the task acts as the record now
+         return !visit.task_id || !tasks.find(t => t.id === visit.task_id);
+      })
+      .map(visit => {
       const visitDate = new Date(visit.visited_at);
       const hours = visitDate.getHours().toString().padStart(2, '0');
       const minutes = visitDate.getMinutes().toString().padStart(2, '0');
@@ -321,7 +343,7 @@ export default function CalendarPage() {
     });
 
     return [...taskEvents, ...visitEvents];
-  }, [tasks, visits, isManager]);
+  }, [tasks, visits, hasTeamView]);
 
   // Update current time every minute
   useEffect(() => {
@@ -360,7 +382,7 @@ export default function CalendarPage() {
       fetchTasks();
       fetchVisits();
 
-      if (isManager) {
+      if (hasTeamView) {
         fetchTeamAgents();
       }
     }
@@ -371,13 +393,13 @@ export default function CalendarPage() {
         supabase.removeAllChannels();
       }
     };
-  }, [user?.id, isManager]);
+  }, [user?.id, hasTeamView]);
 
   // Setup real-time subscriptions for tasks
   const setupRealtimeSubscriptions = () => {
     if (!user?.id) return;
 
-    const taskFilter = isManager
+    const taskFilter = hasTeamView
       ? `leader_id=eq.${user.id}`
       : `agent_id=eq.${user.id}`;
 
@@ -499,9 +521,23 @@ export default function CalendarPage() {
 
       let data: Task[] | null = null;
 
-      if (isManager) {
-        // Managers: show tasks for all team members in their managed sub-teams (leaders + mobile sales)
-        const teamAgentIds = await getManagerTeamAgentIds();
+      if (hasTeamView) {
+        // Managers/Team Leaders: show tasks for all team members
+        let teamAgentIds: string[] = [];
+        
+        if (isManager) {
+             teamAgentIds = await getManagerTeamAgentIds();
+        } else if (isTeamLeader) {
+             // Team leaders: get agents reporting to them directly
+            const { data: teamData } = await supabase
+              .from('leader_teams')
+              .select('agent_id')
+              .eq('leader_id', user!.id);
+              
+            teamAgentIds = (teamData || []).map((t: any) => t.agent_id);
+            // Include themselves
+            teamAgentIds.push(user!.id);
+        }
 
         const { data: managerViewTasks, error: managerTasksError } = await supabase
           .from('tasks')
@@ -569,10 +605,18 @@ export default function CalendarPage() {
       if (!user?.id) return;
 
       const isManagerRole = user.role === 'manager' || user.role === 'admin';
+      const isTeamLeaderRole = user.role === 'team_leader';
 
       let agentIds: string[] = [user.id];
       if (isManagerRole) {
         agentIds = await getManagerTeamAgentIds();
+      } else if (isTeamLeaderRole) {
+         const { data: teamData } = await supabase
+              .from('leader_teams')
+              .select('agent_id')
+              .eq('leader_id', user.id);
+         const teamMembers = (teamData || []).map((t: any) => t.agent_id);
+         agentIds = [...agentIds, ...teamMembers];
       }
 
       const { data, error } = await supabase
@@ -1235,7 +1279,7 @@ export default function CalendarPage() {
 
   // Event colors (type-based, but tasks can be colored per-agent for leaders)
   const getEventTypeColor = (event: CalendarEvent) => {
-    if (isManager && event.type === 'task' && event.agentColorClass) {
+    if (hasTeamView && event.type === 'task' && event.agentColorClass) {
       return event.agentColorClass;
     }
 
@@ -1807,8 +1851,8 @@ export default function CalendarPage() {
             </SelectContent>
           </Select>
 
-          {/* Agent Filter (Managers) */}
-          {isManager && (
+          {/* Agent Filter (Managers & Team Leaders) */}
+          {hasTeamView && (
             <Select value={selectedAgentFilter} onValueChange={setSelectedAgentFilter}>
               <SelectTrigger className="w-44">
                 <SelectValue placeholder="Filter by agent" />

@@ -28,8 +28,9 @@ import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
-import { useMyRequests, useInventoryBaseData, Request, GroupedRequest } from './requestHooks';
+import { useMyRequests, useInventoryBaseData, useLeaderInventorySummary, Request, GroupedRequest } from './requestHooks';
 import { useQueryClient } from '@tanstack/react-query';
+import { RefreshCw } from 'lucide-react';
 
 
 
@@ -38,11 +39,20 @@ export default function RequestInventoryPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const [leaderId, setLeaderId] = useState<string | null>(null);
+
   const { data: inventoryData, isLoading: inventoryLoading } = useInventoryBaseData();
   const { data: requests = [], isLoading: requestsLoading, refetch: refetchRequests } = useMyRequests();
 
-  const brands = inventoryData?.brands || [];
-  const variants = inventoryData?.variants || [];
+  // Leader inventory summary (brands and variants specifically from leader's stock)
+  const { 
+    data: leaderSummary, 
+    isLoading: leaderSummaryLoading, 
+    refetch: refetchLeaderSummary 
+  } = useLeaderInventorySummary(leaderId);
+
+  const brands = leaderSummary?.brands || [];
+  const variants = leaderSummary?.variants || [];
   const loading = inventoryLoading || requestsLoading;
 
   const [submitting, setSubmitting] = useState(false);
@@ -59,7 +69,6 @@ export default function RequestInventoryPage() {
   // Leader inventory state
   const [leaderInventory, setLeaderInventory] = useState<Record<string, number>>({});
   const [loadingLeaderInventory, setLoadingLeaderInventory] = useState(false);
-  const [leaderId, setLeaderId] = useState<string | null>(null);
 
   // Confirmation dialogs
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
@@ -555,9 +564,11 @@ export default function RequestInventoryPage() {
           </DialogTrigger>
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Create New Request</DialogTitle>
+              <DialogTitle>
+                Create New Request
+              </DialogTitle>
               <DialogDescription>
-                Select products and quantities to request from your team leader
+                Select products and quantities to request from your team leader's current stock
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-6 py-4">

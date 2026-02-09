@@ -2,33 +2,32 @@ import { useState, useMemo, useEffect } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { WarRoomMap } from './components/WarRoomMap';
 import { WarRoomFilters } from './components/WarRoomFilters';
-import { WarRoomLegend } from './components/WarRoomLegend';
-import { WarRoomStats } from './components/WarRoomStats';
 import { ClientMapPopup } from './components/ClientMapPopup';
 import { useWarRoomClients, WarRoomClient } from './hooks/useWarRoomClients';
+import { useWarRoomHierarchy } from './hooks/useWarRoomHierarchy';
 import { Card } from '@/components/ui/card';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 
 export function WarRoomPage() {
-  const { clients, loading, error } = useWarRoomClients();
+  const { clients, loading: clientsLoading, error: clientsError } = useWarRoomClients();
+  const { data: hierarchy, isLoading: hierarchyLoading } = useWarRoomHierarchy();
   const { user } = useAuth();
+  
   const [selectedClient, setSelectedClient] = useState<WarRoomClient | null>(null);
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   
   // Filter states
-  const [accountTypeFilter, setAccountTypeFilter] = useState<'all' | 'Key Accounts' | 'Standard Accounts'>('all');
-  const [roleFilter, setRoleFilter] = useState<'all' | 'mobile_sales' | 'team_leader' | 'manager'>('all');
+  const [selectedManagerId, setSelectedManagerId] = useState<string>('all');
+  const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
   const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Fetch all brands for this company for the brands filter
+  // Fetch all brands
   useEffect(() => {
     if (!user?.company_id) return;
-
     let cancelled = false;
-
     const fetchBrands = async () => {
       try {
         const { data, error } = await supabase
@@ -38,136 +37,163 @@ export function WarRoomPage() {
           .order('name');
 
         if (error) throw error;
-        if (!cancelled) {
-          setBrands(data || []);
-        }
+        if (!cancelled) setBrands(data || []);
       } catch (err) {
-        console.error('Error fetching brands for War Room filter:', err);
-        if (!cancelled) {
-          setBrands([]);
-        }
+        console.error('Error fetching brands:', err);
       }
     };
-
     fetchBrands();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [user?.company_id]);
 
-  // Filter clients based on all filters
-  const filteredClients = useMemo(() => {
-    return clients.filter(client => {
-      // Account type filter
-      if (accountTypeFilter !== 'all' && client.account_type !== accountTypeFilter) {
-        return false;
+  // 1. Manager Filter Logic
+  // If a manager is selected, we get all agent IDs that fall under their hierarchy.
+  const managerTeamAgentIds = useMemo(() => {
+    if (selectedManagerId === 'all' || !hierarchy) return null;
+    
+    // Find the selected manager node
+    const managerNode = hierarchy.find(m => m.id === selectedManagerId);
+    if (!managerNode) return null;
+
+    // Collect all member IDs from all sub-teams
+    const ids = new Set<string>();
+    // include manager themself if they have clients
+    ids.add(managerNode.id); 
+    
+    managerNode.subTeams.forEach(st => {
+      st.memberIds.forEach(id => ids.add(id));
+    });
+    
+    return ids;
+  }, [selectedManagerId, hierarchy]);
+
+  // 2. Base Filtered Clients (Filtered by Manager ONLY)
+  // This is used to generate the City Options available for this Manager
+  const clientsInManagerScope = useMemo(() => {
+    if (selectedManagerId === 'all') return clients;
+    if (!managerTeamAgentIds) return []; // Should not happen if 'all' check passes, but for safety
+    
+    return clients.filter(c => 
+      c.agent_id && managerTeamAgentIds.has(c.agent_id)
+    );
+  }, [clients, selectedManagerId, managerTeamAgentIds]);
+
+  // 3. Generate City Options from Manager Scope
+  const cityOptions = useMemo(() => {
+    const cityMap = new Map<string, Set<string>>(); // City -> Set of Agent Names
+    const cityCounts = new Map<string, number>();
+
+    clientsInManagerScope.forEach(client => {
+      const city = client.city || 'Unknown';
+      if (!city || city.trim() === '') return;
+
+      // Track agent names for this city
+      if (!cityMap.has(city)) {
+        cityMap.set(city, new Set());
+        cityCounts.set(city, 0);
+      }
+      
+      if (client.agent_name) {
+        cityMap.get(city)!.add(client.agent_name);
+      }
+      cityCounts.set(city, (cityCounts.get(city) || 0) + 1);
+    });
+
+    return Array.from(cityMap.entries()).map(([city, agentSet]) => ({
+      city,
+      holderNames: Array.from(agentSet).sort(),
+      count: cityCounts.get(city) || 0
+    })).sort((a, b) => a.city.localeCompare(b.city));
+  }, [clientsInManagerScope]);
+
+  // Generate City -> Holder Map for the Map Component
+  const cityHolderMap = useMemo(() => {
+    const map = new Map<string, string>();
+    cityOptions.forEach(opt => {
+      map.set(opt.city, opt.holderNames.join(', '));
+    });
+    return map;
+  }, [cityOptions]);
+
+  // 4. Final Filtered Clients (Manager + Cities + Brands + Search)
+  const finalFilteredClients = useMemo(() => {
+    return clientsInManagerScope.filter(client => {
+      // City Filter
+      if (selectedCities.length > 0) {
+        const clientCity = client.city || 'Unknown';
+        if (!selectedCities.includes(clientCity)) return false;
       }
 
-      // Team role filter (based on owning agent's role)
-      if (roleFilter !== 'all') {
-        const role = (client.agent_role || '').toLowerCase();
-        if (role !== roleFilter) {
-          return false;
-        }
-      }
-
-      // Brands filter: client must carry at least one of the selected brands
+      // Brand Filter
       if (selectedBrandIds.length > 0) {
-        const clientBrands = client.brand_ids || [];
-        const hasAnySelectedBrand = clientBrands.some((id) =>
-          selectedBrandIds.includes(id)
-        );
-        if (!hasAnySelectedBrand) {
-          return false;
-        }
+        if (!client.brand_ids) return false;
+        const hasBrand = client.brand_ids.some(id => selectedBrandIds.includes(id));
+        if (!hasBrand) return false;
       }
 
-      // Search query filter
+      // Search Query
       if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const matchesName = client.name.toLowerCase().includes(query);
-        const matchesCompany = client.company.toLowerCase().includes(query);
-        const matchesCity = client.city.toLowerCase().includes(query);
-        const matchesRegion = client.region.toLowerCase().includes(query);
-        
-        if (!matchesName && !matchesCompany && !matchesCity && !matchesRegion) {
-          return false;
-        }
+        const q = searchQuery.toLowerCase();
+        const match = 
+          client.name.toLowerCase().includes(q) ||
+          client.company.toLowerCase().includes(q) ||
+          (client.city || '').toLowerCase().includes(q) ||
+          (client.region || '').toLowerCase().includes(q);
+        if (!match) return false;
       }
 
       return true;
     });
-  }, [clients, accountTypeFilter, roleFilter, selectedBrandIds, searchQuery]);
+  }, [clientsInManagerScope, selectedCities, selectedBrandIds, searchQuery]);
 
+  // Handlers
   const handleClientClick = (client: WarRoomClient) => {
     setSelectedClient(client);
     setIsPopupOpen(true);
   };
 
-  // Loading State
+  const handleManagerChange = (val: string) => {
+    setSelectedManagerId(val);
+    setSelectedCities([]); // Reset cities when changing manager context
+  };
+
+  const handleCityToggle = (city: string, checked: boolean) => {
+    setSelectedCities(prev => {
+      if (checked) {
+        return prev.includes(city) ? prev : [...prev, city];
+      } else {
+        return prev.filter(c => c !== city);
+      }
+    });
+  };
+
+  const handleSelectAllCities = (checked: boolean) => {
+    if (checked) {
+      setSelectedCities(cityOptions.map(o => o.city));
+    } else {
+      setSelectedCities([]);
+    }
+  };
+
+  const loading = clientsLoading || hierarchyLoading;
+
   if (loading) {
     return (
       <div className="flex flex-col h-[calc(100vh-64px)]">
-        <div className="p-6 pb-4">
-          <h1 className="text-3xl font-bold">War Room</h1>
-          <p className="text-muted-foreground mt-1">
-            Interactive map of client locations with forge status
-          </p>
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          <Card className="p-8 flex flex-col items-center gap-4">
-            <Loader2 className="h-12 w-12 animate-spin text-primary" />
-            <p className="text-lg font-medium">Loading client locations...</p>
-          </Card>
-        </div>
+        <LoadingState message="Loading War Room data..." />
       </div>
     );
   }
 
-  // Error State
-  if (error) {
+  if (clientsError) {
     return (
       <div className="flex flex-col h-[calc(100vh-64px)]">
-        <div className="p-6 pb-4">
-          <h1 className="text-3xl font-bold">War Room</h1>
-          <p className="text-muted-foreground mt-1">
-            Interactive map of client locations with forge status
-          </p>
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          <Card className="p-8 flex flex-col items-center gap-4 max-w-md">
-            <AlertCircle className="h-12 w-12 text-destructive" />
-            <p className="text-lg font-medium">Failed to load clients</p>
-            <p className="text-sm text-muted-foreground text-center">{error}</p>
-          </Card>
-        </div>
+        <ErrorState message={clientsError} />
       </div>
     );
   }
 
-  // Empty State
-  if (clients.length === 0) {
-    return (
-      <div className="flex flex-col h-[calc(100vh-64px)]">
-        <div className="p-6 pb-4">
-          <h1 className="text-3xl font-bold">War Room</h1>
-          <p className="text-muted-foreground mt-1">
-            Interactive map of client locations with forge status
-          </p>
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          <Card className="p-8 flex flex-col items-center gap-4 max-w-md">
-            <AlertCircle className="h-12 w-12 text-muted-foreground" />
-            <p className="text-lg font-medium">No Clients with Locations</p>
-            <p className="text-sm text-muted-foreground text-center">
-              No clients have location data available. Add location information to clients to see them on the map.
-            </p>
-          </Card>
-        </div>
-      </div>
-    );
-  }
+  const managerOptions = hierarchy?.map(h => ({ id: h.id, name: h.name })) || [];
 
   return (
     <div className="flex flex-col h-[calc(100vh-64px)]">
@@ -175,66 +201,94 @@ export function WarRoomPage() {
       <div className="p-6 pb-4">
         <h1 className="text-3xl font-bold">War Room</h1>
         <p className="text-muted-foreground mt-1">
-          Interactive map of client locations with forge status
+          Interactive map of client locations and territory management
         </p>
       </div>
 
       <div className="flex-1 p-6 overflow-hidden">
         <div className="h-full flex flex-col gap-4">
-          {/* Statistics Cards */}
-          <WarRoomStats clients={filteredClients} />
 
-          {/* Main Content: Filters, Map, and Legend */}
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
-            {/* Left Sidebar: Filters */}
+            {/* Filters Sidebar */}
             <div className="lg:col-span-3 overflow-y-auto">
               <WarRoomFilters
-                accountTypeFilter={accountTypeFilter}
-                roleFilter={roleFilter}
+                managers={managerOptions}
+                selectedManagerId={selectedManagerId}
+                onManagerChange={handleManagerChange}
+                cityOptions={cityOptions}
+                selectedCities={selectedCities}
+                onCityToggle={handleCityToggle}
+                onSelectAllCities={handleSelectAllCities}
                 brands={brands}
                 selectedBrandIds={selectedBrandIds}
+                onBrandToggle={(id, checked) => 
+                  setSelectedBrandIds(prev => checked ? [...prev, id] : prev.filter(b => b !== id))
+                }
                 searchQuery={searchQuery}
-                onAccountTypeChange={setAccountTypeFilter}
-                onRoleChange={setRoleFilter}
-                onBrandToggle={(brandId, checked) => {
-                  setSelectedBrandIds((prev) =>
-                    checked ? [...prev, brandId] : prev.filter((id) => id !== brandId)
-                  );
-                }}
                 onSearchChange={setSearchQuery}
               />
             </div>
 
-            {/* Center: Map */}
-            <div className="lg:col-span-7 h-[500px] lg:h-full">
-              <WarRoomMap
-                clients={filteredClients}
-                onClientClick={handleClientClick}
-              />
-            </div>
-
-            {/* Right Sidebar: Legend */}
-            <div className="lg:col-span-2">
-              <WarRoomLegend />
-              
-              {/* Client Count */}
-              <div className="mt-4 p-4 bg-muted rounded-lg">
-                <p className="text-sm text-muted-foreground">
-                  Showing <span className="font-bold text-foreground">{filteredClients.length}</span> of{' '}
-                  <span className="font-bold text-foreground">{clients.length}</span> clients
-                </p>
+            {/* Map Area */}
+            <div className="lg:col-span-9 h-[750px] lg:h-[calc(100vh-180px)] flex flex-col gap-4">
+              <div className="flex-1 relative rounded-xl overflow-hidden border">
+                <WarRoomMap
+                  clients={finalFilteredClients}
+                  cityHolders={cityHolderMap} // Pass the color/boundary mapping
+                  selectedCities={selectedCities}
+                  onClientClick={handleClientClick}
+                  onCityStatusChange={handleCityToggle}
+                />
+                
+                {/* Floating Info Overlay */}
+                <div className="absolute top-4 right-4 bg-background/90 backdrop-blur-sm p-3 rounded-lg shadow-lg border text-sm max-w-xs z-[400]">
+                  <p className="font-semibold mb-1">
+                    Showing {finalFilteredClients.length} Clients
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    {selectedManagerId === 'all' 
+                      ? 'All Teams' 
+                      : `Team ${managerOptions.find(m => m.id === selectedManagerId)?.name}`}
+                   {' • '}
+                   {selectedCities.length === 0 
+                     ? 'All Cities' 
+                     : `${selectedCities.length} Cities Selected`}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Client Details Popup */}
       <ClientMapPopup
         client={selectedClient}
         open={isPopupOpen}
         onOpenChange={setIsPopupOpen}
       />
+    </div>
+  );
+}
+
+function LoadingState({ message }: { message: string }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
+      <div className="p-8 rounded-full bg-muted/50 animate-pulse">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+      <p className="text-lg font-medium text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
+      <Card className="p-8 flex flex-col items-center gap-4 max-w-md bg-destructive/5 border-destructive/20">
+        <AlertCircle className="h-12 w-12 text-destructive" />
+        <h3 className="text-lg font-bold text-destructive">Data Error</h3>
+        <p className="text-sm text-center text-muted-foreground">{message}</p>
+      </Card>
     </div>
   );
 }

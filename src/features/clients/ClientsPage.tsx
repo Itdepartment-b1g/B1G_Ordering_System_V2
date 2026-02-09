@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, ChevronLeft, ChevronRight, BarChart3 } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, ChevronLeft, ChevronRight, BarChart3, Tag } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -33,6 +33,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import * as XLSX from 'xlsx';
 
 interface Client {
   id: string;
@@ -296,6 +297,7 @@ export default function ClientsPage() {
     if (!roleResolved) return;
     fetchClients();
     fetchAllClientsRevenue(); // Fetch revenue from all clients (active + inactive)
+    fetchAgents(); // Load agents for Transfer to dropdown and Current Agent display
     // DISABLED: initializeAgentCities() - don't auto-update on page load
     // Cities will be merged automatically when clients are transferred
     // initializeAgentCities(); // Initialize city tags for all agents
@@ -311,9 +313,13 @@ export default function ClientsPage() {
       fetchClients();
       fetchAllClientsRevenue(); // Update revenue when orders change
     });
+    const profilesChannel = subscribeToTable('profiles', () => {
+      fetchAgents(); // Keep Transfer to dropdown and agent lists in sync
+    });
     return () => {
       unsubscribe(clientsChannel);
       unsubscribe(ordersChannel);
+      unsubscribe(profilesChannel);
     };
   }, [roleResolved, isAdmin, user?.id, user?.company_id]);
 
@@ -532,6 +538,7 @@ export default function ClientsPage() {
         approved_by: client.approved_by || null,
         visit_count: client.visit_logs?.[0]?.count || 0, // Map count
         tax_status: client.tax_status,
+        brand_ids: client.brand_ids || [],
       }));
 
       setClients(formattedClients);
@@ -551,7 +558,7 @@ export default function ClientsPage() {
   };
 
   const handleDownloadTemplate = () => {
-    const header = 'name,company,email,phone,address,city,account_type,category\n';
+    const header = 'name,company,contact_person,email,phone,tin,address,city,account_type,category,location_latitude,location_longitude,location_accuracy\n';
     const blob = new Blob([header], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -575,29 +582,63 @@ export default function ClientsPage() {
     if (!file) return;
 
     try {
-      const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+      const name = file.name.toLowerCase();
+      const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
 
-      if (lines.length <= 1) {
-        toast({
-          title: 'No data',
-          description: 'The template file is empty.',
-          variant: 'destructive',
-        });
-        return;
+      let headers: string[];
+      let rows: string[][];
+
+      if (isExcel) {
+        const ab = await file.arrayBuffer();
+        const wb = XLSX.read(ab, { type: 'array' });
+        const firstSheet = wb.SheetNames[0];
+        if (!firstSheet) {
+          toast({ title: 'No data', description: 'The Excel file has no sheets.', variant: 'destructive' });
+          return;
+        }
+        const sheet = wb.Sheets[firstSheet];
+        const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][];
+        if (!raw.length) {
+          toast({ title: 'No data', description: 'The sheet is empty.', variant: 'destructive' });
+          return;
+        }
+        headers = (raw[0] as unknown[]).map((h: unknown) => String(h ?? '').trim().toLowerCase());
+        rows = raw.slice(1).map((row: unknown[]) =>
+          (row || []).map((c: unknown) => (c == null ? '' : String(c)).trim())
+        );
+      } else {
+        const text = await file.text();
+        const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+        if (lines.length <= 1) {
+          toast({ title: 'No data', description: 'The template file is empty.', variant: 'destructive' });
+          return;
+        }
+        const [headerLine, ...lineRows] = lines;
+        headers = headerLine.split(',').map(h => h.trim().toLowerCase());
+        rows = lineRows.map(row => row.split(',').map(c => c.trim()));
       }
 
-      const [headerLine, ...rows] = lines;
-      const headers = headerLine.split(',').map(h => h.trim().toLowerCase());
+      const findCol = (aliases: string[]) => {
+        for (const a of aliases) {
+          const i = headers.indexOf(a);
+          if (i >= 0) return i;
+        }
+        return -1;
+      };
 
-      const nameIdx = headers.indexOf('name');
-      const companyIdx = headers.indexOf('company');
-      const emailIdx = headers.indexOf('email');
-      const phoneIdx = headers.indexOf('phone');
-      const addressIdx = headers.indexOf('address');
-      const cityIdx = headers.indexOf('city');
-      const accountTypeIdx = headers.indexOf('account_type');
-      const categoryIdx = headers.indexOf('category');
+      const nameIdx = findCol(['name', 'trade name', 'trade_name']);
+      const companyIdx = findCol(['company', 'shop name', 'shop_name']);
+      const contactPersonIdx = findCol(['contact_person', 'contact person']);
+      const emailIdx = findCol(['email']);
+      const phoneIdx = findCol(['phone']);
+      const tinIdx = findCol(['tin']);
+      const addressIdx = findCol(['address']);
+      const cityIdx = findCol(['city']);
+      const accountTypeIdx = findCol(['account_type', 'account type']);
+      const categoryIdx = findCol(['category']);
+      const locationLatIdx = findCol(['location_latitude', 'location latitude', 'latitude', 'lat']);
+      const locationLonIdx = findCol(['location_longitude', 'location longitude', 'longitude', 'lon', 'long']);
+      const locationAccuracyIdx = findCol(['location_accuracy', 'location accuracy', 'accuracy']);
 
       if (nameIdx === -1) {
         toast({
@@ -609,24 +650,24 @@ export default function ClientsPage() {
       }
 
       const isAdminUser = isAdmin || isSuperAdmin;
-
       let total = 0;
       let valid = 0;
       let skipped = 0;
 
       const previewRows = rows.map(row => {
-        const cols = row.split(',').map(c => c.trim());
+        const cols = row;
         if (cols.every(c => !c)) {
           return null;
         }
         total += 1;
-        if (!cols[nameIdx]) {
+        const nameVal = cols[nameIdx] ?? '';
+        if (!nameVal) {
           skipped += 1;
           return null;
         }
 
-        const rawAccountType = accountTypeIdx >= 0 ? cols[accountTypeIdx] : '';
-        const rawCategory = categoryIdx >= 0 ? cols[categoryIdx] : '';
+        const rawAccountType = accountTypeIdx >= 0 ? (cols[accountTypeIdx] ?? '') : '';
+        const rawCategory = categoryIdx >= 0 ? (cols[categoryIdx] ?? '') : '';
 
         const account_type: Client['account_type'] =
           rawAccountType === 'Key Accounts' ? 'Key Accounts' : 'Standard Accounts';
@@ -638,17 +679,34 @@ export default function ClientsPage() {
         valid += 1;
 
         const rowObj: Partial<Client> = {
-          name: cols[nameIdx],
-          company: companyIdx >= 0 ? cols[companyIdx] || null : null,
-          email: emailIdx >= 0 ? cols[emailIdx] || null : null,
-          phone: phoneIdx >= 0 ? cols[phoneIdx] || null : null,
-          address: addressIdx >= 0 ? cols[addressIdx] || null : null,
-          city: cityIdx >= 0 ? cols[cityIdx] || null : null,
+          name: nameVal,
+          company: companyIdx >= 0 ? (cols[companyIdx] ?? '') || null : null,
+          contact_person: contactPersonIdx >= 0 ? (cols[contactPersonIdx] ?? '') || null : null,
+          email: emailIdx >= 0 ? (cols[emailIdx] ?? '') || null : null,
+          phone: phoneIdx >= 0 ? (cols[phoneIdx] ?? '') || null : null,
+          tin: tinIdx >= 0 ? (cols[tinIdx] ?? '') || null : null,
+          address: addressIdx >= 0 ? (cols[addressIdx] ?? '') || null : null,
+          city: cityIdx >= 0 ? (cols[cityIdx] ?? '') || null : null,
           account_type,
           category,
           status: 'active',
           approval_status: isAdminUser ? 'approved' : 'pending',
           agent_id: isAdminUser ? null : user?.id || null,
+          location_latitude: (() => {
+            if (locationLatIdx < 0) return undefined;
+            const v = parseFloat(String(cols[locationLatIdx] ?? '').trim());
+            return Number.isFinite(v) ? v : undefined;
+          })(),
+          location_longitude: (() => {
+            if (locationLonIdx < 0) return undefined;
+            const v = parseFloat(String(cols[locationLonIdx] ?? '').trim());
+            return Number.isFinite(v) ? v : undefined;
+          })(),
+          location_accuracy: (() => {
+            if (locationAccuracyIdx < 0) return undefined;
+            const v = parseFloat(String(cols[locationAccuracyIdx] ?? '').trim());
+            return Number.isFinite(v) ? v : undefined;
+          })(),
         };
         return rowObj;
       }).filter(Boolean) as Partial<Client>[];
@@ -706,12 +764,20 @@ export default function ClientsPage() {
         // imports by agents are assigned to themselves
         const agentId = isAdminUser ? null : user.id;
 
+        const lat = row.location_latitude != null ? (typeof row.location_latitude === 'number' ? row.location_latitude : parseFloat(String(row.location_latitude))) : null;
+        const lon = row.location_longitude != null ? (typeof row.location_longitude === 'number' ? row.location_longitude : parseFloat(String(row.location_longitude))) : null;
+        const acc = row.location_accuracy != null ? (typeof row.location_accuracy === 'number' ? row.location_accuracy : parseFloat(String(row.location_accuracy))) : null;
+        // Set location_captured_at to the date/time of import (ignore any file data)
+        const importTimestamp = new Date().toISOString();
+
         return {
           company_id: user.company_id,
           name: row.name,
           company: row.company || null,
+          contact_person: row.contact_person || null,
           email: row.email || null,
           phone: row.phone || null,
+          tin: row.tin || null,
           address: row.address || null,
           city: row.city || null,
           account_type: row.account_type || 'Standard Accounts',
@@ -722,10 +788,10 @@ export default function ClientsPage() {
           total_spent: 0,
           photo_url: null,
           photo_timestamp: null,
-          location_latitude: null,
-          location_longitude: null,
-          location_accuracy: null,
-          location_captured_at: null,
+          location_latitude: Number.isFinite(lat) ? lat : null,
+          location_longitude: Number.isFinite(lon) ? lon : null,
+          location_accuracy: Number.isFinite(acc) ? acc : null,
+          location_captured_at: importTimestamp,
           approval_status: approvalStatus,
           approval_requested_at: approvalRequestedAt,
           approval_notes: null,
@@ -1097,10 +1163,14 @@ export default function ClientsPage() {
     return agents.find(agent => agent.id === topAgent[0]);
   };
 
-  // Get available agents for transfer (excluding current holder)
+  // Get available agents for transfer: mobile_sales and team_leader only (excluding current holder)
   const getAvailableAgents = (city: string) => {
     const currentHolder = getCurrentCityHolder(city);
-    return agents.filter(agent => agent.id !== currentHolder?.id);
+    return agents.filter(
+      agent =>
+        (agent.role === 'mobile_sales' || agent.role === 'team_leader') &&
+        agent.id !== currentHolder?.id
+    );
   };
 
   // Load clients for selected city
@@ -1235,10 +1305,11 @@ export default function ClientsPage() {
   };
 
   // City-based bulk transfer functions
-  const handleOpenCityBulkTransfer = () => {
+  const handleOpenCityBulkTransfer = async () => {
     setSelectedCity('');
     setSelectedTransferAgent('');
     setCityClients([]);
+    await fetchAgents(); // Ensure Transfer to dropdown is populated (mobile_sales / team_leader)
     setCityBulkTransferOpen(true);
   };
 
@@ -2346,22 +2417,32 @@ export default function ClientsPage() {
     setExportProgress({ current: 0, total: clients.length });
 
     try {
-      // Prepare client data for export
+      // Prepare client data for export (column order = CSV order)
       const exportData = clients.map(client => ({
         id: client.id,
-        name: client.name,
+        trade_name: client.name,
+        shop_name: client.company || '',
+        contact_person: client.contact_person || '',
         email: client.email || '',
         phone: client.phone || '',
-        company: client.company || '',
+        tin: client.tin || '',
         address: client.address || '',
         city: client.city || '',
         agent_name: client.agent_name || 'Unassigned',
-        photo_url: client.photo_url || '',
+        account_type: client.account_type || 'Standard Accounts',
+        category: client.category || 'Open',
+        status: client.status || 'active',
         total_orders: client.total_orders || 0,
         total_spent: client.total_spent || 0,
-        status: client.status || 'active',
-        created_at: client.created_at,
+        visit_count: client.visit_count ?? 0,
+        last_order_date: client.last_order_date || '',
         approval_status: client.approval_status || 'approved',
+        created_at: client.created_at,
+        updated_at: client.updated_at,
+        location_latitude: client.location_latitude ?? '',
+        location_longitude: client.location_longitude ?? '',
+        location_accuracy: client.location_accuracy ?? '',
+        location_captured_at: client.location_captured_at ?? '',
       }));
 
       // Export to Excel with progress tracking
@@ -2401,26 +2482,50 @@ export default function ClientsPage() {
     <div className="p-8 space-y-6">
       {/* Import Preview Dialog */}
       <Dialog open={importPreviewOpen} onOpenChange={setImportPreviewOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="flex flex-col w-[95vw] max-w-4xl max-h-[90dvh] p-4 sm:p-6 overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Import Clients Preview</DialogTitle>
             <DialogDescription>
               Review the rows below. Only rows with a name will be imported.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="text-xs text-muted-foreground">
-              Total rows (excluding header): <span className="font-semibold">{importSummary.total}</span> ·{' '}
-              Valid: <span className="font-semibold text-green-600">{importSummary.valid}</span> ·{' '}
-              Skipped: <span className="font-semibold text-red-600">{importSummary.skipped}</span>
+          <div className="text-xs text-muted-foreground shrink-0 mb-3">
+            Total rows (excluding header): <span className="font-semibold">{importSummary.total}</span> ·{' '}
+            Valid: <span className="font-semibold text-green-600">{importSummary.valid}</span> ·{' '}
+            Skipped: <span className="font-semibold text-red-600">{importSummary.skipped}</span>
+          </div>
+          <div className="flex-1 min-h-0 overflow-auto border rounded-md -mx-1 px-1">
+            {/* Mobile: card list - no horizontal scroll */}
+            <div className="md:hidden space-y-3 py-2">
+              {importRows.map((row, idx) => (
+                <div key={idx} className="rounded-lg border bg-card p-3 shadow-sm space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground border-b pb-1.5">
+                    Row {idx + 1}
+                  </div>
+                  <div className="grid gap-1.5">
+                    {importHeaders.map((h) => {
+                      const key = h as keyof Client;
+                      const value = (row as any)[key] ?? '';
+                      const label = h.charAt(0).toUpperCase() + h.slice(1).replace(/_/g, ' ');
+                      return (
+                        <div key={h} className="flex flex-wrap gap-x-2 text-sm">
+                          <span className="text-muted-foreground shrink-0">{label}:</span>
+                          <span className="break-words min-w-0">{String(value) || '—'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="border rounded-md overflow-auto">
-              <Table>
+            {/* Desktop: scrollable table inside viewport */}
+            <div className="hidden md:block h-full min-h-[200px] overflow-auto">
+              <Table className="min-w-[600px]">
                 <TableHeader>
                   <TableRow>
                     {importHeaders.map((h) => (
-                      <TableHead key={h} className="uppercase text-[10px] tracking-wide">
-                        {h}
+                      <TableHead key={h} className="uppercase text-[10px] tracking-wide whitespace-nowrap">
+                        {h.replace(/_/g, ' ')}
                       </TableHead>
                     ))}
                   </TableRow>
@@ -2432,8 +2537,8 @@ export default function ClientsPage() {
                         const key = h as keyof Client;
                         const value = (row as any)[key] ?? '';
                         return (
-                          <TableCell key={h} className="text-xs">
-                            {String(value)}
+                          <TableCell key={h} className="text-xs max-w-[180px] truncate" title={String(value)}>
+                            {String(value) || '—'}
                           </TableCell>
                         );
                       })}
@@ -2443,7 +2548,7 @@ export default function ClientsPage() {
               </Table>
             </div>
           </div>
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="flex justify-end gap-2 mt-4 shrink-0 pt-2 border-t">
             <Button
               variant="outline"
               onClick={() => setImportPreviewOpen(false)}
@@ -2506,7 +2611,7 @@ export default function ClientsPage() {
                   type="file"
                   ref={importInputRef}
                   onChange={handleImportClients}
-                  accept=".csv,.txt"
+                  accept=".csv,.txt,.xlsx,.xls"
                   className="hidden"
                 />
                 <Button variant="outline" className="gap-2" onClick={handleImportClick} disabled={importing}>
@@ -2585,7 +2690,7 @@ export default function ClientsPage() {
                     type="file"
                     ref={importInputRef}
                     onChange={handleImportClients}
-                    accept=".csv,.txt"
+                    accept=".csv,.txt,.xlsx,.xls"
                     className="hidden"
                   />
                   <DropdownMenuItem onClick={handleOpenCityBulkTransfer}>
@@ -3068,7 +3173,7 @@ export default function ClientsPage() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search clients by name, email, shop name, or agent..."
+                  placeholder="Search clients by trade name, email, shop name, or agent..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
@@ -3262,7 +3367,7 @@ export default function ClientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
-                  <TableHead className="text-center">Name</TableHead>
+                  <TableHead className="text-center">Trade Name</TableHead>
                   <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
@@ -3554,6 +3659,30 @@ export default function ClientsPage() {
                 <div className="p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">Status</p>
                   <Badge variant="outline">{viewingClient.status}</Badge>
+                </div>
+              </div>
+
+              {/* Brands they have */}
+              <div className="space-y-3">
+                <h4 className="font-semibold text-sm flex items-center gap-2 text-gray-900">
+                  <Tag className="h-4 w-4" />
+                  Brands they have
+                </h4>
+                <div className="p-4 bg-muted/40 rounded-lg border">
+                  {viewingClient.brand_ids && viewingClient.brand_ids.length > 0 && brands.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {viewingClient.brand_ids
+                        .map((id) => brands.find((b) => b.id === id))
+                        .filter((b): b is { id: string; name: string } => !!b)
+                        .map((b) => (
+                          <Badge key={b.id} variant="secondary" className="font-normal">
+                            {b.name}
+                          </Badge>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No brands assigned</p>
+                  )}
                 </div>
               </div>
 

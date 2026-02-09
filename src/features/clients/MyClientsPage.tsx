@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
@@ -2218,6 +2218,30 @@ export default function MyClientsPage() {
                       )}
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Brands */}
+              <div className="space-y-4">
+                <h4 className="font-semibold text-sm flex items-center gap-2 text-primary">
+                  <Tag className="h-4 w-4" />
+                  Brands they have
+                </h4>
+                <div className="bg-gray-50/50 p-4 rounded-xl border">
+                  {viewingClient.brandIds && viewingClient.brandIds.length > 0 && brands.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {viewingClient.brandIds
+                        .map((id) => brands.find((b) => b.id === id))
+                        .filter((b): b is { id: string; name: string } => !!b)
+                        .map((b) => (
+                          <Badge key={b.id} variant="secondary" className="font-normal">
+                            {b.name}
+                          </Badge>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No brands assigned</p>
+                  )}
                 </div>
               </div>
 
