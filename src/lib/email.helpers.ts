@@ -35,6 +35,21 @@ interface OrderEmailData {
 function generateEmailHTML(orderData: OrderEmailData): string {
     const formatPrice = (price: number) => `₱${price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     
+    const formatPaymentMethod = (method: string, bankName?: string) => {
+        if (!method) return 'Cash';
+        
+        // Handle enum values
+        if (method === 'BANK_TRANSFER') {
+            return bankName ? `Bank Transfer (${bankName})` : 'Bank Transfer';
+        }
+        if (method === 'GCASH') return 'GCash';
+        if (method === 'CHEQUE') return 'Cheque';
+        if (method === 'CASH') return 'Cash';
+        
+        // Already formatted (like "Bank Transfer (BPI)")
+        return method;
+    };
+    
     const itemsHTML = orderData.items.map(item => `
         <tr>
             <td style="padding: 8px 12px 8px 0; border-bottom: 1px solid #eee;">
@@ -82,7 +97,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method:</td>
-                                <td style="padding: 4px 0; text-align: right; color: #111;">${orderData.paymentMethod || 'Cash'}</td>
+                                <td style="padding: 4px 0; text-align: right; color: #111;">${formatPaymentMethod(orderData.paymentMethod, orderData.bankName)}</td>
                             </tr>
                         </table>
                     </div>
@@ -181,6 +196,21 @@ function generateEmailHTML(orderData: OrderEmailData): string {
 function generateITReceiptHTML(orderData: OrderEmailData): string {
     const formatPrice = (price: number) => `₱${price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     
+    const formatPaymentMethod = (method: string, bankName?: string) => {
+        if (!method) return 'Cash';
+        
+        // Handle enum values
+        if (method === 'BANK_TRANSFER') {
+            return bankName ? `Bank Transfer (${bankName})` : 'Bank Transfer';
+        }
+        if (method === 'GCASH') return 'GCash';
+        if (method === 'CHEQUE') return 'Cheque';
+        if (method === 'CASH') return 'Cash';
+        
+        // Already formatted (like "Bank Transfer (BPI)")
+        return method;
+    };
+    
     const itemsHTML = orderData.items.map(item => `
         <tr>
             <td style="padding: 8px 12px 8px 0; border-bottom: 1px solid #eee;">
@@ -231,7 +261,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method:</td>
-                                <td style="padding: 4px 0; color: #111;">${orderData.paymentMethod || 'Cash'}</td>
+                                <td style="padding: 4px 0; color: #111;">${formatPaymentMethod(orderData.paymentMethod, orderData.bankName)}</td>
                             </tr>
                         </table>
                     </div>
