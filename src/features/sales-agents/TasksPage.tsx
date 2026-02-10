@@ -142,6 +142,7 @@ export default function TasksPage() {
   const [agentClients, setAgentClients] = useState<{id: string, name: string}[]>([]);
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
   const [fetchingClients, setFetchingClients] = useState(false);
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
 
   // Record Visit states
   const [showRecordVisitDialog, setShowRecordVisitDialog] = useState(false);
@@ -848,7 +849,7 @@ export default function TasksPage() {
                 Create Task
               </Button>
             </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New Task</DialogTitle>
               <DialogDescription>
@@ -856,7 +857,7 @@ export default function TasksPage() {
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4">
+            <div className="space-y-4 px-1">
               <div>
                 <Label htmlFor="agent">Team Member</Label>
                 <Select value={formData.agent_id} onValueChange={(value) => {
@@ -884,8 +885,24 @@ export default function TasksPage() {
                   <p className="text-xs text-muted-foreground mb-3">
                     Selecting multiple clients will create separate tasks for each client.
                   </p>
+                  
+                  {/* Search Bar */}
+                  <div className="relative mb-3">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search clients..."
+                      value={clientSearchQuery}
+                      onChange={(e) => setClientSearchQuery(e.target.value)}
+                      className="pl-8 h-9 text-sm"
+                    />
+                  </div>
+
                   <div className="max-h-40 overflow-y-auto space-y-2 p-1">
-                    {agentClients.map(client => (
+                    {agentClients
+                      .filter(client => 
+                        client.name.toLowerCase().includes(clientSearchQuery.toLowerCase())
+                      )
+                      .map(client => (
                       <div key={client.id} className="flex items-center space-x-2 bg-white p-2 rounded border border-gray-100 shadow-sm">
                         <Checkbox 
                           id={`client-${client.id}`} 
@@ -906,6 +923,13 @@ export default function TasksPage() {
                         </Label>
                       </div>
                     ))}
+                    {agentClients.filter(client => 
+                      client.name.toLowerCase().includes(clientSearchQuery.toLowerCase())
+                    ).length === 0 && (
+                      <div className="text-center py-4 text-sm text-muted-foreground">
+                        No clients found
+                      </div>
+                    )}
                   </div>
                   {selectedClientIds.length > 0 && (
                     <div className="mt-2 text-xs text-blue-600 font-medium flex items-center">
@@ -937,7 +961,7 @@ export default function TasksPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="priority">Priority</Label>
                   <Select value={formData.priority} onValueChange={(value: any) => setFormData({ ...formData, priority: value })}>
@@ -968,13 +992,14 @@ export default function TasksPage() {
                   />
                 </div>
 
-                <div>
+                <div className="sm:col-span-2">
                   <Label htmlFor="due_time">Due Time</Label>
                   <Input
                     id="due_time"
                     type="time"
                     value={formData.due_time}
                     onChange={(e) => setFormData({ ...formData, due_time: e.target.value })}
+                    className="max-w-full sm:max-w-xs"
                   />
                 </div>
               </div>
@@ -990,11 +1015,22 @@ export default function TasksPage() {
                 />
               </div>
 
-              <div className="flex justify-end space-x-2">
-                <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:space-x-2 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setCreateDialogOpen(false);
+                    setClientSearchQuery(''); // Reset search on close
+                  }}
+                  className="w-full sm:w-auto"
+                >
                   Cancel
                 </Button>
-                <Button onClick={handleCreateTask} disabled={!formData.agent_id || !formData.title}>
+                <Button 
+                  onClick={handleCreateTask} 
+                  disabled={!formData.agent_id || !formData.title}
+                  className="w-full sm:w-auto"
+                >
                   Create Task
                 </Button>
               </div>

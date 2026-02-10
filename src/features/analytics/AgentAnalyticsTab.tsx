@@ -15,7 +15,9 @@ import {
   X,
   Package,
   MapPin,
-  Filter
+  Filter,
+  Eye,
+  Target
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -41,7 +43,24 @@ interface AgentKPI {
   orders: number;
   revenue: number;
   clients: number;
+  avgOrderValue: number;
   conversionRate: number;
+  performance: 'excellent' | 'good' | 'average' | 'needs_improvement';
+  // Target values (set by leader/admin)
+  targetClients?: number | null;
+  targetRevenue?: number | null;
+  targetQty?: number | null;
+  // Actual values (calculated from current month data)
+  actualClients?: number; // Clients created this month
+  actualRevenue?: number; // Revenue from approved orders this month
+  actualQty?: number; // Total quantity from approved orders this month
+  // Achievement percentages
+  achievementClients?: number; // Percentage (actualClients / targetClients * 100)
+  achievementRevenue?: number; // Percentage (actualRevenue / targetRevenue * 100)
+  achievementQty?: number; // Percentage (actualQty / targetQty * 100)
+  // Legacy field (keeping for backward compatibility)
+  targetOrders?: number | null;
+  targetAchievement?: number;
 }
 
 interface VariantSales {
@@ -113,6 +132,10 @@ interface AgentAnalyticsTabProps {
   userId: string;
   isAdmin: boolean;
   isLeader: boolean;
+  isManager?: boolean;
+  onViewAgentDetails?: (agent: AgentKPI) => Promise<void>;
+  onOpenTargetDialog?: () => void;
+  agentKPIs?: AgentKPI[];
 }
 
 const AGENT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#14b8a6'];
@@ -152,7 +175,15 @@ const CustomLegend = ({ payload }: CustomLegendProps) => {
   );
 };
 
-export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAnalyticsTabProps) {
+export default function AgentAnalyticsTab({ 
+  userId, 
+  isAdmin, 
+  isLeader,
+  isManager = false,
+  onViewAgentDetails,
+  onOpenTargetDialog,
+  agentKPIs = []
+}: AgentAnalyticsTabProps) {
   const { toast } = useToast();
   
   // Performance Chart State
@@ -163,7 +194,7 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
   const [selectedRole, setSelectedRole] = useState<RoleType>('mobile_sales');
   const [selectedPerson, setSelectedPerson] = useState<string>('all'); // 'all' or specific person ID
   const [availablePeople, setAvailablePeople] = useState<AgentInfo[]>([]);
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
   const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
   
@@ -316,9 +347,37 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
       let endDate: Date;
       let timePeriods: { label: string; start: Date; end: Date }[] = [];
 
-      if (selectedWeek !== 'all') {
+      if (selectedYear === 'all') {
+        // All Time - show all-time total as a single data point
+        // Get the earliest and latest dates from the database
+        const { data: earliestOrder } = await supabase
+          .from('client_orders')
+          .select('created_at')
+          .order('created_at', { ascending: true })
+          .limit(1);
+        
+        const { data: latestOrder } = await supabase
+          .from('client_orders')
+          .select('created_at')
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        const earliestDate = earliestOrder?.[0]?.created_at 
+          ? new Date(earliestOrder[0].created_at) 
+          : new Date(new Date().getFullYear() - 5, 0, 1);
+        
+        const latestDate = latestOrder?.[0]?.created_at 
+          ? new Date(latestOrder[0].created_at) 
+          : new Date();
+
+        timePeriods.push({
+          label: 'All Time',
+          start: earliestDate,
+          end: latestDate
+        });
+      } else if (selectedWeek !== 'all') {
         // Specific week - show daily data (7 days)
-        const monthStart = new Date(selectedYear, selectedMonth as number - 1, 1);
+        const monthStart = new Date(selectedYear as number, selectedMonth as number - 1, 1);
         const weekNum = selectedWeek as number;
         const weekStart = startOfWeek(new Date(monthStart.getTime() + (weekNum - 1) * 7 * 24 * 60 * 60 * 1000));
         
@@ -335,10 +394,10 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
         }
       } else if (selectedMonth !== 'all') {
         // Specific month, all weeks - show weekly data
-        startDate = startOfMonth(new Date(selectedYear, selectedMonth as number - 1));
+        startDate = startOfMonth(new Date(selectedYear as number, selectedMonth as number - 1));
         endDate = endOfMonth(startDate);
         
-        const weeksInMonth = getWeeksInMonth(new Date(selectedYear, selectedMonth as number - 1));
+        const weeksInMonth = getWeeksInMonth(new Date(selectedYear as number, selectedMonth as number - 1));
         for (let i = 0; i < weeksInMonth; i++) {
           const weekStart = new Date(startDate);
           weekStart.setDate(startDate.getDate() + i * 7);
@@ -353,7 +412,7 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
       } else {
         // All months - show monthly data (12 months)
         for (let i = 0; i < 12; i++) {
-          const monthStart = startOfMonth(new Date(selectedYear, i));
+          const monthStart = startOfMonth(new Date(selectedYear as number, i));
           const monthEnd = endOfMonth(monthStart);
           
           timePeriods.push({
@@ -987,25 +1046,12 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
                   {/* Year Filter */}
                   <div className="space-y-2 mb-4">
                     <label className="text-sm font-medium">Year</label>
-                    <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {yearOptions.map(year => (
-                          <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Month Filter */}
-                  <div className="space-y-2 mb-4">
-                    <label className="text-sm font-medium">Month</label>
-                    <Select value={selectedMonth.toString()} onValueChange={(value) => {
-                      const newMonth = value === 'all' ? 'all' : parseInt(value);
-                      setSelectedMonth(newMonth);
-                      if (newMonth === 'all') {
+                    <Select value={selectedYear.toString()} onValueChange={(value) => {
+                      const newYear = value === 'all' ? 'all' : parseInt(value);
+                      setSelectedYear(newYear);
+                      // Reset month and week when selecting All Time
+                      if (newYear === 'all') {
+                        setSelectedMonth('all');
                         setSelectedWeek('all');
                       }
                     }}>
@@ -1013,15 +1059,41 @@ export default function AgentAnalyticsTab({ userId, isAdmin, isLeader }: AgentAn
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {monthOptions.map(month => (
-                          <SelectItem key={month.value} value={month.value.toString()}>{month.label}</SelectItem>
+                        <SelectItem value="all">
+                          <span className="font-semibold">All Time</span>
+                        </SelectItem>
+                        {yearOptions.map(year => (
+                          <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
 
+                  {/* Month Filter - only show when specific year selected */}
+                  {selectedYear !== 'all' && (
+                    <div className="space-y-2 mb-4">
+                      <label className="text-sm font-medium">Month</label>
+                      <Select value={selectedMonth.toString()} onValueChange={(value) => {
+                        const newMonth = value === 'all' ? 'all' : parseInt(value);
+                        setSelectedMonth(newMonth);
+                        if (newMonth === 'all') {
+                          setSelectedWeek('all');
+                        }
+                      }}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {monthOptions.map(month => (
+                            <SelectItem key={month.value} value={month.value.toString()}>{month.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
                   {/* Week Filter - only show when specific month selected */}
-                  {selectedMonth !== 'all' && (
+                  {selectedYear !== 'all' && selectedMonth !== 'all' && (
                     <div className="space-y-2">
                       <label className="text-sm font-medium">Week</label>
                       <Select 

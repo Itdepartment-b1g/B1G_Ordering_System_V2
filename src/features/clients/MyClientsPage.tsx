@@ -56,10 +56,16 @@ export default function MyClientsPage() {
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
     has_forge: false,
-    brand_ids: [] as string[]
+    brand_ids: [] as string[],
+    shop_type: ''
   });
 
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+  
+  // Shop Type States
+  const [shopTypes, setShopTypes] = useState<Array<{ id: string; type_name: string; is_default: boolean }>>([]);
+  const [isOtherShopType, setIsOtherShopType] = useState(false);
+  const [customShopType, setCustomShopType] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const corFileInputRef = useRef<HTMLInputElement>(null);
   const [newCorPhoto, setNewCorPhoto] = useState<string | null>(null);
@@ -88,8 +94,11 @@ export default function MyClientsPage() {
     contact_person: '',
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
-    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
+    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
+    shop_type: ''
   });
+  const [isEditOtherShopType, setIsEditOtherShopType] = useState(false);
+  const [editCustomShopType, setEditCustomShopType] = useState('');
 
   // Edit Photo States
   const [editPhoto, setEditPhoto] = useState<string | null>(null);
@@ -142,6 +151,12 @@ export default function MyClientsPage() {
     const phoneNumber = client.phone || '';
     const phoneWithoutPrefix = phoneNumber.startsWith('+63 ') ? phoneNumber.slice(4) : phoneNumber;
 
+    console.log('📝 [Edit Client] Opening edit for:', {
+      clientId: client.id,
+      name: client.name,
+      shopType: client.shopType
+    });
+
     setEditForm({
       photo: client.photo || '',
       name: client.name,
@@ -151,11 +166,17 @@ export default function MyClientsPage() {
       contact_person: client.contactPerson || '',
       tin: client.tin || '',
       account_type: client.accountType || 'Standard Accounts',
-      category: client.category || 'Open'
+      category: client.category || 'Open',
+      shop_type: client.shopType || ''
     });
     setNewCorPhoto(null);
     setEditPhoto(client.photo || null);
     setEditDialogOpen(true);
+    fetchShopTypes(); // Fetch shop types when opening edit dialog
+    
+    // Reset edit shop type states
+    setIsEditOtherShopType(false);
+    setEditCustomShopType('');
   };
 
   const handleSaveEdit = () => {
@@ -259,6 +280,57 @@ export default function MyClientsPage() {
         corUrl = corUrlData.signedUrl;
       }
 
+      // Validate shop type for duplicates (Edit)
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        const normalizedCustomType = editCustomShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${editCustomShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setIsUpdating(false);
+          setUpdateConfirmOpen(false);
+          return;
+        }
+      }
+
+      // Handle custom shop type if "Other" is selected
+      let finalShopType = editForm.shop_type;
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        // Insert custom shop type into shop_types table
+        const { error: shopTypeError } = await supabase
+          .from('shop_types')
+          .insert({
+            company_id: user.company_id,
+            type_name: editCustomShopType.trim(),
+            is_default: false,
+            created_by: user.id
+          });
+        
+        // If error is due to duplicate (UNIQUE constraint), it's okay - just use the value
+        if (shopTypeError && !shopTypeError.message.includes('duplicate')) {
+          console.error('Error inserting custom shop type:', shopTypeError);
+        }
+        
+        finalShopType = editCustomShopType.trim();
+        
+        // Refresh shop types list to include the new type
+        fetchShopTypes();
+      }
+
+      console.log('💾 [Update Client] Saving shop_type:', {
+        editFormShopType: editForm.shop_type,
+        isEditOtherShopType,
+        editCustomShopType,
+        finalShopType,
+        willSave: finalShopType || null
+      });
+
       const { error } = await supabase
         .from('clients')
         .update({
@@ -270,6 +342,7 @@ export default function MyClientsPage() {
           tin: editForm.tin || null,
           account_type: editForm.account_type,
           category: editForm.category,
+          shop_type: finalShopType || null,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           cor_url: corUrl || null,
@@ -278,6 +351,8 @@ export default function MyClientsPage() {
         .eq('id', editingClient.id);
 
       if (error) throw error;
+      
+      console.log('✅ [Update Client] Save successful');
 
       toast({
         title: 'Success',
@@ -1060,6 +1135,35 @@ export default function MyClientsPage() {
     }
   };
 
+  // Fetch shop types for the company
+  const fetchShopTypes = async () => {
+    if (!user?.company_id) {
+      setShopTypes([]);
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('shop_types')
+        .select('id, type_name, is_default')
+        .eq('company_id', user.company_id)
+        .order('is_default', { ascending: false })
+        .order('type_name', { ascending: true });
+      
+      if (error) throw error;
+      
+      console.log('🏪 [Shop Types] Loaded:', data);
+      setShopTypes(data || []);
+    } catch (error) {
+      console.error('Error fetching shop types:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load shop types',
+        variant: 'destructive'
+      });
+    }
+  };
+
   // Fetch brands for the company
   const fetchBrands = async () => {
     if (!user?.company_id) {
@@ -1115,7 +1219,8 @@ export default function MyClientsPage() {
       account_type: 'Standard Accounts',
       category: 'Open',
       has_forge: false,
-      brand_ids: []
+      brand_ids: [],
+      shop_type: ''
     });
     setNewClientPhoto(null);
     setCapturedLocation(null);
@@ -1325,6 +1430,48 @@ export default function MyClientsPage() {
         throw new Error('User company_id not found');
       }
 
+      // Validate shop type for duplicates
+      if (isOtherShopType && customShopType.trim()) {
+        const normalizedCustomType = customShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${customShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      // Handle custom shop type if "Other" is selected
+      let finalShopType = formData.shop_type;
+      if (isOtherShopType && customShopType.trim()) {
+        // Insert custom shop type into shop_types table
+        const { error: shopTypeError } = await supabase
+          .from('shop_types')
+          .insert({
+            company_id: user.company_id,
+            type_name: customShopType.trim(),
+            is_default: false,
+            created_by: user.id
+          });
+        
+        // If error is due to duplicate (UNIQUE constraint), it's okay - just use the value
+        if (shopTypeError && !shopTypeError.message.includes('duplicate')) {
+          console.error('Error inserting custom shop type:', shopTypeError);
+        }
+        
+        finalShopType = customShopType.trim();
+        
+        // Refresh shop types list to include the new type
+        fetchShopTypes();
+      }
+
       // Save client to database
       const { data, error } = await supabase
         .from('clients')
@@ -1343,6 +1490,7 @@ export default function MyClientsPage() {
           category: formData.category,
           has_forge: formData.has_forge,
           brand_ids: formData.brand_ids.length > 0 ? formData.brand_ids : null,
+          shop_type: finalShopType || null,
           cor_url: corUrl,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
@@ -1442,6 +1590,10 @@ export default function MyClientsPage() {
           }
           if (open) {
             fetchBrands(); // Fetch brands when dialog opens
+            fetchShopTypes(); // Fetch shop types when dialog opens
+          } else {
+            setIsOtherShopType(false);
+            setCustomShopType('');
           }
         }}>
           <DialogTrigger asChild>
@@ -1802,6 +1954,48 @@ export default function MyClientsPage() {
                 </Select>
               </div>
 
+              {/* Shop Type Selection */}
+              <div className="space-y-2">
+                <Label>Shop Type</Label>
+                <Select
+                  value={isOtherShopType ? 'Other' : formData.shop_type}
+                  onValueChange={(value) => {
+                    if (value === 'Other') {
+                      setIsOtherShopType(true);
+                      setFormData({ ...formData, shop_type: 'Other' });
+                    } else {
+                      setIsOtherShopType(false);
+                      setCustomShopType('');
+                      setFormData({ ...formData, shop_type: value });
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select shop type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {shopTypes.map((type) => (
+                      <SelectItem key={type.id} value={type.type_name}>
+                        {type.type_name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+                {isOtherShopType && (
+                  <div className="mt-2">
+                    <Input
+                      placeholder="Enter custom shop type"
+                      value={customShopType}
+                      onChange={(e) => setCustomShopType(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      This custom type will be available for all users in your company
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Brands Selection */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
@@ -2021,16 +2215,16 @@ export default function MyClientsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      <div className="flex justify-center gap-2">
-                        <Button variant="ghost" size="icon" onClick={() => handleOpenView(client)} title="View Details">
-                          <Eye className="h-4 w-4" />
+                      <div className="flex justify-center gap-1 md:gap-2">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenView(client)} title="View Details">
+                          <Eye className="h-3.5 w-3.5 md:h-4 md:w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleOpenEdit(client)} title="Edit">
-                          <Edit className="h-4 w-4" />
+                        <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenEdit(client)} title="Edit">
+                          <Edit className="h-3.5 w-3.5 md:h-4 md:w-4" />
                         </Button>
                         {user?.role !== 'mobile_sales' && (
-                        <Button variant="ghost" size="icon" onClick={() => handleOpenDelete(client)} title="Delete">
-                          <Trash2 className="h-4 w-4" />
+                        <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenDelete(client)} title="Delete">
+                          <Trash2 className="h-3.5 w-3.5 md:h-4 md:w-4" />
                         </Button>
                         )}
                       </div>
@@ -2472,6 +2666,47 @@ export default function MyClientsPage() {
                             <SelectItem value="Permanently Closed">Closed</SelectItem>
                           </SelectContent>
                         </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Shop Type</Label>
+                        <Select
+                          value={isEditOtherShopType ? 'Other' : editForm.shop_type}
+                          onValueChange={(value) => {
+                            if (value === 'Other') {
+                              setIsEditOtherShopType(true);
+                              setEditForm({ ...editForm, shop_type: 'Other' });
+                            } else {
+                              setIsEditOtherShopType(false);
+                              setEditCustomShopType('');
+                              setEditForm({ ...editForm, shop_type: value });
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="h-10">
+                            <SelectValue placeholder="Select shop type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {shopTypes.map((type) => (
+                              <SelectItem key={type.id} value={type.type_name}>
+                                {type.type_name}
+                              </SelectItem>
+                            ))}
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {isEditOtherShopType && (
+                          <div className="mt-2">
+                            <Input
+                              placeholder="Enter custom shop type"
+                              value={editCustomShopType}
+                              onChange={(e) => setEditCustomShopType(e.target.value)}
+                              className="h-10"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                              This custom type will be available for all users in your company
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

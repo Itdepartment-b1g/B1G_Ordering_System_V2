@@ -638,7 +638,7 @@ export default function VoidedClientsPage() {
 
       {/* View Client Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="w-[92vw] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-3xl max-h-[85vh] overflow-y-auto md:max-h-none md:overflow-visible">
+        <DialogContent className="w-[95vw] sm:w-[90vw] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Voided Client Details</DialogTitle>
             <DialogDescription>

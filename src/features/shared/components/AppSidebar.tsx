@@ -28,7 +28,8 @@ import {
   LayoutGrid,
   Activity,
   Settings,
-  ShieldCheck
+  ShieldCheck,
+  CreditCard
 } from 'lucide-react';
 import {
   Sidebar,
@@ -99,6 +100,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   {
@@ -163,6 +165,7 @@ const leaderMenuItems: MenuItem[] = [
     ]
   },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
+  { title: "My Team's Clients", url: '/my-teams', icon: Users },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
@@ -185,6 +188,7 @@ const executiveMenuItems: MenuItem[] = [
 const managerMenuItems: MenuItem[] = [
   { title: 'Manager Dashboard', url: '/manager-dashboard', icon: LayoutDashboard },
   { title: 'My Team', url: '/manager-teams', icon: Users },
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   {
     title: 'Inventory',
     url: '/inventory',
@@ -214,6 +218,7 @@ const financeMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   { title: 'System History', url: '/system-history', icon: History },
@@ -265,6 +270,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   {

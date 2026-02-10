@@ -71,6 +71,7 @@ interface Client {
   visit_count: number; // Added
   tax_status?: 'Tax on Sales' | 'Tax Exempt';
   brand_ids?: string[];
+  shop_type?: string;
 }
 
 interface Agent {
@@ -109,8 +110,11 @@ export default function ClientsPage() {
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
     has_forge: false,
-    brand_ids: [] as string[]
+    brand_ids: [] as string[],
+    shop_type: ''
   });
+  const [isEditOtherShopType, setIsEditOtherShopType] = useState(false);
+  const [editCustomShopType, setEditCustomShopType] = useState('');
 
   // Delete Confirmation States
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -133,10 +137,16 @@ export default function ClientsPage() {
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
-    brand_ids: [] as string[]
+    brand_ids: [] as string[],
+    shop_type: ''
   });
   const [adding, setAdding] = useState(false);
   const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+  
+  // Shop Type States
+  const [shopTypes, setShopTypes] = useState<Array<{ id: string; type_name: string; is_default: boolean }>>([]);
+  const [isOtherShopType, setIsOtherShopType] = useState(false);
+  const [customShopType, setCustomShopType] = useState('');
 
   // Add Client Photo States
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
@@ -539,6 +549,7 @@ export default function ClientsPage() {
         visit_count: client.visit_logs?.[0]?.count || 0, // Map count
         tax_status: client.tax_status,
         brand_ids: client.brand_ids || [],
+        shop_type: client.shop_type || undefined,
       }));
 
       setClients(formattedClients);
@@ -1024,12 +1035,18 @@ export default function ClientsPage() {
       account_type: client.account_type || 'Standard Accounts',
       category: client.category || 'Open',
       has_forge: client.has_forge || false,
-      brand_ids: client.brand_ids || []
+      brand_ids: client.brand_ids || [],
+      shop_type: client.shop_type || ''
     });
     setEditCorPhoto(null); // Reset COR photo state
     setEditClientPhoto(null); // Reset client photo state
     setEditDialogOpen(true);
     fetchBrands(); // Fetch brands when opening edit dialog
+    fetchShopTypes(); // Fetch shop types when opening edit dialog
+    
+    // Reset edit shop type states
+    setIsEditOtherShopType(false);
+    setEditCustomShopType('');
   };
 
   const handleSaveEdit = () => {
@@ -1160,7 +1177,49 @@ export default function ClientsPage() {
         corUrl = corUrlData.signedUrl;
       }
 
+      // Validate shop type for duplicates (Edit)
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        const normalizedCustomType = editCustomShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${editCustomShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setUpdateConfirmOpen(false);
+          return;
+        }
+      }
+
       // Update client - exclude address and city (read-only fields)
+      // Handle custom shop type if "Other" is selected
+      let finalShopType = editForm.shop_type;
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        // Insert custom shop type into shop_types table
+        const { error: shopTypeError } = await supabase
+          .from('shop_types')
+          .insert({
+            company_id: user.company_id,
+            type_name: editCustomShopType.trim(),
+            is_default: false,
+            created_by: user.id
+          });
+        
+        // If error is due to duplicate (UNIQUE constraint), it's okay - just use the value
+        if (shopTypeError && !shopTypeError.message.includes('duplicate')) {
+          console.error('Error inserting custom shop type:', shopTypeError);
+        }
+        
+        finalShopType = editCustomShopType.trim();
+        
+        // Refresh shop types list to include the new type
+        fetchShopTypes();
+      }
+
       const updateData: any = {
         name: editForm.name,
         company: editForm.company || null,
@@ -1172,6 +1231,7 @@ export default function ClientsPage() {
         category: editForm.category,
         has_forge: editForm.has_forge,
         brand_ids: editForm.brand_ids.length > 0 ? editForm.brand_ids : null,
+        shop_type: finalShopType || null,
         updated_at: new Date().toISOString()
       };
 
@@ -1798,6 +1858,48 @@ export default function ClientsPage() {
         throw new Error('User company_id not found');
       }
 
+      // Validate shop type for duplicates
+      if (isOtherShopType && customShopType.trim()) {
+        const normalizedCustomType = customShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${customShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setAdding(false);
+          return;
+        }
+      }
+
+      // Handle custom shop type if "Other" is selected
+      let finalShopType = addForm.shop_type;
+      if (isOtherShopType && customShopType.trim()) {
+        // Insert custom shop type into shop_types table
+        const { error: shopTypeError } = await supabase
+          .from('shop_types')
+          .insert({
+            company_id: user.company_id,
+            type_name: customShopType.trim(),
+            is_default: false,
+            created_by: user.id
+          });
+        
+        // If error is due to duplicate (UNIQUE constraint), it's okay - just use the value
+        if (shopTypeError && !shopTypeError.message.includes('duplicate')) {
+          console.error('Error inserting custom shop type:', shopTypeError);
+        }
+        
+        finalShopType = customShopType.trim();
+        
+        // Refresh shop types list to include the new type
+        fetchShopTypes();
+      }
+
       const { error } = await supabase
         .from('clients')
         .insert({
@@ -1818,6 +1920,7 @@ export default function ClientsPage() {
           status: 'active',
           has_forge: addForm.has_forge,
           brand_ids: addForm.brand_ids.length > 0 ? addForm.brand_ids : null,
+          shop_type: finalShopType || null,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           cor_url: corUrl,
@@ -2419,6 +2522,34 @@ export default function ClientsPage() {
     }
   };
 
+  // Fetch shop types for the company
+  const fetchShopTypes = async () => {
+    if (!user?.company_id) {
+      setShopTypes([]);
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('shop_types')
+        .select('id, type_name, is_default')
+        .eq('company_id', user.company_id)
+        .order('is_default', { ascending: false })
+        .order('type_name', { ascending: true });
+      
+      if (error) throw error;
+      
+      setShopTypes(data || []);
+    } catch (error) {
+      console.error('Error fetching shop types:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load shop types',
+        variant: 'destructive'
+      });
+    }
+  };
+
   // Fetch brands for the company
   const fetchBrands = async () => {
     console.log('🔍 fetchBrands called');
@@ -2473,8 +2604,9 @@ export default function ClientsPage() {
   useEffect(() => {
     console.log('🔄 useEffect triggered, user:', user);
     if (user?.company_id) {
-      console.log('🔄 useEffect: Fetching brands on mount for company_id:', user.company_id);
+      console.log('🔄 useEffect: Fetching brands and shop types on mount for company_id:', user.company_id);
       fetchBrands();
+      fetchShopTypes();
     } else {
       console.log('⚠️ useEffect: No user or company_id yet');
     }
@@ -2490,6 +2622,7 @@ export default function ClientsPage() {
       has_forge: false,
       city: '',
       contact_person: '',
+      shop_type: '',
       tin: '',
       account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
       category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
@@ -2809,11 +2942,14 @@ export default function ClientsPage() {
         console.log('🚪 Dialog onOpenChange called, open:', open);
         setAddDialogOpen(open);
         if (open) {
-          console.log('✅ Dialog opening, calling fetchBrands');
+          console.log('✅ Dialog opening, calling fetchBrands and fetchShopTypes');
           startLocationPrewarm();
           fetchBrands(); // Fetch brands when dialog opens
+          fetchShopTypes(); // Fetch shop types when dialog opens
         } else {
           resetAddForm();
+          setIsOtherShopType(false);
+          setCustomShopType('');
         }
       }}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
@@ -3170,7 +3306,47 @@ export default function ClientsPage() {
               </Select>
             </div>
 
-
+            {/* Shop Type Selection */}
+            <div className="space-y-2">
+              <Label>Shop Type</Label>
+              <Select
+                value={isOtherShopType ? 'Other' : addForm.shop_type}
+                onValueChange={(value) => {
+                  if (value === 'Other') {
+                    setIsOtherShopType(true);
+                    setAddForm({ ...addForm, shop_type: 'Other' });
+                  } else {
+                    setIsOtherShopType(false);
+                    setCustomShopType('');
+                    setAddForm({ ...addForm, shop_type: value });
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select shop type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {shopTypes.map((type) => (
+                    <SelectItem key={type.id} value={type.type_name}>
+                      {type.type_name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+              {isOtherShopType && (
+                <div className="mt-2">
+                  <Input
+                    placeholder="Enter custom shop type"
+                    value={customShopType}
+                    onChange={(e) => setCustomShopType(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    This custom type will be available for all users in your company
+                  </p>
+                </div>
+              )}
+            </div>
 
             {/* Brands Selection */}
             <div className="space-y-2">
@@ -3462,8 +3638,8 @@ export default function ClientsPage() {
           </div>
 
           {/* Desktop: table */}
-          <div className="hidden md:block">
-            <Table>
+          <div className="hidden md:block overflow-x-auto">
+            <Table className="min-w-[1200px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
@@ -3587,13 +3763,14 @@ export default function ClientsPage() {
                           size="sm"
                           className="h-8 px-2 text-xs"
                           onClick={() => handleOpenView(client)}
+                          title="View Details"
                         >
-                          <Eye className="h-3.5 w-3.5 mr-1" />
-                          View Details
+                          <Eye className="h-3.5 w-3.5 lg:mr-1" />
+                          <span className="hidden lg:inline">View Details</span>
                         </Button>
                         <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -3630,8 +3807,8 @@ export default function ClientsPage() {
 
           {/* Pagination Controls */}
           {filteredClients.length > itemsPerPage && (
-            <div className="flex items-center justify-between mt-4 pt-4 border-t">
-              <div className="text-sm text-muted-foreground">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t">
+              <div className="text-xs sm:text-sm text-muted-foreground">
                 Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
               </div>
               <div className="flex items-center gap-2">
@@ -3640,9 +3817,10 @@ export default function ClientsPage() {
                   size="sm"
                   onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                   disabled={currentPage === 1}
+                  className="h-8 px-2 sm:px-4"
                 >
                   <ChevronLeft className="h-4 w-4" />
-                  Previous
+                  <span className="hidden sm:inline ml-1">Previous</span>
                 </Button>
                 <div className="flex items-center gap-1">
                   {Array.from({ length: totalPages }, (_, i) => i + 1)
@@ -3681,8 +3859,9 @@ export default function ClientsPage() {
                   size="sm"
                   onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                   disabled={currentPage === totalPages}
+                  className="h-8 px-2 sm:px-4"
                 >
-                  Next
+                  <span className="hidden sm:inline mr-1">Next</span>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -3693,26 +3872,26 @@ export default function ClientsPage() {
 
       {/* View Client Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="w-[92vw] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-3xl max-h-[85vh] overflow-y-auto md:max-h-none md:overflow-visible">
+        <DialogContent className="w-[95vw] sm:w-[90vw] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Client Details</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-lg sm:text-xl">Client Details</DialogTitle>
+            <DialogDescription className="text-xs sm:text-sm">
               View detailed information about this client including contact details, orders, and assignment status.
             </DialogDescription>
           </DialogHeader>
           {viewingClient && (
-            <div className="space-y-6 py-2">
-              <div className="flex items-center gap-4">
+            <div className="space-y-4 sm:space-y-6 py-2">
+              <div className="flex items-center gap-3 sm:gap-4">
                 {viewingClient.photo_url ? (
-                  <img src={viewingClient.photo_url} alt={viewingClient.name} className="w-16 h-16 rounded-full object-cover border" />
+                  <img src={viewingClient.photo_url} alt={viewingClient.name} className="w-12 h-12 sm:w-16 sm:h-16 rounded-full object-cover border flex-shrink-0" />
                 ) : (
-                  <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                    <Building className="w-7 h-7 text-muted-foreground" />
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                    <Building className="w-6 h-6 sm:w-7 sm:h-7 text-muted-foreground" />
                   </div>
                 )}
-                <div>
-                  <p className="text-xl font-semibold">{viewingClient.name}</p>
-                  <p className="text-sm text-muted-foreground">{viewingClient.company || '—'}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-base sm:text-xl font-semibold truncate">{viewingClient.name}</p>
+                  <p className="text-xs sm:text-sm text-muted-foreground truncate">{viewingClient.company || '—'}</p>
                 </div>
               </div>
 
@@ -3733,78 +3912,78 @@ export default function ClientsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-muted/40 rounded-lg border">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">Email</p>
-                  <p className="font-medium break-all">{viewingClient.email || '—'}</p>
+                  <p className="text-sm sm:text-base font-medium break-all">{viewingClient.email || '—'}</p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">Phone</p>
-                  <p className="font-medium">{viewingClient.phone || '—'}</p>
+                  <p className="text-sm sm:text-base font-medium">{viewingClient.phone || '—'}</p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border sm:col-span-2">
                   <p className="text-xs text-muted-foreground">Address</p>
-                  <p className="font-medium">{viewingClient.address || '—'}</p>
+                  <p className="text-sm sm:text-base font-medium">{viewingClient.address || '—'}</p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">City</p>
-                  <p className="font-medium">{viewingClient.city || '—'}</p>
+                  <p className="text-sm sm:text-base font-medium">{viewingClient.city || '—'}</p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">Agent</p>
-                  <p className="font-medium">
+                  <p className="text-sm sm:text-base font-medium">
                     {isClientUnassigned(viewingClient) ? 'No Agent' : (viewingClient.agent_name || 'Unassigned')}
                   </p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border sm:col-span-2">
                   <p className="text-xs text-muted-foreground">Status</p>
                   <Badge variant="outline">{viewingClient.status}</Badge>
                 </div>
               </div>
 
               {/* Brands they have */}
-              <div className="space-y-3">
-                <h4 className="font-semibold text-sm flex items-center gap-2 text-gray-900">
-                  <Tag className="h-4 w-4" />
+              <div className="space-y-2 sm:space-y-3">
+                <h4 className="font-semibold text-xs sm:text-sm flex items-center gap-2 text-gray-900">
+                  <Tag className="h-3 w-3 sm:h-4 sm:w-4" />
                   Brands they have
                 </h4>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   {viewingClient.brand_ids && viewingClient.brand_ids.length > 0 && brands.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1.5 sm:gap-2">
                       {viewingClient.brand_ids
                         .map((id) => brands.find((b) => b.id === id))
                         .filter((b): b is { id: string; name: string } => !!b)
                         .map((b) => (
-                          <Badge key={b.id} variant="secondary" className="font-normal">
+                          <Badge key={b.id} variant="secondary" className="font-normal text-xs">
                             {b.name}
                           </Badge>
                         ))}
                     </div>
                   ) : (
-                    <p className="text-sm text-muted-foreground">No brands assigned</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground">No brands assigned</p>
                   )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 bg-background rounded-lg border">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div className="p-3 sm:p-4 bg-background rounded-lg border">
                   <p className="text-xs text-muted-foreground">Orders</p>
-                  <p className="text-2xl font-bold">{viewingClient.total_orders}</p>
+                  <p className="text-xl sm:text-2xl font-bold">{viewingClient.total_orders}</p>
                 </div>
-                <div className="p-4 bg-background rounded-lg border">
+                <div className="p-3 sm:p-4 bg-background rounded-lg border">
                   <p className="text-xs text-muted-foreground">Total Spent</p>
-                  <p className="text-1xl font-bold">₱{viewingClient.total_spent.toLocaleString()}</p>
+                  <p className="text-lg sm:text-xl font-bold">₱{viewingClient.total_spent.toLocaleString()}</p>
                 </div>
-                <div className="p-4 bg-background rounded-lg border">
+                <div className="p-3 sm:p-4 bg-background rounded-lg border">
                   <p className="text-xs text-muted-foreground">Total Visits</p>
                   <div className="flex items-center gap-1 text-purple-600">
-                    <MapPin className="h-5 w-5" />
-                    <p className="text-2xl font-bold">{viewingClient.visit_count}</p>
+                    <MapPin className="h-4 w-4 sm:h-5 sm:w-5" />
+                    <p className="text-xl sm:text-2xl font-bold">{viewingClient.visit_count}</p>
                   </div>
                 </div>
-                <div className="p-4 bg-background rounded-lg border">
+                <div className="p-3 sm:p-4 bg-background rounded-lg border">
                   <p className="text-xs text-muted-foreground">Last Order</p>
-                  <p className="text-sm font-medium">{viewingClient.last_order_date ? new Date(viewingClient.last_order_date).toLocaleDateString() : '—'}</p>
+                  <p className="text-xs sm:text-sm font-medium">{viewingClient.last_order_date ? new Date(viewingClient.last_order_date).toLocaleDateString() : '—'}</p>
                 </div>
               </div>
 
@@ -3812,35 +3991,35 @@ export default function ClientsPage() {
 
 
               {/* Compliance Checklist */}
-              <div className="space-y-3">
-                <h4 className="font-semibold text-sm text-gray-900">Compliance Status</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2 sm:space-y-3">
+                <h4 className="font-semibold text-xs sm:text-sm text-gray-900">Compliance Status</h4>
+                <div className="grid grid-cols-1 gap-3 sm:gap-4">
                   {/* COR Check */}
-                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.cor_url ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${viewingClient.cor_url ? 'bg-green-100' : 'bg-red-100'}`}>
-                        {viewingClient.cor_url ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                  <div className={`flex items-center justify-between p-3 sm:p-4 rounded-lg border ${viewingClient.cor_url ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                      <div className={`p-1.5 sm:p-2 rounded-full flex-shrink-0 ${viewingClient.cor_url ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {viewingClient.cor_url ? <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-600" /> : <X className="h-4 w-4 sm:h-5 sm:w-5 text-red-600" />}
                       </div>
-                      <div>
-                        <p className={`font-medium ${viewingClient.cor_url ? 'text-green-900' : 'text-red-900'}`}>COR (Certificate of Registration)</p>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xs sm:text-sm font-medium truncate ${viewingClient.cor_url ? 'text-green-900' : 'text-red-900'}`}>COR (Certificate of Registration)</p>
                         <p className="text-xs text-muted-foreground">{viewingClient.cor_url ? 'Uploaded & Verified' : 'Missing Document'}</p>
                       </div>
                     </div>
                     {viewingClient.cor_url && (
-                      <Button variant="ghost" size="sm" onClick={() => window.open(viewingClient.cor_url, '_blank')}>
-                        <Eye className="h-4 w-4" />
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 flex-shrink-0" onClick={() => window.open(viewingClient.cor_url, '_blank')}>
+                        <Eye className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                       </Button>
                     )}
                   </div>
 
                   {/* TIN Check */}
-                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.tin ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${viewingClient.tin ? 'bg-green-100' : 'bg-red-100'}`}>
-                        {viewingClient.tin ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                  <div className={`flex items-center justify-between p-3 sm:p-4 rounded-lg border ${viewingClient.tin ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                      <div className={`p-1.5 sm:p-2 rounded-full flex-shrink-0 ${viewingClient.tin ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {viewingClient.tin ? <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-600" /> : <X className="h-4 w-4 sm:h-5 sm:w-5 text-red-600" />}
                       </div>
-                      <div>
-                        <p className={`font-medium ${viewingClient.tin ? 'text-green-900' : 'text-red-900'}`}>TIN (Tax ID Number)</p>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xs sm:text-sm font-medium truncate ${viewingClient.tin ? 'text-green-900' : 'text-red-900'}`}>TIN (Tax ID Number)</p>
                         <p className="text-xs text-muted-foreground">{viewingClient.tin ? viewingClient.tin : 'Missing TIN'}</p>
                       </div>
                     </div>
@@ -4138,6 +4317,46 @@ export default function ClientsPage() {
                           <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
                         </SelectContent>
                       </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Shop Type</Label>
+                      <Select
+                        value={isEditOtherShopType ? 'Other' : editForm.shop_type}
+                        onValueChange={(value) => {
+                          if (value === 'Other') {
+                            setIsEditOtherShopType(true);
+                            setEditForm({ ...editForm, shop_type: 'Other' });
+                          } else {
+                            setIsEditOtherShopType(false);
+                            setEditCustomShopType('');
+                            setEditForm({ ...editForm, shop_type: value });
+                          }
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select shop type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {shopTypes.map((type) => (
+                            <SelectItem key={type.id} value={type.type_name}>
+                              {type.type_name}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="Other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {isEditOtherShopType && (
+                        <div className="mt-2">
+                          <Input
+                            placeholder="Enter custom shop type"
+                            value={editCustomShopType}
+                            onChange={(e) => setEditCustomShopType(e.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            This custom type will be available for all users in your company
+                          </p>
+                        </div>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label>Has Forge?</Label>
