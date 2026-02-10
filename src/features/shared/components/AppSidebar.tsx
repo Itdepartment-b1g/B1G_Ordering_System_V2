@@ -165,6 +165,7 @@ const leaderMenuItems: MenuItem[] = [
     ]
   },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
+  { title: "My Team's Clients", url: '/my-teams', icon: Users },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },

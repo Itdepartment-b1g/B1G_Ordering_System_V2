@@ -151,6 +151,12 @@ export default function MyClientsPage() {
     const phoneNumber = client.phone || '';
     const phoneWithoutPrefix = phoneNumber.startsWith('+63 ') ? phoneNumber.slice(4) : phoneNumber;
 
+    console.log('📝 [Edit Client] Opening edit for:', {
+      clientId: client.id,
+      name: client.name,
+      shopType: client.shopType
+    });
+
     setEditForm({
       photo: client.photo || '',
       name: client.name,
@@ -161,7 +167,7 @@ export default function MyClientsPage() {
       tin: client.tin || '',
       account_type: client.accountType || 'Standard Accounts',
       category: client.category || 'Open',
-      shop_type: (client as any).shopType || ''
+      shop_type: client.shopType || ''
     });
     setNewCorPhoto(null);
     setEditPhoto(client.photo || null);
@@ -274,6 +280,25 @@ export default function MyClientsPage() {
         corUrl = corUrlData.signedUrl;
       }
 
+      // Validate shop type for duplicates (Edit)
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        const normalizedCustomType = editCustomShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${editCustomShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setIsUpdating(false);
+          setUpdateConfirmOpen(false);
+          return;
+        }
+      }
+
       // Handle custom shop type if "Other" is selected
       let finalShopType = editForm.shop_type;
       if (isEditOtherShopType && editCustomShopType.trim()) {
@@ -298,6 +323,14 @@ export default function MyClientsPage() {
         fetchShopTypes();
       }
 
+      console.log('💾 [Update Client] Saving shop_type:', {
+        editFormShopType: editForm.shop_type,
+        isEditOtherShopType,
+        editCustomShopType,
+        finalShopType,
+        willSave: finalShopType || null
+      });
+
       const { error } = await supabase
         .from('clients')
         .update({
@@ -318,6 +351,8 @@ export default function MyClientsPage() {
         .eq('id', editingClient.id);
 
       if (error) throw error;
+      
+      console.log('✅ [Update Client] Save successful');
 
       toast({
         title: 'Success',
@@ -1117,6 +1152,7 @@ export default function MyClientsPage() {
       
       if (error) throw error;
       
+      console.log('🏪 [Shop Types] Loaded:', data);
       setShopTypes(data || []);
     } catch (error) {
       console.error('Error fetching shop types:', error);
@@ -1392,6 +1428,24 @@ export default function MyClientsPage() {
       // Validate company_id
       if (!user.company_id) {
         throw new Error('User company_id not found');
+      }
+
+      // Validate shop type for duplicates
+      if (isOtherShopType && customShopType.trim()) {
+        const normalizedCustomType = customShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${customShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setIsSubmitting(false);
+          return;
+        }
       }
 
       // Handle custom shop type if "Other" is selected
@@ -1908,7 +1962,7 @@ export default function MyClientsPage() {
                   onValueChange={(value) => {
                     if (value === 'Other') {
                       setIsOtherShopType(true);
-                      setFormData({ ...formData, shop_type: '' });
+                      setFormData({ ...formData, shop_type: 'Other' });
                     } else {
                       setIsOtherShopType(false);
                       setCustomShopType('');
@@ -2620,7 +2674,7 @@ export default function MyClientsPage() {
                           onValueChange={(value) => {
                             if (value === 'Other') {
                               setIsEditOtherShopType(true);
-                              setEditForm({ ...editForm, shop_type: '' });
+                              setEditForm({ ...editForm, shop_type: 'Other' });
                             } else {
                               setIsEditOtherShopType(false);
                               setEditCustomShopType('');

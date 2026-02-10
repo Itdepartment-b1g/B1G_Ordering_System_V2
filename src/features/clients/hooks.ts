@@ -81,7 +81,7 @@ export function useMyClients() {
 
             const { data, error } = await supabase
                 .from('clients')
-                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status, cor_url, tin, contact_person, tax_status, brand_ids, visit_logs(count)')
+                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status, cor_url, tin, contact_person, tax_status, brand_ids, shop_type, visit_logs(count)')
                 .eq('agent_id', user.id)
                 .eq('status', 'active')
                 .order('created_at', { ascending: false });
@@ -150,7 +150,8 @@ export function useMyClients() {
                         approvalNotes: c.approval_notes || undefined,
                         approvedBy: c.approved_by || null,
                         status: c.status || undefined,
-                        brandIds: c.brand_ids || []
+                        brandIds: c.brand_ids || [],
+                        shopType: c.shop_type || undefined
                     };
                 })
             );

@@ -549,6 +549,7 @@ export default function ClientsPage() {
         visit_count: client.visit_logs?.[0]?.count || 0, // Map count
         tax_status: client.tax_status,
         brand_ids: client.brand_ids || [],
+        shop_type: client.shop_type || undefined,
       }));
 
       setClients(formattedClients);
@@ -1074,6 +1075,24 @@ export default function ClientsPage() {
         }
 
         corUrl = corUrlData.signedUrl;
+      }
+
+      // Validate shop type for duplicates (Edit)
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        const normalizedCustomType = editCustomShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${editCustomShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setUpdateConfirmOpen(false);
+          return;
+        }
       }
 
       // Update client - exclude address and city (read-only fields)
@@ -1737,6 +1756,24 @@ export default function ClientsPage() {
       // Validate company_id
       if (!user?.company_id) {
         throw new Error('User company_id not found');
+      }
+
+      // Validate shop type for duplicates
+      if (isOtherShopType && customShopType.trim()) {
+        const normalizedCustomType = customShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${customShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setAdding(false);
+          return;
+        }
       }
 
       // Handle custom shop type if "Other" is selected
@@ -3177,7 +3214,7 @@ export default function ClientsPage() {
                 onValueChange={(value) => {
                   if (value === 'Other') {
                     setIsOtherShopType(true);
-                    setAddForm({ ...addForm, shop_type: '' });
+                    setAddForm({ ...addForm, shop_type: 'Other' });
                   } else {
                     setIsOtherShopType(false);
                     setCustomShopType('');
@@ -4188,7 +4225,7 @@ export default function ClientsPage() {
                         onValueChange={(value) => {
                           if (value === 'Other') {
                             setIsEditOtherShopType(true);
-                            setEditForm({ ...editForm, shop_type: '' });
+                            setEditForm({ ...editForm, shop_type: 'Other' });
                           } else {
                             setIsEditOtherShopType(false);
                             setEditCustomShopType('');

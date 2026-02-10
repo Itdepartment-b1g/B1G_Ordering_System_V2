@@ -15,7 +15,7 @@ import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
 import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, RequestInventoryPage, PendingRequestsPage, AdminRequestsPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
-import { ClientsPage, MyClientsPage, PendingClientsPage } from "@/features/clients";
+import { ClientsPage, MyClientsPage, MyTeamsPage, PendingClientsPage } from "@/features/clients";
 import { AnalyticsPage, ClientAnalyticsPage } from "@/features/analytics";
 import VoidedClientsPage from "@/features/clients/VoidedClientsPage";
 import { CalendarPage } from "@/features/calendar";
@@ -94,6 +94,7 @@ const App = () => (
                     <Route path="/finance/payment-settings" element={<ProtectedRoute allowedRoles={['super_admin', 'finance']}><PaymentSettingsPage /></ProtectedRoute>} />
                     <Route path="/my-inventory" element={<ProtectedRoute><MyInventoryPage /></ProtectedRoute>} />
                     <Route path="/my-clients" element={<ProtectedRoute><MyClientsPage /></ProtectedRoute>} />
+                    <Route path="/my-teams" element={<ProtectedRoute allowedRoles={['team_leader']}><MyTeamsPage /></ProtectedRoute>} />
                     <Route path="/my-orders" element={<ProtectedRoute><MyOrdersPage /></ProtectedRoute>} />
                     <Route path="/my-history" element={<ProtectedRoute><AgentHistoryPage /></ProtectedRoute>} />
                     <Route path="/system-history" element={<ProtectedRoute><SystemHistoryPage /></ProtectedRoute>} />
