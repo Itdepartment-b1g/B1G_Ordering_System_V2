@@ -38,6 +38,7 @@ export interface Client {
     contactPerson?: string;
     taxStatus?: 'Tax on Sales' | 'Tax Exempt';
     brandIds?: string[];
+    shopType?: string;
 }
 
 const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<string | null> => {

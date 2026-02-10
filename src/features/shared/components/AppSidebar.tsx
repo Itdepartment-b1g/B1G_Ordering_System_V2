@@ -28,7 +28,8 @@ import {
   LayoutGrid,
   Activity,
   Settings,
-  ShieldCheck
+  ShieldCheck,
+  CreditCard
 } from 'lucide-react';
 import {
   Sidebar,
@@ -99,6 +100,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   {
@@ -215,6 +217,7 @@ const financeMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   { title: 'System History', url: '/system-history', icon: History },
@@ -266,6 +269,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   {

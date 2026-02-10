@@ -223,6 +223,15 @@ export type ClientApprovalStatus = 'pending' | 'approved' | 'rejected';
 export type ClientAccountType = 'Key Accounts' | 'Standard Accounts';
 export type ClientCategory = 'Permanently Closed' | 'Renovating' | 'Open';
 
+export interface ShopType {
+  id: string;
+  company_id: string;
+  type_name: string;
+  is_default: boolean;
+  created_at: string;
+  created_by?: string;
+}
+
 export interface Client {
   id: string;
   company_id: string;
@@ -254,6 +263,7 @@ export interface Client {
   contact_person?: string;
   tin?: string;
   tax_status?: 'Tax on Sales' | 'Tax Exempt';
+  shop_type?: string;
   created_at: string;
   updated_at: string;
 }
@@ -587,6 +597,32 @@ export interface LeaderInventoryItem {
 }
 
 // ============================================================================
+// PAYMENT SETTINGS TYPES
+// ============================================================================
+
+export interface BankAccount {
+  name: string;
+  account_number: string;
+  enabled: boolean;
+  qr_code_url?: string;
+}
+
+export interface CompanyPaymentSettings {
+  id: string;
+  company_id: string;
+  bank_accounts: BankAccount[];
+  gcash_number?: string;
+  gcash_name?: string;
+  gcash_qr_url?: string;
+  cash_enabled: boolean;
+  cheque_enabled: boolean;
+  gcash_enabled: boolean;
+  bank_transfer_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================================================
 // DASHBOARD STATS TYPES
 // ============================================================================
 
@@ -744,6 +780,11 @@ export interface Database {
         Row: Notification;
         Insert: Omit<Notification, 'id' | 'created_at'>;
         Update: Partial<Omit<Notification, 'id' | 'created_at'>>;
+      };
+      company_payment_settings: {
+        Row: CompanyPaymentSettings;
+        Insert: Omit<CompanyPaymentSettings, 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<Omit<CompanyPaymentSettings, 'id' | 'created_at'>>;
       };
     };
     Functions: {

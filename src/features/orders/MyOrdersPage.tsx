@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -20,6 +20,8 @@ import { supabase } from '@/lib/supabase';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { sendOrderConfirmationEmail } from '@/lib/email.helpers';
+import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
+import type { BankAccount } from '@/types/database.types';
 
 interface SelectedItem {
   variantId: string;
@@ -110,18 +112,42 @@ export default function MyOrdersPage() {
   const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null>(null);
   const [showBankSelectionModal, setShowBankSelectionModal] = useState(false);
-  const [selectedBank, setSelectedBank] = useState<{ name: string; accountNumber: string } | null>(null);
+  const [selectedBank, setSelectedBank] = useState<BankAccount | null>(null);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null);
   const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
 
-  // Bank accounts configuration
-  const bankAccounts = [
-    { name: 'Unionbank', accountNumber: '00-218-002553-7' },
-    { name: 'BPI', accountNumber: '1761-011118' },
-    { name: 'PBCOM', accountNumber: '238101006138' }
-  ];
+  // Payment settings from database
+  const { settings: paymentSettings, loading: loadingPaymentSettings } = usePaymentSettings();
+  
+  // Get enabled bank accounts from payment settings
+  const bankAccounts = paymentSettings?.bank_accounts?.filter(bank => bank.enabled) || [];
+
+  // Log when payment settings change (for debugging real-time updates)
+  useEffect(() => {
+    if (paymentSettings) {
+      console.log('🔄 [MyOrders] Payment settings updated:', {
+        bank_transfer: paymentSettings.bank_transfer_enabled,
+        gcash: paymentSettings.gcash_enabled,
+        cash: paymentSettings.cash_enabled,
+        cheque: paymentSettings.cheque_enabled,
+        banks_count: bankAccounts.length
+      });
+    }
+  }, [paymentSettings, bankAccounts.length]);
+
+  // Log when payment modal is open and settings are available (to verify real-time)
+  useEffect(() => {
+    if (showPaymentMethodModal && paymentSettings) {
+      console.log('💳 [Payment Modal] Rendering with settings:', {
+        bank_transfer: paymentSettings.bank_transfer_enabled,
+        gcash: paymentSettings.gcash_enabled,
+        cash: paymentSettings.cash_enabled,
+        cheque: paymentSettings.cheque_enabled
+      });
+    }
+  }, [showPaymentMethodModal, paymentSettings]);
 
   // Camera states
   const [showCamera, setShowCamera] = useState(false);
@@ -2083,34 +2109,65 @@ export default function MyOrdersPage() {
             </Alert>
 
             <div className="grid grid-cols-1 gap-2 sm:gap-3">
+              {/* Bank Transfer - only show if enabled */}
+              {paymentSettings?.bank_transfer_enabled && bankAccounts.length > 0 && (
+                <Button
+                  variant={paymentMethod === 'BANK_TRANSFER' ? 'default' : 'outline'}
+                  className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                  onClick={() => handlePaymentMethodSelected('BANK_TRANSFER')}
+                >
+                  <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
+                  <span className="text-base sm:text-lg font-semibold">Bank Transfer</span>
+                </Button>
+              )}
 
+              {/* GCash - only show if enabled */}
+              {paymentSettings?.gcash_enabled && (
+                <Button
+                  variant={paymentMethod === 'GCASH' ? 'default' : 'outline'}
+                  className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                  onClick={() => handlePaymentMethodSelected('GCASH')}
+                >
+                  <Smartphone className="h-5 w-5 sm:h-6 sm:w-6" />
+                  <span className="text-base sm:text-lg font-semibold">GCash</span>
+                </Button>
+              )}
 
-              <Button
-                variant={paymentMethod === 'BANK_TRANSFER' ? 'default' : 'outline'}
-                className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
-                onClick={() => handlePaymentMethodSelected('BANK_TRANSFER')}
-              >
-                <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
-                <span className="text-base sm:text-lg font-semibold">Bank Transfer</span>
-              </Button>
+              {/* Cash - only show if enabled */}
+              {paymentSettings?.cash_enabled && (
+                <Button
+                  variant={paymentMethod === 'CASH' ? 'default' : 'outline'}
+                  className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                  onClick={() => handlePaymentMethodSelected('CASH')}
+                >
+                  <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
+                  <span className="text-base sm:text-lg font-semibold">Cash</span>
+                </Button>
+              )}
 
-              <Button
-                variant={paymentMethod === 'CASH' ? 'default' : 'outline'}
-                className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
-                onClick={() => handlePaymentMethodSelected('CASH')}
-              >
-                <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
-                <span className="text-base sm:text-lg font-semibold">Cash</span>
-              </Button>
+              {/* Cheque - only show if enabled */}
+              {paymentSettings?.cheque_enabled && (
+                <Button
+                  variant={paymentMethod === 'CHEQUE' ? 'default' : 'outline'}
+                  className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                  onClick={() => handlePaymentMethodSelected('CHEQUE')}
+                >
+                  <FileSignature className="h-5 w-5 sm:h-6 sm:w-6" />
+                  <span className="text-base sm:text-lg font-semibold">Cheque</span>
+                </Button>
+              )}
 
-              <Button
-                variant={paymentMethod === 'CHEQUE' ? 'default' : 'outline'}
-                className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
-                onClick={() => handlePaymentMethodSelected('CHEQUE')}
-              >
-                <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
-                <span className="text-base sm:text-lg font-semibold">Cheque</span>
-              </Button>
+              {/* Show message if no payment methods configured */}
+              {!paymentSettings?.bank_transfer_enabled && 
+               !paymentSettings?.gcash_enabled && 
+               !paymentSettings?.cash_enabled && 
+               !paymentSettings?.cheque_enabled && (
+                <Alert variant="destructive">
+                  <AlertDescription className="text-xs sm:text-sm">
+                    No payment methods are currently enabled. Please contact your administrator.
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
 
             <div className="flex flex-col sm:flex-row justify-end gap-2 pt-3 sm:pt-4 border-t">
@@ -2164,7 +2221,7 @@ export default function MyOrdersPage() {
                     <CreditCard className="h-5 w-5 flex-shrink-0" />
                     <span className="font-semibold text-base">{bank.name}</span>
                   </div>
-                  <span className="text-sm text-muted-foreground ml-7">{bank.accountNumber}</span>
+                  <span className="text-sm text-muted-foreground ml-7">{bank.account_number}</span>
                 </Button>
               ))}
             </div>
@@ -2210,11 +2267,27 @@ export default function MyOrdersPage() {
 
             {/* Bank Account Display (for Bank Transfer) */}
             {paymentMethod === 'BANK_TRANSFER' && selectedBank && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 space-y-2">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 space-y-3">
                 <div className="flex items-center gap-2 mb-2">
                   <CreditCard className="h-4 w-4 sm:h-5 sm:w-5 text-blue-700" />
                   <Label className="font-semibold text-blue-900 text-sm sm:text-base">Selected Bank Account</Label>
                 </div>
+                
+                {/* QR Code Display (if available) */}
+                {selectedBank.qr_code_url && (
+                  <div className="flex justify-center py-2">
+                    <div className="bg-white p-3 rounded-lg border-2 border-blue-300">
+                      <img 
+                        src={selectedBank.qr_code_url} 
+                        alt={`${selectedBank.name} QR Code`}
+                        className="w-48 h-48 object-contain"
+                      />
+                      <p className="text-xs text-center text-blue-700 mt-2">Scan to pay</p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Bank Details */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <span className="text-xs sm:text-sm text-blue-700 font-medium">Bank:</span>
@@ -2222,7 +2295,45 @@ export default function MyOrdersPage() {
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-xs sm:text-sm text-blue-700 font-medium">Account Number:</span>
-                    <span className="text-xs sm:text-sm font-mono font-semibold text-blue-900">{selectedBank.accountNumber}</span>
+                    <span className="text-xs sm:text-sm font-mono font-semibold text-blue-900">{selectedBank.account_number}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* GCash Account Display (for GCash) */}
+            {paymentMethod === 'GCASH' && paymentSettings && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 sm:p-4 space-y-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Smartphone className="h-4 w-4 sm:h-5 sm:w-5 text-green-700" />
+                  <Label className="font-semibold text-green-900 text-sm sm:text-base">GCash Payment</Label>
+                </div>
+                
+                {/* QR Code Display (if available) */}
+                {paymentSettings.gcash_qr_url && (
+                  <div className="flex justify-center py-2">
+                    <div className="bg-white p-3 rounded-lg border-2 border-green-300">
+                      <img 
+                        src={paymentSettings.gcash_qr_url} 
+                        alt="GCash QR Code"
+                        className="w-48 h-48 object-contain"
+                      />
+                      <p className="text-xs text-center text-green-700 mt-2">Scan to pay via GCash</p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* GCash Details */}
+                <div className="space-y-1">
+                  {paymentSettings.gcash_name && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs sm:text-sm text-green-700 font-medium">Account Name:</span>
+                      <span className="text-xs sm:text-sm font-semibold text-green-900">{paymentSettings.gcash_name}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs sm:text-sm text-green-700 font-medium">GCash Number:</span>
+                    <span className="text-xs sm:text-sm font-mono font-semibold text-green-900">{paymentSettings.gcash_number}</span>
                   </div>
                 </div>
               </div>
@@ -2456,7 +2567,7 @@ export default function MyOrdersPage() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Account Number:</span>
-                        <span className="font-mono font-semibold">{selectedBank.accountNumber}</span>
+                        <span className="font-mono font-semibold">{selectedBank.account_number}</span>
                       </div>
                     </div>
                   )}
