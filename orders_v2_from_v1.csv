@@ -1,0 +1,510 @@
+order_number,order_item_index,agent_id,agent_name,client_id,client_name,order_date,subtotal,tax,discount,total_amount,status,stage,payment_method,bank_type,deposit_id,notes,item_brand_name,item_variant_name,item_variant_type,item_quantity,item_unit_price,item_pricing_strategy
+ORD-20260208-1046,1,,Aaron Jay Esperidion,,GGAZ Energy Inc,2026-02-08,20200,0,0,20200,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 FRESH YAKU,flavor,10,,rsp
+ORD-20260208-1046,2,,Aaron Jay Esperidion,,GGAZ Energy Inc,2026-02-08,20200,0,0,20200,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 GARDENS HEART,flavor,10,,rsp
+ORD-20260208-1046,3,,Aaron Jay Esperidion,,GGAZ Energy Inc,2026-02-08,20200,0,0,20200,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1  TANGY PURPLE,flavor,10,,rsp
+ORD-20260208-1046,4,,Aaron Jay Esperidion,,GGAZ Energy Inc,2026-02-08,20200,0,0,20200,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 FRESH RED,flavor,10,,rsp
+ORD-20260208-1046,5,,Aaron Jay Esperidion,,GGAZ Energy Inc,2026-02-08,20200,0,0,20200,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 RED BURST,flavor,10,,rsp
+ORD-20260208-1046,6,,Aaron Jay Esperidion,,GGAZ Energy Inc,2026-02-08,20200,0,0,20200,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 DARK SPARKLE,flavor,10,,rsp
+ORD-20260208-1046,7,,Aaron Jay Esperidion,,GGAZ Energy Inc,2026-02-08,20200,0,0,20200,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,10,,rsp
+ORD-20260208-1046,8,,Aaron Jay Esperidion,,GGAZ Energy Inc,2026-02-08,20200,0,0,20200,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,10,,rsp
+ORD-20260206-1045,1,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-06,2080,0,0,2080,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260206-1045,2,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-06,2080,0,0,2080,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,1,,rsp
+ORD-20260206-1045,3,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-06,2080,0,0,2080,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260206-1045,4,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-06,2080,0,0,2080,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,3,,rsp
+ORD-20260206-1045,5,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-06,2080,0,0,2080,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,1,,rsp
+ORD-20260206-1045,6,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-06,2080,0,0,2080,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260206-1044,1,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-06,2250,0,0,2250,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,2,,rsp
+ORD-20260206-1044,2,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-06,2250,0,0,2250,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,1,,rsp
+ORD-20260206-1044,3,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-06,2250,0,0,2250,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,1,,rsp
+ORD-20260206-1044,4,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-06,2250,0,0,2250,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SILVER DYNASTY (MENTHOL ICE),flavor,1,,rsp
+ORD-20260206-1043,1,,Aaron Jay Esperidion,,Symon,2026-02-06,1430,0,0,1430,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,3,,rsp
+ORD-20260206-1043,2,,Aaron Jay Esperidion,,Symon,2026-02-06,1430,0,0,1430,approved,admin_approved,CASH,,,,X-ULTRA LITE,White Pearl (white),flavor,1,,rsp
+ORD-20260206-1043,3,,Aaron Jay Esperidion,,Symon,2026-02-06,1430,0,0,1430,approved,admin_approved,CASH,,,,X-ULTRA LITE,Irony Gray (black),flavor,1,,rsp
+ORD-20260206-1043,4,,Aaron Jay Esperidion,,Symon,2026-02-06,1430,0,0,1430,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 BLACK GEMS,flavor,1,,rsp
+ORD-20260206-1042,1,,Aaron Jay Esperidion,,Erjan Quiohling,2026-02-06,2160,0,0,2160,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,3,,rsp
+ORD-20260206-1042,2,,Aaron Jay Esperidion,,Erjan Quiohling,2026-02-06,2160,0,0,2160,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,1,,rsp
+ORD-20260206-1042,3,,Aaron Jay Esperidion,,Erjan Quiohling,2026-02-06,2160,0,0,2160,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20260206-1042,4,,Aaron Jay Esperidion,,Erjan Quiohling,2026-02-06,2160,0,0,2160,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,1,,rsp
+ORD-20260205-1041,1,,Aaron Jay Esperidion,,Ralph Alon-Alon,2026-02-05,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260205-1041,2,,Aaron Jay Esperidion,,Ralph Alon-Alon,2026-02-05,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260205-1041,3,,Aaron Jay Esperidion,,Ralph Alon-Alon,2026-02-05,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,2,,rsp
+ORD-20260205-1041,4,,Aaron Jay Esperidion,,Ralph Alon-Alon,2026-02-05,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260205-1040,1,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-05,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,2,,rsp
+ORD-20260205-1040,2,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-05,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260205-1040,3,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-05,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,1,,rsp
+ORD-20260205-1040,4,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-05,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260205-1040,5,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-05,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260205-1040,6,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-05,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260205-1040,7,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-05,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,2,,rsp
+ORD-20260205-1040,8,,Alysson Faye H. Enriquez,,Martin Valbuena,2026-02-05,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260204-1039,1,,Francsico Ruiz A. Titong,,Sthepen John Erat,2026-02-04,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G HEART,flavor,10,,rsp
+ORD-20260204-1039,2,,Francsico Ruiz A. Titong,,Sthepen John Erat,2026-02-04,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G PURPLE,flavor,10,,rsp
+ORD-20260204-1039,3,,Francsico Ruiz A. Titong,,Sthepen John Erat,2026-02-04,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,10,,rsp
+ORD-20260204-1039,4,,Francsico Ruiz A. Titong,,Sthepen John Erat,2026-02-04,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,10,,rsp
+ORD-20260204-1038,1,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-02-04,2000,0,0,2000,approved,admin_approved,CASH,,,,X-ULTRA LITE,White Pearl (white),flavor,10,,rsp
+ORD-20260204-1037,1,,Alysson Faye H. Enriquez,,Richard Estrella,2026-02-04,4000,0,0,4000,approved,admin_approved,CASH,,,,X-ULTRA LITE,Irony Gray (black),flavor,10,,rsp
+ORD-20260204-1037,2,,Alysson Faye H. Enriquez,,Richard Estrella,2026-02-04,4000,0,0,4000,approved,admin_approved,CASH,,,,X-ULTRA LITE,White Pearl (white),flavor,10,,rsp
+ORD-20260203-1036,1,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-03,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260203-1036,2,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-03,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260203-1036,3,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-03,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260203-1036,4,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-03,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,1,,rsp
+ORD-20260203-1036,5,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-02-03,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260202-1035,1,,Alysson Faye H. Enriquez,,Mark Anthony Cambarjian,2026-02-02,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,1,,rsp
+ORD-20260202-1035,2,,Alysson Faye H. Enriquez,,Mark Anthony Cambarjian,2026-02-02,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,2,,rsp
+ORD-20260202-1035,3,,Alysson Faye H. Enriquez,,Mark Anthony Cambarjian,2026-02-02,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260202-1035,4,,Alysson Faye H. Enriquez,,Mark Anthony Cambarjian,2026-02-02,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260202-1034,1,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260202-1034,2,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260202-1034,3,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,1,,rsp
+ORD-20260202-1034,4,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260202-1034,5,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,1,,rsp
+ORD-20260202-1034,6,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260202-1034,7,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260202-1034,8,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,FRESH FOREST FRESH MINT,flavor,1,,rsp
+ORD-20260202-1034,9,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,1,,rsp
+ORD-20260202-1034,10,,Francsico Ruiz A. Titong,,Alex store,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260202-1033,1,,Aaron Jay Esperidion,,Christopher Yano,2026-02-02,2750,0,0,2750,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20260202-1033,2,,Aaron Jay Esperidion,,Christopher Yano,2026-02-02,2750,0,0,2750,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,2,,rsp
+ORD-20260202-1033,3,,Aaron Jay Esperidion,,Christopher Yano,2026-02-02,2750,0,0,2750,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,1,,rsp
+ORD-20260202-1033,4,,Aaron Jay Esperidion,,Christopher Yano,2026-02-02,2750,0,0,2750,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20260202-1033,5,,Aaron Jay Esperidion,,Christopher Yano,2026-02-02,2750,0,0,2750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,1,,rsp
+ORD-20260202-1033,6,,Aaron Jay Esperidion,,Christopher Yano,2026-02-02,2750,0,0,2750,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260202-1033,7,,Aaron Jay Esperidion,,Christopher Yano,2026-02-02,2750,0,0,2750,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260202-1032,1,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 FRESH YAKU,flavor,1,,rsp
+ORD-20260202-1032,2,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 FRAGRANT BURST,flavor,1,,rsp
+ORD-20260202-1032,3,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 MIXED GEMS,flavor,1,,rsp
+ORD-20260202-1032,4,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 PURPLE SNOW,flavor,1,,rsp
+ORD-20260202-1032,5,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 RED BURST,flavor,1,,rsp
+ORD-20260202-1032,6,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 GARDENS HEART,flavor,1,,rsp
+ORD-20260202-1032,7,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 BLACK GEMS,flavor,1,,rsp
+ORD-20260202-1032,8,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 DARK SPARKLE,flavor,1,,rsp
+ORD-20260202-1032,9,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 BROWN BRAVO,flavor,1,,rsp
+ORD-20260202-1032,10,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2500,0,0,2500,approved,admin_approved,CASH,,,,ONE BAR V1,ONE BAR V1 MELLOW MELODY,flavor,1,,rsp
+ORD-20260202-1031,1,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260202-1031,2,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260202-1031,3,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260202-1031,4,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,1,,rsp
+ORD-20260202-1031,5,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260202-1031,6,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,1,,rsp
+ORD-20260202-1031,7,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260202-1031,8,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260202-1031,9,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,1,,rsp
+ORD-20260202-1031,10,,Francsico Ruiz A. Titong,,Ritchie Torres,2026-02-02,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,FRESH FOREST FRESH MINT,flavor,1,,rsp
+ORD-20260201-1030,1,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260201-1030,2,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,1,,rsp
+ORD-20260201-1030,3,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260201-1030,4,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260201-1030,5,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,FRESH FOREST FRESH MINT,flavor,1,,rsp
+ORD-20260201-1030,6,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260201-1030,7,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,1,,rsp
+ORD-20260201-1030,8,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,1,,rsp
+ORD-20260201-1030,9,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260201-1030,10,,Ariel Culibar,,Kevin flores,2026-02-01,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260201-1029,1,,Alysson Faye H. Enriquez,,Krecibel M. Menese,2026-02-01,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260201-1029,2,,Alysson Faye H. Enriquez,,Krecibel M. Menese,2026-02-01,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,1,,rsp
+ORD-20260201-1029,3,,Alysson Faye H. Enriquez,,Krecibel M. Menese,2026-02-01,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260201-1029,4,,Alysson Faye H. Enriquez,,Krecibel M. Menese,2026-02-01,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260201-1029,5,,Alysson Faye H. Enriquez,,Krecibel M. Menese,2026-02-01,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260129-1028,1,,Aaron Jay Esperidion,,Jlo OB,2026-01-29,22500,0,0,22500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,8,,rsp
+ORD-20260129-1028,2,,Aaron Jay Esperidion,,Jlo OB,2026-01-29,22500,0,0,22500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,THUNDER BLAZE (GATORADE),flavor,3,,rsp
+ORD-20260129-1028,3,,Aaron Jay Esperidion,,Jlo OB,2026-01-29,22500,0,0,22500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,3,,rsp
+ORD-20260129-1028,4,,Aaron Jay Esperidion,,Jlo OB,2026-01-29,22500,0,0,22500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,7,,rsp
+ORD-20260129-1028,5,,Aaron Jay Esperidion,,Jlo OB,2026-01-29,22500,0,0,22500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,7,,rsp
+ORD-20260129-1028,6,,Aaron Jay Esperidion,,Jlo OB,2026-01-29,22500,0,0,22500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,7,,rsp
+ORD-20260129-1028,7,,Aaron Jay Esperidion,,Jlo OB,2026-01-29,22500,0,0,22500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,7,,rsp
+ORD-20260129-1028,8,,Aaron Jay Esperidion,,Jlo OB,2026-01-29,22500,0,0,22500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,8,,rsp
+ORD-20260128-1027,1,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,1,,rsp
+ORD-20260128-1027,2,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,1,,rsp
+ORD-20260128-1027,3,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,1,,rsp
+ORD-20260128-1027,4,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,1,,rsp
+ORD-20260128-1027,5,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20260128-1027,6,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,1,,rsp
+ORD-20260128-1027,7,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,1,,rsp
+ORD-20260128-1027,8,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20260128-1027,9,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,1,,rsp
+ORD-20260128-1027,10,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,1,,rsp
+ORD-20260128-1027,11,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260128-1027,12,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260128-1027,13,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,1,,rsp
+ORD-20260128-1027,14,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260128-1027,15,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260128-1027,16,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260128-1027,17,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,1,,rsp
+ORD-20260128-1027,18,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260128-1027,19,,Ariel Culibar,,Paul John delos reyes,2026-01-28,6400,0,0,6400,approved,admin_approved,CASH,,,,AMZ,FRESH FOREST FRESH MINT,flavor,2,,rsp
+ORD-20260126-1026,1,,Aaron Jay Esperidion,,Diane Grace A,2026-01-26,1940,0,0,1940,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260126-1026,2,,Aaron Jay Esperidion,,Diane Grace A,2026-01-26,1940,0,0,1940,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260126-1026,3,,Aaron Jay Esperidion,,Diane Grace A,2026-01-26,1940,0,0,1940,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260126-1026,4,,Aaron Jay Esperidion,,Diane Grace A,2026-01-26,1940,0,0,1940,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260126-1026,5,,Aaron Jay Esperidion,,Diane Grace A,2026-01-26,1940,0,0,1940,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,1,,rsp
+ORD-20260126-1026,6,,Aaron Jay Esperidion,,Diane Grace A,2026-01-26,1940,0,0,1940,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,1,,rsp
+ORD-20260126-1025,1,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260126-1025,2,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260126-1025,3,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,1,,rsp
+ORD-20260126-1025,4,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260126-1025,5,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260126-1025,6,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,2,,rsp
+ORD-20260126-1025,7,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260126-1025,8,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,1,,rsp
+ORD-20260126-1025,9,,Ariel Culibar,,Mac Obando,2026-01-26,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260125-1024,1,,Francsico Ruiz A. Titong,,Joel M-Torres,2026-01-25,26000,0,0,26000,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,15,,rsp
+ORD-20260125-1024,2,,Francsico Ruiz A. Titong,,Joel M-Torres,2026-01-25,26000,0,0,26000,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,15,,rsp
+ORD-20260125-1024,3,,Francsico Ruiz A. Titong,,Joel M-Torres,2026-01-25,26000,0,0,26000,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,10,,rsp
+ORD-20260125-1024,4,,Francsico Ruiz A. Titong,,Joel M-Torres,2026-01-25,26000,0,0,26000,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,15,,rsp
+ORD-20260125-1024,5,,Francsico Ruiz A. Titong,,Joel M-Torres,2026-01-25,26000,0,0,26000,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,15,,rsp
+ORD-20260125-1024,6,,Francsico Ruiz A. Titong,,Joel M-Torres,2026-01-25,26000,0,0,26000,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,15,,rsp
+ORD-20260125-1024,7,,Francsico Ruiz A. Titong,,Joel M-Torres,2026-01-25,26000,0,0,26000,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,15,,rsp
+ORD-20260123-1023,1,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,3,,rsp
+ORD-20260123-1023,2,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,3,,rsp
+ORD-20260123-1023,3,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,3,,rsp
+ORD-20260123-1023,4,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,3,,rsp
+ORD-20260123-1023,5,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,3,,rsp
+ORD-20260123-1023,6,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,3,,rsp
+ORD-20260123-1023,7,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,3,,rsp
+ORD-20260123-1023,8,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,3,,rsp
+ORD-20260123-1023,9,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,FRESH FOREST FRESH MINT,flavor,3,,rsp
+ORD-20260123-1023,10,,Francsico Ruiz A. Titong,,Vilma Jelle,2026-01-23,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,3,,rsp
+ORD-20260123-1022,1,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-01-23,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260123-1022,2,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-01-23,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,2,,rsp
+ORD-20260123-1022,3,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-01-23,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260123-1022,4,,Alysson Faye H. Enriquez,,Aeithan Almeida,2026-01-23,1300,0,0,1300,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260122-1021,1,,Alysson Faye H. Enriquez,,Michael Gamutin,2026-01-22,1560,0,0,1560,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,2,,rsp
+ORD-20260122-1021,2,,Alysson Faye H. Enriquez,,Michael Gamutin,2026-01-22,1560,0,0,1560,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260122-1021,3,,Alysson Faye H. Enriquez,,Michael Gamutin,2026-01-22,1560,0,0,1560,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,1,,rsp
+ORD-20260122-1021,4,,Alysson Faye H. Enriquez,,Michael Gamutin,2026-01-22,1560,0,0,1560,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260122-1021,5,,Alysson Faye H. Enriquez,,Michael Gamutin,2026-01-22,1560,0,0,1560,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260121-1020,1,,Aaron Jay Esperidion,,Yakak VS,2026-01-21,1540,0,0,1540,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,1,,rsp
+ORD-20260121-1020,2,,Aaron Jay Esperidion,,Yakak VS,2026-01-21,1540,0,0,1540,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,1,,rsp
+ORD-20260121-1020,3,,Aaron Jay Esperidion,,Yakak VS,2026-01-21,1540,0,0,1540,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,1,,rsp
+ORD-20260121-1020,4,,Aaron Jay Esperidion,,Yakak VS,2026-01-21,1540,0,0,1540,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260121-1020,5,,Aaron Jay Esperidion,,Yakak VS,2026-01-21,1540,0,0,1540,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,1,,rsp
+ORD-20260121-1019,1,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-21,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,1,,rsp
+ORD-20260121-1019,2,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-21,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,2,,rsp
+ORD-20260121-1019,3,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-21,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260121-1019,4,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-21,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,1,,rsp
+ORD-20260121-1019,5,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-21,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,2,,rsp
+ORD-20260121-1019,6,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-21,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260121-1019,7,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-21,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,1,,rsp
+ORD-20260121-1019,8,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-21,2600,0,0,2600,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,1,,rsp
+ORD-20260121-1018,1,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,10,,rsp
+ORD-20260121-1018,2,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,10,,rsp
+ORD-20260121-1018,3,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,10,,rsp
+ORD-20260121-1018,4,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,10,,rsp
+ORD-20260121-1018,5,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,FRESH FOREST FRESH MINT,flavor,10,,rsp
+ORD-20260121-1018,6,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,30,,rsp
+ORD-20260121-1018,7,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,10,,rsp
+ORD-20260121-1018,8,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,20,,rsp
+ORD-20260121-1018,9,,Ariel Culibar,,Jasyson Bale Evangelista,2026-01-21,31200,0,0,31200,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,10,,rsp
+ORD-20260118-1017,1,,Alysson Faye H. Enriquez,,Pijong Balbuena,2026-01-18,1490,0,0,1490,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,2,,rsp
+ORD-20260118-1017,2,,Alysson Faye H. Enriquez,,Pijong Balbuena,2026-01-18,1490,0,0,1490,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,1,,rsp
+ORD-20260118-1017,3,,Alysson Faye H. Enriquez,,Pijong Balbuena,2026-01-18,1490,0,0,1490,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,1,,rsp
+ORD-20260118-1017,4,,Alysson Faye H. Enriquez,,Pijong Balbuena,2026-01-18,1490,0,0,1490,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,1,,rsp
+ORD-20260116-1016,1,,Alysson Faye H. Enriquez,,Jasmin Abe Nas,2026-01-16,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,LUSH ICE WATERMELON ICE,flavor,5,,rsp
+ORD-20260116-1016,2,,Alysson Faye H. Enriquez,,Jasmin Abe Nas,2026-01-16,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,FRESH FOREST FRESH MINT,flavor,5,,rsp
+ORD-20260116-1016,3,,Alysson Faye H. Enriquez,,Jasmin Abe Nas,2026-01-16,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,5,,rsp
+ORD-20260116-1016,4,,Alysson Faye H. Enriquez,,Jasmin Abe Nas,2026-01-16,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,5,,rsp
+ORD-20260116-1016,5,,Alysson Faye H. Enriquez,,Jasmin Abe Nas,2026-01-16,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,5,,rsp
+ORD-20260116-1016,6,,Alysson Faye H. Enriquez,,Jasmin Abe Nas,2026-01-16,7800,0,0,7800,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,5,,rsp
+ORD-20260116-1015,1,,Alysson Faye H. Enriquez,,Rose Ann Servo,2026-01-16,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,10,,rsp
+ORD-20260116-1015,2,,Alysson Faye H. Enriquez,,Rose Ann Servo,2026-01-16,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,2,,rsp
+ORD-20260116-1015,3,,Alysson Faye H. Enriquez,,Rose Ann Servo,2026-01-16,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,3,,rsp
+ORD-20260116-1015,4,,Alysson Faye H. Enriquez,,Rose Ann Servo,2026-01-16,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,2,,rsp
+ORD-20260116-1015,5,,Alysson Faye H. Enriquez,,Rose Ann Servo,2026-01-16,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,1,,rsp
+ORD-20260116-1015,6,,Alysson Faye H. Enriquez,,Rose Ann Servo,2026-01-16,6400,0,0,6400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20260115-1014,1,,Aaron Jay Esperidion,,April Joy Carcer,2026-01-15,5460,0,0,5460,approved,admin_approved,CASH,,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,3,,rsp
+ORD-20260115-1014,2,,Aaron Jay Esperidion,,April Joy Carcer,2026-01-15,5460,0,0,5460,approved,admin_approved,CASH,,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,2,,rsp
+ORD-20260115-1014,3,,Aaron Jay Esperidion,,April Joy Carcer,2026-01-15,5460,0,0,5460,approved,admin_approved,CASH,,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,3,,rsp
+ORD-20260115-1014,4,,Aaron Jay Esperidion,,April Joy Carcer,2026-01-15,5460,0,0,5460,approved,admin_approved,CASH,,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,2,,rsp
+ORD-20260115-1014,5,,Aaron Jay Esperidion,,April Joy Carcer,2026-01-15,5460,0,0,5460,approved,admin_approved,CASH,,,,AMZ,RED ROSE ROSE LYCHEE,flavor,2,,rsp
+ORD-20260115-1014,6,,Aaron Jay Esperidion,,April Joy Carcer,2026-01-15,5460,0,0,5460,approved,admin_approved,CASH,,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,3,,rsp
+ORD-20260115-1014,7,,Aaron Jay Esperidion,,April Joy Carcer,2026-01-15,5460,0,0,5460,approved,admin_approved,CASH,,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,3,,rsp
+ORD-20260115-1014,8,,Aaron Jay Esperidion,,April Joy Carcer,2026-01-15,5460,0,0,5460,approved,admin_approved,CASH,,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,3,,rsp
+ORD-20260114-1013,1,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,M FUSION HONEY DEW MELON ICE,flavor,11,,rsp
+ORD-20260114-1013,2,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,RED ROSE ROSE LYCHEE,flavor,12,,rsp
+ORD-20260114-1013,3,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,PINK ICE STRAWBERRY ICE,flavor,11,,rsp
+ORD-20260114-1013,4,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,PURPLE SNOW GRAPE ICE,flavor,12,,rsp
+ORD-20260114-1013,5,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,BLACK TORNADO BLACK CURRANT,flavor,12,,rsp
+ORD-20260114-1013,6,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,WHITE FUSION TARO ICE CREAM,flavor,11,,rsp
+ORD-20260114-1013,7,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,LUSH ICE WATERMELON ICE,flavor,11,,rsp
+ORD-20260114-1013,8,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,LUSH PINK WATERMELON STRAWBERRY,flavor,11,,rsp
+ORD-20260114-1013,9,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,BLUE ICE BLUEBERRY ICE,flavor,11,,rsp
+ORD-20260114-1013,10,,Francsico Ruiz A. Titong,,Nancy Celestino Lingad,2026-01-14,29380,0,0,29380,approved,admin_approved,BANK_TRANSFER,Unionbank,,,AMZ,FRESH FOREST FRESH MINT,flavor,11,,rsp
+ORD-20260114-1012,1,,Aaron Jay Esperidion,,Ralph Alon-Alon,2026-01-14,2040,0,0,2040,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,1,,rsp
+ORD-20260114-1012,2,,Aaron Jay Esperidion,,Ralph Alon-Alon,2026-01-14,2040,0,0,2040,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,1,,rsp
+ORD-20260114-1012,3,,Aaron Jay Esperidion,,Ralph Alon-Alon,2026-01-14,2040,0,0,2040,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,1,,rsp
+ORD-20260114-1012,4,,Aaron Jay Esperidion,,Ralph Alon-Alon,2026-01-14,2040,0,0,2040,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20260109-1011,1,,Aaron Jay Esperidion,,Joan F. Necesito,2026-01-09,2600,0,0,2600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,5,,rsp
+ORD-20260109-1011,2,,Aaron Jay Esperidion,,Joan F. Necesito,2026-01-09,2600,0,0,2600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,5,,rsp
+ORD-20260109-1010,1,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,10,,rsp
+ORD-20260109-1010,2,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,10,,rsp
+ORD-20260109-1010,3,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,10,,rsp
+ORD-20260109-1010,4,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,10,,rsp
+ORD-20260109-1010,5,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,10,,rsp
+ORD-20260109-1010,6,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,THUNDER BLAZE (GATORADE),flavor,10,,rsp
+ORD-20260109-1010,7,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,10,,rsp
+ORD-20260109-1010,8,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SILVER DYNASTY (MENTHOL ICE),flavor,10,,rsp
+ORD-20260109-1010,9,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,RUSTIC HAZE (CLASSIC TOBACCO),flavor,10,,rsp
+ORD-20260109-1010,10,,Ariel Culibar,,Rolly Bilan,2026-01-09,45000,0,0,45000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,10,,rsp
+ORD-20260107-1009,1,,Alysson Faye H. Enriquez,,Joshua Munion,2026-01-07,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,5,,rsp
+ORD-20260107-1009,2,,Alysson Faye H. Enriquez,,Joshua Munion,2026-01-07,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,5,,rsp
+ORD-20260107-1009,3,,Alysson Faye H. Enriquez,,Joshua Munion,2026-01-07,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,5,,rsp
+ORD-20260107-1009,4,,Alysson Faye H. Enriquez,,Joshua Munion,2026-01-07,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,5,,rsp
+ORD-20260107-1008,1,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,5,,rsp
+ORD-20260107-1008,2,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,5,,rsp
+ORD-20260107-1008,3,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,5,,rsp
+ORD-20260107-1008,4,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,5,,rsp
+ORD-20260107-1008,5,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,5,,rsp
+ORD-20260107-1008,6,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,THUNDER BLAZE (GATORADE),flavor,10,,rsp
+ORD-20260107-1008,7,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,10,,rsp
+ORD-20260107-1008,8,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,10,,rsp
+ORD-20260107-1008,9,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,10,,rsp
+ORD-20260107-1008,10,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,RUSTIC HAZE (CLASSIC TOBACCO),flavor,10,,rsp
+ORD-20260107-1008,11,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,10,,rsp
+ORD-20260107-1008,12,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,10,,rsp
+ORD-20260107-1008,13,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SILVER DYNASTY (MENTHOL ICE),flavor,10,,rsp
+ORD-20260107-1008,14,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,10,,rsp
+ORD-20260107-1008,15,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2026-01-07,54500,0,0,54500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,10,,rsp
+ORD-20260107-1007,1,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2026-01-07,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G LUSH,flavor,10,,rsp
+ORD-20260107-1007,2,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2026-01-07,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G BLACK,flavor,10,,rsp
+ORD-20260107-1007,3,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2026-01-07,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,5,,rsp
+ORD-20260107-1007,4,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2026-01-07,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,5,,rsp
+ORD-20260107-1007,5,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2026-01-07,12800,0,0,12800,approved,admin_approved,BANK_TRANSFER,Unionbank,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,10,,rsp
+ORD-20260107-1006,1,,Alysson Faye H. Enriquez,,Don Diego Lugo,2026-01-07,78000,0,0,78000,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,100,,rsp
+ORD-20260107-1006,2,,Alysson Faye H. Enriquez,,Don Diego Lugo,2026-01-07,78000,0,0,78000,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,100,,rsp
+ORD-20260107-1006,3,,Alysson Faye H. Enriquez,,Don Diego Lugo,2026-01-07,78000,0,0,78000,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,100,,rsp
+ORD-20260106-1005,1,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20260106-1005,2,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,2,,rsp
+ORD-20260106-1005,3,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,2,,rsp
+ORD-20260106-1005,4,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,2,,rsp
+ORD-20260106-1005,5,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,2,,rsp
+ORD-20260106-1005,6,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,2,,rsp
+ORD-20260106-1005,7,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,2,,rsp
+ORD-20260106-1005,8,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,2,,rsp
+ORD-20260106-1005,9,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,2,,rsp
+ORD-20260106-1005,10,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,4,,rsp
+ORD-20260106-1005,11,,Francsico Ruiz A. Titong,,Naiza Funtilar,2026-01-06,8640,0,0,8640,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,2,,rsp
+ORD-20260106-1004,1,,Ariel Culibar,,Sherrylyn Caranguian,2026-01-06,9700,0,0,9700,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,1,,rsp
+ORD-20260106-1004,2,,Ariel Culibar,,Sherrylyn Caranguian,2026-01-06,9700,0,0,9700,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,1,,rsp
+ORD-20260106-1004,3,,Ariel Culibar,,Sherrylyn Caranguian,2026-01-06,9700,0,0,9700,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,1,,rsp
+ORD-20260106-1004,4,,Ariel Culibar,,Sherrylyn Caranguian,2026-01-06,9700,0,0,9700,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20260106-1004,5,,Ariel Culibar,,Sherrylyn Caranguian,2026-01-06,9700,0,0,9700,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,1,,rsp
+ORD-20260106-1004,6,,Ariel Culibar,,Sherrylyn Caranguian,2026-01-06,9700,0,0,9700,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,10,,rsp
+ORD-20260106-1004,7,,Ariel Culibar,,Sherrylyn Caranguian,2026-01-06,9700,0,0,9700,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,10,,rsp
+ORD-20260106-1004,8,,Ariel Culibar,,Sherrylyn Caranguian,2026-01-06,9700,0,0,9700,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,10,,rsp
+ORD-20260106-1003,1,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20260106-1003,2,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,1,,rsp
+ORD-20260106-1003,3,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20260106-1003,4,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,1,,rsp
+ORD-20260106-1003,5,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,2,,rsp
+ORD-20260106-1003,6,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,1,,rsp
+ORD-20260106-1003,7,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,1,,rsp
+ORD-20260106-1003,8,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,1,,rsp
+ORD-20260106-1003,9,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,1,,rsp
+ORD-20260106-1003,10,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,3,,rsp
+ORD-20260106-1003,11,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,3,,rsp
+ORD-20260106-1003,12,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,4,,rsp
+ORD-20260106-1003,13,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,1,,rsp
+ORD-20260106-1003,14,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,2,,rsp
+ORD-20260106-1003,15,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,1,,rsp
+ORD-20260106-1003,16,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,1,,rsp
+ORD-20260106-1003,17,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,1,,rsp
+ORD-20260106-1003,18,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,2,,rsp
+ORD-20260106-1003,19,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,3,,rsp
+ORD-20260106-1003,20,,Alysson Faye H. Enriquez,,Anton Ramirez,2026-01-06,11800,0,0,11800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SILVER DYNASTY (MENTHOL ICE),flavor,1,,rsp
+ORD-20260102-1002,1,,Ariel Culibar,,Mac Obando,2026-01-02,4400,0,0,4400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,4,,rsp
+ORD-20260102-1002,2,,Ariel Culibar,,Mac Obando,2026-01-02,4400,0,0,4400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,3,,rsp
+ORD-20260102-1002,3,,Ariel Culibar,,Mac Obando,2026-01-02,4400,0,0,4400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,3,,rsp
+ORD-20260102-1002,4,,Ariel Culibar,,Mac Obando,2026-01-02,4400,0,0,4400,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,1,,rsp
+ORD-20260102-1002,5,,Ariel Culibar,,Mac Obando,2026-01-02,4400,0,0,4400,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,1,,rsp
+ORD-20260102-1002,6,,Ariel Culibar,,Mac Obando,2026-01-02,4400,0,0,4400,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,1,,rsp
+ORD-20260102-1002,7,,Ariel Culibar,,Mac Obando,2026-01-02,4400,0,0,4400,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,1,,rsp
+ORD-20260101-1001,1,,Aaron Jay Esperidion,,Jlo OB,2026-01-01,15750,0,0,15750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,5,,rsp
+ORD-20260101-1001,2,,Aaron Jay Esperidion,,Jlo OB,2026-01-01,15750,0,0,15750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,5,,rsp
+ORD-20260101-1001,3,,Aaron Jay Esperidion,,Jlo OB,2026-01-01,15750,0,0,15750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,5,,rsp
+ORD-20260101-1001,4,,Aaron Jay Esperidion,,Jlo OB,2026-01-01,15750,0,0,15750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,5,,rsp
+ORD-20260101-1001,5,,Aaron Jay Esperidion,,Jlo OB,2026-01-01,15750,0,0,15750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,5,,rsp
+ORD-20260101-1001,6,,Aaron Jay Esperidion,,Jlo OB,2026-01-01,15750,0,0,15750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,2,,rsp
+ORD-20260101-1001,7,,Aaron Jay Esperidion,,Jlo OB,2026-01-01,15750,0,0,15750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,5,,rsp
+ORD-20260101-1001,8,,Aaron Jay Esperidion,,Jlo OB,2026-01-01,15750,0,0,15750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,THUNDER BLAZE (GATORADE),flavor,3,,rsp
+ORD-20251228-1028,1,,Aaron Jay Esperidion,,Yakak VS,2025-12-28,2040,0,0,2040,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,1,,rsp
+ORD-20251228-1028,2,,Aaron Jay Esperidion,,Yakak VS,2025-12-28,2040,0,0,2040,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,1,,rsp
+ORD-20251228-1028,3,,Aaron Jay Esperidion,,Yakak VS,2025-12-28,2040,0,0,2040,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20251228-1028,4,,Aaron Jay Esperidion,,Yakak VS,2025-12-28,2040,0,0,2040,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,1,,rsp
+ORD-20251228-1028,5,,Aaron Jay Esperidion,,Yakak VS,2025-12-28,2040,0,0,2040,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,1,,rsp
+ORD-20251228-1027,1,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20251228-1027,2,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,2,,rsp
+ORD-20251228-1027,3,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,2,,rsp
+ORD-20251228-1027,4,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,2,,rsp
+ORD-20251228-1027,5,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,2,,rsp
+ORD-20251228-1027,6,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,2,,rsp
+ORD-20251228-1027,7,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,2,,rsp
+ORD-20251228-1027,8,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,2,,rsp
+ORD-20251228-1027,9,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,2,,rsp
+ORD-20251228-1027,10,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,2,,rsp
+ORD-20251228-1027,11,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,5,,rsp
+ORD-20251228-1027,12,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,5,,rsp
+ORD-20251228-1027,13,,Alysson Faye H. Enriquez,,Led Tatlonghari,2025-12-28,12800,0,0,12800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,10,,rsp
+ORD-20251226-1026,1,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-26,3270,0,0,3270,approved,admin_approved,CASH,,,,CHILLAX INFINITE,RUSTIC HAZE (CLASSIC TOBACCO),flavor,1,,rsp
+ORD-20251226-1026,2,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-26,3270,0,0,3270,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,1,,rsp
+ORD-20251226-1026,3,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-26,3270,0,0,3270,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,1,,rsp
+ORD-20251226-1026,4,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-26,3270,0,0,3270,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,2,,rsp
+ORD-20251226-1026,5,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-26,3270,0,0,3270,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20251226-1026,6,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-26,3270,0,0,3270,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,1,,rsp
+ORD-20251221-1025,1,,Aaron Jay Esperidion,,Janice Mandigma,2025-12-21,2800,0,0,2800,approved,admin_approved,CASH,,,,CHILLAX INFINITE,RUSTIC HAZE (CLASSIC TOBACCO),flavor,2,,rsp
+ORD-20251221-1025,2,,Aaron Jay Esperidion,,Janice Mandigma,2025-12-21,2800,0,0,2800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,2,,rsp
+ORD-20251221-1025,3,,Aaron Jay Esperidion,,Janice Mandigma,2025-12-21,2800,0,0,2800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20251221-1025,4,,Aaron Jay Esperidion,,Janice Mandigma,2025-12-21,2800,0,0,2800,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,1,,rsp
+ORD-20251221-1024,1,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,2,,rsp
+ORD-20251221-1024,2,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20251221-1024,3,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,2,,rsp
+ORD-20251221-1024,4,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,2,,rsp
+ORD-20251221-1024,5,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,2,,rsp
+ORD-20251221-1024,6,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,2,,rsp
+ORD-20251221-1024,7,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,2,,rsp
+ORD-20251221-1024,8,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,2,,rsp
+ORD-20251221-1024,9,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,2,,rsp
+ORD-20251221-1024,10,,Francsico Ruiz A. Titong,,Vilma Jelle,2025-12-21,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,2,,rsp
+ORD-20251215-1023,1,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,1,,rsp
+ORD-20251215-1023,2,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20251215-1023,3,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,1,,rsp
+ORD-20251215-1023,4,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,1,,rsp
+ORD-20251215-1023,5,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20251215-1023,6,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,1,,rsp
+ORD-20251215-1023,7,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,1,,rsp
+ORD-20251215-1023,8,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,1,,rsp
+ORD-20251215-1023,9,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,1,,rsp
+ORD-20251215-1023,10,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,1,,rsp
+ORD-20251215-1023,11,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,1,,rsp
+ORD-20251215-1023,12,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,1,,rsp
+ORD-20251215-1023,13,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,1,,rsp
+ORD-20251215-1023,14,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,1,,rsp
+ORD-20251215-1023,15,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,1,,rsp
+ORD-20251215-1023,16,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,1,,rsp
+ORD-20251215-1023,17,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,3,,rsp
+ORD-20251215-1023,18,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,3,,rsp
+ORD-20251215-1023,19,,Alysson Faye H. Enriquez,,Martin Valbuena,2025-12-15,9100,0,0,9100,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,4,,rsp
+ORD-20251215-1022,1,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,2,,rsp
+ORD-20251215-1022,2,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,2,,rsp
+ORD-20251215-1022,3,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,2,,rsp
+ORD-20251215-1022,4,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,2,,rsp
+ORD-20251215-1022,5,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,2,,rsp
+ORD-20251215-1022,6,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,SILVER DYNASTY (MENTHOL ICE),flavor,2,,rsp
+ORD-20251215-1022,7,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,RUSTIC HAZE (CLASSIC TOBACCO),flavor,2,,rsp
+ORD-20251215-1022,8,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,2,,rsp
+ORD-20251215-1022,9,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,THUNDER BLAZE (GATORADE),flavor,2,,rsp
+ORD-20251215-1022,10,,Ariel Culibar,,Jeffrey Ochava,2025-12-15,9000,0,0,9000,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,2,,rsp
+ORD-20251214-1021,1,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-14,2750,0,0,2750,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,1,,rsp
+ORD-20251214-1021,2,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-14,2750,0,0,2750,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20251214-1021,3,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-14,2750,0,0,2750,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,1,,rsp
+ORD-20251214-1021,4,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-14,2750,0,0,2750,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,1,,rsp
+ORD-20251214-1021,5,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-14,2750,0,0,2750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,1,,rsp
+ORD-20251214-1021,6,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-14,2750,0,0,2750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,1,,rsp
+ORD-20251214-1021,7,,Alysson Faye H. Enriquez,,Pijong Balbuena,2025-12-14,2750,0,0,2750,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,1,,rsp
+ORD-20251210-1020,1,,Aaron Jay Esperidion,,Jlo OB,2025-12-10,15750,0,0,15750,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,5,,rsp
+ORD-20251210-1020,2,,Aaron Jay Esperidion,,Jlo OB,2025-12-10,15750,0,0,15750,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,5,,rsp
+ORD-20251210-1020,3,,Aaron Jay Esperidion,,Jlo OB,2025-12-10,15750,0,0,15750,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,5,,rsp
+ORD-20251210-1020,4,,Aaron Jay Esperidion,,Jlo OB,2025-12-10,15750,0,0,15750,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,5,,rsp
+ORD-20251210-1020,5,,Aaron Jay Esperidion,,Jlo OB,2025-12-10,15750,0,0,15750,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,5,,rsp
+ORD-20251210-1020,6,,Aaron Jay Esperidion,,Jlo OB,2025-12-10,15750,0,0,15750,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,5,,rsp
+ORD-20251210-1020,7,,Aaron Jay Esperidion,,Jlo OB,2025-12-10,15750,0,0,15750,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,5,,rsp
+ORD-20251210-1019,1,,Aaron Jay Esperidion,,Joan F. Necesito,2025-12-10,13500,0,0,13500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,10,,rsp
+ORD-20251210-1019,2,,Aaron Jay Esperidion,,Joan F. Necesito,2025-12-10,13500,0,0,13500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,5,,rsp
+ORD-20251210-1019,3,,Aaron Jay Esperidion,,Joan F. Necesito,2025-12-10,13500,0,0,13500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,5,,rsp
+ORD-20251210-1019,4,,Aaron Jay Esperidion,,Joan F. Necesito,2025-12-10,13500,0,0,13500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,5,,rsp
+ORD-20251210-1019,5,,Aaron Jay Esperidion,,Joan F. Necesito,2025-12-10,13500,0,0,13500,approved,admin_approved,CASH,,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,5,,rsp
+ORD-20251210-1018,1,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,COSMIC CRUSH (GRAPES),flavor,10,,rsp
+ORD-20251210-1018,2,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,PINK HARMONY (STRAWBERRY),flavor,10,,rsp
+ORD-20251210-1018,3,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,VERY YELLOW (WATERMELON),flavor,10,,rsp
+ORD-20251210-1018,4,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,THUNDER BLAZE (GATORADE),flavor,10,,rsp
+ORD-20251210-1018,5,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,VIOLET FUSION (UBE),flavor,10,,rsp
+ORD-20251210-1018,6,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,SILVER DYNASTY (MENTHOL ICE),flavor,10,,rsp
+ORD-20251210-1018,7,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,RUSTIC HAZE (CLASSIC TOBACCO),flavor,10,,rsp
+ORD-20251210-1018,8,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,CRYSTAL WINK (BUBBLEGUM),flavor,10,,rsp
+ORD-20251210-1018,9,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,TWILIGHT WILLOW (BLACKCURRANT),flavor,10,,rsp
+ORD-20251210-1018,10,,Francsico Ruiz A. Titong,,Roy Jason Alboleras,2025-12-10,45000,0,0,45000,approved,admin_approved,BANK_TRANSFER,Unionbank,,,CHILLAX INFINITE,SLICK KICK (SOUR APPLE),flavor,10,,rsp
+ORD-20251208-1017,1,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,2,,rsp
+ORD-20251208-1017,2,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,2,,rsp
+ORD-20251208-1017,3,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,2,,rsp
+ORD-20251208-1017,4,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,2,,rsp
+ORD-20251208-1017,5,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20251208-1017,6,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,2,,rsp
+ORD-20251208-1017,7,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,2,,rsp
+ORD-20251208-1017,8,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,2,,rsp
+ORD-20251208-1017,9,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,2,,rsp
+ORD-20251208-1017,10,,Francsico Ruiz A. Titong,,April Joy Cabingue,2025-12-08,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,2,,rsp
+ORD-20251203-1016,1,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,2,,rsp
+ORD-20251203-1016,2,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,2,,rsp
+ORD-20251203-1016,3,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,2,,rsp
+ORD-20251203-1016,4,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,2,,rsp
+ORD-20251203-1016,5,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,2,,rsp
+ORD-20251203-1016,6,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,2,,rsp
+ORD-20251203-1016,7,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,2,,rsp
+ORD-20251203-1016,8,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,2,,rsp
+ORD-20251203-1016,9,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,2,,rsp
+ORD-20251203-1016,10,,Francsico Ruiz A. Titong,,Mary Evangeline Oliva,2025-12-03,7600,0,0,7600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,2,,rsp
+ORD-20251201-1009,1,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-12-01,1900,0,0,1900,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20251201-1009,2,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-12-01,1900,0,0,1900,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,1,,rsp
+ORD-20251201-1009,3,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-12-01,1900,0,0,1900,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,2,,rsp
+ORD-20251201-1009,4,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-12-01,1900,0,0,1900,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,1,,rsp
+ORD-20251125-1008,1,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-11-25,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20251125-1008,2,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-11-25,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,1,,rsp
+ORD-20251125-1008,3,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-11-25,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,1,,rsp
+ORD-20251125-1008,4,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-11-25,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,1,,rsp
+ORD-20251125-1008,5,,Aaron Jay Esperidion,,Ralph Alon-Alon,2025-11-25,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,1,,rsp
+ORD-20251125-1007,1,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,5,,rsp
+ORD-20251125-1007,2,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,5,,rsp
+ORD-20251125-1007,3,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,5,,rsp
+ORD-20251125-1007,4,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,5,,rsp
+ORD-20251125-1007,5,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,5,,rsp
+ORD-20251125-1007,6,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,5,,rsp
+ORD-20251125-1007,7,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,5,,rsp
+ORD-20251125-1007,8,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,5,,rsp
+ORD-20251125-1007,9,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,5,,rsp
+ORD-20251125-1007,10,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,5,,rsp
+ORD-20251125-1007,11,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,3,,rsp
+ORD-20251125-1007,12,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,3,,rsp
+ORD-20251125-1007,13,,Ariel Culibar,,Redfield brookside shell,2025-11-25,21600,0,0,21600,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,4,,rsp
+ORD-20251125-1006,1,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,10,,rsp
+ORD-20251125-1006,2,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,10,,rsp
+ORD-20251125-1006,3,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,10,,rsp
+ORD-20251125-1006,4,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,10,,rsp
+ORD-20251125-1006,5,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,10,,rsp
+ORD-20251125-1006,6,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G LUSH,flavor,10,,rsp
+ORD-20251125-1006,7,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,10,,rsp
+ORD-20251125-1006,8,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,10,,rsp
+ORD-20251125-1006,9,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SPARKLE,flavor,10,,rsp
+ORD-20251125-1006,10,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,10,,rsp
+ORD-20251125-1006,11,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,7,,rsp
+ORD-20251125-1006,12,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,7,,rsp
+ORD-20251125-1006,13,,Ariel Culibar,,Rolly Bilan,2025-11-25,43200,0,0,43200,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,6,,rsp
+ORD-20251121-1005,1,,Aaron Jay Esperidion,,Christopher Yano,2025-11-21,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,3,,rsp
+ORD-20251121-1005,2,,Aaron Jay Esperidion,,Christopher Yano,2025-11-21,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,1,,rsp
+ORD-20251121-1005,3,,Aaron Jay Esperidion,,Christopher Yano,2025-11-21,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,2,,rsp
+ORD-20251121-1005,4,,Aaron Jay Esperidion,,Christopher Yano,2025-11-21,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,1,,rsp
+ORD-20251121-1005,5,,Aaron Jay Esperidion,,Christopher Yano,2025-11-21,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20251121-1004,1,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLUE,flavor,10,,rsp
+ORD-20251121-1004,2,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,10,,rsp
+ORD-20251121-1004,3,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,20,,rsp
+ORD-20251121-1004,4,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,10,,rsp
+ORD-20251121-1004,5,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G HEART,flavor,10,,rsp
+ORD-20251121-1004,6,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,10,,rsp
+ORD-20251121-1004,7,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,10,,rsp
+ORD-20251121-1004,8,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,10,,rsp
+ORD-20251121-1004,9,,Alysson Faye H. Enriquez,,Emmanuel Casulla,2025-11-21,34400,0,0,34400,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,10,,rsp
+ORD-20251118-1003,1,,Alysson Faye H. Enriquez,,Ralph Vincent Serrano,2025-11-18,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G BLACK,flavor,3,,rsp
+ORD-20251118-1003,2,,Alysson Faye H. Enriquez,,Ralph Vincent Serrano,2025-11-18,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20251118-1003,3,,Alysson Faye H. Enriquez,,Ralph Vincent Serrano,2025-11-18,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,1,,rsp
+ORD-20251118-1003,4,,Alysson Faye H. Enriquez,,Ralph Vincent Serrano,2025-11-18,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,2,,rsp
+ORD-20251118-1003,5,,Alysson Faye H. Enriquez,,Ralph Vincent Serrano,2025-11-18,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,1,,rsp
+ORD-20251117-1002,1,,Aaron Jay Esperidion,,Christopher Yano,2025-11-17,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20251117-1002,2,,Aaron Jay Esperidion,,Christopher Yano,2025-11-17,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,2,,rsp
+ORD-20251117-1002,3,,Aaron Jay Esperidion,,Christopher Yano,2025-11-17,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,1,,rsp
+ORD-20251117-1002,4,,Aaron Jay Esperidion,,Christopher Yano,2025-11-17,1660,0,0,1660,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,1,,rsp
+ORD-20251116-1001,1,,Francsico Ruiz A. Titong,,Alex store,2025-11-16,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G PURPLE,flavor,1,,rsp
+ORD-20251116-1001,2,,Francsico Ruiz A. Titong,,Alex store,2025-11-16,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G FROST,flavor,1,,rsp
+ORD-20251116-1001,3,,Francsico Ruiz A. Titong,,Alex store,2025-11-16,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RIZZ,flavor,1,,rsp
+ORD-20251116-1001,4,,Francsico Ruiz A. Titong,,Alex store,2025-11-16,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G SHIROTA,flavor,1,,rsp
+ORD-20251116-1001,5,,Francsico Ruiz A. Titong,,Alex store,2025-11-16,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G RED,flavor,1,,rsp
+ORD-20251116-1001,6,,Francsico Ruiz A. Titong,,Alex store,2025-11-16,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE GRAY,flavor,1,,rsp
+ORD-20251116-1001,7,,Francsico Ruiz A. Titong,,Alex store,2025-11-16,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE CYAN,flavor,1,,rsp
+ORD-20251116-1001,8,,Francsico Ruiz A. Titong,,Alex store,2025-11-16,2680,0,0,2680,approved,admin_approved,CASH,,,,XFORGE,XFORGE B1G DEVICE BLACK,flavor,1,,rsp
