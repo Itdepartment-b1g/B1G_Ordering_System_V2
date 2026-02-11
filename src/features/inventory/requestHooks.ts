@@ -6,6 +6,7 @@ import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 
 export interface Request {
     id: string;
+    request_number?: string; // Added optional for backward compatibility
     variant_id: string;
     requested_quantity: number;
     status: string;
@@ -47,6 +48,7 @@ export function useMyRequests() {
                 .from('stock_requests')
                 .select(`
           id,
+          request_number,
           variant_id,
           requested_quantity,
           requested_at,
@@ -68,6 +70,7 @@ export function useMyRequests() {
 
             return (data || []).map((row: any) => ({
                 id: row.id,
+                request_number: row.request_number, // Added
                 variant_id: row.variant_id,
                 requested_quantity: row.requested_quantity,
                 requested_at: row.requested_at,
@@ -84,8 +87,16 @@ export function useMyRequests() {
     useEffect(() => {
         if (!user?.id) return;
 
-        const channel = subscribeToTable('stock_requests', () => {
-            queryClient.invalidateQueries({ queryKey: ['my_requests', user.id] });
+        const channel = subscribeToTable('stock_requests', (payload) => {
+            console.log('🔔 Stock request update:', payload);
+            // Client-side filtering to ensure we only update for relevant requests
+            // This is more reliable than server-side filtering with RLS in some cases
+            if (payload.new && (payload.new as any).agent_id === user.id) {
+                queryClient.invalidateQueries({ queryKey: ['my_requests', user.id] });
+            } else if (payload.old && (payload.old as any).agent_id === user.id) {
+                 // Handle deletion case or if we only have old record
+                queryClient.invalidateQueries({ queryKey: ['my_requests', user.id] });
+            }
         });
 
         return () => unsubscribe(channel);
@@ -158,7 +169,8 @@ export function useLeaderInventorySummary(leaderId: string | null) {
                     variantsSet.add(v.id);
                     formattedVariants.push({
                         ...v,
-                        brand: v.brand
+                        brand: v.brand,
+                        stock: item.stock // Include the stock from the leader's inventory
                     });
                 }
 
@@ -190,4 +202,86 @@ export function useLeaderInventorySummary(leaderId: string | null) {
     }, [leaderId, queryClient]);
 
     return query;
+}
+
+export function useMainInventorySummary() {
+    return useQuery({
+        queryKey: ['main_inventory_summary'],
+        queryFn: async () => {
+            // Fetch main inventory items (stock > 0)
+            const { data: inventoryData, error: inventoryError } = await supabase
+                .from('main_inventory')
+                .select(`
+                    variant_id,
+                    stock,
+                    variants (
+                        id,
+                        name,
+                        variant_type,
+                        brand_id,
+                        brand:brands(id, name)
+                    )
+                `)
+                .gt('stock', 0);
+
+            if (inventoryError) throw inventoryError;
+
+            // Extract unique brands and variants
+            const brandsMap = new Map();
+            const variantsSet = new Set();
+            const formattedVariants: any[] = [];
+
+            inventoryData?.forEach((item: any) => {
+                const v = item.variants;
+                if (!v) return;
+
+                if (!variantsSet.has(v.id)) {
+                    variantsSet.add(v.id);
+                    formattedVariants.push({
+                        ...v,
+                        brand: v.brand
+                    });
+                }
+
+                if (v.brand && !brandsMap.has(v.brand.id)) {
+                    brandsMap.set(v.brand.id, v.brand);
+                }
+            });
+
+            return {
+                brands: Array.from(brandsMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+                variants: formattedVariants.sort((a, b) => a.name.localeCompare(b.name))
+            };
+        },
+        staleTime: 1000 * 60 * 5, // 5 minutes
+    });
+}
+
+export function useMyLeader() {
+    const { user } = useAuth();
+    
+    return useQuery({
+        queryKey: ['my_leader', user?.id],
+        enabled: !!user?.id && user.role === 'mobile_sales',
+        queryFn: async () => {
+            if (!user?.id) return null;
+
+            const { data, error } = await supabase
+                .from('leader_teams')
+                .select('leader_id, leader:profiles!leader_teams_leader_id_fkey(full_name)')
+                .eq('agent_id', user.id)
+                .single();
+
+            if (error) {
+                console.error('Error fetching leader:', error);
+                return null;
+            }
+
+            return {
+                leaderId: data.leader_id,
+                leaderName: (data.leader as any)?.full_name
+            };
+        },
+        staleTime: 1000 * 60 * 30, // 30 minutes
+    });
 }

@@ -125,7 +125,7 @@ const adminMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'My Inventory', url: '/my-inventory', icon: Package },
-  { title: 'Request Inventory', url: '/inventory/request', icon: Send },
+  { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'My Activity', url: '/system-history', icon: History },
@@ -148,6 +148,7 @@ const leaderMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'My Inventory', url: '/my-inventory', icon: Package },
+      { title: 'Request Stock', url: '/leader-inventory/request', icon: Send },
       { title: 'Teams Inventory', url: '/leader-inventory', icon: Crown },
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },

@@ -214,6 +214,15 @@ export default function PurchaseOrdersPage() {
     order.supplier.company_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Pagination: 10 purchase orders per page
+  const PO_PER_PAGE = 10;
+  const [poPage, setPoPage] = useState(1);
+  const totalPoPages = Math.max(1, Math.ceil(filteredOrders.length / PO_PER_PAGE));
+  const paginatedOrders = filteredOrders.slice(
+    (poPage - 1) * PO_PER_PAGE,
+    poPage * PO_PER_PAGE
+  );
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center">
@@ -301,7 +310,7 @@ export default function PurchaseOrdersPage() {
         <CardContent>
           {/* Mobile: card list */}
           <div className="md:hidden space-y-3">
-            {filteredOrders.map((order) => (
+            {paginatedOrders.map((order) => (
               <div key={order.id} className="rounded-lg border bg-background p-4 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div>
@@ -369,73 +378,120 @@ export default function PurchaseOrdersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredOrders.map((order) => (
-                  <TableRow key={order.id}>
-                    <TableCell className="font-mono font-medium">{order.po_number}</TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{order.supplier.company_name}</p>
-                        <p className="text-xs text-muted-foreground">{order.supplier.contact_person}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>{new Date(order.order_date).toLocaleDateString()}</TableCell>
-                    <TableCell>{new Date(order.expected_delivery_date).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-right">{order.items.length}</TableCell>
-                    <TableCell className="text-right font-semibold">
-                      ₱{order.total_amount.toLocaleString()}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          order.status === 'approved' ? 'default' :
-                            order.status === 'pending' ? 'secondary' :
-                              'destructive'
-                        }
-                      >
-                        {order.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {order.status === 'pending' && (
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => handleOpenApproveDialog(order)}
-                            disabled={approvingOrderId === order.id}
-                          >
-                            {approvingOrderId === order.id ? (
-                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            ) : (
-                              <Check className="h-4 w-4 mr-1" />
-                            )}
-                            Approve & Add to Inventory
-                          </Button>
-                        )}
-                        {order.status === 'pending' && (
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => handleOpenRejectDialog(order)}
-                            disabled={rejectingOrderId === order.id}
-                          >
-                            {rejectingOrderId === order.id ? (
-                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            ) : (
-                              <X className="h-4 w-4 mr-1" />
-                            )}
-                            Reject
-                          </Button>
-                        )}
-                        <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </div>
+                {paginatedOrders.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-6">
+                      No purchase orders found.
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  paginatedOrders.map((order) => (
+                    <TableRow key={order.id}>
+                      <TableCell className="font-mono font-medium">{order.po_number}</TableCell>
+                      <TableCell>
+                        <div>
+                          <p className="font-medium">{order.supplier.company_name}</p>
+                          <p className="text-xs text-muted-foreground">{order.supplier.contact_person}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>{new Date(order.order_date).toLocaleDateString()}</TableCell>
+                      <TableCell>{new Date(order.expected_delivery_date).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-right">{order.items.length}</TableCell>
+                      <TableCell className="text-right font-semibold">
+                        ₱{order.total_amount.toLocaleString()}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            order.status === 'approved'
+                              ? 'default'
+                              : order.status === 'pending'
+                              ? 'secondary'
+                              : 'destructive'
+                          }
+                        >
+                          {order.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {order.status === 'pending' && (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => handleOpenApproveDialog(order)}
+                              disabled={approvingOrderId === order.id}
+                            >
+                              {approvingOrderId === order.id ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <Check className="h-4 w-4 mr-1" />
+                              )}
+                              Approve & Add to Inventory
+                            </Button>
+                          )}
+                          {order.status === 'pending' && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleOpenRejectDialog(order)}
+                              disabled={rejectingOrderId === order.id}
+                            >
+                              {rejectingOrderId === order.id ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <X className="h-4 w-4 mr-1" />
+                              )}
+                              Reject
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
+
+            {/* Pagination controls */}
+            {filteredOrders.length > PO_PER_PAGE && (
+              <div className="flex items-center justify-between mt-4">
+                <div className="text-xs text-muted-foreground">
+                  Showing{' '}
+                  <span className="font-medium">
+                    {(poPage - 1) * PO_PER_PAGE + 1}-
+                    {Math.min(poPage * PO_PER_PAGE, filteredOrders.length)}
+                  </span>{' '}
+                  of <span className="font-medium">{filteredOrders.length}</span> purchase orders
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPoPage((p) => Math.max(1, p - 1))}
+                    disabled={poPage === 1}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    Prev
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Page {poPage} of {totalPoPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPoPage((p) => Math.min(totalPoPages, p + 1))}
+                    disabled={poPage === totalPoPages}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, UserPlus, Loader2, Package, Eye, Rewind, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, UserPlus, Loader2, Package, Eye, Rewind, MoreHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -147,6 +147,15 @@ export function SalesAgentsTab() {
       agent.region.toLowerCase().includes(searchQuery.toLowerCase()) ||
       agent.cities.some(city => city.toLowerCase().includes(searchQuery.toLowerCase()));
   });
+
+  // Pagination: 10 agents per page
+  const AGENTS_PER_PAGE = 10;
+  const [agentPage, setAgentPage] = useState(1);
+  const totalAgentPages = Math.max(1, Math.ceil(filteredAgents.length / AGENTS_PER_PAGE));
+  const paginatedAgents = filteredAgents.slice(
+    (agentPage - 1) * AGENTS_PER_PAGE,
+    agentPage * AGENTS_PER_PAGE
+  );
 
   const fetchAgents = async () => {
     // Wait for user to be loaded
@@ -805,7 +814,7 @@ export function SalesAgentsTab() {
             {filteredAgents.length === 0 ? (
               <div className="text-center text-muted-foreground py-6">No users found</div>
             ) : (
-              filteredAgents.map((agent) => (
+              paginatedAgents.map((agent) => (
                 <div key={agent.id} className="rounded-lg border bg-background p-3 shadow-sm">
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <div className="min-w-0 flex-1">
@@ -916,7 +925,7 @@ export function SalesAgentsTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredAgents.map((agent) => (
+                {paginatedAgents.map((agent) => (
                   <TableRow key={agent.id}>
                     <TableCell className="font-medium text-center">{agent.name}</TableCell>
                     <TableCell className="text-center">{agent.email}</TableCell>
@@ -997,6 +1006,43 @@ export function SalesAgentsTab() {
                 ))}
               </TableBody>
             </Table>
+
+            {/* Pagination controls */}
+            {filteredAgents.length > AGENTS_PER_PAGE && (
+              <div className="flex items-center justify-between mt-4">
+                <div className="text-xs text-muted-foreground">
+                  Showing{' '}
+                  <span className="font-medium">
+                    {(agentPage - 1) * AGENTS_PER_PAGE + 1}-
+                    {Math.min(agentPage * AGENTS_PER_PAGE, filteredAgents.length)}
+                  </span>{' '}
+                  of <span className="font-medium">{filteredAgents.length}</span> agents
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAgentPage((p) => Math.max(1, p - 1))}
+                    disabled={agentPage === 1}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    Prev
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Page {agentPage} of {totalAgentPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAgentPage((p) => Math.min(totalAgentPages, p + 1))}
+                    disabled={agentPage === totalAgentPages}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

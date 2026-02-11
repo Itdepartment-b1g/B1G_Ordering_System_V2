@@ -45,6 +45,7 @@ export interface Company {
   super_admin_email: string;
   role: string; // Default: 'Super Admin'
   status: UserStatus;
+  company_account_type: 'Key Accounts' | 'Standard Accounts';
   team_leader_allowed_pricing?: PricingColumn[];
   mobile_sales_allowed_pricing?: PricingColumn[];
   created_at: string;

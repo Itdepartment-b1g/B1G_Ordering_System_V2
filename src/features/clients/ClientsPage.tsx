@@ -185,6 +185,30 @@ export default function ClientsPage() {
   const [importSummary, setImportSummary] = useState<{ total: number; valid: number; skipped: number }>({ total: 0, valid: 0, skipped: 0 });
 
   const { toast } = useToast();
+  const [companyAccountType, setCompanyAccountType] = useState<'Key Accounts' | 'Standard Accounts' | null>(null);
+
+  useEffect(() => {
+    const fetchCompanyAccountType = async () => {
+      if (!user?.company_id) return;
+      try {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('company_account_type')
+          .eq('id', user.company_id)
+          .single();
+        
+        if (data && !error) {
+          setCompanyAccountType(data.company_account_type || 'Standard Accounts');
+          // Update form defaults
+          setAddForm(prev => ({ ...prev, account_type: data.company_account_type || 'Standard Accounts' }));
+          setEditForm(prev => ({ ...prev, account_type: data.company_account_type || 'Standard Accounts' }));
+        }
+      } catch (err) {
+        console.error('Error fetching company account type:', err);
+      }
+    };
+    fetchCompanyAccountType();
+  }, [user?.company_id]);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize all agent city tags based on current client assignments
@@ -3272,20 +3296,26 @@ export default function ClientsPage() {
             </div>
             <div className="space-y-2">
               <Label>Type Of Account</Label>
-              <Select
-                value={addForm.account_type}
-                onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                  setAddForm({ ...addForm, account_type: value })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                  <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                </SelectContent>
-              </Select>
+                  <Select
+                    value={addForm.account_type}
+                    onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                      setAddForm({ ...addForm, account_type: value })
+                    }
+                    disabled={!!companyAccountType}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                      <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {companyAccountType && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Account type is set by your company settings.
+                    </p>
+                  )}
             </div>
             <div className="space-y-2">
               <Label>Category</Label>
@@ -3651,7 +3681,6 @@ export default function ClientsPage() {
                   <TableHead className="text-center">City</TableHead>
                   <TableHead className="text-center">Account Type</TableHead>
                   <TableHead className="text-center">Category</TableHead>
-                  <TableHead className="text-center">Forge</TableHead>
                   <TableHead className="text-center">Orders</TableHead>
                   <TableHead>Total Spent</TableHead>
                   <TableHead>Visits</TableHead>
@@ -3730,17 +3759,7 @@ export default function ClientsPage() {
                         {client.category}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-center">
-                      {client.has_forge ? (
-                        <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-xs">
-                          Yes
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-xs">
-                          No
-                        </Badge>
-                      )}
-                    </TableCell>
+                    
                     <TableCell className="text-center">{client.total_orders}</TableCell>
                     <TableCell className="font-medium text-green-600">
                       ₱{client.total_spent.toLocaleString()}
@@ -4285,20 +4304,26 @@ export default function ClientsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Type Of Account</Label>
-                      <Select
-                        value={editForm.account_type}
-                        onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                          setEditForm({ ...editForm, account_type: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                          <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        <Select
+                          value={editForm.account_type}
+                          onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                            setEditForm({ ...editForm, account_type: value })
+                          }
+                          disabled={!!companyAccountType}
+                        >
+                          <SelectTrigger className="h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                            <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {companyAccountType && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Account type is set by your company settings.
+                          </p>
+                        )}
                     </div>
                     <div className="space-y-2">
                       <Label>Category</Label>

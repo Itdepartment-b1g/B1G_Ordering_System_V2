@@ -3,9 +3,9 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient, persister } from "@/lib/queryClient";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
-import { DashboardPage, AdminHistoryPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
+import { DashboardPage, SysAdDashboardPage, SuperAdminDashboardPage } from "@/features/dashboard";
 import ExecutiveDashboardPage from "@/features/dashboard/ExecutiveDashboardPage";
 import { SystemHistoryPage } from "@/features/system-history";
 import { ProfilePage } from "@/features/profile";
@@ -14,7 +14,7 @@ import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOr
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, RequestInventoryPage, PendingRequestsPage, AdminRequestsPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import { ClientsPage, MyClientsPage, MyTeamsPage, PendingClientsPage } from "@/features/clients";
 import { AnalyticsPage, ClientAnalyticsPage } from "@/features/analytics";
 import VoidedClientsPage from "@/features/clients/VoidedClientsPage";
@@ -71,12 +71,14 @@ const App = () => (
                     <Route path="/inventory/admin-team-remittances" element={<ProtectedRoute><AdminTeamRemittancesPage /></ProtectedRoute>} />
                     <Route path="/inventory/team-remittances" element={<ProtectedRoute><LeaderRemittancePage /></ProtectedRoute>} />
                     <Route path="/inventory/cash-deposits" element={<ProtectedRoute><LeaderCashDepositsPage /></ProtectedRoute>} />
-                    <Route path="/inventory/request" element={<ProtectedRoute><RequestInventoryPage /></ProtectedRoute>} />
+                    <Route path="/inventory/request" element={<ProtectedRoute><LeaderStockRequestPage /></ProtectedRoute>} />
+                    <Route path="/inventory/mobile-request" element={<ProtectedRoute><MobileSalesStockRequestPage /></ProtectedRoute>} />
                     <Route path="/inventory/pending-requests" element={<ProtectedRoute><PendingRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-requests" element={<ProtectedRoute><AdminRequestsPage /></ProtectedRoute>} />
                     <Route path="/inventory/leaders" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/leader-inventory" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/team-members" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
+                    <Route path="/leader-inventory/request" element={<ProtectedRoute><LeaderStockRequestPage /></ProtectedRoute>} />
                     <Route path="/my-team" element={<ProtectedRoute><MyTeamPage /></ProtectedRoute>} />
                     <Route path="/manager-teams" element={<ProtectedRoute><ManagerTeamsPage /></ProtectedRoute>} />
                     <Route path="/manager-inventory" element={<ProtectedRoute><ManagerTeamInventoryPage /></ProtectedRoute>} />

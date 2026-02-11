@@ -1375,17 +1375,7 @@ export default function LeaderInventoryPage() {
               <Users className="h-4 w-4 md:h-5 md:w-5 text-blue-600 flex-shrink-0" />
               <span className="truncate">Team Members</span>
             </CardTitle>
-            {user.role !== 'admin' && user.role !== 'manager' && (
-              <Button
-                onClick={() => setAllocationOpen(true)}
-                disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
-                size="sm"
-                className="w-full sm:w-auto h-9 text-xs"
-              >
-                <ArrowRight className="mr-2 h-3 w-3" />
-                Allocate
-              </Button>
-            )}
+
           </div>
         </CardHeader>
         <CardContent className="p-4 md:p-6">

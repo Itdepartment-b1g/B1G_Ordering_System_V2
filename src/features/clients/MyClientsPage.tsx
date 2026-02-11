@@ -73,6 +73,14 @@ export default function MyClientsPage() {
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isCameraLoading, setIsCameraLoading] = useState(false);
+  
+  // Inside Store Photo States
+  const [newInsideStorePhoto, setNewInsideStorePhoto] = useState<string | null>(null);
+  const insideStoreFileInputRef = useRef<HTMLInputElement>(null);
+  const insideStoreVideoRef = useRef<HTMLVideoElement>(null);
+  const [isInsideStoreCameraOpen, setIsInsideStoreCameraOpen] = useState(false);
+  const [insideStoreStream, setInsideStoreStream] = useState<MediaStream | null>(null);
+  const [isInsideStoreCameraLoading, setIsInsideStoreCameraLoading] = useState(false);
   const [capturedLocation, setCapturedLocation] = useState<{
     latitude: number;
     longitude: number;
@@ -95,7 +103,8 @@ export default function MyClientsPage() {
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
-    shop_type: ''
+    shop_type: '',
+    brand_ids: [] as string[]
   });
   const [isEditOtherShopType, setIsEditOtherShopType] = useState(false);
   const [editCustomShopType, setEditCustomShopType] = useState('');
@@ -122,6 +131,29 @@ export default function MyClientsPage() {
   const [viewingClient, setViewingClient] = useState<Client | null>(null);
 
   const { toast } = useToast();
+  const [companyAccountType, setCompanyAccountType] = useState<'Key Accounts' | 'Standard Accounts' | null>(null);
+
+  useEffect(() => {
+    const fetchCompanyAccountType = async () => {
+      if (!user?.company_id) return;
+      try {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('company_account_type')
+          .eq('id', user.company_id)
+          .single();
+        
+        if (data && !error) {
+          setCompanyAccountType(data.company_account_type || 'Standard Accounts');
+          // Update form defaults if not already set by user interaction (though here we just set the default)
+          setFormData(prev => ({ ...prev, account_type: data.company_account_type || 'Standard Accounts' }));
+        }
+      } catch (err) {
+        console.error('Error fetching company account type:', err);
+      }
+    };
+    fetchCompanyAccountType();
+  }, [user?.company_id]);
 
   const filteredClients = clients.filter(client =>
     client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -145,7 +177,7 @@ export default function MyClientsPage() {
     setViewDialogOpen(true);
   };
 
-  const handleOpenEdit = (client: Client) => {
+  const handleOpenEdit = async (client: Client) => {
     setEditingClient(client);
     // Strip +63 prefix from phone for editing
     const phoneNumber = client.phone || '';
@@ -157,6 +189,14 @@ export default function MyClientsPage() {
       shopType: client.shopType
     });
 
+    // Fetch client brands
+    const { data: clientBrands } = await supabase
+      .from('client_brands')
+      .select('brand_id')
+      .eq('client_id', client.id);
+
+    const brandIds = clientBrands?.map(cb => cb.brand_id) || [];
+
     setEditForm({
       photo: client.photo || '',
       name: client.name,
@@ -167,11 +207,13 @@ export default function MyClientsPage() {
       tin: client.tin || '',
       account_type: client.accountType || 'Standard Accounts',
       category: client.category || 'Open',
-      shop_type: client.shopType || ''
+      shop_type: client.shopType || '',
+      brand_ids: brandIds
     });
     setNewCorPhoto(null);
     setEditPhoto(client.photo || null);
     setEditDialogOpen(true);
+    fetchBrands(); // Fetch brands when opening edit dialog
     fetchShopTypes(); // Fetch shop types when opening edit dialog
     
     // Reset edit shop type states
@@ -351,6 +393,30 @@ export default function MyClientsPage() {
         .eq('id', editingClient.id);
 
       if (error) throw error;
+
+      // Update client brands
+      // First, delete existing brand associations
+      await supabase
+        .from('client_brands')
+        .delete()
+        .eq('client_id', editingClient.id);
+
+      // Then, insert new brand associations
+      if (editForm.brand_ids.length > 0) {
+        const brandInserts = editForm.brand_ids.map(brandId => ({
+          client_id: editingClient.id,
+          brand_id: brandId
+        }));
+
+        const { error: brandError } = await supabase
+          .from('client_brands')
+          .insert(brandInserts);
+
+        if (brandError) {
+          console.error('Error updating client brands:', brandError);
+          throw brandError;
+        }
+      }
       
       console.log('✅ [Update Client] Save successful');
 
@@ -1135,6 +1201,128 @@ export default function MyClientsPage() {
     }
   };
 
+  // Inside Store Photo Functions
+  const openInsideStoreCamera = async () => {
+    console.log('📸 [Inside Store Photo] Opening camera');
+    setIsInsideStoreCameraLoading(true);
+    try {
+      let mediaStream: MediaStream | null = null;
+
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+      } catch (err) {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true
+        });
+      }
+
+      if (mediaStream) {
+        setInsideStoreStream(mediaStream);
+        setIsInsideStoreCameraOpen(true);
+
+        setTimeout(() => {
+          if (insideStoreVideoRef.current) {
+            insideStoreVideoRef.current.srcObject = mediaStream;
+            insideStoreVideoRef.current.play().catch(err => {
+              if (err.name !== 'AbortError') {
+                console.error('Error playing video:', err);
+              }
+            });
+          }
+          setIsInsideStoreCameraLoading(false);
+        }, 100);
+      } else {
+        setIsInsideStoreCameraLoading(false);
+      }
+    } catch (error) {
+      console.error('📸 [Inside Store Photo] Camera error:', error);
+      setIsInsideStoreCameraLoading(false);
+      toast({
+        title: 'Camera Error',
+        description: 'Unable to access camera. Please check permissions.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const captureInsideStorePhoto = async () => {
+    console.log('📸 [Inside Store Photo] Capturing photo');
+    if (insideStoreVideoRef.current && insideStoreVideoRef.current.videoWidth > 0 && insideStoreVideoRef.current.videoHeight > 0) {
+      const canvas = document.createElement('canvas');
+      canvas.width = insideStoreVideoRef.current.videoWidth;
+      canvas.height = insideStoreVideoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        ctx.drawImage(insideStoreVideoRef.current, 0, 0);
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+        setNewInsideStorePhoto(imageData);
+        closeInsideStoreCamera();
+        console.log('✅ [Inside Store Photo] Photo captured successfully');
+        toast({
+          title: 'Inside Store Photo Captured',
+          description: 'Photo captured successfully',
+        });
+      }
+    } else {
+      toast({
+        title: 'Camera Not Ready',
+        description: 'Please wait for the camera to fully initialize.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const closeInsideStoreCamera = () => {
+    console.log('📸 [Inside Store Photo] Closing camera');
+    if (insideStoreStream) {
+      insideStoreStream.getTracks().forEach(track => track.stop());
+      setInsideStoreStream(null);
+    }
+    setIsInsideStoreCameraOpen(false);
+    setIsInsideStoreCameraLoading(false);
+  };
+
+  const handleInsideStoreFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('📸 [Inside Store Photo] File upload initiated');
+    const file = event.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: 'Error',
+          description: 'Image size should be less than 5MB',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewInsideStorePhoto(reader.result as string);
+        console.log('✅ [Inside Store Photo] File uploaded successfully');
+        toast({
+          title: 'Inside Store Photo Uploaded',
+          description: 'Photo uploaded successfully',
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeInsideStorePhoto = () => {
+    console.log('📸 [Inside Store Photo] Removing photo');
+    setNewInsideStorePhoto(null);
+    if (insideStoreFileInputRef.current) {
+      insideStoreFileInputRef.current.value = '';
+    }
+  };
+
   // Fetch shop types for the company
   const fetchShopTypes = async () => {
     if (!user?.company_id) {
@@ -1223,10 +1411,12 @@ export default function MyClientsPage() {
       shop_type: ''
     });
     setNewClientPhoto(null);
+    setNewInsideStorePhoto(null);
     setCapturedLocation(null);
     setPrewarmPosition(null);
     setIsPrewarmingLocation(false);
     closeCamera();
+    closeInsideStoreCamera();
   };
 
   // Philippine phone number formatter
@@ -1417,6 +1607,71 @@ export default function MyClientsPage() {
         if (corUrlError || !corUrlData?.signedUrl) throw new Error(`Failed to generate COR signed URL`);
 
         corUrl = corUrlData.signedUrl;
+      }
+
+      // Upload Inside Store Photo if present (optional)
+      let insideStorePhotoUrl = null;
+      if (newInsideStorePhoto) {
+        console.log('📸 [Inside Store Photo] Starting upload process');
+        
+        // Convert base64 to blob
+        const base64Data = newInsideStorePhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+        // Generate folder structure: inside_store/{yyyy/mm/dd}_{clientname}
+        const sanitizeName = (str: string) => {
+          return str
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        };
+
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const dateFolder = `${year}/${month}/${day}`;
+        
+        const clientName = sanitizeName(formData.name || 'client');
+        const timestamp = Date.now();
+        
+        // Folder structure: inside_store/{yyyy/mm/dd}_{clientname}/photo_{timestamp}.jpg
+        const insideStoreFileName = `inside_store/${dateFolder}_${clientName}/photo_${timestamp}.jpg`;
+        
+        console.log('📸 [Inside Store Photo] Upload path:', insideStoreFileName);
+
+        // Upload to Supabase Storage
+        const { error: insideStoreUploadError } = await supabase.storage
+          .from('client-photos')
+          .upload(insideStoreFileName, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          });
+
+        if (insideStoreUploadError) {
+          console.error('📸 [Inside Store Photo] Upload error:', insideStoreUploadError);
+          throw new Error(`Failed to upload inside store photo: ${insideStoreUploadError.message}`);
+        }
+
+        // Get signed URL
+        const { data: insideStoreUrlData, error: insideStoreUrlError } = await supabase.storage
+          .from('client-photos')
+          .createSignedUrl(insideStoreFileName, 31536000); // 1 year expiry
+
+        if (insideStoreUrlError || !insideStoreUrlData?.signedUrl) {
+          console.error('📸 [Inside Store Photo] URL generation error:', insideStoreUrlError);
+          throw new Error(`Failed to generate inside store photo signed URL`);
+        }
+
+        insideStorePhotoUrl = insideStoreUrlData.signedUrl;
+        console.log('✅ [Inside Store Photo] Upload successful');
       }
 
       const nowIso = new Date().toISOString();
@@ -1769,6 +2024,116 @@ export default function MyClientsPage() {
                 )}
               </div>
 
+              {/* Inside Store Photo Section - Only available after Client Photo is taken */}
+              {newClientPhoto && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">
+                    Inside Store Photo <span className="text-muted-foreground font-normal">(Optional)</span>
+                  </Label>
+                  <p className="text-xs text-muted-foreground">Take a photo of the inside of the store</p>
+
+                  {!newInsideStorePhoto && !isInsideStoreCameraOpen && (
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={openInsideStoreCamera}
+                        className="flex-1"
+                      >
+                        <Camera className="h-4 w-4 mr-2" />
+                        Open Camera
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => insideStoreFileInputRef.current?.click()}
+                        className="flex-1"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload Photo
+                      </Button>
+                      <input
+                        ref={insideStoreFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleInsideStoreFileUpload}
+                        className="hidden"
+                      />
+                    </div>
+                  )}
+
+                  {isInsideStoreCameraOpen && (
+                    <div className="space-y-2">
+                      <div className="relative rounded-lg overflow-hidden bg-black">
+                        <video
+                          ref={insideStoreVideoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-64 object-cover"
+                          onLoadedMetadata={() => {
+                            if (insideStoreVideoRef.current) {
+                              insideStoreVideoRef.current.play().catch(err => {
+                                console.error('Error playing video:', err);
+                              });
+                              setIsInsideStoreCameraLoading(false);
+                            }
+                          }}
+                        />
+                        {isInsideStoreCameraLoading && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                            <div className="text-center text-white">
+                              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
+                              <p className="text-sm">Initializing camera...</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          onClick={captureInsideStorePhoto}
+                          className="flex-1"
+                          disabled={isInsideStoreCameraLoading}
+                        >
+                          <Camera className="h-4 w-4 mr-2" />
+                          Capture Photo
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={closeInsideStoreCamera}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {newInsideStorePhoto && !isInsideStoreCameraOpen && (
+                    <div className="relative">
+                      <img
+                        src={newInsideStorePhoto}
+                        alt="Inside store preview"
+                        className="w-full h-64 object-cover rounded-lg border"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 right-2"
+                        onClick={removeInsideStorePhoto}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                      <div className="mt-2 text-xs text-green-600 font-medium">
+                        ✓ Inside store photo captured: {new Date().toLocaleString()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Client Information Fields */}
               <div className="space-y-2">
                 <Label>Trade Name *</Label>
@@ -1920,20 +2285,26 @@ export default function MyClientsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Type Of Account</Label>
-                <Select
-                  value={formData.account_type}
-                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                    setFormData({ ...formData, account_type: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                    <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <Select
+                    value={formData.account_type}
+                    onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                      setFormData({ ...formData, account_type: value })
+                    }
+                    disabled={!!companyAccountType}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                      <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {companyAccountType && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Account type is set by your company settings.
+                    </p>
+                  )}
               </div>
               <div className="space-y-2">
                 <Label>Category</Label>
@@ -2639,6 +3010,7 @@ export default function MyClientsPage() {
                           onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
                             setEditForm({ ...editForm, account_type: value })
                           }
+                          disabled={!!companyAccountType}
                         >
                           <SelectTrigger className="h-10">
                             <SelectValue />
@@ -2648,6 +3020,11 @@ export default function MyClientsPage() {
                             <SelectItem value="Key Accounts">Key Accounts</SelectItem>
                           </SelectContent>
                         </Select>
+                        {companyAccountType && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Account type is set by your company settings.
+                          </p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label>Category</Label>
@@ -2849,6 +3226,49 @@ export default function MyClientsPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Products / Brands Section */}
+              <div className="space-y-3 border-t pt-6">
+                <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
+                <p className="text-xs text-muted-foreground">Select all brands/products this client is currently holding</p>
+                {brands.length > 0 ? (
+                  <>
+                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                      {brands.map((brand) => (
+                        <div key={brand.id} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`edit-brand-${brand.id}`}
+                            checked={editForm.brand_ids.includes(brand.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setEditForm({
+                                  ...editForm,
+                                  brand_ids: [...editForm.brand_ids, brand.id]
+                                });
+                              } else {
+                                setEditForm({
+                                  ...editForm,
+                                  brand_ids: editForm.brand_ids.filter(id => id !== brand.id)
+                                });
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`edit-brand-${brand.id}`} className="text-sm font-normal cursor-pointer">
+                            {brand.name}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                    {editForm.brand_ids.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {editForm.brand_ids.length} {editForm.brand_ids.length === 1 ? 'brand' : 'brands'} selected
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">No brands available in the system</p>
+                )}
               </div>
 
               {/* Action Bar */}
