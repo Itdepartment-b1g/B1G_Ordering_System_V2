@@ -1212,6 +1212,8 @@ export default function MyOrdersPage() {
           paymentMethod: paymentMode === 'FULL' ? paymentMethod : undefined,
           selectedBank: paymentMode === 'FULL' && selectedBank ? selectedBank.name : undefined,
           paymentProofUrl: paymentMode === 'FULL' ? paymentProofUrl : undefined,
+          paymentMode: paymentMode,
+          paymentSplits: paymentMode === 'SPLIT' ? uploadedSplits : undefined,
           pricingStrategy: pricingType,
           requestSalesInvoice: requestSalesInvoice,
           companyId: user.company_id
