@@ -309,6 +309,8 @@ export default function MyInventory() {
           status,
           payment_method,
           bank_type,
+          payment_mode,
+          payment_splits,
           agent_remittance_notes,
           created_at,
           clients(name),
@@ -333,6 +335,47 @@ export default function MyInventory() {
       const bankOrders: RemittanceOrder[] = [];
 
       (data || []).forEach((order: any) => {
+        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+        const paymentMethod = order.payment_method as 'CASH' | 'GCASH' | 'BANK_TRANSFER' | 'CHEQUE' | null;
+        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+        let cashPortion = 0;
+        let chequePortion = 0;
+        let nonCashPortion = 0;
+        const nonCashLabels: string[] = [];
+
+        if (paymentMode === 'SPLIT') {
+          splits.forEach((s: any) => {
+            const amount = s.amount || 0;
+            if (s.method === 'CASH') {
+              cashPortion += amount;
+            } else if (s.method === 'CHEQUE') {
+              chequePortion += amount;
+            } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+              nonCashPortion += amount;
+              // Build human-readable label for non-cash methods
+              if (s.method === 'BANK_TRANSFER') {
+                if (s.bank && !nonCashLabels.includes(s.bank)) {
+                  nonCashLabels.push(s.bank);
+                } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
+                  nonCashLabels.push('Bank Transfer');
+                }
+              } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
+                nonCashLabels.push('GCash');
+              }
+            }
+          });
+        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+          const amt = order.total_amount || 0;
+          if (paymentMethod === 'CASH') {
+            cashPortion = amt;
+          } else {
+            chequePortion = amt;
+          }
+        }
+
+        const remittanceAmount = cashPortion + chequePortion;
+
         const items = (order.items || []).map((item: any) => ({
           variantName: item.variant?.name || 'Unknown',
           brandName: item.variant?.brand?.name || 'Unknown',
@@ -344,15 +387,24 @@ export default function MyInventory() {
           id: order.id,
           orderNumber: order.order_number,
           clientName: order.clients?.name || 'Unknown',
-          totalAmount: order.total_amount,
+          totalAmount: remittanceAmount || order.total_amount,
           paymentMethod: order.payment_method,
           bankType: order.bank_type,
           items,
           createdAt: order.created_at,
-          agentNotes: order.agent_remittance_notes
+          agentNotes: order.agent_remittance_notes,
+          paymentMode,
+          cashPortion,
+          chequePortion,
+          fullOrderTotal: order.total_amount,
+          nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
+          nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined
         };
 
-        if (order.payment_method === 'CASH' || order.payment_method === 'CHEQUE') {
+        // For agent-side remittance list:
+        // - Include any order where CASH or CHEQUE has a portion (full or split)
+        // - Bank transfer / GCash-only orders remain in bankOrders for notes
+        if (cashPortion > 0 || chequePortion > 0) {
           cashOrders.push(formattedOrder);
         } else if (order.payment_method === 'BANK_TRANSFER' || order.payment_method === 'GCASH') {
           bankOrders.push(formattedOrder);
@@ -1195,6 +1247,17 @@ export default function MyInventory() {
                                 <div className="text-right ml-2">
                                   <div className="text-xs text-muted-foreground">Amount</div>
                                   <div className="font-bold text-sm text-green-600">₱{order.totalAmount.toFixed(2)}</div>
+                                  {order.paymentMode === 'SPLIT' && (order.cashPortion || order.chequePortion) && (
+                                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                                      {order.cashPortion ? `Cash ₱${order.cashPortion.toFixed(2)}` : ''}
+                                      {order.chequePortion ? `${order.cashPortion ? ' • ' : ''}Cheque ₱${order.chequePortion.toFixed(2)}` : ''}
+                                    </div>
+                                  )}
+                                  {order.paymentMode === 'SPLIT' && order.fullOrderTotal && order.nonCashPortion && order.nonCashPortion > 0 && (
+                                    <div className="text-[10px] text-muted-foreground">
+                                      {order.nonCashLabel || 'Non-cash'} ₱{order.nonCashPortion.toFixed(2)} (handled by Finance)
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <div className="space-y-1.5">
@@ -1242,9 +1305,22 @@ export default function MyInventory() {
                                   <TableCell className="font-mono text-sm">{order.orderNumber}</TableCell>
                                   <TableCell>{order.clientName}</TableCell>
                                   <TableCell className="text-right">{order.items.length}</TableCell>
-                                  <TableCell className="text-right font-semibold text-green-600">
-                                    ₱{order.totalAmount.toFixed(2)}
-                                  </TableCell>
+                              <TableCell className="text-right font-semibold text-green-600 align-top">
+                                <div className="space-y-1">
+                                  <div>₱{order.totalAmount.toFixed(2)}</div>
+                                  {order.paymentMode === 'SPLIT' && (order.cashPortion || order.chequePortion) && (
+                                    <div className="text-xs text-muted-foreground">
+                                      {order.cashPortion ? `Cash ₱${order.cashPortion.toFixed(2)}` : ''}
+                                      {order.chequePortion ? `${order.cashPortion ? ' • ' : ''}Cheque ₱${order.chequePortion.toFixed(2)}` : ''}
+                                    </div>
+                                  )}
+                                  {order.paymentMode === 'SPLIT' && order.fullOrderTotal && order.nonCashPortion && order.nonCashPortion > 0 && (
+                                    <div className="text-[10px] text-muted-foreground">
+                                      {order.nonCashLabel || 'Non-cash'} ₱{order.nonCashPortion.toFixed(2)} (handled by Finance)
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
                                   <TableCell className="text-center">
                                     <Button
                                       size="sm"
@@ -1730,10 +1806,38 @@ export default function MyInventory() {
                       <div className="text-sm font-medium">{selectedOrder.clientName}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-muted-foreground mb-1">Payment Method</div>
-                      <Badge variant={selectedOrder.paymentMethod === 'CASH' ? 'default' : 'secondary'} className="text-xs">
-                        {selectedOrder.paymentMethod}
-                      </Badge>
+                      <div className="text-xs text-muted-foreground mb-1">Payment</div>
+                      {selectedOrder.paymentMode === 'SPLIT' ? (
+                        <div className="space-y-1 text-xs">
+                          <Badge variant="outline" className="inline-flex px-2 py-0.5 text-[11px]">
+                            Split Payment
+                          </Badge>
+
+                          {/* Remitted cash/cheque portion */}
+                          {(selectedOrder.cashPortion || selectedOrder.chequePortion) && (
+                            <div className="text-[11px] text-foreground">
+                              {selectedOrder.cashPortion ? `Cash ₱${selectedOrder.cashPortion.toFixed(2)}` : ''}
+                              {selectedOrder.chequePortion
+                                ? `${selectedOrder.cashPortion ? ' • ' : ''}Cheque ₱${selectedOrder.chequePortion.toFixed(2)}`
+                                : ''}
+                            </div>
+                          )}
+
+                          {/* Non-cash (bank/GCash) portion */}
+                          {selectedOrder.nonCashPortion && selectedOrder.nonCashPortion > 0 && (
+                            <div className="text-[11px] text-muted-foreground">
+                              {selectedOrder.nonCashLabel || 'Bank / GCash'} ₱{selectedOrder.nonCashPortion.toFixed(2)}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <Badge
+                          variant={selectedOrder.paymentMethod === 'CASH' || selectedOrder.paymentMethod === 'CHEQUE' ? 'default' : 'secondary'}
+                          className="text-xs"
+                        >
+                          {selectedOrder.paymentMethod}
+                        </Badge>
+                      )}
                     </div>
                     {selectedOrder.bankType && (
                       <div>
@@ -1742,9 +1846,17 @@ export default function MyInventory() {
                       </div>
                     )}
                     <div>
-                      <div className="text-xs text-muted-foreground mb-1">Total Amount</div>
+                      <div className="text-xs text-muted-foreground mb-1">
+                        {selectedOrder.paymentMode === 'SPLIT' ? 'Remittance Amount (Cash/Cheque)' : 'Total Amount'}
+                      </div>
                       <div className="text-base font-bold text-green-600">₱{selectedOrder.totalAmount.toFixed(2)}</div>
                     </div>
+                    {selectedOrder.paymentMode === 'SPLIT' && typeof selectedOrder.fullOrderTotal === 'number' && (
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Order Total</div>
+                        <div className="text-base font-semibold">₱{selectedOrder.fullOrderTotal.toFixed(2)}</div>
+                      </div>
+                    )}
                     <div>
                       <div className="text-xs text-muted-foreground mb-1">Total Quantity</div>
                       <div className="text-base font-bold">{selectedOrder.items.reduce((sum, item) => sum + item.quantity, 0)}</div>
@@ -1763,66 +1875,135 @@ export default function MyInventory() {
               <div>
                 <h3 className="text-sm font-semibold mb-2 px-1">Order Items ({selectedOrder.items.length})</h3>
 
-                {/* Mobile Card Layout */}
-                <div className="md:hidden space-y-2">
-                  {selectedOrder.items.map((item: any, index: number) => (
-                    <Card key={index} className="border">
-                      <CardContent className="p-3">
-                        <div className="space-y-2">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs text-muted-foreground">Product</div>
-                              <div className="font-medium text-sm truncate">{item.variantName}</div>
-                            </div>
-                            <Badge variant="secondary" className="ml-2 text-xs flex-shrink-0">{item.brandName}</Badge>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2 pt-2 border-t">
-                            <div>
-                              <div className="text-[10px] text-muted-foreground">Quantity</div>
-                              <div className="font-semibold text-sm">{item.quantity}</div>
-                            </div>
-                            <div>
-                              <div className="text-[10px] text-muted-foreground">Price</div>
-                              <div className="font-semibold text-sm">₱{item.unitPrice.toFixed(2)}</div>
-                            </div>
-                            <div>
-                              <div className="text-[10px] text-muted-foreground">Amount</div>
-                              <div className="font-semibold text-sm text-green-600">₱{(item.quantity * item.unitPrice).toFixed(2)}</div>
-                            </div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                {selectedOrder.items.length > 0 ? (
+                  (() => {
+                    // Group items by brand for clearer overview
+                    const itemsByBrand = selectedOrder.items.reduce((acc: any, item: any) => {
+                      const brand = item.brandName || 'Unknown Brand';
+                      if (!acc[brand]) acc[brand] = [];
+                      acc[brand].push(item);
+                      return acc;
+                    }, {} as Record<string, any[]>);
 
-                {/* Desktop Table Layout */}
-                <div className="hidden md:block border rounded-lg overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Brand</TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead className="text-right">Price</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {selectedOrder.items.map((item: any, index: number) => (
-                        <TableRow key={index}>
-                          <TableCell>
-                            <Badge variant="secondary">{item.brandName}</Badge>
-                          </TableCell>
-                          <TableCell className="font-medium">{item.variantName}</TableCell>
-                          <TableCell className="text-right font-semibold">{item.quantity}</TableCell>
-                          <TableCell className="text-right">₱{item.unitPrice.toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-semibold text-green-600">₱{(item.quantity * item.unitPrice).toFixed(2)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                    const brands = Object.keys(itemsByBrand).sort();
+
+                    return (
+                      <>
+                        {/* Mobile Card Layout - grouped by brand */}
+                        <div className="md:hidden space-y-3">
+                          {brands.map((brand) => (
+                            <div key={brand} className="space-y-2">
+                              <div className="flex items-center justify-between px-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    {brand}
+                                  </span>
+                                  <Badge variant="outline" className="text-[10px]">
+                                    {itemsByBrand[brand].length} item
+                                    {itemsByBrand[brand].length > 1 ? 's' : ''}
+                                  </Badge>
+                                </div>
+                                <div className="text-[11px] font-semibold text-green-700">
+                                  ₱
+                                  {itemsByBrand[brand]
+                                    .reduce((sum: number, it: any) => sum + it.quantity * it.unitPrice, 0)
+                                    .toFixed(2)}
+                                </div>
+                              </div>
+
+                              {itemsByBrand[brand].map((item: any, index: number) => (
+                                <Card key={`${brand}-${index}`} className="border ml-1.5">
+                                  <CardContent className="p-3">
+                                    <div className="space-y-2">
+                                      <div className="flex justify-between items-start mb-2">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="text-[10px] text-muted-foreground">Product</div>
+                                          <div className="font-medium text-sm truncate">{item.variantName}</div>
+                                        </div>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-2 pt-2 border-t">
+                                        <div>
+                                          <div className="text-[10px] text-muted-foreground">Quantity</div>
+                                          <div className="font-semibold text-sm">{item.quantity}</div>
+                                        </div>
+                                        <div>
+                                          <div className="text-[10px] text-muted-foreground">Price</div>
+                                          <div className="font-semibold text-sm">
+                                            ₱{item.unitPrice.toFixed(2)}
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <div className="text-[10px] text-muted-foreground">Amount</div>
+                                          <div className="font-semibold text-sm text-green-600">
+                                            ₱{(item.quantity * item.unitPrice).toFixed(2)}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Desktop Table Layout - grouped by brand */}
+                        <div className="hidden md:block space-y-3">
+                          {brands.map((brand) => (
+                            <div key={brand} className="border rounded-lg overflow-hidden">
+                              <div className="bg-muted/40 px-4 py-2 border-b flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    {brand}
+                                  </span>
+                                  <Badge variant="outline" className="text-[11px]">
+                                    {itemsByBrand[brand].length} item
+                                    {itemsByBrand[brand].length > 1 ? 's' : ''}
+                                  </Badge>
+                                </div>
+                                <div className="text-sm font-semibold text-green-700">
+                                  Brand Total:&nbsp;
+                                  ₱
+                                  {itemsByBrand[brand]
+                                    .reduce((sum: number, it: any) => sum + it.quantity * it.unitPrice, 0)
+                                    .toFixed(2)}
+                                </div>
+                              </div>
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Product</TableHead>
+                                    <TableHead className="text-right">Quantity</TableHead>
+                                    <TableHead className="text-right">Price</TableHead>
+                                    <TableHead className="text-right">Amount</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {itemsByBrand[brand].map((item: any, index: number) => (
+                                    <TableRow key={`${brand}-${index}`}>
+                                      <TableCell className="font-medium">{item.variantName}</TableCell>
+                                      <TableCell className="text-right font-semibold">{item.quantity}</TableCell>
+                                      <TableCell className="text-right">
+                                        ₱{item.unitPrice.toFixed(2)}
+                                      </TableCell>
+                                      <TableCell className="text-right font-semibold text-green-600">
+                                        ₱{(item.quantity * item.unitPrice).toFixed(2)}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    );
+                  })()
+                ) : (
+                  <div className="text-center text-xs text-muted-foreground py-4">
+                    No items found for this order.
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -31,12 +31,21 @@ export interface RemittanceOrder {
     id: string;
     orderNumber: string;
     clientName: string;
+    // Amount being remitted (cash + cheque portions only)
     totalAmount: number;
     paymentMethod: 'CASH' | 'GCASH' | 'BANK_TRANSFER' | 'CHEQUE';
     bankType?: string;
     items: RemittanceOrderItem[];
     createdAt: string;
     agentNotes?: string;
+    // Split payment awareness for cash/cheque portions
+    paymentMode?: 'FULL' | 'SPLIT';
+    cashPortion?: number;
+    chequePortion?: number;
+    fullOrderTotal?: number;
+    // For split payments: non-cash (bank / GCash) portion summary
+    nonCashPortion?: number;
+    nonCashLabel?: string;
 }
 
 export interface BankOrderNote {

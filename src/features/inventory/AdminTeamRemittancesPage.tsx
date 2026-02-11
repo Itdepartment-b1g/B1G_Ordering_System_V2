@@ -153,6 +153,9 @@ export default function AdminTeamRemittancesPage() {
                   id,
                   order_number,
                   total_amount,
+                  payment_method,
+                  payment_mode,
+                  payment_splits,
                   created_at,
                   clients(name),
                   items:client_order_items(
@@ -164,18 +167,49 @@ export default function AdminTeamRemittancesPage() {
 
             if (error) throw error;
 
-            const formattedOrders = (data || []).flatMap((order: any) =>
-                (order.items || []).map((item: any) => ({
+            const formattedOrders = (data || []).flatMap((order: any) => {
+                const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+                const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+                const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+                let cashPortion = 0;
+                let chequePortion = 0;
+
+                if (paymentMode === 'SPLIT') {
+                    splits.forEach((s: any) => {
+                        if (s.method === 'CASH') {
+                            cashPortion += s.amount || 0;
+                        } else if (s.method === 'CHEQUE') {
+                            chequePortion += s.amount || 0;
+                        }
+                    });
+                } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+                    const amt = order.total_amount || 0;
+                    if (paymentMethod === 'CASH') {
+                        cashPortion = amt;
+                    } else {
+                        chequePortion = amt;
+                    }
+                }
+
+                const remittanceAmount = cashPortion + chequePortion;
+
+                return (order.items || []).map((item: any) => ({
                     orderId: order.id,
                     orderNumber: order.order_number,
                     clientName: order.clients?.name || 'Unknown',
                     variantName: item.variant?.name || 'Unknown',
                     brandName: item.variant?.brand?.name || 'Unknown',
                     quantity: item.quantity,
-                    totalAmount: order.total_amount,
+                    totalAmount: remittanceAmount,
+                    fullOrderTotal: order.total_amount,
+                    cashPortion,
+                    chequePortion,
+                    paymentMode,
+                    paymentMethod,
                     createdAt: order.created_at
-                }))
-            );
+                }));
+            });
 
             setRemittanceOrders(formattedOrders);
         } catch (error: any) {
@@ -376,7 +410,7 @@ export default function AdminTeamRemittancesPage() {
                                                         <TableHead>Client</TableHead>
                                                         <TableHead>Item (Brand - Variant)</TableHead>
                                                         <TableHead className="text-right">Qty</TableHead>
-                                                        <TableHead className="text-right">Amount</TableHead>
+                                                        <TableHead className="text-right">Remittance Amount</TableHead>
                                                     </TableRow>
                                                 </TableHeader>
                                                 <TableBody>
@@ -391,7 +425,27 @@ export default function AdminTeamRemittancesPage() {
                                                                 </div>
                                                             </TableCell>
                                                             <TableCell className="text-right">{order.quantity}</TableCell>
-                                                            <TableCell className="text-right">₱{(order.totalAmount || 0).toLocaleString()}</TableCell>
+                                                            <TableCell className="text-right align-top">
+                                                                <div className="space-y-1">
+                                                                    <div>₱{(order.totalAmount || 0).toLocaleString()}</div>
+                                                                    {order.paymentMode === 'SPLIT' && (order.cashPortion > 0 || order.chequePortion > 0) && (
+                                                                        <div className="text-xs text-muted-foreground">
+                                                                            {order.cashPortion > 0 && `Cash ₱${order.cashPortion.toLocaleString()}`}
+                                                                            {order.chequePortion > 0 && (
+                                                                                <>
+                                                                                    {order.cashPortion > 0 ? ' • ' : ''}
+                                                                                    {`Cheque ₱${order.chequePortion.toLocaleString()}`}
+                                                                                </>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                    {order.paymentMode === 'SPLIT' && order.fullOrderTotal && order.nonCashPortion && order.nonCashPortion > 0 && (
+                                                                        <div className="text-[10px] text-muted-foreground">
+                                                                            {(order.nonCashLabel || 'Non-cash') + ' ₱' + order.nonCashPortion.toLocaleString()} (handled by Finance)
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </TableCell>
                                                         </TableRow>
                                                     ))}
                                                 </TableBody>

@@ -354,7 +354,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                                 : '';
 
                         const proofCell = split.proofUrl
-                            ? `<img src="${split.proofUrl}" alt="Payment proof ${index + 1}" style="max-width: 140px; max-height: 80px; border: 1px solid #e5e5e5; border-radius: 4px;" />`
+                            ? `<img src="${split.proofUrl}" alt="Payment proof ${index + 1}" style="max-width: 260px; max-height: 260px; border: 1px solid #e5e5e5; border-radius: 4px; display: block;" />`
                             : '<span style="color: #999;">—</span>';
 
                         return `
@@ -510,7 +510,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                     <div style="margin-bottom: 24px;">
                         <p style="margin: 0 0 8px 0; font-size: 13px; color: #666;">Payment proof</p>
                         <div style="border: 1px solid #e5e5e5; padding: 12px; background: #fafafa;">
-                            <img src="${orderData.paymentProofUrl}" alt="Payment proof" style="max-width: 100%; height: auto; display: block;" />
+                            <img src="${orderData.paymentProofUrl}" alt="Payment proof" style="max-width: 100%; max-height: 360px; height: auto; display: block;" />
                         </div>
                     </div>
                     ` : '')}
