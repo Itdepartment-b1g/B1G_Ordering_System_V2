@@ -4,16 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { useOrders, type OrderItem } from './OrderContext';
+import { useOrders, type OrderItem, type PaymentSplit } from './OrderContext';
 import { useAuth } from '@/features/auth';
 import { useAgentInventory } from '@/features/inventory/hooks';
 import { supabase } from '@/lib/supabase';
@@ -68,8 +68,26 @@ export default function MyOrdersPage() {
     }
   };
 
-  // Helper function to format payment method
-  const formatPaymentMethod = (method: string | undefined, bankType?: string) => {
+  // Helper function to format payment / split payment summary
+  const formatPaymentSummary = (order: any) => {
+    // Split payment: show indicator + methods/banks
+    if (order.paymentMode === 'SPLIT' && Array.isArray(order.paymentSplits) && order.paymentSplits.length > 0) {
+      const parts = order.paymentSplits.map((split: any) => {
+        if (split.method === 'BANK_TRANSFER') {
+          return split.bank ? `Bank: ${split.bank}` : 'Bank Transfer';
+        }
+        if (split.method === 'GCASH') return 'GCash';
+        if (split.method === 'CASH') return 'Cash';
+        if (split.method === 'CHEQUE') return 'Cheque';
+        return split.method;
+      });
+      return `Split: ${parts.join(' + ')}`;
+    }
+
+    // Full payment: fall back to legacy formatting
+    const method = order.paymentMethod as string | undefined;
+    const bankType = order.bankType as string | undefined;
+
     if (!method) return 'N/A';
     switch (method) {
       case 'GCASH':
@@ -117,6 +135,13 @@ export default function MyOrdersPage() {
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null);
   const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
+
+  // Split payment states
+  const [paymentMode, setPaymentMode] = useState<'FULL' | 'SPLIT'>('FULL');
+  const [showPaymentModeDialog, setShowPaymentModeDialog] = useState(false);
+  const [showSplitPaymentDialog, setShowSplitPaymentDialog] = useState(false);
+  const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>([]); // Start with no selections
+  const [splitValidationError, setSplitValidationError] = useState<string>('');
 
   // Payment settings from database
   const { settings: paymentSettings, loading: loadingPaymentSettings } = usePaymentSettings();
@@ -501,6 +526,10 @@ export default function MyOrdersPage() {
     setSelectedBank(null);
     setPaymentProofFile(null);
     setPaymentProofPreview(null);
+    // Reset split payment states
+    setPaymentMode('FULL');
+    setPaymentSplits([]); // Start with no selections
+    setSplitValidationError('');
     // Reset sales invoice request
     setRequestSalesInvoice(false);
   };
@@ -536,7 +565,7 @@ export default function MyOrdersPage() {
   const handleSignatureCaptured = (dataUrl: string) => {
     setSignatureDataUrl(dataUrl);
     setShowSignatureModal(false);
-    setShowPaymentMethodModal(true);
+    setShowPaymentModeDialog(true); // Changed to show payment mode selector first
   };
 
   // Handle payment method selection
@@ -553,8 +582,8 @@ export default function MyOrdersPage() {
     }
   };
 
-  // Handle bank selection
-  const handleBankSelected = (bank: { name: string; accountNumber: string }) => {
+  // Handle bank selection (use BankAccount shape from database.types)
+  const handleBankSelected = (bank: BankAccount) => {
     setSelectedBank(bank);
     setShowBankSelectionModal(false);
     setShowPaymentProofModal(true);
@@ -786,6 +815,137 @@ export default function MyOrdersPage() {
     }
   }, [showPaymentProofModal]);
 
+  // Split payment helper functions
+  // Removed unused helper functions: updateSplit, applyPreset, autoFillAmount
+  // The new design directly manipulates paymentSplits array
+
+  const getSplitTotal = () => {
+    return paymentSplits.reduce((sum, split) => sum + (split.amount || 0), 0);
+  };
+
+  const validateSplitPayment = () => {
+    const total = getSplitTotal();
+    const orderTotal = calculateTotal();
+    const allMethodsSelected = paymentSplits.every(s => s.method);
+    const allAmountsValid = paymentSplits.every(s => s.amount > 0);
+    const allProofsUploaded = paymentSplits.every(s => s.proofFile);
+    const totalMatches = Math.abs(total - orderTotal) < 0.01;
+
+    if (!allMethodsSelected) {
+      setSplitValidationError('Please select payment method for all splits');
+      return false;
+    }
+    if (!allAmountsValid) {
+      setSplitValidationError('Please enter amount for all splits');
+      return false;
+    }
+    if (!allProofsUploaded) {
+      setSplitValidationError('Please upload payment proof for all splits');
+      return false;
+    }
+    if (total > orderTotal) {
+      setSplitValidationError(`Split total exceeds order by ₱${(total - orderTotal).toLocaleString()}`);
+      return false;
+    }
+    if (total < orderTotal) {
+      setSplitValidationError(`Split total is ₱${(orderTotal - total).toLocaleString()} below order total`);
+      return false;
+    }
+    
+    setSplitValidationError('');
+    return totalMatches;
+  };
+
+  const handleContinueWithSplit = () => {
+    if (validateSplitPayment()) {
+      setShowSplitPaymentDialog(false);
+      setShowConfirmModal(true);
+    }
+  };
+
+  // Upload split payment proof to Supabase Storage
+  const uploadSplitProof = async (file: File, index: number, orderNumber: string): Promise<string> => {
+    if (!user || !selectedClientId || !clientName) {
+      throw new Error('User, client ID, or client name not available');
+    }
+
+    try {
+      const bucketName = 'payment-proofs';
+      const split = paymentSplits[index];
+      
+      // Determine folder based on payment method
+      let folderPath: string;
+      
+      if (split.method === 'BANK_TRANSFER' && split.bank) {
+        const sanitizedBankName = split.bank.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, '-');
+        folderPath = `bank-transfer/${sanitizedBankName}/${orderNumber}`;
+      } else {
+        // For GCASH, CASH, CHEQUE
+        const sanitizeForPath = (str: string) => {
+          return str
+            .trim()
+            .replace(/[<>:"/\\|?*]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        };
+        
+        const cleanClientName = sanitizeForPath(clientName);
+        const cleanCompanyName = sanitizeForPath(clientCompany || '');
+        const clientFolderName = cleanCompanyName
+          ? `${cleanClientName} _ ${cleanCompanyName}`
+          : cleanClientName;
+        
+        folderPath = `${split.method}/${clientFolderName}`;
+      }
+      
+      // Format date and time
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const ampm = hours >= 12 ? 'pm' : 'am';
+      const displayHours = hours % 12 || 12;
+      const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+      
+      // Generate filename with split indicator
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const fileName = `${folderPath}/${dateStr}_${timeStr}_split${index + 1}.${fileExt}`;
+      
+      // Convert file to blob and upload
+      const arrayBuffer = await file.arrayBuffer();
+      const blob = new Blob([arrayBuffer], { type: file.type });
+      
+      const { error: uploadError } = await supabase.storage
+        .from(bucketName)
+        .upload(fileName, blob, {
+          contentType: file.type,
+          upsert: false
+        });
+      
+      if (uploadError) {
+        throw uploadError;
+      }
+      
+      // Get signed URL
+      const { data: { signedUrl }, error: signedUrlError } = await supabase.storage
+        .from(bucketName)
+        .createSignedUrl(fileName, 31536000); // 1 year expiry
+      
+      if (signedUrlError || !signedUrl) {
+        throw signedUrlError || new Error('Failed to get signed URL');
+      }
+      
+      return signedUrl;
+    } catch (error) {
+      console.error('Error uploading split payment proof:', error);
+      throw error;
+    }
+  };
+
   // Upload signature to Supabase Storage
   const uploadSignatureToStorage = async (): Promise<string> => {
     if (!signatureDataUrl || !user) {
@@ -838,10 +998,22 @@ export default function MyOrdersPage() {
 
   // Final order submission
   const handleConfirmAndSubmitOrder = async () => {
-    if (!user || !signatureDataUrl || !paymentMethod || !paymentProofFile) {
+    // Validate based on payment mode
+    if (!user || !signatureDataUrl) {
       toast({
         title: 'Error',
-        description: 'User not authenticated, signature missing, payment method not selected, or payment proof missing',
+        description: 'User not authenticated or signature missing',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // Validate FULL payment mode
+    if (paymentMode === 'FULL') {
+      if (!paymentMethod || !paymentProofFile) {
+        toast({
+          title: 'Error',
+          description: 'Payment method not selected or payment proof missing',
         variant: 'destructive'
       });
       return;
@@ -855,6 +1027,19 @@ export default function MyOrdersPage() {
         variant: 'destructive'
       });
       return;
+      }
+    }
+
+    // Validate SPLIT payment mode
+    if (paymentMode === 'SPLIT') {
+      if (!validateSplitPayment()) {
+        toast({
+          title: 'Error',
+          description: 'Invalid split payment configuration',
+          variant: 'destructive'
+        });
+        return;
+      }
     }
 
     setUploadingSignature(true);
@@ -875,9 +1060,6 @@ export default function MyOrdersPage() {
       // Upload signature to Supabase Storage
       const signatureUrl = await uploadSignatureToStorage();
 
-      // Upload payment proof to Supabase Storage (pass order number for bank transfer path)
-      const paymentProofUrl = await uploadPaymentProofToStorage(generatedOrderNumber);
-
       // Convert selectedItems to OrderItems with variant IDs
       const orderItems: OrderItem[] = selectedItems.map((item) => ({
         id: item.variantId,
@@ -891,6 +1073,32 @@ export default function MyOrdersPage() {
         rspPrice: item.rspPrice,
         total: item.quantity * item.unitPrice
       }));
+
+      // Handle payment uploads and order data based on mode
+      let paymentProofUrl: string | undefined = undefined;
+      let uploadedSplits: PaymentSplit[] | undefined = undefined;
+
+      if (paymentMode === 'FULL') {
+        // Upload payment proof for FULL payment
+        paymentProofUrl = await uploadPaymentProofToStorage(generatedOrderNumber);
+      } else {
+        // Upload split payment proofs
+        const uploadsPromises = paymentSplits.map((split, index) => {
+          if (split.proofFile) {
+            return uploadSplitProof(split.proofFile, index, generatedOrderNumber);
+          }
+          return Promise.resolve('');
+        });
+        
+        const uploadedUrls = await Promise.all(uploadsPromises);
+        
+        uploadedSplits = paymentSplits.map((split, index) => ({
+          method: split.method,
+          bank: split.bank,
+          amount: split.amount,
+          proofUrl: uploadedUrls[index]
+        }));
+      }
 
       const newOrder = {
         id: Date.now().toString(),
@@ -908,9 +1116,11 @@ export default function MyOrdersPage() {
         notes,
         status: 'pending' as const,
         signatureUrl, // Add signature URL to order
-        paymentMethod, // Add payment method
-        bankType: paymentMethod === 'BANK_TRANSFER' && selectedBank ? selectedBank.name as 'Unionbank' | 'BPI' | 'PBCOM' : undefined, // Add bank type if bank transfer
-        paymentProofUrl, // Add payment proof URL
+        paymentMode, // NEW: Add payment mode
+        paymentMethod: paymentMode === 'FULL' ? paymentMethod : undefined, // Only for FULL
+        bankType: paymentMode === 'FULL' && paymentMethod === 'BANK_TRANSFER' && selectedBank ? selectedBank.name as 'Unionbank' | 'BPI' | 'PBCOM' : undefined, // Only for FULL bank transfer
+        paymentProofUrl: paymentMode === 'FULL' ? paymentProofUrl : undefined, // Only for FULL
+        paymentSplits: paymentMode === 'SPLIT' ? uploadedSplits : undefined, // NEW: Only for SPLIT
         pricingStrategy: pricingType // Add pricing strategy selection
       };
 
@@ -999,9 +1209,9 @@ export default function MyOrdersPage() {
           agentEmail: user.email,
           agentPhone: agentPhone,
           leaderName: leaderName,
-          paymentMethod: paymentMethod,
-          selectedBank: selectedBank?.name,
-          paymentProofUrl: paymentProofUrl,
+          paymentMethod: paymentMode === 'FULL' ? paymentMethod : undefined,
+          selectedBank: paymentMode === 'FULL' && selectedBank ? selectedBank.name : undefined,
+          paymentProofUrl: paymentMode === 'FULL' ? paymentProofUrl : undefined,
           pricingStrategy: pricingType,
           requestSalesInvoice: requestSalesInvoice,
           companyId: user.company_id
@@ -1933,7 +2143,7 @@ export default function MyOrdersPage() {
                     <div className="space-y-1 text-xs pt-2 border-t">
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">Payment:</span>
-                        <span className="font-medium">{formatPaymentMethod(order.paymentMethod, order.bankType)}</span>
+                        <span className="font-medium">{formatPaymentSummary(order)}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
@@ -1982,7 +2192,7 @@ export default function MyOrdersPage() {
                       ₱{order.total.toLocaleString()}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap align-middle">
-                      {formatPaymentMethod(order.paymentMethod, order.bankType)}
+                      {formatPaymentSummary(order)}
                     </TableCell>
                     <TableCell className="align-middle">
                       <Badge variant={getDisplayStatus(order).variant} className="font-normal whitespace-nowrap">
@@ -2085,6 +2295,510 @@ export default function MyOrdersPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Payment Mode Selection Dialog */}
+      <Dialog open={showPaymentModeDialog} onOpenChange={setShowPaymentModeDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Select Payment Mode</DialogTitle>
+            <DialogDescription>
+              Choose how you want to handle payment for this order
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="grid grid-cols-2 gap-4 py-4">
+            {/* Full Payment Option */}
+            <Card 
+              className={`cursor-pointer transition-all ${
+                paymentMode === 'FULL' 
+                  ? 'ring-2 ring-primary bg-primary/5' 
+                  : 'hover:bg-muted/50'
+              }`}
+              onClick={() => setPaymentMode('FULL')}
+            >
+              <CardContent className="flex flex-col items-center justify-center p-6 space-y-3">
+                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                  <CreditCard className="h-6 w-6 text-primary" />
+                </div>
+                <div className="text-center">
+                  <p className="font-semibold">Full Payment</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Single payment method
+                  </p>
+                </div>
+                {paymentMode === 'FULL' && (
+                  <CheckCircle className="h-5 w-5 text-primary" />
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Split Payment Option */}
+            <Card 
+              className={`cursor-pointer transition-all ${
+                paymentMode === 'SPLIT' 
+                  ? 'ring-2 ring-primary bg-primary/5' 
+                  : 'hover:bg-muted/50'
+              }`}
+              onClick={() => setPaymentMode('SPLIT')}
+            >
+              <CardContent className="flex flex-col items-center justify-center p-6 space-y-3">
+                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Split className="h-6 w-6 text-primary" />
+                </div>
+                <div className="text-center">
+                  <p className="font-semibold">Split Payment</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    2-3 payment methods
+                  </p>
+                </div>
+                {paymentMode === 'SPLIT' && (
+                  <CheckCircle className="h-5 w-5 text-primary" />
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => {
+              setShowPaymentModeDialog(false);
+              setShowSignatureModal(true);
+            }}>
+              Back
+            </Button>
+            <Button onClick={() => {
+              setShowPaymentModeDialog(false);
+              if (paymentMode === 'FULL') {
+                setShowPaymentMethodModal(true);
+              } else {
+                setShowSplitPaymentDialog(true);
+              }
+            }}>
+              Continue
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Split Payment Configuration Dialog - Redesigned */}
+      <Dialog open={showSplitPaymentDialog} onOpenChange={setShowSplitPaymentDialog}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Select Payment Methods (up to 3)</DialogTitle>
+            <DialogDescription>
+              Choose payment methods and enter amounts. Total must equal ₱{calculateTotal().toLocaleString()}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Bank Transfer Section */}
+            {paymentSettings?.bank_transfer_enabled && bankAccounts.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Bank Transfer</Label>
+                <div className="space-y-2 ml-4">
+                  {bankAccounts.map((bank) => {
+                    const existingIndex = paymentSplits.findIndex(
+                      s => s.method === 'BANK_TRANSFER' && s.bank === bank.name
+                    );
+                    const isSelected = existingIndex !== -1;
+                    
+                    return (
+                      <Card 
+                        key={bank.name} 
+                        className={`transition-all ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/50'}`}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-start gap-3">
+                            <Checkbox
+                              checked={isSelected}
+                              disabled={!isSelected && paymentSplits.length >= 3}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setPaymentSplits([...paymentSplits, { 
+                                    method: 'BANK_TRANSFER', 
+                                    bank: bank.name, 
+                                    amount: 0 
+                                  }]);
+                                } else {
+                                  setPaymentSplits(paymentSplits.filter((_, i) => i !== existingIndex));
+                                }
+                              }}
+                              className="mt-1"
+                            />
+                            <div className="flex-1 space-y-3">
+                              <div>
+                                <p className="font-medium">{bank.name}</p>
+                                <p className="text-sm text-muted-foreground">{bank.account_number}</p>
+                              </div>
+
+                              {isSelected && (
+                                <div className="space-y-3 pt-2 border-t">
+                                  {/* Amount Input */}
+                                  <div>
+                                    <Label className="text-sm">Amount *</Label>
+                                    <div className="relative">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm">₱</span>
+                                      <Input
+                                        type="number"
+                                        value={paymentSplits[existingIndex].amount || ''}
+                                        onChange={(e) => {
+                                          const newSplits = [...paymentSplits];
+                                          newSplits[existingIndex].amount = parseFloat(e.target.value) || 0;
+                                          setPaymentSplits(newSplits);
+                                        }}
+                                        className="pl-7"
+                                        placeholder="0.00"
+                                        step="0.01"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {/* Payment Proof */}
+                                  <div>
+                                    <Label className="text-sm">Payment Proof *</Label>
+                                    <Input
+                                      type="file"
+                                      accept="image/*"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                          const newSplits = [...paymentSplits];
+                                          newSplits[existingIndex].proofFile = file;
+                                          setPaymentSplits(newSplits);
+                                        }
+                                      }}
+                                    />
+                                    {paymentSplits[existingIndex].proofFile && (
+                                      <p className="text-xs text-green-600 mt-1">
+                                        ✓ {paymentSplits[existingIndex].proofFile!.name}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* GCash Section */}
+            {paymentSettings?.gcash_enabled && (
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">GCash</Label>
+                {(() => {
+                  const existingIndex = paymentSplits.findIndex(s => s.method === 'GCASH');
+                  const isSelected = existingIndex !== -1;
+                  
+                  return (
+                    <Card className={`transition-all ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={isSelected}
+                            disabled={!isSelected && paymentSplits.length >= 3}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setPaymentSplits([...paymentSplits, { method: 'GCASH', amount: 0 }]);
+                              } else {
+                                setPaymentSplits(paymentSplits.filter((_, i) => i !== existingIndex));
+                              }
+                            }}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 space-y-3">
+                            <div>
+                              <p className="font-medium">GCash Payment</p>
+                              {paymentSettings.gcash_number && (
+                                <p className="text-sm text-muted-foreground">{paymentSettings.gcash_number}</p>
+                              )}
+                              {paymentSettings.gcash_name && (
+                                <p className="text-sm text-muted-foreground">{paymentSettings.gcash_name}</p>
+                              )}
+                              {paymentSettings.gcash_qr_url && (
+                                <img 
+                                  src={paymentSettings.gcash_qr_url} 
+                                  alt="GCash QR" 
+                                  className="w-32 h-32 mt-2 border rounded"
+                                />
+                              )}
+                            </div>
+
+                            {isSelected && (
+                              <div className="space-y-3 pt-2 border-t">
+                                {/* Amount Input */}
+                                <div>
+                                  <Label className="text-sm">Amount *</Label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm">₱</span>
+                                    <Input
+                                      type="number"
+                                      value={paymentSplits[existingIndex].amount || ''}
+                                      onChange={(e) => {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].amount = parseFloat(e.target.value) || 0;
+                                        setPaymentSplits(newSplits);
+                                      }}
+                                      className="pl-7"
+                                      placeholder="0.00"
+                                      step="0.01"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Payment Proof */}
+                                <div>
+                                  <Label className="text-sm">Payment Proof *</Label>
+                                  <Input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].proofFile = file;
+                                        setPaymentSplits(newSplits);
+                                      }
+                                    }}
+                                  />
+                                  {paymentSplits[existingIndex].proofFile && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Cash Section */}
+            {paymentSettings?.cash_enabled && (
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Cash</Label>
+                {(() => {
+                  const existingIndex = paymentSplits.findIndex(s => s.method === 'CASH');
+                  const isSelected = existingIndex !== -1;
+                  
+                  return (
+                    <Card className={`transition-all ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={isSelected}
+                            disabled={!isSelected && paymentSplits.length >= 3}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setPaymentSplits([...paymentSplits, { method: 'CASH', amount: 0 }]);
+                              } else {
+                                setPaymentSplits(paymentSplits.filter((_, i) => i !== existingIndex));
+                              }
+                            }}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 space-y-3">
+                            <p className="font-medium">Cash Payment</p>
+
+                            {isSelected && (
+                              <div className="space-y-3 pt-2 border-t">
+                                {/* Amount Input */}
+                                <div>
+                                  <Label className="text-sm">Amount *</Label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm">₱</span>
+                                    <Input
+                                      type="number"
+                                      value={paymentSplits[existingIndex].amount || ''}
+                                      onChange={(e) => {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].amount = parseFloat(e.target.value) || 0;
+                                        setPaymentSplits(newSplits);
+                                      }}
+                                      className="pl-7"
+                                      placeholder="0.00"
+                                      step="0.01"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Payment Proof */}
+                                <div>
+                                  <Label className="text-sm">Payment Proof *</Label>
+                                  <Input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].proofFile = file;
+                                        setPaymentSplits(newSplits);
+                                      }
+                                    }}
+                                  />
+                                  {paymentSplits[existingIndex].proofFile && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Cheque Section */}
+            {paymentSettings?.cheque_enabled && (
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Cheque</Label>
+                {(() => {
+                  const existingIndex = paymentSplits.findIndex(s => s.method === 'CHEQUE');
+                  const isSelected = existingIndex !== -1;
+                  
+                  return (
+                    <Card className={`transition-all ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={isSelected}
+                            disabled={!isSelected && paymentSplits.length >= 3}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setPaymentSplits([...paymentSplits, { method: 'CHEQUE', amount: 0 }]);
+                              } else {
+                                setPaymentSplits(paymentSplits.filter((_, i) => i !== existingIndex));
+                              }
+                            }}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 space-y-3">
+                            <p className="font-medium">Cheque Payment</p>
+
+                            {isSelected && (
+                              <div className="space-y-3 pt-2 border-t">
+                                {/* Amount Input */}
+                                <div>
+                                  <Label className="text-sm">Amount *</Label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm">₱</span>
+                                    <Input
+                                      type="number"
+                                      value={paymentSplits[existingIndex].amount || ''}
+                                      onChange={(e) => {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].amount = parseFloat(e.target.value) || 0;
+                                        setPaymentSplits(newSplits);
+                                      }}
+                                      className="pl-7"
+                                      placeholder="0.00"
+                                      step="0.01"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Payment Proof */}
+                                <div>
+                                  <Label className="text-sm">Payment Proof *</Label>
+                                  <Input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].proofFile = file;
+                                        setPaymentSplits(newSplits);
+                                      }
+                                    }}
+                                  />
+                                  {paymentSplits[existingIndex].proofFile && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Validation Summary */}
+            {paymentSplits.length > 0 && (
+              <div className={`p-4 rounded-lg ${
+                Math.abs(getSplitTotal() - calculateTotal()) < 0.01
+                  ? 'bg-green-50 border border-green-200' 
+                  : 'bg-red-50 border border-red-200'
+              }`}>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-semibold">Split Total: ₱{getSplitTotal().toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">Order Total: ₱{calculateTotal().toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {paymentSplits.length} of 3 payment methods selected
+                    </p>
+                  </div>
+                  {Math.abs(getSplitTotal() - calculateTotal()) < 0.01 ? (
+                    <Badge className="bg-green-600">✓ Valid</Badge>
+                  ) : (
+                    <Badge variant="destructive">
+                      {getSplitTotal() > calculateTotal() ? 'Over' : 'Under'} by ₱{Math.abs(getSplitTotal() - calculateTotal()).toLocaleString()}
+                    </Badge>
+                  )}
+                </div>
+                {splitValidationError && (
+                  <p className="text-sm text-destructive mt-2">{splitValidationError}</p>
+                )}
+              </div>
+            )}
+
+            {paymentSplits.length === 0 && (
+              <div className="p-4 rounded-lg bg-muted text-center">
+                <p className="text-sm text-muted-foreground">Select at least one payment method to continue</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => {
+              setShowSplitPaymentDialog(false);
+              setShowPaymentModeDialog(true);
+            }}>
+              Back
+            </Button>
+            <Button 
+              onClick={handleContinueWithSplit}
+              disabled={
+                paymentSplits.length === 0 ||
+                paymentSplits.some(s => !s.method || !s.amount || !s.proofFile) ||
+                Math.abs(getSplitTotal() - calculateTotal()) > 0.01
+              }
+            >
+              Continue to Confirmation
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Payment Method Selection Modal */}
       <Dialog open={showPaymentMethodModal} onOpenChange={setShowPaymentMethodModal}>
         <DialogContent
@@ -2111,14 +2825,14 @@ export default function MyOrdersPage() {
             <div className="grid grid-cols-1 gap-2 sm:gap-3">
               {/* Bank Transfer - only show if enabled */}
               {paymentSettings?.bank_transfer_enabled && bankAccounts.length > 0 && (
-                <Button
-                  variant={paymentMethod === 'BANK_TRANSFER' ? 'default' : 'outline'}
-                  className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
-                  onClick={() => handlePaymentMethodSelected('BANK_TRANSFER')}
-                >
-                  <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
-                  <span className="text-base sm:text-lg font-semibold">Bank Transfer</span>
-                </Button>
+              <Button
+                variant={paymentMethod === 'BANK_TRANSFER' ? 'default' : 'outline'}
+                className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                onClick={() => handlePaymentMethodSelected('BANK_TRANSFER')}
+              >
+                <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
+                <span className="text-base sm:text-lg font-semibold">Bank Transfer</span>
+              </Button>
               )}
 
               {/* GCash - only show if enabled */}
@@ -2135,26 +2849,26 @@ export default function MyOrdersPage() {
 
               {/* Cash - only show if enabled */}
               {paymentSettings?.cash_enabled && (
-                <Button
-                  variant={paymentMethod === 'CASH' ? 'default' : 'outline'}
-                  className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
-                  onClick={() => handlePaymentMethodSelected('CASH')}
-                >
-                  <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
-                  <span className="text-base sm:text-lg font-semibold">Cash</span>
-                </Button>
+              <Button
+                variant={paymentMethod === 'CASH' ? 'default' : 'outline'}
+                className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                onClick={() => handlePaymentMethodSelected('CASH')}
+              >
+                <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
+                <span className="text-base sm:text-lg font-semibold">Cash</span>
+              </Button>
               )}
 
               {/* Cheque - only show if enabled */}
               {paymentSettings?.cheque_enabled && (
-                <Button
-                  variant={paymentMethod === 'CHEQUE' ? 'default' : 'outline'}
-                  className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
-                  onClick={() => handlePaymentMethodSelected('CHEQUE')}
-                >
+              <Button
+                variant={paymentMethod === 'CHEQUE' ? 'default' : 'outline'}
+                className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                onClick={() => handlePaymentMethodSelected('CHEQUE')}
+              >
                   <FileSignature className="h-5 w-5 sm:h-6 sm:w-6" />
-                  <span className="text-base sm:text-lg font-semibold">Cheque</span>
-                </Button>
+                <span className="text-base sm:text-lg font-semibold">Cheque</span>
+              </Button>
               )}
 
               {/* Show message if no payment methods configured */}
