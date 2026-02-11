@@ -569,8 +569,24 @@ export default function ClientsPage() {
   };
 
   const handleDownloadTemplate = () => {
-    const header = 'name,company,contact_person,email,phone,tin,address,city,account_type,category,location_latitude,location_longitude,location_accuracy\n';
-    const blob = new Blob([header], { type: 'text/csv;charset=utf-8;' });
+    const guideLines =
+      '# GUIDE:\n' +
+      '# - id: OPTIONAL. If provided, will use this ID for the client (must be a valid UUID).\n' +
+      '#   If left blank, a new ID will be auto-generated. Use when re-importing exported data.\n' +
+      '# - created_at, updated_at: OPTIONAL. If provided, will preserve historical dates.\n' +
+      '#   If left blank, will use the current date/time. Use ISO format (e.g., 2024-01-15T10:30:00Z).\n' +
+      '# - approved_at, approval_requested_at: OPTIONAL. If provided, will preserve approval dates.\n' +
+      '#   If left blank, will be set based on approval_status. Use ISO format.\n' +
+      '# - account_type: \"Key Accounts\" or \"Standard Accounts\".\n' +
+      '# - category: \"Open\", \"Renovating\", or \"Permanently Closed\".\n' +
+      '# - agent_id: OPTIONAL. If provided, must match an existing user ID in this company.\n' +
+      '#   If left blank: admins create unassigned clients; other roles assign clients to themselves.\n';
+
+    const header =
+      'id,name,company,contact_person,email,phone,tin,address,city,agent_id,agent_name,account_type,category,status,total_orders,total_spent,visit_count,last_order_date,approval_status,approval_requested_at,approved_at,created_at,updated_at,location_latitude,location_longitude,location_accuracy,location_captured_at\n';
+
+    const csv = guideLines + header;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -619,14 +635,20 @@ export default function ClientsPage() {
         );
       } else {
         const text = await file.text();
-        const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+        const lines = text
+          .split(/\r?\n/)
+          .filter((line) => {
+            const trimmed = line.trim();
+            // Ignore empty lines and guide/comment lines starting with '#'
+            return trimmed.length > 0 && !trimmed.startsWith('#');
+          });
         if (lines.length <= 1) {
           toast({ title: 'No data', description: 'The template file is empty.', variant: 'destructive' });
           return;
         }
         const [headerLine, ...lineRows] = lines;
-        headers = headerLine.split(',').map(h => h.trim().toLowerCase());
-        rows = lineRows.map(row => row.split(',').map(c => c.trim()));
+        headers = headerLine.split(',').map((h) => h.trim().toLowerCase());
+        rows = lineRows.map((row) => row.split(',').map((c) => c.trim()));
       }
 
       const findCol = (aliases: string[]) => {
@@ -637,6 +659,7 @@ export default function ClientsPage() {
         return -1;
       };
 
+      const idIdx = findCol(['id']);
       const nameIdx = findCol(['name', 'trade name', 'trade_name']);
       const companyIdx = findCol(['company', 'shop name', 'shop_name']);
       const contactPersonIdx = findCol(['contact_person', 'contact person']);
@@ -647,9 +670,21 @@ export default function ClientsPage() {
       const cityIdx = findCol(['city']);
       const accountTypeIdx = findCol(['account_type', 'account type']);
       const categoryIdx = findCol(['category']);
+      const agentIdIdx = findCol(['agent_id', 'agent id']);
+      const statusIdx = findCol(['status']);
+      const approvalStatusIdx = findCol(['approval_status', 'approval status']);
       const locationLatIdx = findCol(['location_latitude', 'location latitude', 'latitude', 'lat']);
       const locationLonIdx = findCol(['location_longitude', 'location longitude', 'longitude', 'lon', 'long']);
       const locationAccuracyIdx = findCol(['location_accuracy', 'location accuracy', 'accuracy']);
+      const createdAtIdx = findCol(['created_at', 'created at', 'created']);
+      const updatedAtIdx = findCol(['updated_at', 'updated at', 'updated']);
+      const approvedAtIdx = findCol(['approved_at', 'approved at', 'approved']);
+      const approvalRequestedAtIdx = findCol(['approval_requested_at', 'approval requested at', 'approval requested']);
+      
+      // Template columns that are ignored (informational/auto-generated):
+      // agent_name, total_orders, total_spent, visit_count, last_order_date, location_captured_at
+      // These are gracefully ignored if present in the file
+      // Note: 'id', 'created_at', 'updated_at', 'approved_at', 'approval_requested_at' are now supported
 
       if (nameIdx === -1) {
         toast({
@@ -687,9 +722,59 @@ export default function ClientsPage() {
             ? (rawCategory as Client['category'])
             : 'Open';
 
+        // Optional status parsing: if provided in file, use it; otherwise default to 'active'
+        // Note: 'voided' maps to 'inactive' in the database
+        const rawStatus = statusIdx >= 0 ? String(cols[statusIdx] ?? '').trim().toLowerCase() : '';
+        const status: Client['status'] = (rawStatus === 'voided' || rawStatus === 'inactive') ? 'inactive' : 'active';
+
+        // Optional approval_status parsing: if provided in file, validate and use it; otherwise default based on role
+        const rawApprovalStatus = approvalStatusIdx >= 0 ? String(cols[approvalStatusIdx] ?? '').trim().toLowerCase() : '';
+        let approval_status: Client['approval_status'];
+        if (rawApprovalStatus === 'approved' || rawApprovalStatus === 'pending' || rawApprovalStatus === 'rejected') {
+          approval_status = rawApprovalStatus as Client['approval_status'];
+        } else {
+          approval_status = isAdminUser ? 'approved' : 'pending';
+        }
+
+        // Optional agent assignment from file: if agent_id is provided, use it.
+        // Otherwise fall back to previous behavior:
+        // - admins/super_admins: unassigned (null)
+        // - others: assign to the importing user.
+        let parsedAgentId: string | null = null;
+        if (agentIdIdx >= 0) {
+          const rawAgentId = String(cols[agentIdIdx] ?? '').trim();
+          if (rawAgentId) {
+            parsedAgentId = rawAgentId;
+          }
+        }
+        if (!parsedAgentId) {
+          parsedAgentId = isAdminUser ? null : user?.id || null;
+        }
+
+        // Optional id parsing: if provided in file, use it; otherwise let database auto-generate
+        const parsedId = idIdx >= 0 ? String(cols[idIdx] ?? '').trim() : null;
+
+        // Helper to parse date strings to ISO format
+        const parseDate = (dateStr: string | null | undefined): string | null => {
+          if (!dateStr || !dateStr.trim()) return null;
+          try {
+            const date = new Date(dateStr.trim());
+            return isNaN(date.getTime()) ? null : date.toISOString();
+          } catch {
+            return null;
+          }
+        };
+
+        // Parse date columns if present
+        const parsedCreatedAt = createdAtIdx >= 0 ? parseDate(cols[createdAtIdx]) : null;
+        const parsedUpdatedAt = updatedAtIdx >= 0 ? parseDate(cols[updatedAtIdx]) : null;
+        const parsedApprovedAt = approvedAtIdx >= 0 ? parseDate(cols[approvedAtIdx]) : null;
+        const parsedApprovalRequestedAt = approvalRequestedAtIdx >= 0 ? parseDate(cols[approvalRequestedAtIdx]) : null;
+
         valid += 1;
 
         const rowObj: Partial<Client> = {
+          ...(parsedId ? { id: parsedId } : {}),
           name: nameVal,
           company: companyIdx >= 0 ? (cols[companyIdx] ?? '') || null : null,
           contact_person: contactPersonIdx >= 0 ? (cols[contactPersonIdx] ?? '') || null : null,
@@ -700,9 +785,9 @@ export default function ClientsPage() {
           city: cityIdx >= 0 ? (cols[cityIdx] ?? '') || null : null,
           account_type,
           category,
-          status: 'active',
-          approval_status: isAdminUser ? 'approved' : 'pending',
-          agent_id: isAdminUser ? null : user?.id || null,
+          status,
+          approval_status,
+          agent_id: parsedAgentId,
           location_latitude: (() => {
             if (locationLatIdx < 0) return undefined;
             const v = parseFloat(String(cols[locationLatIdx] ?? '').trim());
@@ -718,6 +803,10 @@ export default function ClientsPage() {
             const v = parseFloat(String(cols[locationAccuracyIdx] ?? '').trim());
             return Number.isFinite(v) ? v : undefined;
           })(),
+          ...(parsedCreatedAt ? { created_at: parsedCreatedAt } : {}),
+          ...(parsedUpdatedAt ? { updated_at: parsedUpdatedAt } : {}),
+          ...(parsedApprovedAt ? { approved_at: parsedApprovedAt } : {}),
+          ...(parsedApprovalRequestedAt ? { approval_requested_at: parsedApprovalRequestedAt } : {}),
         };
         return rowObj;
       }).filter(Boolean) as Partial<Client>[];
@@ -767,13 +856,21 @@ export default function ClientsPage() {
 
       // Build payload to match normal client creation and RLS expectations
       const insertPayload = importRows.map((row) => {
-        const approvalStatus: Client['approval_status'] = isAdminUser ? 'approved' : 'pending';
-        const approvalRequestedAt = !isAdminUser ? nowIso : null;
-        const approvedAt = approvalStatus === 'approved' ? nowIso : null;
+        // Use parsed approval_status from row, or default based on role
+        const approvalStatus: Client['approval_status'] = row.approval_status || (isAdminUser ? 'approved' : 'pending');
+        
+        // Use parsed dates from file if provided, otherwise use defaults
+        const created_at = (row as any).created_at || nowIso;
+        const updated_at = (row as any).updated_at || nowIso;
+        const approved_at = (row as any).approved_at || (approvalStatus === 'approved' ? nowIso : null);
+        const approval_requested_at = (row as any).approval_requested_at || (approvalStatus === 'pending' ? nowIso : null);
 
-        // For now, imports created by admins/super admins are unassigned (agent_id = null),
-        // imports by agents are assigned to themselves
-        const agentId = isAdminUser ? null : user.id;
+        // Agent assignment:
+        // - If the row already has an agent_id (from the file), use it
+        // - Otherwise:
+        //   - admins/super_admins: unassigned (null)
+        //   - others: assign to importing user
+        const agentId = row.agent_id || (isAdminUser ? null : user.id);
 
         const lat = row.location_latitude != null ? (typeof row.location_latitude === 'number' ? row.location_latitude : parseFloat(String(row.location_latitude))) : null;
         const lon = row.location_longitude != null ? (typeof row.location_longitude === 'number' ? row.location_longitude : parseFloat(String(row.location_longitude))) : null;
@@ -782,6 +879,7 @@ export default function ClientsPage() {
         const importTimestamp = new Date().toISOString();
 
         return {
+          ...(row.id ? { id: row.id } : {}), // Include id if provided, otherwise let database auto-generate
           company_id: user.company_id,
           name: row.name,
           company: row.company || null,
@@ -793,7 +891,7 @@ export default function ClientsPage() {
           city: row.city || null,
           account_type: row.account_type || 'Standard Accounts',
           category: row.category || 'Open',
-          status: 'active',
+          status: row.status || 'active',
           has_forge: false,
           total_orders: 0,
           total_spent: 0,
@@ -803,11 +901,13 @@ export default function ClientsPage() {
           location_longitude: Number.isFinite(lon) ? lon : null,
           location_accuracy: Number.isFinite(acc) ? acc : null,
           location_captured_at: importTimestamp,
+          created_at,
+          updated_at,
           approval_status: approvalStatus,
-          approval_requested_at: approvalRequestedAt,
+          approval_requested_at,
           approval_notes: null,
-          approved_at: approvedAt,
-          approved_by: isAdminUser && approvedAt ? user.id : null,
+          approved_at,
+          approved_by: isAdminUser && approved_at ? user.id : null,
           agent_id: agentId,
           tax_status: 'Tax Exempt',
         };
