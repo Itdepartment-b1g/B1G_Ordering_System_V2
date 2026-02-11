@@ -269,6 +269,13 @@ export interface Client {
   updated_at: string;
 }
 
+export interface PaymentSplit {
+  method: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
+  bank?: string; // For BANK_TRANSFER
+  amount: number;
+  proof_url?: string;
+}
+
 export interface ClientOrder {
   id: string;
   company_id: string;
@@ -285,9 +292,11 @@ export interface ClientOrder {
   status: OrderStatus;
   notes?: string;
   signature_url?: string;
-  payment_method?: 'GCASH' | 'BANK_TRANSFER' | 'CASH';
+  payment_method?: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
   bank_type?: 'Unionbank' | 'BPI' | 'PBCOM';
   payment_proof_url?: string;
+  payment_mode?: 'FULL' | 'SPLIT'; // NEW: Payment mode
+  payment_splits?: PaymentSplit[]; // NEW: Split payment data
   stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected';
   remitted?: boolean;
   created_at: string;

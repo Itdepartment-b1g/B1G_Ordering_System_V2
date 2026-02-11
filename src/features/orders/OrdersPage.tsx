@@ -267,6 +267,24 @@ export default function OrdersPage() {
     }
   };
 
+  // Helper: does an order use the given payment method?
+  // Includes BOTH full payments and split payments.
+  const orderMatchesPaymentMethod = (order: Order, method: string) => {
+    if (!method || method === 'all') return true;
+
+    // Full payment (or legacy orders without paymentMode)
+    if (order.paymentMode !== 'SPLIT') {
+      return order.paymentMethod === method;
+    }
+
+    // Split payment – check any split method
+    if (Array.isArray(order.paymentSplits)) {
+      return order.paymentSplits.some((s) => s.method === method);
+    }
+
+    return false;
+  };
+
   const filterOrders = (status?: Order['status']) => {
     let filtered = visibleOrders;
     if (status) {
@@ -279,7 +297,7 @@ export default function OrdersPage() {
       }
     }
     if (selectedPaymentMethod && selectedPaymentMethod !== "all") {
-      filtered = filtered.filter(o => o.paymentMethod === selectedPaymentMethod);
+      filtered = filtered.filter(o => orderMatchesPaymentMethod(o, selectedPaymentMethod));
     }
     if (searchQuery) {
       filtered = filtered.filter(o =>
@@ -1687,78 +1705,136 @@ export default function OrdersPage() {
               </div>
 
               {/* Payment Information */}
-              {viewingOrder.paymentMethod && (
-                <div className="space-y-3 p-4 bg-muted rounded-lg border">
-                  <Label className="text-lg font-semibold">Payment Information</Label>
-                  <div className="space-y-2">
-                    <div>
-                      <Label className="text-muted-foreground">Payment Method</Label>
-                      <p className="font-medium">
-                        {viewingOrder.paymentMethod === 'GCASH' ? 'GCash' :
-                          viewingOrder.paymentMethod === 'BANK_TRANSFER' ? (
-                            <>
-                              Bank Transfer
-                              {viewingOrder.bankType && (
-                                <span className="ml-2 text-sm text-muted-foreground">({viewingOrder.bankType})</span>
-                              )}
-                            </>
-                          ) : viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}
-                      </p>
+              {viewingOrder && (
+                viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits && viewingOrder.paymentSplits.length > 0 ? (
+                  <div className="space-y-3 p-4 bg-muted rounded-lg border">
+                    <Label className="text-lg font-semibold">Payment Information</Label>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-muted-foreground">Payment Mode</Label>
+                          <p className="font-medium">Split Payment ({viewingOrder.paymentSplits.length} methods)</p>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {viewingOrder.paymentSplits.map((split, index) => (
+                          <div key={index} className="border rounded-lg p-3 bg-background space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <Label className="text-muted-foreground text-xs">Method</Label>
+                                <p className="font-medium text-sm">
+                                  {split.method === 'GCASH'
+                                    ? 'GCash'
+                                    : split.method === 'BANK_TRANSFER'
+                                    ? split.bank
+                                      ? `Bank Transfer (${split.bank})`
+                                      : 'Bank Transfer'
+                                    : split.method === 'CHEQUE'
+                                    ? 'Cheque'
+                                    : 'Cash'}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <Label className="text-muted-foreground text-xs">Amount</Label>
+                                <p className="font-semibold text-sm">₱{split.amount.toLocaleString()}</p>
+                              </div>
+                            </div>
+
+                            {split.proofUrl && (
+                              <div>
+                                <Label className="text-muted-foreground text-xs">Payment Proof</Label>
+                                <div className="mt-1 border rounded-md overflow-hidden bg-white">
+                                  <img
+                                    src={split.proofUrl}
+                                    alt={`Payment Proof ${index + 1}`}
+                                    className="w-full h-auto max-h-64 object-contain"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src =
+                                        'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    {viewingOrder.paymentProofUrl && (
-                      <div>
-                        <Label className="text-muted-foreground">Payment Proof</Label>
-                        <div className="mt-2 border rounded-lg overflow-hidden bg-white">
-                          <img
-                            src={viewingOrder.paymentProofUrl}
-                            alt="Payment Proof"
-                            className="w-full h-auto max-h-96 object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* CASH/CHEQUE Orders: Show deposit slip if recorded */}
-                    {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositSlipUrl && (
-                      <div className="pt-3 border-t">
-                        <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
-                        {viewingOrder.depositReferenceNumber && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Reference: {viewingOrder.depositReferenceNumber}
-                          </p>
-                        )}
-                        <div className="mt-2 border rounded-lg overflow-hidden bg-white">
-                          <img
-                            src={viewingOrder.depositSlipUrl}
-                            alt="Deposit Slip"
-                            className="w-full h-auto max-h-96 object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                            }}
-                          />
-                        </div>
-                        <p className="text-xs text-green-700 mt-2 flex items-center gap-1">
-                          <CheckCircle className="h-3 w-3" />
-                          Deposit slip uploaded by team leader
-                        </p>
-                      </div>
-                    )}
-
-                    {/* CASH/CHEQUE Orders: Show message if deposit not recorded yet */}
-                    {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositSlipUrl && viewingOrder.depositId && (
-                      <div className="pt-3 border-t">
-                        <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
-                        <p className="text-sm text-amber-700 mt-2 flex items-center gap-1">
-                          <AlertCircle className="h-4 w-4" />
-                          Waiting for team leader to upload deposit image
-                        </p>
-                      </div>
-                    )}
                   </div>
-                </div>
+                ) : viewingOrder.paymentMethod ? (
+                  <div className="space-y-3 p-4 bg-muted rounded-lg border">
+                    <Label className="text-lg font-semibold">Payment Information</Label>
+                    <div className="space-y-2">
+                      <div>
+                        <Label className="text-muted-foreground">Payment Method</Label>
+                        <p className="font-medium">
+                          {viewingOrder.paymentMethod === 'GCASH' ? 'GCash' :
+                            viewingOrder.paymentMethod === 'BANK_TRANSFER' ? (
+                              <>
+                                Bank Transfer
+                                {viewingOrder.bankType && (
+                                  <span className="ml-2 text-sm text-muted-foreground">({viewingOrder.bankType})</span>
+                                )}
+                              </>
+                            ) : viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}
+                        </p>
+                      </div>
+                      {viewingOrder.paymentProofUrl && (
+                        <div>
+                          <Label className="text-muted-foreground">Payment Proof</Label>
+                          <div className="mt-2 border rounded-lg overflow-hidden bg-white">
+                            <img
+                              src={viewingOrder.paymentProofUrl}
+                              alt="Payment Proof"
+                              className="w-full h-auto max-h-96 object-contain"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* CASH/CHEQUE Orders: Show deposit slip if recorded */}
+                      {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositSlipUrl && (
+                        <div className="pt-3 border-t">
+                          <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
+                          {viewingOrder.depositReferenceNumber && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Reference: {viewingOrder.depositReferenceNumber}
+                            </p>
+                          )}
+                          <div className="mt-2 border rounded-lg overflow-hidden bg-white">
+                            <img
+                              src={viewingOrder.depositSlipUrl}
+                              alt="Deposit Slip"
+                              className="w-full h-auto max-h-96 object-contain"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                              }}
+                            />
+                          </div>
+                          <p className="text-xs text-green-700 mt-2 flex items-center gap-1">
+                            <CheckCircle className="h-3 w-3" />
+                            Deposit slip uploaded by team leader
+                          </p>
+                        </div>
+                      )}
+
+                      {/* CASH/CHEQUE Orders: Show message if deposit not recorded yet */}
+                      {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositSlipUrl && viewingOrder.depositId && (
+                        <div className="pt-3 border-t">
+                          <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
+                          <p className="text-sm text-amber-700 mt-2 flex items-center gap-1">
+                            <AlertCircle className="h-4 w-4" />
+                            Waiting for team leader to upload deposit image
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null
               )}
 
               {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (

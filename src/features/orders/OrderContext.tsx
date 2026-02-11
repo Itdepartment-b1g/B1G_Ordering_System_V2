@@ -18,6 +18,14 @@ export interface OrderItem {
   total: number;
 }
 
+export interface PaymentSplit {
+  method: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
+  bank?: string;
+  amount: number;
+  proofUrl?: string;
+  proofFile?: File; // For upload before submission
+}
+
 export interface Order {
   id: string;
   orderNumber: string;
@@ -40,6 +48,8 @@ export interface Order {
   paymentMethod?: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
   bankType?: 'Unionbank' | 'BPI' | 'PBCOM';
   paymentProofUrl?: string;
+  paymentMode?: 'FULL' | 'SPLIT'; // NEW: Payment mode
+  paymentSplits?: PaymentSplit[]; // NEW: Split payment data
   pricingStrategy?: 'rsp' | 'dsp' | 'special';
   depositId?: string; // Links to cash_deposits table for CASH payment orders
   depositStatus?: 'pending_verification' | 'verified'; // Status of the linked cash deposit
@@ -93,6 +103,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           payment_method,
           bank_type,
           payment_proof_url,
+          payment_mode,
+          payment_splits,
           stage,
           pricing_strategy,
           deposit_id,
@@ -229,6 +241,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           !cashDeposit.bank_account.includes('Cheque Remittance') &&
           cashDeposit.bank_account.trim() !== '';
 
+        // Map split payment data (if any) from JSONB into our frontend shape
+        const paymentMode: 'FULL' | 'SPLIT' | undefined = order.payment_mode || undefined;
+        const paymentSplits = Array.isArray(order.payment_splits)
+          ? order.payment_splits.map((s: any) => ({
+              method: s.method,
+              bank: s.bank || undefined,
+              amount: s.amount,
+              proofUrl: s.proof_url || undefined,
+            }))
+          : undefined;
+
         return {
           id: order.id,
           orderNumber: order.order_number,
@@ -250,6 +273,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           paymentMethod: order.payment_method || undefined,
           bankType: order.bank_type || undefined,
           paymentProofUrl: order.payment_proof_url || undefined,
+          paymentMode: paymentMode || (order.payment_method ? 'FULL' : undefined),
+          paymentSplits,
           pricingStrategy: order.pricing_strategy || undefined,
           depositId: order.deposit_id || undefined,
           depositStatus: cashDeposit?.status || undefined,
@@ -404,6 +429,15 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           payment_method: (order as any).paymentMethod || null, // Include payment method if provided
           bank_type: (order as any).bankType || null, // Include bank type if payment method is BANK_TRANSFER
           payment_proof_url: (order as any).paymentProofUrl || null, // Include payment proof URL if provided
+          payment_mode: (order as any).paymentMode || 'FULL',
+          payment_splits: (order as any).paymentSplits
+            ? (order as any).paymentSplits.map((s: any) => ({
+                method: s.method,
+                bank: s.bank ?? null,
+                amount: s.amount,
+                proof_url: s.proofUrl ?? null,
+              }))
+            : null,
           status: 'pending',
           stage: 'agent_pending', // Set stage explicitly for two-stage approval
           pricing_strategy: (order as any).pricingStrategy || 'rsp'
@@ -571,6 +605,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         paymentMethod: (order as any).paymentMethod,
         bankType: (order as any).bankType,
         paymentProofUrl: (order as any).paymentProofUrl,
+        paymentMode: (order as any).paymentMode,
+        paymentSplits: (order as any).paymentSplits,
         pricingStrategy: (order as any).pricingStrategy,
       };
 

@@ -26,6 +26,14 @@ interface OrderEmailData {
     paymentMethod?: string;
     selectedBank?: string;
     paymentProofUrl?: string;
+    // NEW: Split payment support
+    paymentMode?: 'FULL' | 'SPLIT';
+    paymentSplits?: Array<{
+        method: string;
+        bank?: string;
+        amount: number;
+        proofUrl?: string;
+    }>;
     pricingStrategy?: string;
     requestSalesInvoice?: boolean;
     companyId?: string;
@@ -60,6 +68,72 @@ function generateEmailHTML(orderData: OrderEmailData): string {
             <td style="padding: 8px 0 8px 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: 500;">${formatPrice(item.total)}</td>
         </tr>
     `).join('');
+
+    const hasSplitPayments = orderData.paymentMode === 'SPLIT' && Array.isArray(orderData.paymentSplits) && orderData.paymentSplits.length > 0;
+
+    const splitSummary = hasSplitPayments
+        ? orderData.paymentSplits!
+            .map(split => {
+                if (split.method === 'BANK_TRANSFER') {
+                    return split.bank ? `Bank Transfer (${split.bank})` : 'Bank Transfer';
+                }
+                if (split.method === 'GCASH') return 'GCash';
+                if (split.method === 'CASH') return 'Cash';
+                if (split.method === 'CHEQUE') return 'Cheque';
+                return split.method;
+            })
+            .join(' + ')
+        : '';
+
+    const paymentMethodDisplay = hasSplitPayments
+        ? `Split Payment – ${splitSummary}`
+        : formatPaymentMethod(orderData.paymentMethod, orderData.selectedBank);
+
+    const splitBreakdownHTML = hasSplitPayments ? `
+        <div style="margin-bottom: 24px;">
+            <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: #111;">Payment Breakdown</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <thead>
+                    <tr>
+                        <th style="padding: 8px 12px 8px 0; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Method</th>
+                        <th style="padding: 8px 12px; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Details</th>
+                        <th style="padding: 8px 0 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${orderData.paymentSplits!.map(split => {
+                        const methodLabel =
+                            split.method === 'BANK_TRANSFER'
+                                ? 'Bank Transfer'
+                                : split.method === 'GCASH'
+                                ? 'GCash'
+                                : split.method === 'CHEQUE'
+                                ? 'Cheque'
+                                : 'Cash';
+
+                        const detailsLabel =
+                            split.method === 'BANK_TRANSFER' && split.bank
+                                ? split.bank
+                                : split.method === 'GCASH'
+                                ? 'GCash Wallet'
+                                : split.method === 'CASH'
+                                ? 'Cash Payment'
+                                : split.method === 'CHEQUE'
+                                ? 'Cheque Payment'
+                                : '';
+
+                        return `
+                            <tr>
+                                <td style="padding: 8px 12px 8px 0; border-bottom: 1px solid #eee;">${methodLabel}</td>
+                                <td style="padding: 8px 12px; border-bottom: 1px solid #eee; color: #666;">${detailsLabel}</td>
+                                <td style="padding: 8px 0 8px 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: 500;">${formatPrice(split.amount)}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    ` : '';
 
     return `
 <!DOCTYPE html>
@@ -97,10 +171,12 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method:</td>
-                                <td style="padding: 4px 0; text-align: right; color: #111;">${formatPaymentMethod(orderData.paymentMethod, orderData.selectedBank)}</td>
+                                <td style="padding: 4px 0; text-align: right; color: #111;">${paymentMethodDisplay}</td>
                             </tr>
                         </table>
                     </div>
+
+                    ${splitBreakdownHTML}
 
                     <!-- Items -->
                     <div style="margin-bottom: 24px;">
@@ -223,6 +299,78 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
         </tr>
     `).join('');
 
+    const hasSplitPayments = orderData.paymentMode === 'SPLIT' && Array.isArray(orderData.paymentSplits) && orderData.paymentSplits.length > 0;
+
+    const splitSummary = hasSplitPayments
+        ? orderData.paymentSplits!
+            .map(split => {
+                if (split.method === 'BANK_TRANSFER') {
+                    return split.bank ? `Bank Transfer (${split.bank})` : 'Bank Transfer';
+                }
+                if (split.method === 'GCASH') return 'GCash';
+                if (split.method === 'CASH') return 'Cash';
+                if (split.method === 'CHEQUE') return 'Cheque';
+                return split.method;
+            })
+            .join(' + ')
+        : '';
+
+    const paymentMethodDisplay = hasSplitPayments
+        ? `Split Payment – ${splitSummary}`
+        : formatPaymentMethod(orderData.paymentMethod, orderData.selectedBank);
+
+    const splitBreakdownHTML = hasSplitPayments ? `
+        <div style="margin-bottom: 24px;">
+            <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: #111;">Payment Breakdown</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <thead>
+                    <tr>
+                        <th style="padding: 8px 12px 8px 0; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Method</th>
+                        <th style="padding: 8px 12px; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Details</th>
+                        <th style="padding: 8px 12px; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Proof</th>
+                        <th style="padding: 8px 0 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${orderData.paymentSplits!.map((split, index) => {
+                        const methodLabel =
+                            split.method === 'BANK_TRANSFER'
+                                ? 'Bank Transfer'
+                                : split.method === 'GCASH'
+                                ? 'GCash'
+                                : split.method === 'CHEQUE'
+                                ? 'Cheque'
+                                : 'Cash';
+
+                        const detailsLabel =
+                            split.method === 'BANK_TRANSFER' && split.bank
+                                ? split.bank
+                                : split.method === 'GCASH'
+                                ? 'GCash Wallet'
+                                : split.method === 'CASH'
+                                ? 'Cash Payment'
+                                : split.method === 'CHEQUE'
+                                ? 'Cheque Payment'
+                                : '';
+
+                        const proofCell = split.proofUrl
+                            ? `<img src="${split.proofUrl}" alt="Payment proof ${index + 1}" style="max-width: 140px; max-height: 80px; border: 1px solid #e5e5e5; border-radius: 4px;" />`
+                            : '<span style="color: #999;">—</span>';
+
+                        return `
+                            <tr>
+                                <td style="padding: 8px 12px 8px 0; border-bottom: 1px solid #eee; vertical-align: top;">${methodLabel}</td>
+                                <td style="padding: 8px 12px; border-bottom: 1px solid #eee; color: #666; vertical-align: top;">${detailsLabel}</td>
+                                <td style="padding: 8px 12px; border-bottom: 1px solid #eee; vertical-align: top;">${proofCell}</td>
+                                <td style="padding: 8px 0 8px 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: 500; vertical-align: top;">${formatPrice(split.amount)}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    ` : '';
+
     return `
 <!DOCTYPE html>
 <html lang="en">
@@ -261,7 +409,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                             </tr>
                             <tr>
                                 <td style="padding: 4px 0; color: #666;">Payment method:</td>
-                                <td style="padding: 4px 0; color: #111;">${formatPaymentMethod(orderData.paymentMethod, orderData.selectedBank)}</td>
+                                <td style="padding: 4px 0; color: #111;">${paymentMethodDisplay}</td>
                             </tr>
                         </table>
                     </div>
@@ -357,7 +505,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                     </div>
                     ` : ''}
 
-                    ${orderData.paymentProofUrl ? `
+                    ${hasSplitPayments ? splitBreakdownHTML : (orderData.paymentProofUrl ? `
                     <!-- Payment Proof -->
                     <div style="margin-bottom: 24px;">
                         <p style="margin: 0 0 8px 0; font-size: 13px; color: #666;">Payment proof</p>
@@ -365,7 +513,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                             <img src="${orderData.paymentProofUrl}" alt="Payment proof" style="max-width: 100%; height: auto; display: block;" />
                         </div>
                     </div>
-                    ` : ''}
+                    ` : '')}
 
                     ${orderData.signatureUrl ? `
                     <!-- Signature -->
