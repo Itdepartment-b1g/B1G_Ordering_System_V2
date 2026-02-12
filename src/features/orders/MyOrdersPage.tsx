@@ -74,14 +74,14 @@ export default function MyOrdersPage() {
     if (order.paymentMode === 'SPLIT' && Array.isArray(order.paymentSplits) && order.paymentSplits.length > 0) {
       const parts = order.paymentSplits.map((split: any) => {
         if (split.method === 'BANK_TRANSFER') {
-          return split.bank ? `Bank: ${split.bank}` : 'Bank Transfer';
+          return split.bank ? split.bank : 'Bank Transfer';
         }
         if (split.method === 'GCASH') return 'GCash';
         if (split.method === 'CASH') return 'Cash';
         if (split.method === 'CHEQUE') return 'Cheque';
         return split.method;
       });
-      return `Split: ${parts.join(' + ')}`;
+      return `Split Payment: ${parts.join(' + ')}`;
     }
 
     // Full payment: fall back to legacy formatting
@@ -3496,122 +3496,238 @@ export default function MyOrdersPage() {
               {/* Items - Responsive */}
               <div className="space-y-2">
                 <h4 className="font-semibold text-lg">Items</h4>
-                {/* Mobile: card list */}
-                <div className="md:hidden space-y-2">
-                  {orderToView.items && orderToView.items.length > 0 ? (
-                    orderToView.items.map((item: any) => (
-                      <div key={item.id} className="rounded-lg border bg-background p-3">
-                        <div className="flex items-center justify-between">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold truncate">{item.variantName}</div>
-                            <div className="text-xs text-muted-foreground truncate">{item.brandName}</div>
-                          </div>
-                          <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
-                            {item.variantType}
-                          </Badge>
-                        </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                          <div>
-                            <div className="text-xs text-muted-foreground">Qty</div>
-                            <div>{item.quantity}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-xs text-muted-foreground">Unit</div>
-                            <div>₱{item.unitPrice.toFixed(2)}</div>
-                          </div>
-                          <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
-                            <span>Total</span>
-                            <span>₱{item.total.toFixed(2)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-lg border bg-muted/30 p-4 text-center text-sm text-muted-foreground">
-                      No items found for this order
-                    </div>
-                  )}
-                </div>
+                {orderToView.items && orderToView.items.length > 0 ? (
+                  (() => {
+                    // Group items by brand
+                    const itemsByBrand = orderToView.items.reduce((acc: any, item: any) => {
+                      const brand = item.brandName || 'Unknown Brand';
+                      if (!acc[brand]) {
+                        acc[brand] = [];
+                      }
+                      acc[brand].push(item);
+                      return acc;
+                    }, {});
 
-                {/* Desktop/Tablet: table */}
-                <div className="hidden md:block border rounded-lg">
-                  {orderToView.items && orderToView.items.length > 0 ? (
-                    <div className="w-full overflow-x-auto">
-                      <Table className="min-w-[640px]">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Brand</TableHead>
-                            <TableHead>Item</TableHead>
-                            <TableHead>Type</TableHead>
-                            <TableHead className="text-right">Quantity</TableHead>
-                            <TableHead className="text-right">Unit Price</TableHead>
-                            <TableHead className="text-right">Total</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {orderToView.items.map((item: any) => (
-                            <TableRow key={item.id}>
-                              <TableCell className="font-medium">{item.brandName}</TableCell>
-                              <TableCell>{item.variantName}</TableCell>
-                              <TableCell>
-                                <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
-                                  {item.variantType}
+                    const brands = Object.keys(itemsByBrand).sort();
+
+                    return (
+                      <>
+                        {/* Mobile: card list grouped by brand */}
+                        <div className="md:hidden space-y-4">
+                          {brands.map((brand) => (
+                            <div key={brand} className="space-y-2">
+                              <div className="flex items-center gap-2 pb-2 border-b">
+                                <h5 className="font-semibold text-base text-primary">{brand}</h5>
+                                <Badge variant="outline" className="text-xs">
+                                  {itemsByBrand[brand].length} item{itemsByBrand[brand].length > 1 ? 's' : ''}
                                 </Badge>
-                              </TableCell>
-                              <TableCell className="text-right">{item.quantity}</TableCell>
-                              <TableCell className="text-right">₱{item.unitPrice.toFixed(2)}</TableCell>
-                              <TableCell className="text-right font-semibold">₱{item.total.toFixed(2)}</TableCell>
-                            </TableRow>
+                              </div>
+                              {itemsByBrand[brand].map((item: any) => (
+                                <div key={item.id} className="rounded-lg border bg-background p-3 ml-2">
+                                  <div className="flex items-center justify-between">
+                                    <div className="min-w-0">
+                                      <div className="text-sm font-semibold truncate">{item.variantName}</div>
+                                    </div>
+                                    <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
+                                      {item.variantType}
+                                    </Badge>
+                                  </div>
+                                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                                    <div>
+                                      <div className="text-xs text-muted-foreground">Qty</div>
+                                      <div>{item.quantity}</div>
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="text-xs text-muted-foreground">Unit</div>
+                                      <div>₱{item.unitPrice.toFixed(2)}</div>
+                                    </div>
+                                    <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
+                                      <span>Total</span>
+                                      <span>₱{item.total.toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                              {/* Brand subtotal */}
+                              <div className="ml-2 flex justify-end pr-3">
+                                <div className="text-sm font-semibold text-muted-foreground">
+                                  Brand Total: ₱{itemsByBrand[brand].reduce((sum: number, item: any) => sum + item.total, 0).toFixed(2)}
+                                </div>
+                              </div>
+                            </div>
                           ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ) : (
-                    <div className="p-4 text-center text-sm text-muted-foreground">
-                      No items found for this order
-                    </div>
-                  )}
-                </div>
+                        </div>
+
+                        {/* Desktop/Tablet: table grouped by brand */}
+                        <div className="hidden md:block space-y-4">
+                          {brands.map((brand) => (
+                            <div key={brand} className="border rounded-lg overflow-hidden">
+                              <div className="bg-muted/50 px-4 py-2 border-b">
+                                <div className="flex items-center justify-between">
+                                  <h5 className="font-semibold text-base text-primary">{brand}</h5>
+                                  <div className="flex items-center gap-4">
+                                    <span className="text-sm text-muted-foreground">
+                                      {itemsByBrand[brand].length} item{itemsByBrand[brand].length > 1 ? 's' : ''}
+                                    </span>
+                                    <span className="text-sm font-semibold">
+                                      Brand Total: ₱{itemsByBrand[brand].reduce((sum: number, item: any) => sum + item.total, 0).toFixed(2)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="w-full overflow-x-auto">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Item</TableHead>
+                                      <TableHead>Type</TableHead>
+                                      <TableHead className="text-right">Quantity</TableHead>
+                                      <TableHead className="text-right">Unit Price</TableHead>
+                                      <TableHead className="text-right">Total</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {itemsByBrand[brand].map((item: any) => (
+                                      <TableRow key={item.id}>
+                                        <TableCell className="font-medium">{item.variantName}</TableCell>
+                                        <TableCell>
+                                          <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
+                                            {item.variantType}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right">{item.quantity}</TableCell>
+                                        <TableCell className="text-right">₱{item.unitPrice.toFixed(2)}</TableCell>
+                                        <TableCell className="text-right font-semibold">₱{item.total.toFixed(2)}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    );
+                  })()
+                ) : (
+                  <div className="rounded-lg border bg-muted/30 p-4 text-center text-sm text-muted-foreground">
+                    No items found for this order
+                  </div>
+                )}
               </div>
 
               {/* Payment Information */}
-              {orderToView.paymentMethod && (
+              {(orderToView.paymentMethod || (orderToView.paymentMode === 'SPLIT' && orderToView.paymentSplits && orderToView.paymentSplits.length > 0)) && (
                 <div className="space-y-3 border-t pt-4">
-                  <h4 className="font-semibold text-lg">Payment Information</h4>
-                  <div className="space-y-2">
-                    <div>
-                      <Label className="text-muted-foreground">Payment Method</Label>
-                      <p className="font-medium">
-                        {orderToView.paymentMethod === 'GCASH' ? 'GCash' :
-                          orderToView.paymentMethod === 'BANK_TRANSFER' ? (
-                            <>
-                              Bank Transfer
-                              {orderToView.bankType && (
-                                <span className="ml-2 text-sm text-muted-foreground">({orderToView.bankType})</span>
-                              )}
-                            </>
-                          ) : orderToView.paymentMethod === 'CHEQUE' ? (
-                            'Cheque'
-                          ) :
-                            'Cash'}
-                      </p>
-                    </div>
-                    {orderToView.paymentProofUrl && (
-                      <div>
-                        <Label className="text-muted-foreground">Payment Proof</Label>
-                        <div className="mt-2 border rounded-lg overflow-hidden bg-white">
-                          <img
-                            src={orderToView.paymentProofUrl}
-                            alt="Payment Proof"
-                            className="w-full h-auto max-h-96 object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                            }}
-                          />
+                  <h4 className="font-semibold text-lg flex items-center gap-2">
+                    <CreditCard className="h-5 w-5" />
+                    Payment Information
+                  </h4>
+                  
+                  {/* Split Payment Breakdown */}
+                  {orderToView.paymentMode === 'SPLIT' && Array.isArray(orderToView.paymentSplits) && orderToView.paymentSplits.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-base px-3 py-1">
+                          <Split className="h-4 w-4 mr-1 inline" />
+                          Split Payment
+                        </Badge>
+                        <span className="text-sm text-muted-foreground">
+                          {orderToView.paymentSplits.length} payment method{orderToView.paymentSplits.length > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {orderToView.paymentSplits.map((split: any, index: number) => (
+                          <Card key={index} className="p-4 bg-muted/30">
+                            <div className="flex justify-between items-start mb-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="secondary">
+                                    {split.method === 'BANK_TRANSFER' ? 'Bank Transfer' :
+                                     split.method === 'GCASH' ? 'GCash' :
+                                     split.method === 'CASH' ? 'Cash' :
+                                     split.method === 'CHEQUE' ? 'Cheque' : split.method}
+                                  </Badge>
+                                  {split.bank && (
+                                    <span className="text-sm font-medium">{split.bank}</span>
+                                  )}
+                                </div>
+                                <p className="text-lg font-semibold text-primary">
+                                  ₱{split.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                                </p>
+                              </div>
+                            </div>
+                            {split.proofUrl && (
+                              <div className="mt-3 pt-3 border-t">
+                                <Label className="text-sm text-muted-foreground mb-2 block">Payment Proof</Label>
+                                <div className="border rounded-lg overflow-hidden bg-white">
+                                  <img
+                                    src={split.proofUrl}
+                                    alt={`Payment Proof - ${split.method}`}
+                                    className="w-full h-auto max-h-64 object-contain cursor-pointer"
+                                    onClick={() => window.open(split.proofUrl, '_blank')}
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                                    }}
+                                  />
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">Click image to view full size</p>
+                              </div>
+                            )}
+                          </Card>
+                        ))}
+                      </div>
+                      
+                      {/* Split Payment Total */}
+                      <div className="bg-primary/5 border-2 border-primary/20 rounded-lg p-4">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold text-lg">Total Payment:</span>
+                          <span className="font-bold text-xl text-primary">
+                            ₱{orderToView.paymentSplits.reduce((sum: number, split: any) => sum + (split.amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  ) : (
+                    /* Full Payment Display */
+                    <div className="space-y-2">
+                      <div>
+                        <Label className="text-muted-foreground">Payment Method</Label>
+                        <p className="font-medium">
+                          {orderToView.paymentMethod === 'GCASH' ? 'GCash' :
+                            orderToView.paymentMethod === 'BANK_TRANSFER' ? (
+                              <>
+                                Bank Transfer
+                                {orderToView.bankType && (
+                                  <span className="ml-2 text-sm text-muted-foreground">({orderToView.bankType})</span>
+                                )}
+                              </>
+                            ) : orderToView.paymentMethod === 'CHEQUE' ? (
+                              'Cheque'
+                            ) :
+                              'Cash'}
+                        </p>
+                      </div>
+                      {orderToView.paymentProofUrl && (
+                        <div>
+                          <Label className="text-muted-foreground">Payment Proof</Label>
+                          <div className="mt-2 border rounded-lg overflow-hidden bg-white">
+                            <img
+                              src={orderToView.paymentProofUrl}
+                              alt="Payment Proof"
+                              className="w-full h-auto max-h-96 object-contain cursor-pointer"
+                              onClick={() => window.open(orderToView.paymentProofUrl, '_blank')}
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                              }}
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">Click image to view full size</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

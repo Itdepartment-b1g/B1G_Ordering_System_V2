@@ -4,6 +4,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,6 +16,7 @@ import { useAuth } from '@/features/auth';
 import { format } from 'date-fns';
 import { canViewCashDeposits } from '@/lib/roleUtils';
 import { sendNotificationToCompanyRoles } from '@/features/shared/lib/notification.helpers';
+import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import {
   BanknoteIcon,
   AlertCircle,
@@ -24,7 +27,14 @@ import {
   Camera,
   X,
   Eye,
-  CreditCard
+  CreditCard,
+  Calendar,
+  ChevronDown,
+  ChevronRight,
+  User,
+  Upload,
+  Receipt,
+  Printer,
 } from 'lucide-react';
 
 // Interfaces
@@ -36,29 +46,83 @@ interface CashDeposit {
   referenceNumber: string;
   status: string;
   agentName: string;
+   agentId?: string;
   depositSlipUrl?: string;
   depositType?: 'CASH' | 'CHEQUE';
 }
 
-const BANK_OPTIONS = [
-  "Unionbank - 00-218-002553-7",
-  "BPI - 1761-011118",
-  "PBCOM - 238101006138"
-];
+interface DepositOrderBreakdown {
+  orderId: string;
+  orderNumber: string;
+  clientName: string;
+  // Amount to deposit for this order (cash + cheque only)
+  remittedAmount: number;
+  fullOrderTotal: number;
+  cashPortion: number;
+  chequePortion: number;
+  nonCashPortion?: number;
+  nonCashLabel?: string;
+}
+
+// Grouped view types for daily consolidation
+interface DailyOrderSummary extends DepositOrderBreakdown {
+  agentId: string;
+  agentName: string;
+  depositId: string;
+  totalQuantity: number;
+}
+
+interface DailyAgentGroup {
+  agentId: string;
+  agentName: string;
+  orders: DailyOrderSummary[];
+  totalOrders: number;
+  totalUnits: number;
+  totalAmount: number; // cash + cheque only
+}
+
+interface DailyDepositGroup {
+  dateKey: string; // e.g. '2026-02-11'
+  dateLabel: string; // e.g. '2/11/2026'
+  depositIds: string[];
+  totalAmount: number; // cash + cheque for the day
+  status: 'pending_deposit' | 'awaiting_verification' | 'verified';
+}
+
+const formatBankLabel = (name: string, accountNumber: string | null | undefined) =>
+  accountNumber ? `${name} - ${accountNumber}` : name;
 
 export default function LeaderCashDepositsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { settings: paymentSettings } = usePaymentSettings();
 
   // State
   const [loading, setLoading] = useState(false);
   const [pendingDeposits, setPendingDeposits] = useState<CashDeposit[]>([]);
   const [depositHistory, setDepositHistory] = useState<CashDeposit[]>([]);
+  const [depositSummaries, setDepositSummaries] = useState<Record<string, {
+    cashPortion: number;
+    chequePortion: number;
+    nonCashPortion: number;
+  }>>({});
+  const [pendingDailyGroups, setPendingDailyGroups] = useState<DailyDepositGroup[]>([]);
+  const [dayDetailsByDate, setDayDetailsByDate] = useState<Record<string, {
+    agents: DailyAgentGroup[];
+    totalOrders: number;
+    totalUnits: number;
+  }>>({});
+  const [loadingDayDetails, setLoadingDayDetails] = useState<Record<string, boolean>>({});
+  const [filterFromDate, setFilterFromDate] = useState('');
+  const [filterToDate, setFilterToDate] = useState('');
+  const [expandedDays, setExpandedDays] = useState<string[]>([]);
+  const [expandedAgents, setExpandedAgents] = useState<string[]>([]);
 
   // Deposit Modal State
   const [depositTypeSelectionOpen, setDepositTypeSelectionOpen] = useState(false);
   const [depositDialogOpen, setDepositDialogOpen] = useState(false);
   const [selectedPendingDeposit, setSelectedPendingDeposit] = useState<CashDeposit | null>(null);
+  const [selectedDepositIds, setSelectedDepositIds] = useState<string[]>([]);
   const [depositType, setDepositType] = useState<'CASH' | 'CHEQUE'>('CASH');
   const [bankAccount, setBankAccount] = useState('');
   const [referenceNumber, setReferenceNumber] = useState('');
@@ -68,6 +132,8 @@ export default function LeaderCashDepositsPage() {
   // View Details Modal State
   const [viewDepositDialogOpen, setViewDepositDialogOpen] = useState(false);
   const [selectedDepositToView, setSelectedDepositToView] = useState<CashDeposit | null>(null);
+  const [depositOrders, setDepositOrders] = useState<DepositOrderBreakdown[]>([]);
+  const [loadingDepositOrders, setLoadingDepositOrders] = useState(false);
 
   // Camera State
   const [showCamera, setShowCamera] = useState(false);
@@ -142,6 +208,75 @@ export default function LeaderCashDepositsPage() {
   };
 
 
+  const loadDepositSummaries = async (deposits: CashDeposit[]) => {
+    try {
+      if (!deposits.length) {
+        setDepositSummaries({});
+        return;
+      }
+
+      const depositIds = deposits.map(d => d.id);
+
+      const { data, error } = await supabase
+        .from('client_orders')
+        .select('id, deposit_id, total_amount, payment_method, payment_mode, payment_splits')
+        .in('deposit_id', depositIds);
+
+      if (error) throw error;
+
+      const summaries: Record<string, { cashPortion: number; chequePortion: number; nonCashPortion: number }> = {};
+
+      (data || []).forEach((order: any) => {
+        const depositId = order.deposit_id as string | null;
+        if (!depositId) return;
+
+        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+        const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+        let cashPortion = 0;
+        let chequePortion = 0;
+        let nonCashPortion = 0;
+
+        if (paymentMode === 'SPLIT') {
+          splits.forEach((s: any) => {
+            const amount = s.amount || 0;
+            if (s.method === 'CASH') {
+              cashPortion += amount;
+            } else if (s.method === 'CHEQUE') {
+              chequePortion += amount;
+            } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+              nonCashPortion += amount;
+            }
+          });
+        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+          const amt = order.total_amount || 0;
+          if (paymentMethod === 'CASH') {
+            cashPortion = amt;
+          } else {
+            chequePortion = amt;
+          }
+        }
+
+        if (!summaries[depositId]) {
+          summaries[depositId] = { cashPortion: 0, chequePortion: 0, nonCashPortion: 0 };
+        }
+
+        summaries[depositId].cashPortion += cashPortion;
+        summaries[depositId].chequePortion += chequePortion;
+        summaries[depositId].nonCashPortion += nonCashPortion;
+      });
+
+      setDepositSummaries(summaries);
+      return summaries;
+    } catch (error) {
+      console.error('Error loading deposit summaries', error);
+      // Fail-soft: keep existing summaries if any
+      return depositSummaries;
+    }
+  };
+
+
   const fetchDepositHistory = async () => {
     try {
       let query = supabase
@@ -202,13 +337,44 @@ export default function LeaderCashDepositsPage() {
         referenceNumber: d.reference_number,
         status: d.status,
         agentName: d.agent?.full_name || 'Unknown',
+         agentId: d.agent_id,
         depositSlipUrl: d.deposit_slip_url,
-        depositType: d.deposit_type || 'CASH'
+        // For legacy deposits without an explicit type, show as CASH/CHEQUE (mixed/unspecified)
+        depositType: d.deposit_type as 'CASH' | 'CHEQUE' | null
       }));
 
+      // Pre-load summaries for all deposits so we can show correct cash/cheque-only amounts
+      const summaries = await loadDepositSummaries(deposits);
+
       // Separate pending and verified deposits
-      setPendingDeposits(deposits.filter(d => d.status === 'pending_verification'));
+      const pending = deposits.filter(d => d.status === 'pending_verification');
+      setPendingDeposits(pending);
       setDepositHistory(deposits.filter(d => d.status === 'verified'));
+
+      // Build daily groups for pending deposits (cash/cheque portions only)
+      const dailyMap: Record<string, DailyDepositGroup> = {};
+      pending.forEach((deposit) => {
+        const date = new Date(deposit.depositDate);
+        const dateKey = format(date, 'yyyy-MM-dd');
+        const dateLabel = format(date, 'M/d/yyyy');
+        const summary = summaries[deposit.id];
+        const amount = summary ? summary.cashPortion + summary.chequePortion : deposit.amount || 0;
+
+        if (!dailyMap[dateKey]) {
+          dailyMap[dateKey] = {
+            dateKey,
+            dateLabel,
+            depositIds: [],
+            totalAmount: 0,
+            status: 'pending_deposit'
+          };
+        }
+        dailyMap[dateKey].depositIds.push(deposit.id);
+        dailyMap[dateKey].totalAmount += amount;
+      });
+
+      const groups = Object.values(dailyMap).sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
+      setPendingDailyGroups(groups);
 
     } catch (error) {
       console.error('Error fetching history', error);
@@ -223,10 +389,13 @@ export default function LeaderCashDepositsPage() {
 
   const handleOpenDepositModal = (pendingDeposit: CashDeposit) => {
     setSelectedPendingDeposit(pendingDeposit);
+    setSelectedDepositIds([pendingDeposit.id]);
     setBankAccount('');
     setReferenceNumber('');
     setDepositSlipFile(null);
     setShowCamera(false);
+    // Preload orders for this deposit so we can show accurate total and order references
+    fetchDepositOrders([pendingDeposit.id]);
 
     // If type is already known (from recent remittance update), skip selection
     if (pendingDeposit.depositType === 'CASH' || pendingDeposit.depositType === 'CHEQUE') {
@@ -236,6 +405,403 @@ export default function LeaderCashDepositsPage() {
       // Fallback for old records or unspecified types
       setDepositTypeSelectionOpen(true);
     }
+  };
+
+  const fetchDepositOrders = async (depositIds: string[]) => {
+    try {
+      setLoadingDepositOrders(true);
+      setDepositOrders([]);
+
+      if (!depositIds || depositIds.length === 0) {
+        setDepositOrders([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('client_orders')
+        .select(`
+          id,
+          order_number,
+          total_amount,
+          payment_method,
+          payment_mode,
+          payment_splits,
+          created_at,
+          clients(name)
+        `)
+        .in('deposit_id', depositIds);
+
+      if (error) throw error;
+
+      const orders: DepositOrderBreakdown[] = (data || []).map((order: any) => {
+        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+        const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+        let cashPortion = 0;
+        let chequePortion = 0;
+        let nonCashPortion = 0;
+        const nonCashLabels: string[] = [];
+
+        if (paymentMode === 'SPLIT') {
+          splits.forEach((s: any) => {
+            const amount = s.amount || 0;
+            if (s.method === 'CASH') {
+              cashPortion += amount;
+            } else if (s.method === 'CHEQUE') {
+              chequePortion += amount;
+            } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+              nonCashPortion += amount;
+              if (s.method === 'BANK_TRANSFER') {
+                if (s.bank && !nonCashLabels.includes(s.bank)) {
+                  nonCashLabels.push(s.bank);
+                } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
+                  nonCashLabels.push('Bank Transfer');
+                }
+              } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
+                nonCashLabels.push('GCash');
+              }
+            }
+          });
+        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+          const amt = order.total_amount || 0;
+          if (paymentMethod === 'CASH') {
+            cashPortion = amt;
+          } else {
+            chequePortion = amt;
+          }
+        }
+
+        const remittedAmount = cashPortion + chequePortion;
+
+        return {
+          orderId: order.id,
+          orderNumber: order.order_number,
+          clientName: order.clients?.name || 'Unknown',
+          remittedAmount,
+          fullOrderTotal: order.total_amount || remittedAmount,
+          cashPortion,
+          chequePortion,
+          nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
+          nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
+        };
+      });
+
+      setDepositOrders(orders);
+    } catch (error) {
+      console.error('Error fetching deposit orders', error);
+      setDepositOrders([]);
+    } finally {
+      setLoadingDepositOrders(false);
+    }
+  };
+
+  const openViewDeposit = (deposit: CashDeposit) => {
+    setSelectedDepositToView(deposit);
+    setViewDepositDialogOpen(true);
+    fetchDepositOrders([deposit.id]);
+  };
+
+  const getDisplayDepositType = (depositType?: 'CASH' | 'CHEQUE' | null): string => {
+    if (depositType === 'CASH' || depositType === 'CHEQUE') {
+      return depositType;
+    }
+    // Legacy / mixed deposits where type wasn't explicitly stored
+    return 'CASH/CHEQUE';
+  };
+
+  const getEffectiveDepositType = (deposit: CashDeposit): string => {
+    const summary = depositSummaries[deposit.id];
+    if (summary) {
+      const hasCash = summary.cashPortion > 0;
+      const hasCheque = summary.chequePortion > 0;
+      if (hasCash && hasCheque) return 'CASH/CHEQUE';
+      if (hasCash) return 'CASH';
+      if (hasCheque) return 'CHEQUE';
+    }
+    return getDisplayDepositType(deposit.depositType || null);
+  };
+
+  const getEffectiveDepositAmount = (deposit: CashDeposit): number => {
+    const summary = depositSummaries[deposit.id];
+    if (summary) {
+      const amount = summary.cashPortion + summary.chequePortion;
+      if (amount > 0) return amount;
+    }
+    return deposit.amount || 0;
+  };
+
+  const getDepositTypeBadgeClass = (displayType: string): string => {
+    if (displayType === 'CHEQUE') return "bg-purple-50 text-purple-700 border-purple-200";
+    if (displayType === 'CASH') return "bg-green-50 text-green-700 border-green-200";
+    if (displayType === 'CASH/CHEQUE') return "bg-blue-50 text-blue-700 border-blue-200";
+    return "bg-gray-50 text-gray-700 border-gray-200";
+  };
+
+  const selectedDepositDisplayType = selectedDepositToView ? getEffectiveDepositType(selectedDepositToView) : null;
+  const selectedDepositDisplayAmount = selectedDepositToView ? getEffectiveDepositAmount(selectedDepositToView) : 0;
+
+  const findDepositById = (depositId: string): CashDeposit | undefined => {
+    return pendingDeposits.find(d => d.id === depositId) || depositHistory.find(d => d.id === depositId);
+  };
+
+  // For the Record Deposit modal: compute accurate cash/cheque total and order references
+  const modalCashAmount =
+    depositOrders.length > 0
+      ? depositOrders.reduce((sum, o) => sum + (o.cashPortion || 0), 0)
+      : selectedPendingDeposit
+      ? (depositSummaries[selectedPendingDeposit.id]?.cashPortion || 0)
+      : 0;
+
+  const modalChequeAmount =
+    depositOrders.length > 0
+      ? depositOrders.reduce((sum, o) => sum + (o.chequePortion || 0), 0)
+      : selectedPendingDeposit
+      ? (depositSummaries[selectedPendingDeposit.id]?.chequePortion || 0)
+      : 0;
+
+  const modalDepositAmount = modalCashAmount + modalChequeAmount;
+  const modalOrderNumbers = Array.from(new Set(depositOrders.map(o => o.orderNumber))).join(', ');
+
+  const handleViewOrderBreakdown = (order: DailyOrderSummary) => {
+    const deposit = findDepositById(order.depositId);
+    if (!deposit) {
+      toast({
+        title: 'Not Found',
+        description: 'Unable to load deposit details for this order.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    openViewDeposit(deposit);
+  };
+
+  const toggleDay = (dateKey: string) => {
+    const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
+    setExpandedDays(prev => {
+      const isOpen = prev.includes(dateKey);
+      const next = isOpen ? prev.filter(d => d !== dateKey) : [...prev, dateKey];
+      if (!isOpen && group) {
+        handleToggleDay(group);
+      }
+      return next;
+    });
+  };
+
+  const toggleAgent = (agentKey: string) => {
+    setExpandedAgents(prev =>
+      prev.includes(agentKey) ? prev.filter(k => k !== agentKey) : [...prev, agentKey]
+    );
+  };
+
+  const clearDateFilter = () => {
+    setFilterFromDate('');
+    setFilterToDate('');
+  };
+
+  const handlePrint = () => {
+    try {
+      window.print();
+    } catch (e) {
+      console.error('Print failed', e);
+    }
+  };
+
+  const getStatusBadge = (status: 'pending' | 'verified') => {
+    if (status === 'verified') {
+      return (
+        <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
+          <CheckCircle2 className="h-3 w-3 mr-1" />
+          Verified
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+        <AlertCircle className="h-3 w-3 mr-1" />
+        Pending Deposit
+      </Badge>
+    );
+  };
+
+  const handleOpenDayDeposit = (dateKey: string) => {
+    const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
+    if (!group) return;
+    const depositsForDay = pendingDeposits.filter(d => group.depositIds.includes(d.id));
+    if (!depositsForDay.length) {
+      toast({
+        title: 'No Deposit Found',
+        description: 'There is no pending cash/cheque deposit for this day.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    // Use the first deposit as the "base" for agent/date info, but aggregate all for amount/orders
+    const base = depositsForDay[0];
+    setSelectedPendingDeposit(base);
+    setSelectedDepositIds(depositsForDay.map(d => d.id));
+    setBankAccount('');
+    setReferenceNumber('');
+    setDepositSlipFile(null);
+    setShowCamera(false);
+    setDepositType(base.depositType || 'CASH');
+    fetchDepositOrders(depositsForDay.map(d => d.id));
+    setDepositDialogOpen(true);
+  };
+
+  const handleViewDepositProof = (dateKey: string) => {
+    const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
+    if (!group) return;
+    const verifiedForDay = depositHistory.filter(d => format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey);
+    const target = verifiedForDay[0];
+    if (!target) {
+      toast({
+        title: 'No Verified Deposit',
+        description: 'No verified deposit was found for this date.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    openViewDeposit(target);
+  };
+
+  const handleToggleDay = (group: DailyDepositGroup) => {
+    const nextKey = group.dateKey;
+    if (!nextKey || dayDetailsByDate[nextKey]) return;
+
+    // Lazy-load day details when a date is expanded
+    (async () => {
+      try {
+        setLoadingDayDetails(prev => ({ ...prev, [nextKey]: true }));
+
+        const { data, error } = await supabase
+          .from('client_orders')
+          .select(`
+            id,
+            deposit_id,
+            order_number,
+            total_amount,
+            payment_method,
+            payment_mode,
+            payment_splits,
+            created_at,
+            agent_id,
+            agent:profiles!client_orders_agent_id_fkey(full_name),
+            clients(name),
+            items:client_order_items(quantity)
+          `)
+          .in('deposit_id', group.depositIds);
+
+        if (error) throw error;
+
+        const agentMap: Record<string, DailyAgentGroup> = {};
+
+        (data || []).forEach((order: any) => {
+          const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+          const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+          const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+          let cashPortion = 0;
+          let chequePortion = 0;
+          let nonCashPortion = 0;
+          const nonCashLabels: string[] = [];
+
+          if (paymentMode === 'SPLIT') {
+            splits.forEach((s: any) => {
+              const amount = s.amount || 0;
+              if (s.method === 'CASH') {
+                cashPortion += amount;
+              } else if (s.method === 'CHEQUE') {
+                chequePortion += amount;
+              } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+                nonCashPortion += amount;
+                if (s.method === 'BANK_TRANSFER') {
+                  if (s.bank && !nonCashLabels.includes(s.bank)) {
+                    nonCashLabels.push(s.bank);
+                  } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
+                    nonCashLabels.push('Bank Transfer');
+                  }
+                } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
+                  nonCashLabels.push('GCash');
+                }
+              }
+            });
+          } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+            const amt = order.total_amount || 0;
+            if (paymentMethod === 'CASH') {
+              cashPortion = amt;
+            } else {
+              chequePortion = amt;
+            }
+          }
+
+          const remittedAmount = cashPortion + chequePortion;
+          if (remittedAmount <= 0) {
+            // Skip pure non-cash orders for this view
+            return;
+          }
+
+          const totalQuantity = (order.items || []).reduce((sum: number, item: any) => sum + (item.quantity || 0), 0);
+          const agentId = order.agent_id as string;
+          const agentName = order.agent?.full_name || 'Unknown Agent';
+
+          if (!agentMap[agentId]) {
+            agentMap[agentId] = {
+              agentId,
+              agentName,
+              orders: [],
+              totalOrders: 0,
+              totalUnits: 0,
+              totalAmount: 0,
+            };
+          }
+
+          const dailyOrder: DailyOrderSummary = {
+            agentId,
+            agentName,
+            orderId: order.id,
+            depositId: order.deposit_id,
+            orderNumber: order.order_number,
+            clientName: order.clients?.name || 'Unknown',
+            remittedAmount,
+            fullOrderTotal: order.total_amount || remittedAmount,
+            cashPortion,
+            chequePortion,
+            nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
+            nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
+            totalQuantity,
+          };
+
+          agentMap[agentId].orders.push(dailyOrder);
+          agentMap[agentId].totalOrders += 1;
+          agentMap[agentId].totalUnits += totalQuantity;
+          agentMap[agentId].totalAmount += remittedAmount;
+        });
+
+        const agents = Object.values(agentMap).sort((a, b) => a.agentName.localeCompare(b.agentName));
+        const totals = agents.reduce(
+          (acc, ag) => {
+            acc.totalOrders += ag.totalOrders;
+            acc.totalUnits += ag.totalUnits;
+            return acc;
+          },
+          { totalOrders: 0, totalUnits: 0 }
+        );
+
+        setDayDetailsByDate(prev => ({
+          ...prev,
+          [nextKey]: {
+            agents,
+            totalOrders: totals.totalOrders,
+            totalUnits: totals.totalUnits,
+          },
+        }));
+      } catch (error) {
+        console.error('Error loading day deposit details', error);
+      } finally {
+        setLoadingDayDetails(prev => ({ ...prev, [nextKey]: false }));
+      }
+    })();
   };
 
   const handleSelectDepositType = (type: 'CASH' | 'CHEQUE') => {
@@ -383,202 +949,300 @@ export default function LeaderCashDepositsPage() {
     );
   }
 
+  // Build daily cash data view (cash/cheque only) for the UI template
+  const filteredDailyCashData = pendingDailyGroups
+    .filter((group) => {
+      if (filterFromDate && group.dateKey < filterFromDate) return false;
+      if (filterToDate && group.dateKey > filterToDate) return false;
+      return true;
+    })
+    .map((group) => {
+      const details = dayDetailsByDate[group.dateKey];
+      return {
+        date: group.dateKey,
+        displayDate: group.dateLabel,
+        totalAmount: group.totalAmount,
+        totalQuantity: details?.totalUnits ?? 0,
+        agents: details?.agents ?? [],
+        depositStatus: 'pending' as 'pending' | 'verified',
+        rawGroup: group,
+      };
+    });
+
   return (
     <div className="container mx-auto p-4 md:p-8 space-y-6 md:space-y-8">
       {/* Header & Controls */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 md:gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Team Cash Deposits</h1>
-          <p className="text-sm md:text-base text-muted-foreground">Record cash deposits from remittances</p>
+          <p className="text-sm md:text-base text-muted-foreground">Record cash/cheque deposits from remittances</p>
         </div>
         <Button variant="outline" size="icon" className="h-9 w-9 md:h-10 md:w-10" onClick={() => fetchData()} title="Refresh">
           {loading ? <Loader2 className="h-3 w-3 md:h-4 md:w-4 animate-spin" /> : <Filter className="h-3 w-3 md:h-4 md:w-4" />}
         </Button>
       </div>
 
-      {/* Pending Deposits Section - Cash received from remittance that needs to be deposited to bank */}
-      {pendingDeposits.length > 0 && (
-        <Card className="border-l-4 border-l-orange-500 shadow-sm">
-          <CardHeader className="p-4 md:p-6">
-            <CardTitle className="flex items-center gap-2 text-base md:text-xl">
-              <AlertCircle className="h-4 w-4 md:h-5 md:w-5 text-orange-600" />
-              Pending Deposits ({pendingDeposits.length})
-            </CardTitle>
-            <CardDescription className="text-xs md:text-sm">
-              Cash deposits awaiting verification
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="p-4 md:p-6">
-            {/* Mobile Card View */}
-            <div className="md:hidden space-y-3">
-              {pendingDeposits.map((deposit) => (
-                <div key={deposit.id} className="border rounded-lg p-3 space-y-2 bg-orange-50/30">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-medium text-sm">{deposit.agentName}</p>
-                      <p className="text-xs text-muted-foreground">{format(new Date(deposit.depositDate), 'MMM dd, yyyy')}</p>
-                    </div>
-                    <p className="text-sm font-bold">₱{deposit.amount.toLocaleString()}</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-muted-foreground">Type:</span>
-                      <Badge variant="outline" className={`ml-1 ${deposit.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-green-50 text-green-700 border-green-200"}`}>
-                        {deposit.depositType === 'CHEQUE' ? 'CHEQUE' : 'CASH'}
-                      </Badge>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Source:</span>
-                      <p className="font-medium text-[10px] truncate">{deposit.bankAccount}</p>
-                    </div>
-                    {deposit.referenceNumber && !deposit.referenceNumber.startsWith('REMIT-') && (
-                      <div className="col-span-2">
-                        <span className="text-muted-foreground">Ref:</span>
-                        <p className="font-mono text-[10px]">{deposit.referenceNumber}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action Button */}
-                  <div className="pt-2 border-t">
-                    {['finance', 'super_admin', 'admin'].includes(user?.role || '') ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full h-8 text-xs"
-                        onClick={() => {
-                          setSelectedDepositToView(deposit);
-                          setViewDepositDialogOpen(true);
-                        }}
-                      >
-                        <Eye className="h-3 w-3 mr-1" />
-                        View Details
-                      </Button>
-                    ) : ['manager'].includes(user?.role || '') ? (
-                      <div className="text-center py-1">
-                        <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-200 text-xs">
-                          View Only
-                        </Badge>
-                      </div>
-                    ) : !deposit.referenceNumber || deposit.referenceNumber.startsWith('REMIT-') ? (
-                      <Button
-                        size="sm"
-                        className="w-full h-8 text-xs bg-emerald-600 hover:bg-emerald-700"
-                        onClick={() => handleOpenDepositModal(deposit)}
-                      >
-                        <BanknoteIcon className="h-3 w-3 mr-1" />
-                        Record Deposit
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full h-8 text-xs"
-                        onClick={() => {
-                          setSelectedDepositToView(deposit);
-                          setViewDepositDialogOpen(true);
-                        }}
-                      >
-                        <Eye className="h-3 w-3 mr-1" />
-                        View Details
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
+      {/* Daily Cash Collections (cash/cheque portions only) */}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Calendar className="h-5 w-5" />
+                Daily Cash Collections
+              </CardTitle>
+              <CardDescription>
+                Cash/cheque remittance orders grouped by date. Click to expand and view agent details.
+              </CardDescription>
             </div>
 
-            {/* Desktop Table View */}
-            <div className="hidden md:block">
-              <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Remittance Date</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Ref Number</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pendingDeposits.map((deposit) => (
-                  <TableRow key={deposit.id} className="bg-orange-50/30">
-                    <TableCell>{format(new Date(deposit.depositDate), 'MMM dd, yyyy')}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={deposit.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-green-50 text-green-700 border-green-200"}>
-                        {deposit.depositType === 'CHEQUE' ? (
-                          <CreditCard className="h-3 w-3 mr-1" />
+            {/* Date Filter & Print */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="fromDate" className="text-sm whitespace-nowrap">
+                  From:
+                </Label>
+                <Input
+                  id="fromDate"
+                  type="date"
+                  value={filterFromDate}
+                  onChange={(e) => setFilterFromDate(e.target.value)}
+                  className="w-[140px] h-9"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="toDate" className="text-sm whitespace-nowrap">
+                  To:
+                </Label>
+                <Input
+                  id="toDate"
+                  type="date"
+                  value={filterToDate}
+                  onChange={(e) => setFilterToDate(e.target.value)}
+                  className="w-[140px] h-9"
+                />
+              </div>
+              {(filterFromDate || filterToDate) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearDateFilter}
+                  className="h-9 px-2"
+                >
+                  <X className="h-4 w-4" />
+                  Clear
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handlePrint}
+                className="h-9 gap-1"
+              >
+                <Printer className="h-4 w-4" />
+                Print
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {filteredDailyCashData.length === 0 ? (
+            <div className="py-8 text-center text-muted-foreground">
+              <Calendar className="h-12 w-12 mx-auto mb-2 opacity-50" />
+              <p>No cash/cheque orders found for the selected date range.</p>
+              {(filterFromDate || filterToDate) && (
+                <Button variant="link" onClick={clearDateFilter} className="mt-2">
+                  Clear filter
+                </Button>
+              )}
+            </div>
+          ) : (
+            filteredDailyCashData.map((day) => (
+              <Collapsible
+                key={day.date}
+                open={expandedDays.includes(day.date)}
+                onOpenChange={() => toggleDay(day.date)}
+              >
+                <div className="border rounded-lg overflow-hidden">
+                  {/* Day Header */}
+                  <CollapsibleTrigger asChild>
+                    <div className="flex items-center justify-between p-4 bg-muted/50 hover:bg-muted cursor-pointer transition-colors">
+                      <div className="flex items-center gap-3">
+                        {expandedDays.includes(day.date) ? (
+                          <ChevronDown className="h-5 w-5 text-muted-foreground" />
                         ) : (
-                          <BanknoteIcon className="h-3 w-3 mr-1" />
+                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
                         )}
-                        {deposit.depositType || 'CASH'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-medium">{deposit.agentName}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                        {deposit.bankAccount}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{deposit.referenceNumber || '-'}</TableCell>
-                    <TableCell className="text-right font-bold text-lg">₱{deposit.amount.toLocaleString()}</TableCell>
-                    <TableCell className="text-right">
-                      {['finance', 'super_admin', 'admin'].includes(user?.role || '') ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedDepositToView(deposit);
-                            setViewDepositDialogOpen(true);
-                          }}
-                        >
-                          <Eye className="h-4 w-4 mr-1" />
-                          View Details
-                        </Button>
-                      ) : ['manager'].includes(user?.role || '') ? (
-                        <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-200">
-                          View Only
-                        </Badge>
-                      ) : !deposit.referenceNumber || deposit.referenceNumber.startsWith('REMIT-') ? (
-                        <Button
-                          size="sm"
-                          onClick={() => handleOpenDepositModal(deposit)}
-                          className="bg-emerald-600 hover:bg-emerald-700"
-                        >
-                          <BanknoteIcon className="h-4 w-4 mr-1" />
-                          Record Deposit
-                        </Button>
-                      ) : (
-                        <div className="flex items-center gap-2 justify-end">
-                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-                            <AlertCircle className="h-3 w-3 mr-1" />
-                            Awaiting Verification
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedDepositToView(deposit);
-                              setViewDepositDialogOpen(true);
-                            }}
-                          >
-                            <Eye className="h-4 w-4 mr-1" />
-                            View
-                          </Button>
+                        <div>
+                          <h3 className="font-semibold text-lg">{day.displayDate}</h3>
+                          <p className="text-sm text-muted-foreground">
+                            {day.agents.length} agent(s) •{' '}
+                            {day.agents.reduce((sum, a) => sum + a.totalOrders, 0)} order(s)
+                          </p>
                         </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <div className="font-bold text-lg">
+                            ₱{day.totalAmount.toLocaleString()}
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {day.totalQuantity} units
+                          </div>
+                        </div>
+                        {getStatusBadge(day.depositStatus)}
+                      </div>
+                    </div>
+                  </CollapsibleTrigger>
+
+                  {/* Day Content */}
+                  <CollapsibleContent>
+                    <div className="p-4 space-y-4 border-t">
+                      {/* Agents List */}
+                      {day.agents.map((agent) => {
+                        const agentKey = `${day.date}-${agent.agentId}`;
+                        return (
+                          <Collapsible
+                            key={agentKey}
+                            open={expandedAgents.includes(agentKey)}
+                            onOpenChange={() => toggleAgent(agentKey)}
+                          >
+                            <div className="border rounded-lg">
+                              {/* Agent Header */}
+                              <CollapsibleTrigger asChild>
+                                <div className="flex items-center justify-between p-3 hover:bg-muted/30 cursor-pointer transition-colors">
+                                  <div className="flex items-center gap-3">
+                                    {expandedAgents.includes(agentKey) ? (
+                                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                      <User className="h-4 w-4 text-primary" />
+                                    </div>
+                                    <div>
+                                      <p className="font-medium">{agent.agentName}</p>
+                                      <p className="text-xs text-muted-foreground">
+                                        {agent.totalOrders} order(s)
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="font-semibold">
+                                      ₱{agent.totalAmount.toLocaleString()}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {agent.totalUnits} units
+                                    </div>
+                                  </div>
+                                </div>
+                              </CollapsibleTrigger>
+
+                              {/* Agent Orders */}
+                              <CollapsibleContent>
+                                <div className="border-t">
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow className="bg-muted/30">
+                                        <TableHead>Order #</TableHead>
+                                        <TableHead>Client</TableHead>
+                                        <TableHead className="text-right">Qty</TableHead>
+                                        <TableHead className="text-right">Amount</TableHead>
+                                        <TableHead className="text-right">Action</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {agent.orders.map((order) => (
+                                        <TableRow key={order.orderId}>
+                                          <TableCell className="font-mono text-sm">
+                                            {order.orderNumber}
+                                          </TableCell>
+                                          <TableCell>
+                                            <div>
+                                              <p className="font-medium">{order.clientName}</p>
+                                            </div>
+                                          </TableCell>
+                                          <TableCell className="text-right">
+                                            {order.totalQuantity}
+                                          </TableCell>
+                                          <TableCell className="text-right font-semibold">
+                                            ₱{order.remittedAmount.toLocaleString()}
+                                          </TableCell>
+                                          <TableCell className="text-right">
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleViewOrderBreakdown(order);
+                                              }}
+                                            >
+                                              <Eye className="h-4 w-4" />
+                                            </Button>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </CollapsibleContent>
+                            </div>
+                          </Collapsible>
+                        );
+                      })}
+
+                      {/* Day Summary & Actions */}
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-4 border-t">
+                        <div className="bg-muted/50 rounded-lg p-3 flex-1">
+                          <div className="grid grid-cols-3 gap-4 text-center">
+                            <div>
+                              <p className="text-xs text-muted-foreground">Total Orders</p>
+                              <p className="font-bold">
+                                {day.agents.reduce((sum, a) => sum + a.totalOrders, 0)}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Total Quantity</p>
+                              <p className="font-bold">{day.totalQuantity}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Total Amount</p>
+                              <p className="font-bold text-green-600">
+                                ₱{day.totalAmount.toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                          {day.depositStatus === 'pending' ? (
+                            <Button
+                              className="gap-2 bg-green-600 hover:bg-green-700"
+                              onClick={() => handleOpenDayDeposit(day.date)}
+                            >
+                              <Upload className="h-4 w-4" />
+                              Record Deposit
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              className="gap-2"
+                              onClick={() => handleViewDepositProof(day.date)}
+                            >
+                              <Receipt className="h-4 w-4" />
+                              View Deposit
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </div>
+              </Collapsible>
+            ))
+          )}
+        </CardContent>
+      </Card>
 
       {/* Deposit History Section */}
       <Card>
@@ -601,7 +1265,7 @@ export default function LeaderCashDepositsPage() {
                         <p className="text-xs text-muted-foreground">{format(new Date(deposit.depositDate), 'MMM dd, yyyy')}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-bold">₱{deposit.amount.toLocaleString()}</p>
+                        <p className="text-sm font-bold">₱{getEffectiveDepositAmount(deposit).toLocaleString()}</p>
                         <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 h-5 text-[10px]">
                           <CheckCircle2 className="h-2 w-2 mr-1" /> Verified
                         </Badge>
@@ -611,8 +1275,11 @@ export default function LeaderCashDepositsPage() {
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div>
                         <span className="text-muted-foreground">Type:</span>
-                        <Badge variant="outline" className={`ml-1 ${deposit.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-green-50 text-green-700 border-green-200"}`}>
-                          {deposit.depositType === 'CHEQUE' ? 'CHEQUE' : 'CASH'}
+                        <Badge
+                          variant="outline"
+                          className={`ml-1 ${getDepositTypeBadgeClass(getEffectiveDepositType(deposit))}`}
+                        >
+                          {getEffectiveDepositType(deposit)}
                         </Badge>
                       </div>
                       <div>
@@ -630,10 +1297,7 @@ export default function LeaderCashDepositsPage() {
                         variant="outline"
                         size="sm"
                         className="w-full h-8 text-xs"
-                        onClick={() => {
-                          setSelectedDepositToView(deposit);
-                          setViewDepositDialogOpen(true);
-                        }}
+                        onClick={() => openViewDeposit(deposit)}
                       >
                         <Eye className="h-3 w-3 mr-1" />
                         View Details
@@ -659,42 +1323,44 @@ export default function LeaderCashDepositsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {depositHistory.map((deposit) => (
-                  <TableRow key={deposit.id}>
-                    <TableCell>{format(new Date(deposit.depositDate), 'MMM dd, yyyy')}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={deposit.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-green-50 text-green-700 border-green-200"}>
-                        {deposit.depositType === 'CHEQUE' ? (
-                          <CreditCard className="h-3 w-3 mr-1" />
-                        ) : (
-                          <BanknoteIcon className="h-3 w-3 mr-1" />
-                        )}
-                        {deposit.depositType || 'CASH'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{deposit.agentName}</TableCell>
-                    <TableCell>{deposit.bankAccount}</TableCell>
-                    <TableCell className="font-mono text-xs">{deposit.referenceNumber || '-'}</TableCell>
-                    <TableCell className="text-right font-medium">₱{deposit.amount.toLocaleString()}</TableCell>
-                    <TableCell className="text-right">
-                      <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
-                        <CheckCircle2 className="h-3 w-3 mr-1" /> Verified
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedDepositToView(deposit);
-                          setViewDepositDialogOpen(true);
-                        }}
-                      >
-                        View Details
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {depositHistory.map((deposit) => {
+                  const displayType = getEffectiveDepositType(deposit);
+                  const displayAmount = getEffectiveDepositAmount(deposit);
+
+                  return (
+                    <TableRow key={deposit.id}>
+                      <TableCell>{format(new Date(deposit.depositDate), 'MMM dd, yyyy')}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={getDepositTypeBadgeClass(displayType)}>
+                          {displayType === 'CHEQUE' ? (
+                            <CreditCard className="h-3 w-3 mr-1" />
+                          ) : (
+                            <BanknoteIcon className="h-3 w-3 mr-1" />
+                          )}
+                          {displayType}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{deposit.agentName}</TableCell>
+                      <TableCell>{deposit.bankAccount}</TableCell>
+                      <TableCell className="font-mono text-xs">{deposit.referenceNumber || '-'}</TableCell>
+                      <TableCell className="text-right font-medium">₱{displayAmount.toLocaleString()}</TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                          <CheckCircle2 className="h-3 w-3 mr-1" /> Verified
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openViewDeposit(deposit)}
+                        >
+                          View Details
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
               </div>
@@ -751,23 +1417,23 @@ export default function LeaderCashDepositsPage() {
             <ScrollArea className="h-full">
               <div className="p-6 space-y-4">
                 <SheetHeader>
-                  <SheetTitle className="text-base">Record {depositType === 'CHEQUE' ? 'Cheque' : 'Cash'} Deposit</SheetTitle>
+                  <SheetTitle className="text-base">Record Cash &amp; Cheque Deposit</SheetTitle>
                   <SheetDescription className="text-xs">
-                    Enter deposit details for {selectedPendingDeposit?.agentName}
+                    Enter deposit details for remittance from {selectedPendingDeposit?.agentName}
                   </SheetDescription>
                 </SheetHeader>
                 {/* Form Content */}
                 <div className="space-y-4">
                   <div className={`p-3 rounded-lg flex justify-between items-center border ${depositType === 'CHEQUE' ? 'bg-purple-50 border-purple-100' : 'bg-emerald-50 border-emerald-100'}`}>
-                    <span className={`${depositType === 'CHEQUE' ? 'text-purple-800' : 'text-emerald-800'} text-xs font-medium`}>Amount:</span>
+                    <span className={`${depositType === 'CHEQUE' ? 'text-purple-800' : 'text-emerald-800'} text-xs font-medium`}>Amount to Deposit:</span>
                     <span className={`text-lg font-bold ${depositType === 'CHEQUE' ? 'text-purple-700' : 'text-emerald-700'}`}>
-                      ₱{(selectedPendingDeposit?.amount || 0).toLocaleString()}
+                      ₱{modalDepositAmount.toLocaleString()}
                     </span>
                   </div>
 
                   {selectedPendingDeposit && (
                     <div className="border rounded-md p-3 bg-orange-50/30 border-orange-200 space-y-2 text-xs">
-                      <p className="font-semibold uppercase text-muted-foreground text-[10px]">Remittance Details</p>
+                      <p className="font-semibold uppercase text-muted-foreground text-[10px]">Remittance Summary</p>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Agent:</span>
                         <span className="font-medium">{selectedPendingDeposit.agentName}</span>
@@ -776,6 +1442,14 @@ export default function LeaderCashDepositsPage() {
                         <span className="text-muted-foreground">Date:</span>
                         <span className="font-medium">{format(new Date(selectedPendingDeposit.depositDate), 'MMM dd, yyyy')}</span>
                       </div>
+                      {modalOrderNumbers && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Orders:</span>
+                          <span className="font-mono text-[10px] text-right max-w-[180px] truncate">
+                            {modalOrderNumbers}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -786,9 +1460,23 @@ export default function LeaderCashDepositsPage() {
                         <SelectValue placeholder="Select bank" />
                       </SelectTrigger>
                       <SelectContent>
-                        {BANK_OPTIONS.map((bank) => (
-                          <SelectItem key={bank} value={bank} className="text-xs">{bank}</SelectItem>
-                        ))}
+                        {(paymentSettings?.bank_accounts || [])
+                          .filter((b) => b.enabled)
+                          .map((bank, index) => {
+                            const label = formatBankLabel(bank.name, bank.account_number);
+                            return (
+                              <SelectItem
+                                key={`${bank.name}-${bank.account_number}-${index}`}
+                                value={label}
+                                className="text-xs"
+                              >
+                                {label}
+                              </SelectItem>
+                            );
+                          })}
+                        <SelectItem value="DIRECT_OFFICE" className="text-xs">
+                          Direct to Office (Company)
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -909,137 +1597,210 @@ export default function LeaderCashDepositsPage() {
         </Sheet>
       ) : (
         <Dialog open={depositDialogOpen} onOpenChange={setDepositDialogOpen}>
-          <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Record {depositType === 'CHEQUE' ? 'Cheque' : 'Cash'} Deposit</DialogTitle>
+              <DialogTitle>Record Cash &amp; Cheque Deposit</DialogTitle>
               <DialogDescription>
-                Enter {depositType?.toLowerCase()} deposit details for remittance from <strong>{selectedPendingDeposit?.agentName}</strong>.
+                Enter deposit details for remittance from <strong>{selectedPendingDeposit?.agentName}</strong>.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className={`p-4 rounded-lg flex justify-between items-center border ${depositType === 'CHEQUE' ? 'bg-purple-50 border-purple-100' : 'bg-emerald-50 border-emerald-100'}`}>
                 <span className={`${depositType === 'CHEQUE' ? 'text-purple-800' : 'text-emerald-800'} font-medium`}>Amount to Deposit:</span>
                 <span className={`text-2xl font-bold ${depositType === 'CHEQUE' ? 'text-purple-700' : 'text-emerald-700'}`}>
-                  ₱{(selectedPendingDeposit?.amount || 0).toLocaleString()}
+                  ₱{modalDepositAmount.toLocaleString()}
                 </span>
               </div>
 
-              {selectedPendingDeposit && (
-                <div className="border rounded-md p-3 bg-orange-50/30 border-orange-200">
-                  <p className="text-xs font-semibold uppercase text-muted-foreground mb-2">Remittance Details</p>
-                  <div className="space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Agent:</span>
-                      <span className="font-medium">{selectedPendingDeposit.agentName}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Remittance Date:</span>
-                      <span className="font-medium">{format(new Date(selectedPendingDeposit.depositDate), 'MMM dd, yyyy')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Reference:</span>
-                      <span className="font-mono text-xs">{selectedPendingDeposit.referenceNumber}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Bank Account</label>
-                <Select value={bankAccount} onValueChange={setBankAccount}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a bank account" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BANK_OPTIONS.map((bank) => (
-                      <SelectItem key={bank} value={bank}>{bank}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Deposit Reference Number</label>
-                <Input
-                  placeholder="e.g. TR-123456789"
-                  value={referenceNumber}
-                  onChange={(e) => setReferenceNumber(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Deposit Slip Photo</label>
-                {showCamera ? (
-                  <div className="space-y-3">
-                    <div className="relative bg-black rounded-lg overflow-hidden">
-                      <video
-                        id="camera-video"
-                        autoPlay
-                        playsInline
-                        ref={(video) => {
-                          if (video && stream) {
-                            video.srcObject = stream;
-                          }
-                        }}
-                        className="w-full h-64 object-cover"
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="button" onClick={capturePhoto} className="flex-1">
-                        <Camera className="h-4 w-4 mr-2" />
-                        Capture Photo
-                      </Button>
-                      <Button type="button" variant="outline" onClick={stopCamera}>
-                        <X className="h-4 w-4 mr-2" />
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : depositSlipFile ? (
-                  <div className="space-y-3">
-                    <div className={`border-2 rounded-lg p-4 ${depositType === 'CHEQUE' ? 'border-purple-200 bg-purple-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                      <div className={`text-sm font-medium flex items-center justify-center gap-2 ${depositType === 'CHEQUE' ? 'text-purple-700' : 'text-emerald-700'}`}>
-                        <CheckCircle2 className="h-5 w-5" />
-                        <span>Photo Captured: {depositSlipFile.name}</span>
+              <div className="grid grid-cols-1 md:grid-cols-[3fr_2fr] gap-4">
+                {selectedPendingDeposit && (
+                  <div className="border rounded-md p-4 bg-orange-50/70 border-orange-200 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-xs md:text-sm font-semibold uppercase text-muted-foreground mb-1">
+                          Remittance Summary
+                        </p>
+                        <p className="text-sm md:text-base font-medium">
+                          {selectedPendingDeposit.agentName}
+                        </p>
+                      </div>
+                      <div className="text-right text-xs text-muted-foreground">
+                        <p>{format(new Date(selectedPendingDeposit.depositDate), 'MMM dd, yyyy')}</p>
+                        {selectedPendingDeposit.referenceNumber && (
+                          <p className="font-mono mt-0.5">
+                            {selectedPendingDeposit.referenceNumber}
+                          </p>
+                        )}
                       </div>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setDepositSlipFile(null)}
-                      className="w-full"
-                    >
-                      <X className="h-4 w-4 mr-2" />
-                      Remove Photo
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={startCamera}
-                      className="w-full"
-                    >
-                      <Camera className="h-4 w-4 mr-2" />
-                      Take Photo
-                    </Button>
-                    <div className="relative">
-                      <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                          onChange={(e) => setDepositSlipFile(e.target.files?.[0] || null)}
-                        />
-                        <div className="space-y-2 pointer-events-none">
-                          <UploadCloud className="h-8 w-8 mx-auto text-muted-foreground" />
-                          <p className="text-xs text-muted-foreground">Or click to upload from device</p>
+
+                    {depositOrders.length > 0 && (
+                      <div className="rounded-md border bg-white max-h-72 overflow-y-auto shadow-inner w-full">
+                        <div className="px-3 pt-3 pb-1">
+                          <p className="text-xs md:text-sm font-semibold text-orange-900">
+                            Orders included in this deposit
+                          </p>
+                        </div>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="text-xs md:text-sm whitespace-nowrap">Order #</TableHead>
+                              <TableHead className="text-xs md:text-sm whitespace-nowrap">Client</TableHead>
+                              <TableHead className="text-right text-xs md:text-sm whitespace-nowrap">Cash</TableHead>
+                              <TableHead className="text-right text-xs md:text-sm whitespace-nowrap">Cheque</TableHead>
+                              <TableHead className="text-right text-xs md:text-sm whitespace-nowrap">Total</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {depositOrders.map((order) => (
+                              <TableRow key={order.orderId}>
+                                <TableCell className="font-mono text-[11px] md:text-sm">
+                                  {order.orderNumber}
+                                </TableCell>
+                                <TableCell className="text-[11px] md:text-sm">
+                                  {order.clientName}
+                                </TableCell>
+                                <TableCell className="text-right text-[11px] md:text-sm">
+                                  {order.cashPortion > 0 ? `₱${order.cashPortion.toLocaleString()}` : '—'}
+                                </TableCell>
+                                <TableCell className="text-right text-[11px] md:text-sm">
+                                  {order.chequePortion > 0 ? `₱${order.chequePortion.toLocaleString()}` : '—'}
+                                </TableCell>
+                                <TableCell className="text-right text-[11px] md:text-sm font-medium">
+                                  ₱{order.remittedAmount.toLocaleString()}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                        <div className="sticky bottom-0 flex justify-end gap-4 px-4 py-2 border-t bg-slate-50 text-[11px] md:text-sm">
+                          <span className="text-muted-foreground">
+                            Cash:&nbsp;
+                            <span className="font-semibold text-emerald-700">
+                              ₱{modalCashAmount.toLocaleString()}
+                            </span>
+                          </span>
+                          <span className="text-muted-foreground">
+                            Cheque:&nbsp;
+                            <span className="font-semibold text-purple-700">
+                              ₱{modalChequeAmount.toLocaleString()}
+                            </span>
+                          </span>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
+
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Bank Account</label>
+                    <Select value={bankAccount} onValueChange={setBankAccount}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a bank account" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(paymentSettings?.bank_accounts || [])
+                          .filter((b) => b.enabled)
+                          .map((bank, index) => {
+                            const label = formatBankLabel(bank.name, bank.account_number);
+                            return (
+                              <SelectItem key={`${bank.name}-${bank.account_number}-${index}`} value={label}>
+                                {label}
+                              </SelectItem>
+                            );
+                          })}
+                      <SelectItem value="DIRECT_OFFICE">
+                        Direct to Office (Company)
+                      </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Deposit Reference Number</label>
+                    <Input
+                      placeholder="e.g. TR-123456789"
+                      value={referenceNumber}
+                      onChange={(e) => setReferenceNumber(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Deposit Slip Photo</label>
+                    {showCamera ? (
+                      <div className="space-y-3">
+                        <div className="relative bg-black rounded-lg overflow-hidden">
+                          <video
+                            id="camera-video"
+                            autoPlay
+                            playsInline
+                            ref={(video) => {
+                              if (video && stream) {
+                                video.srcObject = stream;
+                              }
+                            }}
+                            className="w-full h-40 md:h-56 object-cover"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button type="button" onClick={capturePhoto} className="flex-1">
+                            <Camera className="h-4 w-4 mr-2" />
+                            Capture Photo
+                          </Button>
+                          <Button type="button" variant="outline" onClick={stopCamera}>
+                            <X className="h-4 w-4 mr-2" />
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : depositSlipFile ? (
+                      <div className="space-y-3">
+                        <div className={`border-2 rounded-lg p-4 ${depositType === 'CHEQUE' ? 'border-purple-200 bg-purple-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                          <div className={`text-sm font-medium flex items-center justify-center gap-2 ${depositType === 'CHEQUE' ? 'text-purple-700' : 'text-emerald-700'}`}>
+                            <CheckCircle2 className="h-5 w-5" />
+                            <span>Photo Captured: {depositSlipFile.name}</span>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setDepositSlipFile(null)}
+                          className="w-full"
+                        >
+                          <X className="h-4 w-4 mr-2" />
+                          Remove Photo
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={startCamera}
+                          className="w-full"
+                        >
+                          <Camera className="h-4 w-4 mr-2" />
+                          Take Photo
+                        </Button>
+                        <div className="relative">
+                          <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                              onChange={(e) => setDepositSlipFile(e.target.files?.[0] || null)}
+                            />
+                            <div className="space-y-2 pointer-events-none">
+                              <UploadCloud className="h-8 w-8 mx-auto text-muted-foreground" />
+                              <p className="text-xs text-muted-foreground">Or click to upload from device</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
             <DialogFooter>
@@ -1074,16 +1835,16 @@ export default function LeaderCashDepositsPage() {
               <div className="p-6 space-y-4">
                 <SheetHeader>
                   <SheetTitle className="text-base">Deposit Details</SheetTitle>
-                  <SheetDescription className="text-xs">Verified deposit information</SheetDescription>
+                  <SheetDescription className="text-xs">Cash/cheque deposit information and order breakdown</SheetDescription>
                 </SheetHeader>
 
                 {selectedDepositToView && (
                   <>
                     {/* Amount Card */}
                     <div className="p-3 bg-gray-50 rounded-lg flex justify-between items-center border border-gray-100">
-                      <span className="text-gray-600 text-xs font-medium">Amount:</span>
+                      <span className="text-gray-600 text-xs font-medium">Amount (Cash/Cheque):</span>
                       <span className="text-lg font-bold text-gray-900">
-                        ₱{selectedDepositToView.amount.toLocaleString()}
+                        ₱{selectedDepositDisplayAmount.toLocaleString()}
                       </span>
                     </div>
 
@@ -1117,13 +1878,18 @@ export default function LeaderCashDepositsPage() {
                       <div className="border rounded-lg p-3 bg-background">
                         <div className="flex justify-between items-center">
                           <span className="text-muted-foreground text-xs">Type</span>
-                          <Badge variant="outline" className={selectedDepositToView.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200 h-5" : "bg-green-50 text-green-700 border-green-200 h-5"}>
-                            {selectedDepositToView.depositType === 'CHEQUE' ? (
+                          <Badge
+                            variant="outline"
+                            className={`${getDepositTypeBadgeClass(selectedDepositDisplayType || getDisplayDepositType(selectedDepositToView.depositType))} h-5`}
+                          >
+                            {selectedDepositDisplayType === 'CHEQUE' ? (
                               <CreditCard className="h-2 w-2 mr-1" />
                             ) : (
                               <BanknoteIcon className="h-2 w-2 mr-1" />
                             )}
-                            <span className="text-[10px]">{selectedDepositToView.depositType || 'CASH'}</span>
+                            <span className="text-[10px]">
+                              {selectedDepositDisplayType || getDisplayDepositType(selectedDepositToView.depositType)}
+                            </span>
                           </Badge>
                         </div>
                       </div>
@@ -1161,6 +1927,50 @@ export default function LeaderCashDepositsPage() {
                           <span className="text-[10px] font-mono">{selectedDepositToView.referenceNumber}</span>
                         </div>
                       </div>
+                    </div>
+
+                    {/* Order Breakdown */}
+                    <div className="space-y-2 mt-4">
+                      <h4 className="text-xs font-semibold text-muted-foreground">Order Breakdown (Cash / Cheque)</h4>
+                      {loadingDepositOrders ? (
+                        <div className="flex items-center justify-center py-4">
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : depositOrders.length === 0 ? (
+                        <p className="text-[11px] text-muted-foreground">No linked orders found for this deposit.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {depositOrders.map((order) => (
+                            <div key={order.orderId} className="border rounded-lg p-2 bg-background">
+                              <div className="flex justify-between items-center text-[11px] mb-1">
+                                <span className="font-mono text-[10px] text-muted-foreground">{order.orderNumber}</span>
+                                <span className="font-semibold text-emerald-700">
+                                  ₱{order.remittedAmount.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-muted-foreground mb-1 flex justify-between">
+                                <span className="truncate mr-2">{order.clientName}</span>
+                              </div>
+                              {(order.cashPortion > 0 || order.chequePortion > 0) && (
+                                <div className="text-[10px] text-muted-foreground">
+                                  {order.cashPortion > 0 && `Cash ₱${order.cashPortion.toFixed(2)}`}
+                                  {order.chequePortion > 0 && (
+                                    <>
+                                      {order.cashPortion > 0 ? ' • ' : ''}
+                                      {`Cheque ₱${order.chequePortion.toFixed(2)}`}
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                              {order.nonCashPortion && order.nonCashPortion > 0 && (
+                                <div className="text-[10px] text-muted-foreground">
+                                  {(order.nonCashLabel || 'Non-cash') + ` ₱${order.nonCashPortion.toFixed(2)} (handled by Finance)`}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* Deposit Slip Image */}
@@ -1205,16 +2015,16 @@ export default function LeaderCashDepositsPage() {
             <DialogHeader>
               <DialogTitle>Deposit Details</DialogTitle>
               <DialogDescription>
-                Verified deposit information.
+                Cash/cheque deposit information and order breakdown.
               </DialogDescription>
             </DialogHeader>
 
             {selectedDepositToView && (
               <div className="space-y-4 py-4">
                 <div className="p-4 bg-gray-50 rounded-lg flex justify-between items-center border border-gray-100">
-                  <span className="text-gray-600 font-medium">Amount:</span>
+                  <span className="text-gray-600 font-medium">Amount (Cash/Cheque):</span>
                   <span className="text-2xl font-bold text-gray-900">
-                    ₱{selectedDepositToView.amount.toLocaleString()}
+                    ₱{selectedDepositDisplayAmount.toLocaleString()}
                   </span>
                 </div>
 
@@ -1243,13 +2053,16 @@ export default function LeaderCashDepositsPage() {
                   <div className="grid grid-cols-3 gap-2 py-2 border-b">
                     <span className="text-muted-foreground">Type</span>
                     <span className="col-span-2 flex items-center gap-2">
-                      <Badge variant="outline" className={selectedDepositToView.depositType === 'CHEQUE' ? "bg-purple-50 text-purple-700 border-purple-200" : "bg-green-50 text-green-700 border-green-200"}>
-                        {selectedDepositToView.depositType === 'CHEQUE' ? (
+                      <Badge
+                        variant="outline"
+                        className={getDepositTypeBadgeClass(selectedDepositDisplayType || getDisplayDepositType(selectedDepositToView.depositType))}
+                      >
+                        {selectedDepositDisplayType === 'CHEQUE' ? (
                           <CreditCard className="h-3 w-3 mr-1" />
                         ) : (
                           <BanknoteIcon className="h-3 w-3 mr-1" />
                         )}
-                        {selectedDepositToView.depositType || 'CASH'}
+                        {selectedDepositDisplayType || getDisplayDepositType(selectedDepositToView.depositType)}
                       </Badge>
                     </span>
                   </div>
@@ -1275,6 +2088,59 @@ export default function LeaderCashDepositsPage() {
                     <span className="text-muted-foreground">Ref Number</span>
                     <span className="col-span-2 font-mono">{selectedDepositToView.referenceNumber}</span>
                   </div>
+                </div>
+
+                {/* Order Breakdown */}
+                <div className="space-y-2 mt-2">
+                  <h4 className="text-sm font-semibold text-muted-foreground">Order Breakdown (Cash / Cheque)</h4>
+                  {loadingDepositOrders ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : depositOrders.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No linked orders found for this deposit.</p>
+                  ) : (
+                    <div className="border rounded-lg max-h-80 overflow-y-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Order #</TableHead>
+                            <TableHead>Client</TableHead>
+                            <TableHead className="text-right">Amount (Cash/Cheque)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {depositOrders.map((order) => (
+                            <TableRow key={order.orderId}>
+                              <TableCell className="font-mono text-xs">{order.orderNumber}</TableCell>
+                              <TableCell className="text-sm">{order.clientName}</TableCell>
+                              <TableCell className="text-right text-sm font-semibold align-top">
+                                <div className="space-y-1">
+                                  <div>₱{order.remittedAmount.toFixed(2)}</div>
+                                  {(order.cashPortion > 0 || order.chequePortion > 0) && (
+                                    <div className="text-xs text-muted-foreground">
+                                      {order.cashPortion > 0 && `Cash ₱${order.cashPortion.toFixed(2)}`}
+                                      {order.chequePortion > 0 && (
+                                        <>
+                                          {order.cashPortion > 0 ? ' • ' : ''}
+                                          {`Cheque ₱${order.chequePortion.toFixed(2)}`}
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                  {order.nonCashPortion && order.nonCashPortion > 0 && (
+                                    <div className="text-[11px] text-muted-foreground">
+                                      {(order.nonCashLabel || 'Non-cash') + ` ₱${order.nonCashPortion.toFixed(2)} (handled by Finance)`}
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </div>
 
                 {selectedDepositToView.depositSlipUrl && (

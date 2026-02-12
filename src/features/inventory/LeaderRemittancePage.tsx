@@ -161,21 +161,79 @@ export default function LeaderRemittancePage() {
 
       if (error) throw error;
 
-      const formattedData: RemittanceLog[] = (data || []).map((item: any) => ({
-        id: item.id,
-        agent_id: item.agent_id,
-        leader_id: item.leader_id,
-        remittance_date: item.remittance_date,
-        remitted_at: item.remitted_at,
-        items_remitted: item.items_remitted,
-        total_units: item.total_units,
-        orders_count: item.orders_count,
-        total_revenue: item.total_revenue,
-        order_ids: item.order_ids || [],
-        signature_url: item.signature_url,
-        signature_path: item.signature_path,
-        agent_name: item.agent?.full_name || 'Unknown Agent'
-      }));
+      const remittanceRows = data || [];
+
+      // Collect all unique order IDs across remittances
+      const allOrderIds = Array.from(
+        new Set(
+          remittanceRows.flatMap((item: any) => item.order_ids || [])
+        )
+      );
+
+      // Map of order_id -> cash/cheque remittance amount (for that order)
+      const cashRevenueByOrder: Record<string, number> = {};
+
+      if (allOrderIds.length > 0) {
+        const { data: ordersData, error: ordersError } = await supabase
+          .from('client_orders')
+          .select('id, total_amount, payment_method, payment_mode, payment_splits')
+          .in('id', allOrderIds);
+
+        if (ordersError) throw ordersError;
+
+        (ordersData || []).forEach((order: any) => {
+          const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+          const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+          const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+          let cashPortion = 0;
+          let chequePortion = 0;
+
+          if (paymentMode === 'SPLIT') {
+            splits.forEach((s: any) => {
+              if (s.method === 'CASH') {
+                cashPortion += s.amount || 0;
+              } else if (s.method === 'CHEQUE') {
+                chequePortion += s.amount || 0;
+              }
+            });
+          } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+            const amt = order.total_amount || 0;
+            if (paymentMethod === 'CASH') {
+              cashPortion = amt;
+            } else {
+              chequePortion = amt;
+            }
+          }
+
+          const remittanceAmount = cashPortion + chequePortion;
+          cashRevenueByOrder[order.id] = remittanceAmount;
+        });
+      }
+
+      const formattedData: RemittanceLog[] = remittanceRows.map((item: any) => {
+        const orderIds: string[] = item.order_ids || [];
+        const calculatedRevenue = orderIds.reduce((sum: number, orderId: string) => {
+          return sum + (cashRevenueByOrder[orderId] || 0);
+        }, 0);
+
+        return {
+          id: item.id,
+          agent_id: item.agent_id,
+          leader_id: item.leader_id,
+          remittance_date: item.remittance_date,
+          remitted_at: item.remitted_at,
+          items_remitted: item.items_remitted,
+          total_units: item.total_units,
+          orders_count: item.orders_count,
+          // Use calculated cash/cheque revenue when available, otherwise fall back to stored total_revenue
+          total_revenue: calculatedRevenue > 0 ? calculatedRevenue : item.total_revenue,
+          order_ids: orderIds,
+          signature_url: item.signature_url,
+          signature_path: item.signature_path,
+          agent_name: item.agent?.full_name || 'Unknown Agent'
+        };
+      });
 
       if (!formattedData.length) {
         setRemittances([]);
@@ -208,6 +266,9 @@ export default function LeaderRemittancePage() {
           id,
           order_number,
           total_amount,
+          payment_method,
+          payment_mode,
+          payment_splits,
           created_at,
           clients(name),
           items:client_order_items(
@@ -219,18 +280,67 @@ export default function LeaderRemittancePage() {
 
       if (error) throw error;
 
-      const formattedOrders = (data || []).flatMap((order: any) =>
-        (order.items || []).map((item: any) => ({
+      const formattedOrders = (data || []).flatMap((order: any) => {
+        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+        const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+        let cashPortion = 0;
+        let chequePortion = 0;
+        let nonCashPortion = 0;
+        const nonCashLabels: string[] = [];
+
+        if (paymentMode === 'SPLIT') {
+          splits.forEach((s: any) => {
+            const amount = s.amount || 0;
+            if (s.method === 'CASH') {
+              cashPortion += amount;
+            } else if (s.method === 'CHEQUE') {
+              chequePortion += amount;
+            } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+              nonCashPortion += amount;
+              if (s.method === 'BANK_TRANSFER') {
+                if (s.bank && !nonCashLabels.includes(s.bank)) {
+                  nonCashLabels.push(s.bank);
+                } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
+                  nonCashLabels.push('Bank Transfer');
+                }
+              } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
+                nonCashLabels.push('GCash');
+              }
+            }
+          });
+        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+          const amt = order.total_amount || 0;
+          if (paymentMethod === 'CASH') {
+            cashPortion = amt;
+          } else {
+            chequePortion = amt;
+          }
+        }
+
+        const remittanceAmount = cashPortion + chequePortion;
+
+        return (order.items || []).map((item: any) => ({
           orderId: order.id,
           orderNumber: order.order_number,
           clientName: order.clients?.name || 'Unknown',
           variantName: item.variant?.name || 'Unknown',
           brandName: item.variant?.brand?.name || 'Unknown',
           quantity: item.quantity,
-          totalAmount: order.total_amount,
+          // Amount remitted for this order (cash + cheque portions only)
+          totalAmount: remittanceAmount,
+          // Full order total for reference
+          fullOrderTotal: order.total_amount,
+          cashPortion,
+          chequePortion,
+          paymentMode,
+          paymentMethod,
+          nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
+          nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
           createdAt: order.created_at
-        }))
-      );
+        }));
+      });
 
       setRemittanceOrders(formattedOrders);
     } catch (error: any) {
@@ -251,6 +361,19 @@ export default function LeaderRemittancePage() {
     // No inventory is transferred during remittance, so unsold items section shows informational message
     setLoadingUnsoldItems(false);
     setUnsoldItems([]);
+  };
+
+  // Helper function to calculate correct cash/cheque revenue from order details
+  const calculateCashRevenue = (): number => {
+    if (remittanceOrders.length === 0) {
+      return selectedRemittance?.total_revenue || 0;
+    }
+    // Sum unique orders' remittance amounts (cash + cheque portions only)
+    return Array.from(new Set(remittanceOrders.map(o => o.orderId)))
+      .reduce((sum, orderId) => {
+        const order = remittanceOrders.find(o => o.orderId === orderId);
+        return sum + (order?.totalAmount || 0);
+      }, 0);
   };
 
   // Helper to check for missing orders
@@ -585,7 +708,7 @@ export default function LeaderRemittancePage() {
                           <Card className="bg-green-50 border-green-200">
                             <CardContent className="p-3">
                               <div className="text-[10px] text-green-600 mb-1">Revenue</div>
-                              <div className="text-lg font-bold text-green-700">₱{(selectedRemittance.total_revenue / 1000).toFixed(0)}k</div>
+                              <div className="text-lg font-bold text-green-700">₱{(calculateCashRevenue() / 1000).toFixed(0)}k</div>
                             </CardContent>
                           </Card>
 
@@ -601,7 +724,7 @@ export default function LeaderRemittancePage() {
                           <h4 className="font-semibold text-xs mb-2 text-blue-900">Summary</h4>
                           <ul className="text-[10px] space-y-1 text-blue-800">
                             <li>✓ {selectedRemittance.items_remitted} items ({selectedRemittance.total_units} units) returned</li>
-                            <li>✓ {selectedRemittance.orders_count} orders • ₱{selectedRemittance.total_revenue.toLocaleString()}</li>
+                            <li>✓ {selectedRemittance.orders_count} orders • ₱{calculateCashRevenue().toLocaleString()}</li>
                             <li>✓ Signature verified</li>
                           </ul>
                         </div>
@@ -633,8 +756,26 @@ export default function LeaderRemittancePage() {
                                           </div>
                                           <div className="font-medium text-xs truncate">{firstItem.clientName}</div>
                                         </div>
-                                        <div className="text-sm font-bold text-green-600 ml-2 flex-shrink-0">
-                                          ₱{firstItem.totalAmount.toFixed(2)}
+                                        <div className="text-right ml-2 flex-shrink-0">
+                                          <div className="text-sm font-bold text-green-600">
+                                            ₱{firstItem.totalAmount.toFixed(2)}
+                                          </div>
+                                          {firstItem.paymentMode === 'SPLIT' && (firstItem.cashPortion > 0 || firstItem.chequePortion > 0) && (
+                                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                                              {firstItem.cashPortion > 0 && `Cash ₱${firstItem.cashPortion.toFixed(2)}`}
+                                              {firstItem.chequePortion > 0 && (
+                                                <>
+                                                  {firstItem.cashPortion > 0 ? ' • ' : ''}
+                                                  {`Cheque ₱${firstItem.chequePortion.toFixed(2)}`}
+                                                </>
+                                              )}
+                                            </div>
+                                          )}
+                                          {firstItem.paymentMode === 'SPLIT' && firstItem.fullOrderTotal && (
+                                            <div className="text-[10px] text-muted-foreground">
+                                              Order ₱{firstItem.fullOrderTotal.toFixed(2)} (bank/GCash handled by Finance)
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
 
@@ -807,7 +948,9 @@ export default function LeaderRemittancePage() {
                           <CardTitle className="text-sm">Cash Revenue</CardTitle>
                         </CardHeader>
                         <CardContent>
-                          <div className="text-2xl font-bold text-green-700">₱{selectedRemittance.total_revenue.toLocaleString()}</div>
+                          <div className="text-2xl font-bold text-green-700">
+                            ₱{calculateCashRevenue().toLocaleString()}
+                          </div>
                           <p className="text-xs text-green-600">To be deposited</p>
                         </CardContent>
                       </Card>
@@ -817,7 +960,7 @@ export default function LeaderRemittancePage() {
                       <h4 className="font-semibold mb-2 text-blue-900">Remittance Summary</h4>
                       <ul className="text-sm space-y-1 text-blue-800">
                         <li>✓ {selectedRemittance.items_remitted} items ({selectedRemittance.total_units} units) returned as unsold</li>
-                        <li>✓ {selectedRemittance.orders_count} orders sold totaling ₱{selectedRemittance.total_revenue.toLocaleString()}</li>
+                        <li>✓ {selectedRemittance.orders_count} orders sold totaling ₱{calculateCashRevenue().toLocaleString()}</li>
                         <li>✓ Signature captured and verified</li>
                         <li>✓ Agent inventory cleared</li>
                       </ul>
@@ -840,32 +983,87 @@ export default function LeaderRemittancePage() {
                           <CardContent>
                             <div className="border rounded-lg max-h-96 overflow-y-auto">
                               <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>Order#</TableHead>
-                                  <TableHead>Client</TableHead>
-                                  <TableHead>Product</TableHead>
-                                  <TableHead className="text-right">Qty</TableHead>
-                                  <TableHead className="text-right">Amount</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {remittanceOrders.map((order, index) => (
-                                  <TableRow key={`${order.orderId}-${index}`}>
-                                    <TableCell className="font-mono text-sm">{order.orderNumber}</TableCell>
-                                    <TableCell>{order.clientName}</TableCell>
-                                    <TableCell className="text-sm">{order.brandName} - {order.variantName}</TableCell>
-                                    <TableCell className="text-right">{order.quantity}</TableCell>
-                                    <TableCell className="text-right font-semibold">
-                                      {/* Only show total on first item of each order */}
-                                      {index === 0 || remittanceOrders[index - 1].orderId !== order.orderId
-                                        ? `₱${order.totalAmount.toFixed(2)}`
-                                        : '-'}
-                                    </TableCell>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Order#</TableHead>
+                                    <TableHead>Client</TableHead>
+                                    <TableHead>Product</TableHead>
+                                    <TableHead className="text-right">Qty</TableHead>
+                                    <TableHead className="text-right">Remittance Amount</TableHead>
                                   </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
+                                </TableHeader>
+                                <TableBody>
+                                  {(() => {
+                                    // Group by order, then by brand for cleaner UI
+                                    const grouped: Record<string, any[]> = {};
+                                    remittanceOrders.forEach((row) => {
+                                      if (!grouped[row.orderId]) {
+                                        grouped[row.orderId] = [];
+                                      }
+                                      grouped[row.orderId].push(row);
+                                    });
+
+                                    const orderIds = Object.keys(grouped);
+
+                                    return orderIds.flatMap((orderId) => {
+                                      const rows = grouped[orderId];
+                                      const first = rows[0];
+
+                                      // Further group by brand inside each order
+                                      const byBrand: Record<string, any[]> = {};
+                                      rows.forEach((r) => {
+                                        const brand = r.brandName || 'Unknown Brand';
+                                        if (!byBrand[brand]) byBrand[brand] = [];
+                                        byBrand[brand].push(r);
+                                      });
+                                      const brands = Object.keys(byBrand);
+
+                                      return brands.flatMap((brand, brandIndex) => {
+                                        const brandRows = byBrand[brand];
+                                        return brandRows.map((row, rowIndex) => (
+                                          <TableRow key={`${row.orderId}-${brand}-${rowIndex}`}>
+                                            <TableCell className="font-mono text-sm">
+                                              {brandIndex === 0 && rowIndex === 0 ? row.orderNumber : ''}
+                                            </TableCell>
+                                            <TableCell>
+                                              {brandIndex === 0 && rowIndex === 0 ? row.clientName : ''}
+                                            </TableCell>
+                                            <TableCell className="text-sm">
+                                              {brand} - {row.variantName}
+                                            </TableCell>
+                                            <TableCell className="text-right">{row.quantity}</TableCell>
+                                            <TableCell className="text-right font-semibold align-top">
+                                              {brandIndex === 0 && rowIndex === 0 ? (
+                                                <div className="space-y-1">
+                                                  <div>₱{first.totalAmount.toFixed(2)}</div>
+                                                  {first.paymentMode === 'SPLIT' && (first.cashPortion > 0 || first.chequePortion > 0) && (
+                                                    <div className="text-xs text-muted-foreground">
+                                                      {first.cashPortion > 0 && `Cash ₱${first.cashPortion.toFixed(2)}`}
+                                                      {first.chequePortion > 0 && (
+                                                        <>
+                                                          {first.cashPortion > 0 ? ' • ' : ''}
+                                                          {`Cheque ₱${first.chequePortion.toFixed(2)}`}
+                                                        </>
+                                                      )}
+                                                    </div>
+                                                  )}
+                                                  {first.paymentMode === 'SPLIT' && first.fullOrderTotal && first.nonCashPortion && first.nonCashPortion > 0 && (
+                                                    <div className="text-[10px] text-muted-foreground">
+                                                      {first.nonCashLabel || 'Non-cash'} ₱{first.nonCashPortion.toFixed(2)} (handled by Finance)
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              ) : (
+                                                ''
+                                              )}
+                                            </TableCell>
+                                          </TableRow>
+                                        ));
+                                      });
+                                    });
+                                  })()}
+                                </TableBody>
+                              </Table>
                           </div>
                         </CardContent>
                       </Card>
