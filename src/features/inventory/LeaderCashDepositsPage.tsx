@@ -125,7 +125,8 @@ export default function LeaderCashDepositsPage() {
   const [selectedDepositIds, setSelectedDepositIds] = useState<string[]>([]);
   const [depositType, setDepositType] = useState<'CASH' | 'CHEQUE'>('CASH');
   const [bankAccount, setBankAccount] = useState('');
-  const [referenceNumber, setReferenceNumber] = useState('');
+  const [cashReferenceNumber, setCashReferenceNumber] = useState('');
+  const [chequeReferenceNumber, setChequeReferenceNumber] = useState('');
   const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -147,6 +148,8 @@ export default function LeaderCashDepositsPage() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  const isFinanceOnly = user?.role === 'finance';
 
 
   // Initial Fetch & Realtime
@@ -366,14 +369,194 @@ export default function LeaderCashDepositsPage() {
             dateLabel,
             depositIds: [],
             totalAmount: 0,
-            status: 'pending_deposit'
+            // Initial status per day – will be refined after we see which deposits already have slips
+            status: 'pending_deposit',
           };
         }
         dailyMap[dateKey].depositIds.push(deposit.id);
         dailyMap[dateKey].totalAmount += amount;
       });
 
+      // After grouping, determine per-day status based on whether ALL deposits for that day
+      // already have a deposit slip recorded.
+      Object.values(dailyMap).forEach((group) => {
+        const depositsForDay = pending.filter((d) => group.depositIds.includes(d.id));
+        const allHaveSlip =
+          depositsForDay.length > 0 && depositsForDay.every((d) => !!d.depositSlipUrl);
+
+        group.status = allHaveSlip ? 'awaiting_verification' : 'pending_deposit';
+      });
+
       const groups = Object.values(dailyMap).sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
+
+      // Preload per-day agent/order/unit details so headers show real counts immediately
+      try {
+        const allDepositIds = Array.from(new Set(groups.flatMap((g) => g.depositIds)));
+
+        if (allDepositIds.length > 0) {
+          const { data: ordersData, error: ordersError } = await supabase
+            .from('client_orders')
+            .select(`
+              id,
+              deposit_id,
+              order_number,
+              total_amount,
+              payment_method,
+              payment_mode,
+              payment_splits,
+              created_at,
+              agent_id,
+              agent:profiles!client_orders_agent_id_fkey(full_name),
+              clients(name),
+              items:client_order_items(quantity)
+            `)
+            .in('deposit_id', allDepositIds);
+
+          if (ordersError) throw ordersError;
+
+          // Map each deposit to its date key
+          const depositIdToDateKey: Record<string, string> = {};
+          groups.forEach((group) => {
+            group.depositIds.forEach((id) => {
+              depositIdToDateKey[id] = group.dateKey;
+            });
+          });
+
+          const dayAgentMaps: Record<string, Record<string, DailyAgentGroup>> = {};
+
+          (ordersData || []).forEach((order: any) => {
+            const depositId = order.deposit_id as string | null;
+            if (!depositId) return;
+
+            const dateKey = depositIdToDateKey[depositId];
+            if (!dateKey) return;
+
+            const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+            const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+            const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+            let cashPortion = 0;
+            let chequePortion = 0;
+            let nonCashPortion = 0;
+            const nonCashLabels: string[] = [];
+
+            if (paymentMode === 'SPLIT') {
+              splits.forEach((s: any) => {
+                const amount = s.amount || 0;
+                if (s.method === 'CASH') {
+                  cashPortion += amount;
+                } else if (s.method === 'CHEQUE') {
+                  chequePortion += amount;
+                } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+                  nonCashPortion += amount;
+                  if (s.method === 'BANK_TRANSFER') {
+                    if (s.bank && !nonCashLabels.includes(s.bank)) {
+                      nonCashLabels.push(s.bank);
+                    } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
+                      nonCashLabels.push('Bank Transfer');
+                    }
+                  } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
+                    nonCashLabels.push('GCash');
+                  }
+                }
+              });
+            } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+              const amt = order.total_amount || 0;
+              if (paymentMethod === 'CASH') {
+                cashPortion = amt;
+              } else {
+                chequePortion = amt;
+              }
+            }
+
+            const remittedAmount = cashPortion + chequePortion;
+            if (remittedAmount <= 0) {
+              // Skip pure non-cash orders for this view
+              return;
+            }
+
+            const totalQuantity = (order.items || []).reduce(
+              (sum: number, item: any) => sum + (item.quantity || 0),
+              0
+            );
+            const agentId = order.agent_id as string;
+            const agentName = order.agent?.full_name || 'Unknown Agent';
+
+            if (!dayAgentMaps[dateKey]) {
+              dayAgentMaps[dateKey] = {};
+            }
+            if (!dayAgentMaps[dateKey][agentId]) {
+              dayAgentMaps[dateKey][agentId] = {
+                agentId,
+                agentName,
+                orders: [],
+                totalOrders: 0,
+                totalUnits: 0,
+                totalAmount: 0,
+              };
+            }
+
+            const dailyOrder: DailyOrderSummary = {
+              agentId,
+              agentName,
+              orderId: order.id,
+              depositId,
+              orderNumber: order.order_number,
+              clientName: order.clients?.name || 'Unknown',
+              remittedAmount,
+              fullOrderTotal: order.total_amount || remittedAmount,
+              cashPortion,
+              chequePortion,
+              nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
+              nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
+              totalQuantity,
+            };
+
+            const agentGroup = dayAgentMaps[dateKey][agentId];
+            agentGroup.orders.push(dailyOrder);
+            agentGroup.totalOrders += 1;
+            agentGroup.totalUnits += totalQuantity;
+            agentGroup.totalAmount += remittedAmount;
+          });
+
+          const nextDayDetails: Record<
+            string,
+            {
+              agents: DailyAgentGroup[];
+              totalOrders: number;
+              totalUnits: number;
+            }
+          > = {};
+
+          Object.entries(dayAgentMaps).forEach(([dateKey, agentMap]) => {
+            const agents = Object.values(agentMap).sort((a, b) => a.agentName.localeCompare(b.agentName));
+            const totals = agents.reduce(
+              (acc, ag) => {
+                acc.totalOrders += ag.totalOrders;
+                acc.totalUnits += ag.totalUnits;
+                return acc;
+              },
+              { totalOrders: 0, totalUnits: 0 }
+            );
+
+            nextDayDetails[dateKey] = {
+              agents,
+              totalOrders: totals.totalOrders,
+              totalUnits: totals.totalUnits,
+            };
+          });
+
+          if (Object.keys(nextDayDetails).length > 0) {
+            setDayDetailsByDate((prev) => ({
+              ...prev,
+              ...nextDayDetails,
+            }));
+          }
+        }
+      } catch (summaryError) {
+        console.error('Error preloading daily cash summaries', summaryError);
+      }
+
       setPendingDailyGroups(groups);
 
     } catch (error) {
@@ -388,10 +571,12 @@ export default function LeaderCashDepositsPage() {
 
 
   const handleOpenDepositModal = (pendingDeposit: CashDeposit) => {
+    if (isFinanceOnly) return;
     setSelectedPendingDeposit(pendingDeposit);
     setSelectedDepositIds([pendingDeposit.id]);
     setBankAccount('');
-    setReferenceNumber('');
+    setCashReferenceNumber('');
+    setChequeReferenceNumber('');
     setDepositSlipFile(null);
     setShowCamera(false);
     // Preload orders for this deposit so we can show accurate total and order references
@@ -563,6 +748,9 @@ export default function LeaderCashDepositsPage() {
   const modalDepositAmount = modalCashAmount + modalChequeAmount;
   const modalOrderNumbers = Array.from(new Set(depositOrders.map(o => o.orderNumber))).join(', ');
 
+  const hasCashPortion = modalCashAmount > 0;
+  const hasChequePortion = modalChequeAmount > 0;
+
   const handleViewOrderBreakdown = (order: DailyOrderSummary) => {
     const deposit = findDepositById(order.depositId);
     if (!deposit) {
@@ -612,7 +800,7 @@ export default function LeaderCashDepositsPage() {
       return (
         <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
           <CheckCircle2 className="h-3 w-3 mr-1" />
-          Verified
+          Deposited
         </Badge>
       );
     }
@@ -625,6 +813,7 @@ export default function LeaderCashDepositsPage() {
   };
 
   const handleOpenDayDeposit = (dateKey: string) => {
+    if (isFinanceOnly) return;
     const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
     if (!group) return;
     const depositsForDay = pendingDeposits.filter(d => group.depositIds.includes(d.id));
@@ -641,7 +830,8 @@ export default function LeaderCashDepositsPage() {
     setSelectedPendingDeposit(base);
     setSelectedDepositIds(depositsForDay.map(d => d.id));
     setBankAccount('');
-    setReferenceNumber('');
+    setCashReferenceNumber('');
+    setChequeReferenceNumber('');
     setDepositSlipFile(null);
     setShowCamera(false);
     setDepositType(base.depositType || 'CASH');
@@ -652,16 +842,33 @@ export default function LeaderCashDepositsPage() {
   const handleViewDepositProof = (dateKey: string) => {
     const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
     if (!group) return;
-    const verifiedForDay = depositHistory.filter(d => format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey);
-    const target = verifiedForDay[0];
+
+    // 1. Prefer a verified deposit for this date (historical, already confirmed)
+    const verifiedForDay = depositHistory.filter(
+      d => format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey
+    );
+    let target = verifiedForDay[0];
+
+    // 2. If none are verified yet, fall back to a pending_verification deposit
+    //    that already has a recorded slip so the leader can review what was submitted.
+    if (!target) {
+      const pendingWithSlip = pendingDeposits.filter(
+        d =>
+          format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey &&
+          !!d.depositSlipUrl
+      );
+      target = pendingWithSlip[0];
+    }
+
     if (!target) {
       toast({
-        title: 'No Verified Deposit',
-        description: 'No verified deposit was found for this date.',
+        title: 'No Deposit Found',
+        description: 'No deposit with a recorded slip was found for this date.',
         variant: 'destructive',
       });
       return;
     }
+
     openViewDeposit(target);
   };
 
@@ -864,13 +1071,62 @@ export default function LeaderCashDepositsPage() {
   }, [stream]);
 
   const handleSubmitDeposit = async () => {
-    if (!bankAccount || !depositSlipFile || !selectedPendingDeposit) {
-      toast({ title: "Incomplete", description: "Please fill all fields and upload slip.", variant: "destructive" });
+    // Basic validation
+    if (!bankAccount) {
+      toast({
+        title: 'Incomplete',
+        description: 'Please select a bank or Direct to Office option.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!depositSlipFile || !selectedPendingDeposit) {
+      toast({
+        title: 'Incomplete',
+        description: 'Please upload the deposit slip photo.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const isDirectOffice = bankAccount === 'DIRECT_OFFICE';
+    const requiresCashRef = hasCashPortion && !isDirectOffice;
+    const requiresChequeRef = hasChequePortion && !isDirectOffice;
+
+    if (requiresCashRef && !cashReferenceNumber.trim()) {
+      toast({
+        title: 'Incomplete',
+        description: 'Please enter the cash reference number.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (requiresChequeRef && !chequeReferenceNumber.trim()) {
+      toast({
+        title: 'Incomplete',
+        description: 'Please enter the cheque reference number.',
+        variant: 'destructive',
+      });
       return;
     }
 
     setSubmitting(true);
     try {
+      let combinedReferenceNumber = '';
+
+      if (hasCashPortion && hasChequePortion) {
+        const parts: string[] = [];
+        if (cashReferenceNumber.trim()) parts.push(`Cash: ${cashReferenceNumber.trim()}`);
+        if (chequeReferenceNumber.trim()) parts.push(`Cheque: ${chequeReferenceNumber.trim()}`);
+        combinedReferenceNumber = parts.join(' | ');
+      } else if (hasCashPortion) {
+        combinedReferenceNumber = cashReferenceNumber.trim();
+      } else if (hasChequePortion) {
+        combinedReferenceNumber = chequeReferenceNumber.trim();
+      }
+
       // 1. Upload Slip
       const timestamp = Date.now();
       const filePath = `${user?.id}/deposits/${timestamp}_${depositSlipFile.name}`;
@@ -890,10 +1146,11 @@ export default function LeaderCashDepositsPage() {
         .from('cash_deposits')
         .update({
           bank_account: bankAccount,
-          reference_number: referenceNumber,
+          // For Direct to Office, reference numbers are optional; for bank deposits they were validated above
+          reference_number: combinedReferenceNumber || null,
           deposit_slip_url: publicUrl,
           updated_at: new Date().toISOString(),
-          deposit_type: depositType // Save the selected deposit type
+          deposit_type: depositType, // Save the selected deposit type
           // Note: status remains 'pending_verification' - requires super admin/manager verification
         })
         .eq('id', selectedPendingDeposit.id);
@@ -958,13 +1215,20 @@ export default function LeaderCashDepositsPage() {
     })
     .map((group) => {
       const details = dayDetailsByDate[group.dateKey];
+
+      // Map internal day status to simple UI status:
+      // - 'pending_deposit'       → 'pending'   (Pending Deposit)
+      // - 'awaiting_verification' → 'verified'  (Deposited – waiting for finance verification)
+      const depositStatus: 'pending' | 'verified' =
+        group.status === 'pending_deposit' ? 'pending' : 'verified';
+
       return {
         date: group.dateKey,
         displayDate: group.dateLabel,
         totalAmount: group.totalAmount,
         totalQuantity: details?.totalUnits ?? 0,
         agents: details?.agents ?? [],
-        depositStatus: 'pending' as 'pending' | 'verified',
+        depositStatus,
         rawGroup: group,
       };
     });
@@ -1216,13 +1480,15 @@ export default function LeaderCashDepositsPage() {
 
                         <div className="flex gap-2">
                           {day.depositStatus === 'pending' ? (
-                            <Button
-                              className="gap-2 bg-green-600 hover:bg-green-700"
-                              onClick={() => handleOpenDayDeposit(day.date)}
-                            >
-                              <Upload className="h-4 w-4" />
-                              Record Deposit
-                            </Button>
+                            isFinanceOnly ? null : (
+                              <Button
+                                className="gap-2 bg-green-600 hover:bg-green-700"
+                                onClick={() => handleOpenDayDeposit(day.date)}
+                              >
+                                <Upload className="h-4 w-4" />
+                                Record Deposit
+                              </Button>
+                            )
                           ) : (
                             <Button
                               variant="outline"
@@ -1482,13 +1748,44 @@ export default function LeaderCashDepositsPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-xs font-medium">Reference Number</label>
-                    <Input
-                      placeholder="TR-123456789"
-                      value={referenceNumber}
-                      onChange={(e) => setReferenceNumber(e.target.value)}
-                      className="h-10 text-xs"
-                    />
+                    {hasCashPortion && hasChequePortion ? (
+                      <>
+                        <label className="text-xs font-medium">Cash Reference Number</label>
+                        <Input
+                          placeholder="Cash ref (e.g. TR-123456789)"
+                          value={cashReferenceNumber}
+                          onChange={(e) => setCashReferenceNumber(e.target.value)}
+                          className="h-10 text-xs mb-2"
+                        />
+                        <label className="text-xs font-medium">Cheque Reference Number</label>
+                        <Input
+                          placeholder="Cheque ref (e.g. CHQ-987654321)"
+                          value={chequeReferenceNumber}
+                          onChange={(e) => setChequeReferenceNumber(e.target.value)}
+                          className="h-10 text-xs"
+                        />
+                      </>
+                    ) : hasCashPortion ? (
+                      <>
+                        <label className="text-xs font-medium">Cash Reference Number</label>
+                        <Input
+                          placeholder="Cash ref (e.g. TR-123456789)"
+                          value={cashReferenceNumber}
+                          onChange={(e) => setCashReferenceNumber(e.target.value)}
+                          className="h-10 text-xs"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <label className="text-xs font-medium">Cheque Reference Number</label>
+                        <Input
+                          placeholder="Cheque ref (e.g. CHQ-987654321)"
+                          value={chequeReferenceNumber}
+                          onChange={(e) => setChequeReferenceNumber(e.target.value)}
+                          className="h-10 text-xs"
+                        />
+                      </>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -1718,12 +2015,41 @@ export default function LeaderCashDepositsPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Deposit Reference Number</label>
-                    <Input
-                      placeholder="e.g. TR-123456789"
-                      value={referenceNumber}
-                      onChange={(e) => setReferenceNumber(e.target.value)}
-                    />
+                    {hasCashPortion && hasChequePortion ? (
+                      <>
+                        <label className="text-sm font-medium">Cash Reference Number</label>
+                        <Input
+                          placeholder="Cash ref (e.g. TR-123456789)"
+                          value={cashReferenceNumber}
+                          onChange={(e) => setCashReferenceNumber(e.target.value)}
+                          className="mb-3"
+                        />
+                        <label className="text-sm font-medium">Cheque Reference Number</label>
+                        <Input
+                          placeholder="Cheque ref (e.g. CHQ-987654321)"
+                          value={chequeReferenceNumber}
+                          onChange={(e) => setChequeReferenceNumber(e.target.value)}
+                        />
+                      </>
+                    ) : hasCashPortion ? (
+                      <>
+                        <label className="text-sm font-medium">Cash Reference Number</label>
+                        <Input
+                          placeholder="Cash ref (e.g. TR-123456789)"
+                          value={cashReferenceNumber}
+                          onChange={(e) => setCashReferenceNumber(e.target.value)}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <label className="text-sm font-medium">Cheque Reference Number</label>
+                        <Input
+                          placeholder="Cheque ref (e.g. CHQ-987654321)"
+                          value={chequeReferenceNumber}
+                          onChange={(e) => setChequeReferenceNumber(e.target.value)}
+                        />
+                      </>
+                    )}
                   </div>
 
                   <div className="space-y-2">
