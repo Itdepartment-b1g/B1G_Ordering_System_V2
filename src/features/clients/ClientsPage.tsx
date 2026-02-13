@@ -301,6 +301,8 @@ export default function ClientsPage() {
   const [selectedTransferAgent, setSelectedTransferAgent] = useState('');
   const [cityClients, setCityClients] = useState<Client[]>([]);
   const [cityTransferring, setCityTransferring] = useState(false);
+  const [agentSearchQuery, setAgentSearchQuery] = useState(''); // Search for agents in transfer dialogs
+
 
   // Export states
   const [exporting, setExporting] = useState(false);
@@ -365,6 +367,13 @@ export default function ClientsPage() {
       setAgentCities([]);
     }
   }, [roleResolved, isAdmin, user?.id]);
+
+  // Clear agent search query when transfer dialogs are closed
+  useEffect(() => {
+    if (!transferDialogOpen && !bulkTransferDialogOpen && !cityBulkTransferOpen) {
+      setAgentSearchQuery('');
+    }
+  }, [transferDialogOpen, bulkTransferDialogOpen, cityBulkTransferOpen]);
 
   const fetchAgentCities = async () => {
     if (!user?.id) return;
@@ -4656,6 +4665,16 @@ export default function ClientsPage() {
 
               <div className="space-y-2">
                 <Label>Select New Agent</Label>
+                {/* Agent Search Bar */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search agents..."
+                    value={agentSearchQuery}
+                    onChange={(e) => setAgentSearchQuery(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
                 {loadingAgents ? (
                   <div className="flex items-center justify-center py-4">
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -4667,10 +4686,11 @@ export default function ClientsPage() {
                       .filter(agent => {
                         // For unassigned clients, show all agents
                         if (isClientUnassigned(transferringClient)) {
-                          return true;
+                          return agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase());
                         }
-                        // For regular clients, exclude current agent
-                        return agent.id !== transferringClient.agent_id;
+                        // For regular clients, exclude current agent and apply search filter
+                        return agent.id !== transferringClient.agent_id && 
+                               agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase());
                       })
                       .map((agent) => (
                         <div
@@ -4706,6 +4726,21 @@ export default function ClientsPage() {
                           </div>
                         </div>
                       ))}
+                    {/* Show "No agents found" when search returns no results */}
+                    {agents
+                      .filter(agent => {
+                        if (isClientUnassigned(transferringClient)) {
+                          return agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase());
+                        }
+                        return agent.id !== transferringClient.agent_id && 
+                               agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase());
+                      }).length === 0 && agentSearchQuery && (
+                        <div className="p-4 text-center border rounded-lg bg-muted/30">
+                          <p className="text-sm text-muted-foreground">
+                            No agents found matching "{agentSearchQuery}"
+                          </p>
+                        </div>
+                      )}
                     {!isClientUnassigned(transferringClient) && transferringClient.agent_id && agents.filter(agent => agent.id === transferringClient.agent_id).length > 0 && (
                       <div className="p-3 border rounded-lg bg-muted/30 border-muted">
                         <div className="flex items-center justify-between">
@@ -4792,6 +4827,20 @@ export default function ClientsPage() {
               Assign multiple clients to different agents at once. Clients are grouped by city for easier management.
             </DialogDescription>
           </DialogHeader>
+          
+          {/* Global Agent Search */}
+          <div className="px-6 pb-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search agents..."
+                value={agentSearchQuery}
+                onChange={(e) => setAgentSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+          </div>
+          
           <div className="space-y-4 py-4">
             {loadingAgents ? (
               <div className="flex items-center justify-center py-8">
@@ -4833,16 +4882,27 @@ export default function ClientsPage() {
                               <SelectValue placeholder="Select agent" />
                             </SelectTrigger>
                             <SelectContent>
-                              {agents.map((agent) => (
-                                <SelectItem key={agent.id} value={agent.id}>
-                                  <div className="flex items-center justify-between w-full">
-                                    <span>{agent.name}</span>
-                                    <span className="text-muted-foreground ml-2">
-                                      ({agent.clientCount} clients)
-                                    </span>
-                                  </div>
-                                </SelectItem>
-                              ))}
+                              {agents
+                                .filter((agent) =>
+                                  agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase())
+                                )
+                                .map((agent) => (
+                                  <SelectItem key={agent.id} value={agent.id}>
+                                    <div className="flex items-center justify-between w-full">
+                                      <span>{agent.name}</span>
+                                      <span className="text-muted-foreground ml-2">
+                                        ({agent.clientCount} clients)
+                                      </span>
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              {agents.filter((agent) =>
+                                agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase())
+                              ).length === 0 && (
+                                <div className="p-2 text-center text-sm text-muted-foreground">
+                                  No agents found
+                                </div>
+                              )}
                             </SelectContent>
                           </Select>
                         </div>
@@ -4924,28 +4984,62 @@ export default function ClientsPage() {
                 </div>
 
                 {/* Transfer To */}
-                <div className="space-y-2">
-                  <Label>Transfer to</Label>
-                  <Select
-                    value={selectedTransferAgent}
-                    onValueChange={setSelectedTransferAgent}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {getAvailableAgents(selectedCity).map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id}>
-                          <div className="flex items-center justify-between w-full">
-                            <span>{agent.name}</span>
-                            <span className="text-muted-foreground ml-2">
-                              ({agent.clientCount} clients)
-                            </span>
+                <div className="space-y-3">
+                  <Label className="text-base font-semibold">Transfer to Agent</Label>
+                  {/* Agent Search Bar */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search agents..."
+                      value={agentSearchQuery}
+                      onChange={(e) => setAgentSearchQuery(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                  
+                  {/* Agent Selection List */}
+                  <div className="border rounded-lg max-h-64 overflow-y-auto">
+                    <RadioGroup value={selectedTransferAgent} onValueChange={setSelectedTransferAgent}>
+                      {getAvailableAgents(selectedCity)
+                        .filter((agent) =>
+                          agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase())
+                        )
+                        .map((agent) => (
+                          <div
+                            key={agent.id}
+                            className={`flex items-center space-x-3 p-3 border-b last:border-b-0 cursor-pointer hover:bg-muted/50 transition-colors ${
+                              selectedTransferAgent === agent.id ? 'bg-primary/5 border-l-4 border-l-primary' : ''
+                            }`}
+                            onClick={() => setSelectedTransferAgent(agent.id)}
+                          >
+                            <RadioGroupItem value={agent.id} id={`agent-${agent.id}`} />
+                            <Label
+                              htmlFor={`agent-${agent.id}`}
+                              className="flex-1 cursor-pointer flex items-center justify-between"
+                            >
+                              <div>
+                                <p className="font-medium">{agent.name}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {agent.role === 'team_leader' ? 'Team Leader' : agent.role === 'mobile_sales' ? 'Mobile Sales' : 'Manager'}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <Badge variant="secondary" className="text-xs">
+                                  {agent.clientCount} clients
+                                </Badge>
+                              </div>
+                            </Label>
                           </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                        ))}
+                      {getAvailableAgents(selectedCity).filter((agent) =>
+                        agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase())
+                      ).length === 0 && (
+                        <div className="p-4 text-center text-sm text-muted-foreground">
+                          No agents found
+                        </div>
+                      )}
+                    </RadioGroup>
+                  </div>
                 </div>
 
                 {/* Clients List */}

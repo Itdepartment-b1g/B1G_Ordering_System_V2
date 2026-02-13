@@ -17,19 +17,24 @@ export interface SubTeamNode {
   memberIds: string[]; // Agents reporting to this leader
 }
 
-export function useWarRoomHierarchy() {
+export function useWarRoomHierarchy(companyIds?: string[]) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
+  // Determine which company IDs to use
+  const effectiveCompanyIds = companyIds && companyIds.length > 0 
+    ? companyIds 
+    : (user?.company_id ? [user.company_id] : []);
+
   const query = useQuery({
-    queryKey: ['war-room-hierarchy', user?.company_id],
-    enabled: !!user?.company_id,
+    queryKey: ['war-room-hierarchy', effectiveCompanyIds.join(',')],
+    enabled: effectiveCompanyIds.length > 0,
     queryFn: async () => {
       // 1. Fetch ALL managers (profiles with role=manager) so dropdown matches Team Management
       const { data: managersData, error: managersError } = await supabase
         .from('profiles')
         .select('id, full_name')
-        .eq('company_id', user!.company_id!)
+        .in('company_id', effectiveCompanyIds)
         .eq('role', 'manager');
 
       if (managersError) throw managersError;
@@ -45,7 +50,7 @@ export function useWarRoomHierarchy() {
           manager:profiles!sub_teams_manager_id_fkey(full_name),
           leader:profiles!sub_teams_leader_id_fkey(full_name)
         `)
-        .eq('company_id', user!.company_id!);
+        .in('company_id', effectiveCompanyIds);
         
       if (subTeamsError) throw subTeamsError;
 
@@ -53,7 +58,7 @@ export function useWarRoomHierarchy() {
       const { data: leaderTeamsData, error: leaderTeamsError } = await supabase
         .from('leader_teams')
         .select('agent_id, leader_id')
-        .eq('company_id', user!.company_id!);
+        .in('company_id', effectiveCompanyIds);
 
       if (leaderTeamsError) throw leaderTeamsError;
 
@@ -101,31 +106,31 @@ export function useWarRoomHierarchy() {
 
   // Real-time: refetch when leader_teams, sub_teams, or profiles (managers) change
   useEffect(() => {
-    if (!user?.company_id) return;
+    if (effectiveCompanyIds.length === 0) return;
 
     const refetch = () => {
-      queryClient.invalidateQueries({ queryKey: ['war-room-hierarchy', user.company_id] });
+      queryClient.invalidateQueries({ queryKey: ['war-room-hierarchy', effectiveCompanyIds.join(',')] });
     };
 
-    const leaderTeamsChannel = subscribeToTable(
-      'leader_teams',
-      refetch
-    );
-    const subTeamsChannel = subscribeToTable(
-      'sub_teams',
-      refetch
-    );
-    const profilesChannel = subscribeToTable(
-      'profiles',
-      refetch
-    );
+    // Subscribe to changes for all companies
+    const channels: ReturnType<typeof subscribeToTable>[] = [];
+    
+    effectiveCompanyIds.forEach(companyId => {
+      channels.push(
+        subscribeToTable('leader_teams', refetch, '*', { column: 'company_id', value: companyId })
+      );
+      channels.push(
+        subscribeToTable('sub_teams', refetch, '*', { column: 'company_id', value: companyId })
+      );
+      channels.push(
+        subscribeToTable('profiles', refetch, '*', { column: 'company_id', value: companyId })
+      );
+    });
 
     return () => {
-      unsubscribe(leaderTeamsChannel);
-      unsubscribe(subTeamsChannel);
-      unsubscribe(profilesChannel);
+      channels.forEach(channel => unsubscribe(channel));
     };
-  }, [user?.company_id, queryClient]);
+  }, [effectiveCompanyIds.join(','), queryClient]);
 
   return query;
 }

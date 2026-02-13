@@ -184,6 +184,7 @@ const systemAdminMenuItems: MenuItem[] = [
 
 const executiveMenuItems: MenuItem[] = [
   { title: 'Executive Dashboard', url: '/executive-dashboard', icon: LayoutDashboard },
+  { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 

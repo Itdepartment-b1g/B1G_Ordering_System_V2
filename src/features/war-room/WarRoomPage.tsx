@@ -8,11 +8,32 @@ import { useWarRoomHierarchy } from './hooks/useWarRoomHierarchy';
 import { Card } from '@/components/ui/card';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
+import { useExecutiveCompanies } from '@/features/dashboard/executiveHooks';
 
 export function WarRoomPage() {
-  const { clients, loading: clientsLoading, error: clientsError } = useWarRoomClients();
-  const { data: hierarchy, isLoading: hierarchyLoading } = useWarRoomHierarchy();
   const { user } = useAuth();
+  
+  // For executive accounts, get assigned companies
+  const { data: executiveCompanies, isLoading: executiveCompaniesLoading } = useExecutiveCompanies();
+  const isExecutive = user?.role === 'executive';
+  
+  // Company filter state (for executive accounts)
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
+  
+  // Determine which company IDs to use for data fetching
+  const allCompanyIds = isExecutive && executiveCompanies?.companyIds 
+    ? executiveCompanies.companyIds 
+    : undefined;
+  
+  // Use filtered company IDs if any are selected, otherwise use all
+  const effectiveCompanyIds = useMemo(() => {
+    if (!allCompanyIds) return undefined;
+    if (selectedCompanyIds.length === 0) return allCompanyIds;
+    return selectedCompanyIds;
+  }, [allCompanyIds, selectedCompanyIds]);
+
+  const { clients, loading: clientsLoading, error: clientsError } = useWarRoomClients(effectiveCompanyIds);
+  const { data: hierarchy, isLoading: hierarchyLoading } = useWarRoomHierarchy(effectiveCompanyIds);
   
   const [selectedClient, setSelectedClient] = useState<WarRoomClient | null>(null);
   const [isPopupOpen, setIsPopupOpen] = useState(false);
@@ -24,16 +45,21 @@ export function WarRoomPage() {
   const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Fetch all brands
+  // Fetch all brands (for all companies if executive, otherwise single company)
   useEffect(() => {
-    if (!user?.company_id) return;
+    const brandCompanyIds = effectiveCompanyIds && effectiveCompanyIds.length > 0 
+      ? effectiveCompanyIds 
+      : (user?.company_id ? [user.company_id] : []);
+    
+    if (brandCompanyIds.length === 0) return;
+    
     let cancelled = false;
     const fetchBrands = async () => {
       try {
         const { data, error } = await supabase
           .from('brands')
           .select('id, name')
-          .eq('company_id', user.company_id)
+          .in('company_id', brandCompanyIds)
           .order('name');
 
         if (error) throw error;
@@ -44,7 +70,7 @@ export function WarRoomPage() {
     };
     fetchBrands();
     return () => { cancelled = true; };
-  }, [user?.company_id]);
+  }, [effectiveCompanyIds?.join(','), user?.company_id]);
 
   // 1. Manager Filter Logic
   // If a manager is selected, we get all agent IDs that fall under their hierarchy.
@@ -175,7 +201,26 @@ export function WarRoomPage() {
     }
   };
 
-  const loading = clientsLoading || hierarchyLoading;
+  // Company filter handlers (for executive accounts)
+  const handleCompanyToggle = (companyId: string, checked: boolean) => {
+    setSelectedCompanyIds(prev => {
+      if (checked) {
+        return prev.includes(companyId) ? prev : [...prev, companyId];
+      } else {
+        return prev.filter(id => id !== companyId);
+      }
+    });
+  };
+
+  const handleSelectAllCompanies = (checked: boolean) => {
+    if (checked && allCompanyIds) {
+      setSelectedCompanyIds(allCompanyIds);
+    } else {
+      setSelectedCompanyIds([]);
+    }
+  };
+
+  const loading = clientsLoading || hierarchyLoading || (isExecutive && executiveCompaniesLoading);
 
   if (loading) {
     return (
@@ -226,6 +271,12 @@ export function WarRoomPage() {
                 }
                 searchQuery={searchQuery}
                 onSearchChange={setSearchQuery}
+                // Executive company filter
+                isExecutive={isExecutive}
+                companies={executiveCompanies?.companies || []}
+                selectedCompanyIds={selectedCompanyIds}
+                onCompanyToggle={handleCompanyToggle}
+                onSelectAllCompanies={handleSelectAllCompanies}
               />
             </div>
 
@@ -235,7 +286,6 @@ export function WarRoomPage() {
                 <WarRoomMap
                   clients={finalFilteredClients}
                   cityHolders={cityHolderMap} // Pass the color/boundary mapping
-                  selectedCities={selectedCities}
                   onClientClick={handleClientClick}
                   onCityStatusChange={handleCityToggle}
                 />
@@ -246,6 +296,14 @@ export function WarRoomPage() {
                     Showing {finalFilteredClients.length} Clients
                   </p>
                   <p className="text-muted-foreground text-xs">
+                    {isExecutive && (
+                      <>
+                        {selectedCompanyIds.length === 0 
+                          ? 'All Companies' 
+                          : `${selectedCompanyIds.length} Company${selectedCompanyIds.length === 1 ? '' : 'ies'} Selected`}
+                        {' • '}
+                      </>
+                    )}
                     {selectedManagerId === 'all' 
                       ? 'All Teams' 
                       : `Team ${managerOptions.find(m => m.id === selectedManagerId)?.name}`}

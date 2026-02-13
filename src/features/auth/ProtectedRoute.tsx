@@ -4,7 +4,12 @@ import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/features/shared/components/AppSidebar';
 import { NotificationsDropdown } from '@/features/shared/components/NotificationsDropdown';
 
-export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+  allowedRoles?: string[];
+}
+
+export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { user, isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
 
@@ -26,6 +31,15 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Check role-based access if allowedRoles is specified
+  if (allowedRoles && allowedRoles.length > 0) {
+    // Super Admin has access to everything
+    if (user?.role !== 'super_admin' && !allowedRoles.includes(user?.role || '')) {
+      // User doesn't have permission, redirect to their dashboard
+      return <Navigate to="/" replace />;
+    }
   }
 
   // Super Admin has full access to all routes (within their company via RLS)

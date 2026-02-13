@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { 
   Award,
   Loader2,
@@ -34,7 +36,71 @@ import {
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { format, startOfDay, endOfDay, startOfYear, endOfYear, startOfMonth, endOfMonth, startOfWeek, endOfWeek, getWeeksInMonth } from 'date-fns';
+import { format, startOfDay, endOfDay, startOfYear, endOfYear, startOfMonth, endOfMonth, startOfWeek, endOfWeek, getWeeksInMonth, differenceInDays, subDays, subMonths } from 'date-fns';
+import { DateRange } from 'react-day-picker';
+
+// Date range presets
+type DatePreset = 'all' | 'this_month' | 'last_month' | 'last_3_months' | 'last_6_months' | 'this_year' | 'last_year' | 'custom';
+
+const getDateRange = (preset: DatePreset, customStart?: Date, customEnd?: Date): { start?: Date; end?: Date } => {
+  const now = new Date();
+  const start = new Date();
+  const end = new Date();
+  
+  switch (preset) {
+    case 'this_month':
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+      
+    case 'last_month':
+      start.setMonth(now.getMonth() - 1);
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+      end.setMonth(now.getMonth());
+      end.setDate(0); // Last day of previous month
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+      
+    case 'last_3_months':
+      start.setMonth(now.getMonth() - 3);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+      
+    case 'last_6_months':
+      start.setMonth(now.getMonth() - 6);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+      
+    case 'this_year':
+      start.setMonth(0); // January
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+      
+    case 'last_year':
+      start.setFullYear(now.getFullYear() - 1);
+      start.setMonth(0);
+      start.setDate(1);
+      start.setHours(0, 0, 0, 0);
+      end.setFullYear(now.getFullYear() - 1);
+      end.setMonth(11); // December
+      end.setDate(31);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+      
+    case 'custom':
+      return { start: customStart, end: customEnd };
+      
+    case 'all':
+    default:
+      return { start: undefined, end: undefined };
+  }
+};
 
 // Types
 interface AgentKPI {
@@ -143,9 +209,10 @@ const AGENT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#e
 // Custom Legend Component
 interface CustomLegendProps {
   payload?: Array<{
-    value: string;
-    color: string;
-    dataKey?: string;
+    value: any;
+    color?: string;
+    dataKey?: any;
+    [key: string]: any;
   }>;
 }
 
@@ -163,8 +230,7 @@ const CustomLegend = ({ payload }: CustomLegendProps) => {
             <div
               className="h-3 w-3 rounded-full shrink-0 ring-2 ring-offset-2 ring-offset-background"
               style={{ 
-                backgroundColor: entry.color,
-                ringColor: entry.color + '40'
+                backgroundColor: entry.color
               }}
             />
             <span className="text-sm font-medium text-foreground">{entry.value}</span>
@@ -194,9 +260,11 @@ export default function AgentAnalyticsTab({
   const [selectedRole, setSelectedRole] = useState<RoleType>('mobile_sales');
   const [selectedPerson, setSelectedPerson] = useState<string>('all'); // 'all' or specific person ID
   const [availablePeople, setAvailablePeople] = useState<AgentInfo[]>([]);
-  const [selectedYear, setSelectedYear] = useState<number | 'all'>(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>('all');
-  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>('all');
+  const [chartDateRange, setChartDateRange] = useState<DateRange | undefined>(undefined);
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [customStartDate, setCustomStartDate] = useState<Date | undefined>(undefined);
+  const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined);
   
   // Agent Detail Dialog State
   const [agentDetailDialogOpen, setAgentDetailDialogOpen] = useState(false);
@@ -235,7 +303,7 @@ export default function AgentAnalyticsTab({
 
   useEffect(() => {
     fetchPerformanceData();
-  }, [selectedMetric, selectedRole, selectedPerson, selectedYear, selectedMonth, selectedWeek, userId]);
+  }, [selectedMetric, selectedRole, selectedPerson, chartDateRange, userId]);
 
   // Fetch visit log data when a specific person is selected or visit log filters change
   useEffect(() => {
@@ -245,6 +313,40 @@ export default function AgentAnalyticsTab({
       setVisitLogData([]);
     }
   }, [selectedPerson, visitLogYear, visitLogMonth, visitLogWeek]);
+
+  // Sync datePreset with chartDateRange
+  useEffect(() => {
+    const dateRange = getDateRange(datePreset, customStartDate, customEndDate);
+    if (dateRange.start && dateRange.end) {
+      setChartDateRange({ from: dateRange.start, to: dateRange.end });
+    } else {
+      setChartDateRange(undefined);
+    }
+  }, [datePreset, customStartDate, customEndDate]);
+
+  // Handle preset change
+  const handlePresetChange = (value: DatePreset) => {
+    setDatePreset(value);
+    if (value !== 'custom') {
+      setCustomStartDate(undefined);
+      setCustomEndDate(undefined);
+    }
+    setIsDatePickerOpen(false);
+  };
+
+  // Format date for input (YYYY-MM-DD)
+  const formatDateForInput = (date?: Date) => {
+    if (!date) return '';
+    return date.toISOString().split('T')[0];
+  };
+
+  // Parse date from input
+  const parseDateFromInput = (dateString: string): Date | undefined => {
+    if (!dateString) return undefined;
+    const date = new Date(dateString);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  };
 
   const fetchAvailablePeople = async () => {
     try {
@@ -343,12 +445,11 @@ export default function AgentAnalyticsTab({
       setAgents(personInfoList);
 
       // Calculate date range and time periods
-      let startDate: Date;
-      let endDate: Date;
       let timePeriods: { label: string; start: Date; end: Date }[] = [];
 
-      if (selectedYear === 'all') {
-        // All Time - show all-time total as a single data point
+      // Determine date range and granularity
+      if (!chartDateRange?.from) {
+        // All Time - show monthly breakdown from start to now
         // Get the earliest and latest dates from the database
         const { data: earliestOrder } = await supabase
           .from('client_orders')
@@ -362,64 +463,94 @@ export default function AgentAnalyticsTab({
           .order('created_at', { ascending: false })
           .limit(1);
 
-        const earliestDate = earliestOrder?.[0]?.created_at 
+        const today = new Date();
+        
+        let startComp = earliestOrder?.[0]?.created_at 
           ? new Date(earliestOrder[0].created_at) 
-          : new Date(new Date().getFullYear() - 5, 0, 1);
+          : new Date(new Date().getFullYear() - 1, 0, 1);
         
-        const latestDate = latestOrder?.[0]?.created_at 
+        const endComp = latestOrder?.[0]?.created_at 
           ? new Date(latestOrder[0].created_at) 
-          : new Date();
+          : today;
 
-        timePeriods.push({
-          label: 'All Time',
-          start: earliestDate,
-          end: latestDate
-        });
-      } else if (selectedWeek !== 'all') {
-        // Specific week - show daily data (7 days)
-        const monthStart = new Date(selectedYear as number, selectedMonth as number - 1, 1);
-        const weekNum = selectedWeek as number;
-        const weekStart = startOfWeek(new Date(monthStart.getTime() + (weekNum - 1) * 7 * 24 * 60 * 60 * 1000));
+        // Ensure we show at least 6 months of history for context, even if data is new
+        const sixMonthsAgo = new Date(endComp);
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
         
-        for (let i = 0; i < 7; i++) {
-          const dayStart = new Date(weekStart);
-          dayStart.setDate(weekStart.getDate() + i);
-          const dayEnd = endOfDay(dayStart);
-          
-          timePeriods.push({
-            label: format(dayStart, 'MMM d'),
-            start: dayStart,
-            end: dayEnd
-          });
+        if (startComp > sixMonthsAgo) {
+          startComp = sixMonthsAgo;
         }
-      } else if (selectedMonth !== 'all') {
-        // Specific month, all weeks - show weekly data
-        startDate = startOfMonth(new Date(selectedYear as number, selectedMonth as number - 1));
-        endDate = endOfMonth(startDate);
+
+        // Generate monthly periods from earliest to latest
+        const start = startOfMonth(startComp);
+        const end = endOfMonth(endComp);
         
-        const weeksInMonth = getWeeksInMonth(new Date(selectedYear as number, selectedMonth as number - 1));
-        for (let i = 0; i < weeksInMonth; i++) {
-          const weekStart = new Date(startDate);
-          weekStart.setDate(startDate.getDate() + i * 7);
-          const weekEnd = endOfWeek(weekStart);
+        const current = new Date(start);
+        
+        while (current <= end) {
+          const periodStart = startOfMonth(current);
+          const periodEnd = endOfMonth(current);
           
           timePeriods.push({
-            label: `Week ${i + 1}`,
-            start: weekStart,
-            end: weekEnd > endDate ? endDate : weekEnd
+            label: format(periodStart, 'MMM yyyy'),
+            start: periodStart,
+            end: periodEnd
           });
+          
+          // Move to next month
+          current.setMonth(current.getMonth() + 1);
         }
       } else {
-        // All months - show monthly data (12 months)
-        for (let i = 0; i < 12; i++) {
-          const monthStart = startOfMonth(new Date(selectedYear as number, i));
-          const monthEnd = endOfMonth(monthStart);
-          
-          timePeriods.push({
-            label: format(monthStart, 'MMM'),
-            start: monthStart,
-            end: monthEnd
-          });
+        // Custom Range
+        const fromDate = startOfDay(chartDateRange.from);
+        const toDate = chartDateRange.to ? endOfDay(chartDateRange.to) : endOfDay(fromDate);
+        const daysDiff = differenceInDays(toDate, fromDate);
+
+        if (daysDiff <= 35) {
+          // Daily breakdown (approx 1 month or less)
+          let current = new Date(fromDate);
+          while (current <= toDate) {
+            timePeriods.push({
+              label: format(current, 'MMM d'),
+              start: startOfDay(current),
+              end: endOfDay(current)
+            });
+            current.setDate(current.getDate() + 1);
+          }
+        } else if (daysDiff <= 180) {
+          // Weekly breakdown (approx 6 months or less)
+          let current = startOfWeek(fromDate);
+          while (current <= toDate) {
+            const weekEnd = endOfWeek(current);
+            const actualEnd = weekEnd > toDate ? toDate : weekEnd;
+            const actualStart = current < fromDate ? fromDate : current;
+
+            if (actualStart <= actualEnd) {
+              timePeriods.push({
+                label: `Week of ${format(actualStart, 'MMM d')}`,
+                start: actualStart,
+                end: actualEnd
+              });
+            }
+            current.setDate(current.getDate() + 7);
+          }
+        } else {
+          // Monthly breakdown (> 6 months)
+          let current = startOfMonth(fromDate);
+          while (current <= toDate) {
+            const monthEnd = endOfMonth(current);
+            const actualEnd = monthEnd > toDate ? toDate : monthEnd;
+            const actualStart = current < fromDate ? fromDate : current;
+
+            if (actualStart <= actualEnd) {
+              timePeriods.push({
+                label: format(actualStart, 'MMM yyyy'),
+                start: actualStart,
+                end: actualEnd
+              });
+            }
+            current.setMonth(current.getMonth() + 1);
+          }
         }
       }
 
@@ -431,17 +562,21 @@ export default function AgentAnalyticsTab({
           for (const person of personInfoList) {
             let value = 0;
 
+            let query = supabase.from('client_orders').select('total_amount, id, created_at');
+
+            // Apply filters
             if (selectedMetric === 'revenue') {
-              const { data: orders } = await supabase
-                .from('client_orders')
-                .select('total_amount')
-                .eq('agent_id', person.id)
-                .gte('created_at', period.start.toISOString())
-                .lte('created_at', period.end.toISOString());
-              
-              value = orders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+              query = query.select('total_amount');
+            } else if (selectedMetric === 'orders') {
+              query = query.select('id');
             } else if (selectedMetric === 'clients') {
-              const { data: clients } = await supabase
+               // For clients, we query the 'clients' table, handled below
+               query = supabase.from('clients').select('id, created_at') as any;
+            }
+
+            // Apply metric specific logic
+            if (selectedMetric === 'clients') {
+               const { data: clients } = await supabase
                 .from('clients')
                 .select('id')
                 .eq('agent_id', person.id)
@@ -449,15 +584,20 @@ export default function AgentAnalyticsTab({
                 .lte('created_at', period.end.toISOString());
               
               value = clients?.length || 0;
-            } else if (selectedMetric === 'orders') {
-              const { data: orders } = await supabase
+            } else {
+              // Orders or Revenue
+               const { data: orders } = await supabase
                 .from('client_orders')
-                .select('id')
+                .select(selectedMetric === 'revenue' ? 'total_amount' : 'id')
                 .eq('agent_id', person.id)
                 .gte('created_at', period.start.toISOString())
                 .lte('created_at', period.end.toISOString());
               
-              value = orders?.length || 0;
+              if (selectedMetric === 'revenue') {
+                value = orders?.reduce((sum, order: any) => sum + (order.total_amount || 0), 0) || 0;
+              } else {
+                value = orders?.length || 0;
+              }
             }
 
             dataPoint[person.id] = value;
@@ -555,7 +695,7 @@ export default function AgentAnalyticsTab({
         setMonthlyVisitData(monthlyData);
         setWeeklyVisitData([]);
         setVisitLogData([]);
-      } else if (visitLogMonth !== 'all' && visitLogWeek === 'all') {
+      } else if (visitLogWeek === 'all') {
         // Month selected but All Weeks - show weekly breakdown (Week 1-4)
         const monthStart = startOfMonth(new Date(visitLogYear, (visitLogMonth as number) - 1, 1));
         const monthEnd = endOfMonth(monthStart);
@@ -919,16 +1059,6 @@ export default function AgentAnalyticsTab({
     { value: 12, label: 'December' }
   ];
 
-  // Generate week options for selected month (only if specific month selected)
-  const weeksInMonth = selectedMonth !== 'all' ? getWeeksInMonth(new Date(selectedYear, selectedMonth - 1)) : 0;
-  const weekOptions = selectedMonth !== 'all' ? [
-    { value: 'all', label: 'All Weeks' },
-    ...Array.from({ length: weeksInMonth }, (_, i) => ({
-      value: i + 1,
-      label: `Week ${i + 1}`
-    }))
-  ] : [];
-
   // Generate week options for visit log filters
   const visitLogWeeksInMonth = visitLogMonth !== 'all' ? getWeeksInMonth(new Date(visitLogYear, visitLogMonth - 1)) : 0;
   const visitLogWeekOptions = visitLogMonth !== 'all' ? [
@@ -967,8 +1097,10 @@ export default function AgentAnalyticsTab({
     if (selectedMetric === 'revenue') {
       return `₱${value.toLocaleString()}`;
     }
-    return value.toString();
+    return value.toLocaleString();
   };
+
+
 
   return (
     <>
@@ -1040,77 +1172,162 @@ export default function AgentAnalyticsTab({
                   </Select>
                 </div>
 
-                <div className="border-t pt-4">
-                  <p className="text-xs font-medium text-muted-foreground mb-3">TIME PERIOD</p>
-                  
-                  {/* Year Filter */}
-                  <div className="space-y-2 mb-4">
-                    <label className="text-sm font-medium">Year</label>
-                    <Select value={selectedYear.toString()} onValueChange={(value) => {
-                      const newYear = value === 'all' ? 'all' : parseInt(value);
-                      setSelectedYear(newYear);
-                      // Reset month and week when selecting All Time
-                      if (newYear === 'all') {
-                        setSelectedMonth('all');
-                        setSelectedWeek('all');
-                      }
-                    }}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">
-                          <span className="font-semibold">All Time</span>
-                        </SelectItem>
-                        {yearOptions.map(year => (
-                          <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Month Filter - only show when specific year selected */}
-                  {selectedYear !== 'all' && (
-                    <div className="space-y-2 mb-4">
-                      <label className="text-sm font-medium">Month</label>
-                      <Select value={selectedMonth.toString()} onValueChange={(value) => {
-                        const newMonth = value === 'all' ? 'all' : parseInt(value);
-                        setSelectedMonth(newMonth);
-                        if (newMonth === 'all') {
-                          setSelectedWeek('all');
-                        }
-                      }}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {monthOptions.map(month => (
-                            <SelectItem key={month.value} value={month.value.toString()}>{month.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-
-                  {/* Week Filter - only show when specific month selected */}
-                  {selectedYear !== 'all' && selectedMonth !== 'all' && (
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Week</label>
-                      <Select 
-                        value={selectedWeek.toString()} 
-                        onValueChange={(value) => setSelectedWeek(value === 'all' ? 'all' : parseInt(value))}
+                <div className="border-t pt-4 space-y-2">
+                  <label className="text-sm font-medium">Date Range</label>
+                  <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={`w-full justify-between text-left font-normal ${!chartDateRange ? 'text-muted-foreground' : ''}`}
                       >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {weekOptions.map(week => (
-                            <SelectItem key={week.value} value={week.value.toString()}>{week.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
+                        <div className="flex items-center truncate">
+                          <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                          <span className="truncate">
+                            {chartDateRange?.from ? (
+                              chartDateRange.to ? (
+                                <>
+                                  {format(chartDateRange.from, "LLL dd, y")} -{" "}
+                                  {format(chartDateRange.to, "LLL dd, y")}
+                                </>
+                              ) : (
+                                format(chartDateRange.from, "LLL dd, y")
+                              )
+                            ) : (
+                              <span>All Time</span>
+                            )}
+                          </span>
+                        </div>
+                        {chartDateRange?.from && (
+                          <div 
+                            role="button"
+                            className="rounded-full hover:bg-muted p-1 -mr-2"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setChartDateRange(undefined);
+                            }}
+                          >
+                            <X className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                      <PopoverContent className="w-[360px] p-0" align="start">
+                        <div className="p-4 space-y-4">
+                          {/* Quick Filters */}
+                          <div className="space-y-3">
+                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Quick Filters</Label>
+                            <div className="grid grid-cols-2 gap-2">
+                              <Button
+                                variant={datePreset === 'this_month' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handlePresetChange('this_month')}
+                                className="justify-center h-9"
+                              >
+                                This Month
+                              </Button>
+                              <Button
+                                variant={datePreset === 'last_month' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handlePresetChange('last_month')}
+                                className="justify-center h-9"
+                              >
+                                Last Month
+                              </Button>
+                              <Button
+                                variant={datePreset === 'last_3_months' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handlePresetChange('last_3_months')}
+                                className="justify-center h-9"
+                              >
+                                Last 3 Months
+                              </Button>
+                              <Button
+                                variant={datePreset === 'last_6_months' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handlePresetChange('last_6_months')}
+                                className="justify-center h-9"
+                              >
+                                Last 6 Months
+                              </Button>
+                              <Button
+                                variant={datePreset === 'this_year' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handlePresetChange('this_year')}
+                                className="justify-center h-9"
+                              >
+                                This Year
+                              </Button>
+                              <Button
+                                variant={datePreset === 'last_year' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handlePresetChange('last_year')}
+                                className="justify-center h-9"
+                              >
+                                Last Year
+                              </Button>
+                              <Button
+                                variant={datePreset === 'all' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handlePresetChange('all')}
+                                className="justify-center col-span-2 h-9"
+                              >
+                                All Time
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Custom Date Range */}
+                          <div className="space-y-3 pt-3 border-t">
+                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Custom Range</Label>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="agent-start-date" className="text-xs text-muted-foreground">From</Label>
+                                <Input
+                                  id="agent-start-date"
+                                  type="date"
+                                  value={formatDateForInput(customStartDate)}
+                                  onChange={(e) => {
+                                    const date = parseDateFromInput(e.target.value);
+                                    setCustomStartDate(date);
+                                    if (date && customEndDate) {
+                                      handlePresetChange('custom');
+                                    }
+                                  }}
+                                  className="h-9"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label htmlFor="agent-end-date" className="text-xs text-muted-foreground">To</Label>
+                                <Input
+                                  id="agent-end-date"
+                                  type="date"
+                                  value={formatDateForInput(customEndDate)}
+                                  onChange={(e) => {
+                                    const date = parseDateFromInput(e.target.value);
+                                    setCustomEndDate(date);
+                                    if (customStartDate && date) {
+                                      handlePresetChange('custom');
+                                    }
+                                  }}
+                                  className="h-9"
+                                />
+                              </div>
+                            </div>
+                            {customStartDate && customEndDate && (
+                              <Button
+                                variant={datePreset === 'custom' ? 'default' : 'outline'}
+                                size="sm"
+                                onClick={() => handlePresetChange('custom')}
+                                className="w-full h-9"
+                              >
+                                <CalendarIcon className="h-4 w-4 mr-2" />
+                                Apply Custom Range
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                 </div>
               </CardContent>
             </Card>

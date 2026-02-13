@@ -29,14 +29,19 @@ export interface WarRoomClient {
   total_visits: number;
 }
 
-export function useWarRoomClients() {
+export function useWarRoomClients(companyIds?: string[]) {
   const { user } = useAuth();
   const [clients, setClients] = useState<WarRoomClient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Determine which company IDs to use
+  const effectiveCompanyIds = companyIds && companyIds.length > 0 
+    ? companyIds 
+    : (user?.company_id ? [user.company_id] : []);
+
   useEffect(() => {
-    if (!user?.company_id) return;
+    if (effectiveCompanyIds.length === 0) return;
 
     const fetchClients = async (silent = false) => {
       if (!silent) {
@@ -45,16 +50,17 @@ export function useWarRoomClients() {
       }
 
       try {
-        // Fetch brands first (for mapping IDs to names)
+        // Fetch brands for all companies (for mapping IDs to names)
         const { data: brands } = await supabase
           .from('brands')
-          .select('id, name')
-          .eq('company_id', user.company_id);
+          .select('id, name, company_id')
+          .in('company_id', effectiveCompanyIds);
 
         // Create a fast lookup map for brands
         const brandMap = new Map<string, string>();
         (brands || []).forEach(b => brandMap.set(b.id, b.name));
 
+        // Fetch clients from all specified companies
         const { data, error: fetchError } = await supabase
           .from('clients')
           .select(`
@@ -76,7 +82,7 @@ export function useWarRoomClients() {
             visit_logs (count),
             agent:profiles!clients_agent_id_fkey (full_name, role)
           `)
-          .eq('company_id', user.company_id)
+          .in('company_id', effectiveCompanyIds)
           .eq('status', 'active')
           .eq('approval_status', 'approved')
           .not('location_latitude', 'is', null)
@@ -130,17 +136,20 @@ export function useWarRoomClients() {
     fetchClients();
 
     // Listen to clients table for real-time updates (imports, transfers, etc.)
-    const clientsChannel = subscribeToTable(
-      'clients',
-      () => fetchClients(true),
-      '*',
-      { column: 'company_id', value: user.company_id }
+    // For multiple companies, we need to subscribe to each one
+    const channels = effectiveCompanyIds.map(companyId =>
+      subscribeToTable(
+        'clients',
+        () => fetchClients(true),
+        '*',
+        { column: 'company_id', value: companyId }
+      )
     );
 
     return () => {
-      unsubscribe(clientsChannel);
+      channels.forEach(channel => unsubscribe(channel));
     };
-  }, [user?.company_id]);
+  }, [effectiveCompanyIds.join(',')]);
 
   return { clients, loading, error };
 }

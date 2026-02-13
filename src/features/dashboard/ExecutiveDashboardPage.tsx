@@ -294,11 +294,37 @@ export default function ExecutiveDashboardPage() {
 
     const getPieColor = (label: string) => {
         const l = label.toUpperCase();
-        if (l.includes('BATT')) return '#4FD1C5'; // Teal
-        if (l.includes('PODS')) return '#38BDF8'; // Cyan
-        if (l.includes('CHILLAX')) return '#F59E0B'; // Amber
-        if (l.includes('AMZ')) return '#8B5CF6'; // Violet
-        return '#CBD5E1'; // Slate
+        
+        // Completely distinct colors from different parts of the spectrum
+        // Each color is from a different hue family to avoid confusion
+        if (l.includes('FORGE PODS')) return '#3B82F6'; // Blue
+        if (l.includes('FORGE BATT')) return '#10B981'; // Green
+        if (l.includes('CHILLAX INFINITE')) return '#F59E0B'; // Orange
+        if (l.includes('CHILLAX') && !l.includes('INFINITE')) return '#FBBF24'; // Yellow
+        if (l.includes('AMZ')) return '#8B5CF6'; // Purple
+        if (l.includes('ONE BAR V1')) return '#EC4899'; // Pink
+        if (l.includes('X-ULTRA LITE') || l.includes('X ULTRA LITE')) return '#06B6D4'; // Cyan
+        if (l.includes('FORGE') && !l.includes('PODS') && !l.includes('BATT')) return '#14B8A6'; // Teal
+        
+        // Fallback colors - all from completely different hue families
+        const fallbackColors = [
+            '#EF4444', // Red
+            '#6366F1', // Indigo  
+            '#84CC16', // Lime
+            '#F97316', // Deep Orange
+            '#A855F7', // Violet
+            '#22D3EE', // Light Cyan
+            '#FB923C', // Amber
+            '#D946EF', // Fuchsia
+            '#059669', // Emerald
+            '#7C3AED', // Purple
+            '#F472B6', // Rose
+            '#0EA5E9', // Sky Blue
+        ];
+        
+        // Use label hash to pick a consistent color
+        const hash = label.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+        return fallbackColors[hash % fallbackColors.length];
     };
     
     // Manual refresh function
@@ -957,7 +983,7 @@ export default function ExecutiveDashboardPage() {
                                     Brand Revenue Distribution
                                 </h4>
 
-                                <div className="w-full h-[450px] relative">
+                                <div className="w-full h-[350px] relative">
                                     {(() => {
                                         const pieChartData = detailedBrandData.flatMap(brand => 
                                             brand.types.map((type: any) => ({
@@ -983,33 +1009,33 @@ export default function ExecutiveDashboardPage() {
                                                             stroke="none"
                                                             isAnimationActive={true}
                                                             activeShape={false}
-                                                            labelLine={{ stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1.5, strokeOpacity: 0.3 }}
-                                                            label={(props) => {
-                                                                const { cx, cy, midAngle, outerRadius, name, percent } = props;
-                                                                const RADIAN = Math.PI / 180;
-                                                                const radius = outerRadius + 35;
-                                                                const x = cx + radius * Math.cos(-midAngle * RADIAN);
-                                                                const y = cy + radius * Math.sin(-midAngle * RADIAN);
-                                                                
-                                                                return (
-                                                                    <text 
-                                                                        x={x} 
-                                                                        y={y} 
-                                                                        fill="hsl(var(--foreground))" 
-                                                                        textAnchor={x > cx ? 'start' : 'end'} 
-                                                                        dominantBaseline="central"
-                                                                        className="text-[13px] font-black uppercase tracking-tighter"
-                                                                    >
-                                                                        <tspan x={x} dy="-0.7em" className="fill-foreground">{name}</tspan>
-                                                                        <tspan x={x} dy="1.4em" className="fill-muted-foreground text-[11px] font-bold">{(percent * 100).toFixed(0)}% SHARE</tspan>
-                                                                    </text>
-                                                                );
-                                                            }}
                                                         >
                                                             {pieChartData.map((entry, index) => (
                                                                 <Cell key={`cell-${index}`} fill={entry.color} style={{ outline: 'none' }} />
                                                             ))}
                                                         </Pie>
+                                                        <Tooltip
+                                                            content={({ active, payload }) => {
+                                                                if (active && payload && payload.length) {
+                                                                    const data = payload[0].payload;
+                                                                    const total = pieChartData.reduce((sum, item) => sum + item.value, 0);
+                                                                    const percentage = ((data.value / total) * 100).toFixed(1);
+                                                                    
+                                                                    return (
+                                                                        <div className="bg-background border rounded-lg p-3 shadow-lg">
+                                                                            <p className="font-bold text-sm mb-1">{data.name}</p>
+                                                                            <p className="text-xs text-muted-foreground">
+                                                                                {data.value.toLocaleString()} units ({percentage}%)
+                                                                            </p>
+                                                                            <p className="text-xs font-semibold text-primary mt-1">
+                                                                                {formatCurrency(data.revenue)}
+                                                                            </p>
+                                                                        </div>
+                                                                    );
+                                                                }
+                                                                return null;
+                                                            }}
+                                                        />
                                                     </PieChart>
                                                 </ResponsiveContainer>
                                                 {/* Center Label */}
@@ -1019,6 +1045,37 @@ export default function ExecutiveDashboardPage() {
                                                 </div>
                                             </>
                                         );
+                                    })()}
+                                </div>
+                                
+                                {/* Custom Legend Below Chart */}
+                                <div className="w-full mt-4 grid grid-cols-2 gap-x-4 gap-y-2 max-h-[200px] overflow-y-auto px-2">
+                                    {(() => {
+                                        const pieChartData = detailedBrandData.flatMap(brand => 
+                                            brand.types.map((type: any) => ({
+                                                name: type.pieLabel,
+                                                value: type.qty,
+                                                revenue: type.rev,
+                                                color: getPieColor(type.pieLabel)
+                                            }))
+                                        );
+                                        const total = pieChartData.reduce((sum, item) => sum + item.value, 0);
+                                        
+                                        return pieChartData.map((item, index) => {
+                                            const percentage = ((item.value / total) * 100).toFixed(0);
+                                            return (
+                                                <div key={index} className="flex items-center gap-2 text-xs">
+                                                    <div 
+                                                        className="w-3 h-3 rounded-sm flex-shrink-0" 
+                                                        style={{ backgroundColor: item.color }}
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="font-semibold truncate text-[11px]">{item.name}</p>
+                                                        <p className="text-[10px] text-muted-foreground">{percentage}% share</p>
+                                                    </div>
+                                                </div>
+                                            );
+                                        });
                                     })()}
                                 </div>
                             </div>

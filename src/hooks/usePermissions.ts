@@ -34,6 +34,7 @@ export function usePermissions() {
     if (user?.role === 'executive') {
       const executiveRoutes = [
         '/executive-dashboard',
+        '/war-room',
         '/profile',
       ];
       return executiveRoutes.includes(route);
