@@ -61,7 +61,18 @@ interface DepositOrderBreakdown {
   cashPortion: number;
   chequePortion: number;
   nonCashPortion?: number;
+
   nonCashLabel?: string;
+}
+
+interface OrderItemDetail {
+  id: string;
+  quantity: number;
+  unitPrice: number;
+  productName: string;
+  variantName: string;
+  variantType?: string;
+  subtotal: number;
 }
 
 // Grouped view types for daily consolidation
@@ -135,6 +146,14 @@ export default function LeaderCashDepositsPage() {
   const [selectedDepositToView, setSelectedDepositToView] = useState<CashDeposit | null>(null);
   const [depositOrders, setDepositOrders] = useState<DepositOrderBreakdown[]>([]);
   const [loadingDepositOrders, setLoadingDepositOrders] = useState(false);
+
+  // Order Details Modal State
+  const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+  const [selectedOrderDetails, setSelectedOrderDetails] = useState<{
+    summary: DepositOrderBreakdown;
+    items: OrderItemDetail[];
+  } | null>(null);
+  const [loadingOrderDetails, setLoadingOrderDetails] = useState(false);
 
   // Camera State
   const [showCamera, setShowCamera] = useState(false);
@@ -751,17 +770,66 @@ export default function LeaderCashDepositsPage() {
   const hasCashPortion = modalCashAmount > 0;
   const hasChequePortion = modalChequeAmount > 0;
 
-  const handleViewOrderBreakdown = (order: DailyOrderSummary) => {
-    const deposit = findDepositById(order.depositId);
-    if (!deposit) {
+  const handleViewOrderBreakdown = async (order: DepositOrderBreakdown) => {
+    try {
+      console.log('Viewing order breakdown:', order);
+      // Open modal immediately with loading state
+      setLoadingOrderDetails(true);
+      // Initialize with summary only (items empty) to allow modal to render header
+      setSelectedOrderDetails({
+        summary: order,
+        items: []
+      });
+      setOrderDialogOpen(true);
+
+      // Fetch order items with product/variant details
+      const { data, error } = await supabase
+        .from('client_order_items')
+        .select(`
+          id,
+          quantity,
+          unit_price,
+          variant:variants(
+            name,
+            variant_type,
+            brand:brands(name)
+          )
+        `)
+        .eq('client_order_id', order.orderId);
+
+      if (error) {
+        console.error('Supabase fetch error:', error);
+        throw error;
+      }
+
+      console.log('Fetched items:', data);
+
+      const items: OrderItemDetail[] = (data || []).map((item: any) => ({
+        id: item.id,
+        quantity: item.quantity,
+        unitPrice: item.unit_price,
+        productName: item.variant?.brand?.name || 'Unknown Brand',
+        variantName: item.variant?.name || 'Unknown Variant',
+        variantType: item.variant?.variant_type,
+        subtotal: (item.quantity || 0) * (item.unit_price || 0),
+      }));
+
+      // Update with items
+      setSelectedOrderDetails({
+        summary: order,
+        items,
+      });
+    } catch (error) {
+      console.error('Error fetching order details:', error);
       toast({
-        title: 'Not Found',
-        description: 'Unable to load deposit details for this order.',
+        title: 'Error',
+        description: 'Failed to load order details.',
         variant: 'destructive',
       });
-      return;
+      // Don't close modal on error, let user see it or close it manually
+    } finally {
+      setLoadingOrderDetails(false);
     }
-    openViewDeposit(deposit);
   };
 
   const toggleDay = (dateKey: string) => {
@@ -1153,7 +1221,7 @@ export default function LeaderCashDepositsPage() {
           deposit_type: depositType, // Save the selected deposit type
           // Note: status remains 'pending_verification' - requires super admin/manager verification
         })
-        .eq('id', selectedPendingDeposit.id);
+        .in('id', selectedDepositIds); // <-- FIX: Update all selected deposits for this day group
 
       if (updateError) throw updateError;
 
@@ -2407,59 +2475,40 @@ export default function LeaderCashDepositsPage() {
 
                   <div className="grid grid-cols-3 gap-2 py-2 border-b">
                     <span className="text-muted-foreground">Bank</span>
-                    <span className="col-span-2 font-medium">{selectedDepositToView.bankAccount}</span>
+                    <span className="col-span-2 font-medium truncate">{selectedDepositToView.bankAccount}</span>
                   </div>
 
                   <div className="grid grid-cols-3 gap-2 py-2 border-b">
-                    <span className="text-muted-foreground">Ref Number</span>
-                    <span className="col-span-2 font-mono">{selectedDepositToView.referenceNumber}</span>
+                    <span className="text-muted-foreground">Reference</span>
+                    <span className="col-span-2 font-mono text-xs">{selectedDepositToView.referenceNumber}</span>
                   </div>
                 </div>
 
-                {/* Order Breakdown */}
-                <div className="space-y-2 mt-2">
-                  <h4 className="text-sm font-semibold text-muted-foreground">Order Breakdown (Cash / Cheque)</h4>
+                <div className="pt-2">
+                  <h4 className="text-sm font-semibold mb-2">Included Orders</h4>
                   {loadingDepositOrders ? (
                     <div className="flex items-center justify-center py-4">
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                     </div>
                   ) : depositOrders.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No linked orders found for this deposit.</p>
+                    <p className="text-sm text-muted-foreground">No orders linked.</p>
                   ) : (
-                    <div className="border rounded-lg max-h-80 overflow-y-auto">
+                    <div className="bg-muted/30 rounded-md border text-sm max-h-48 overflow-y-auto">
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Order #</TableHead>
+                            <TableHead className="w-[100px]">Order #</TableHead>
                             <TableHead>Client</TableHead>
-                            <TableHead className="text-right">Amount (Cash/Cheque)</TableHead>
+                            <TableHead className="text-right">Amount</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {depositOrders.map((order) => (
-                            <TableRow key={order.orderId}>
+                            <TableRow key={order.orderId} className="cursor-pointer hover:bg-muted/50" onClick={() => handleViewOrderBreakdown(order)}>
                               <TableCell className="font-mono text-xs">{order.orderNumber}</TableCell>
-                              <TableCell className="text-sm">{order.clientName}</TableCell>
-                              <TableCell className="text-right text-sm font-semibold align-top">
-                                <div className="space-y-1">
-                                  <div>₱{order.remittedAmount.toFixed(2)}</div>
-                                  {(order.cashPortion > 0 || order.chequePortion > 0) && (
-                                    <div className="text-xs text-muted-foreground">
-                                      {order.cashPortion > 0 && `Cash ₱${order.cashPortion.toFixed(2)}`}
-                                      {order.chequePortion > 0 && (
-                                        <>
-                                          {order.cashPortion > 0 ? ' • ' : ''}
-                                          {`Cheque ₱${order.chequePortion.toFixed(2)}`}
-                                        </>
-                                      )}
-                                    </div>
-                                  )}
-                                  {order.nonCashPortion && order.nonCashPortion > 0 && (
-                                    <div className="text-[11px] text-muted-foreground">
-                                      {(order.nonCashLabel || 'Non-cash') + ` ₱${order.nonCashPortion.toFixed(2)} (handled by Finance)`}
-                                    </div>
-                                  )}
-                                </div>
+                              <TableCell className="text-xs">{order.clientName}</TableCell>
+                              <TableCell className="text-right font-medium text-xs">
+                                ₱{order.remittedAmount.toLocaleString()}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -2470,9 +2519,9 @@ export default function LeaderCashDepositsPage() {
                 </div>
 
                 {selectedDepositToView.depositSlipUrl && (
-                  <div className="mt-4">
-                    <h4 className="text-sm font-medium mb-2">Deposit Slip</h4>
-                    <div className="border rounded-lg overflow-hidden bg-gray-50">
+                  <div className="pt-2 border-t mt-4">
+                    <h4 className="text-sm font-semibold mb-2">Deposit Slip</h4>
+                    <div className="rounded-lg overflow-hidden border bg-gray-50 flex justify-center">
                       <img
                         src={selectedDepositToView.depositSlipUrl}
                         alt="Deposit Slip"
@@ -2503,6 +2552,145 @@ export default function LeaderCashDepositsPage() {
           </DialogContent>
         </Dialog>
       )}
-    </div >
+      {/* Order Details Modal */}
+      <Dialog open={orderDialogOpen} onOpenChange={setOrderDialogOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Order Details</DialogTitle>
+            <DialogDescription>
+              Items included in Order #{selectedOrderDetails?.summary.orderNumber}
+            </DialogDescription>
+          </DialogHeader>
+
+          {loadingOrderDetails ? (
+            <div className="flex justify-center items-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : selectedOrderDetails ? (
+            <div className="space-y-4 py-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-muted-foreground block text-xs uppercase font-semibold">Client</span>
+                  <span className="font-medium">{selectedOrderDetails.summary.clientName}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-muted-foreground block text-xs uppercase font-semibold">Total Amount</span>
+                  <span className="font-bold text-lg text-emerald-600">
+                    ₱{selectedOrderDetails.summary.fullOrderTotal.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {selectedOrderDetails.summary.nonCashPortion && (
+                <div className="bg-blue-50 text-blue-800 p-3 rounded-md text-sm flex justify-between items-center">
+                  <span>
+                    <span className="font-semibold">{selectedOrderDetails.summary.nonCashLabel || 'Non-Cash'}:</span>
+                    {' '}₱{selectedOrderDetails.summary.nonCashPortion.toLocaleString()}
+                  </span>
+                  <Badge variant="secondary" className="bg-white text-blue-700">
+                    Handled by Finance
+                  </Badge>
+                </div>
+              )}
+
+              <div className="border rounded-md overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead className="w-[30%]">Product</TableHead>
+                      <TableHead className="w-[30%]">Variant</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead className="text-right">Price</TableHead>
+                      <TableHead className="text-right">Subtotal</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(() => {
+                      // Group items by Product Name
+                      const grouped = selectedOrderDetails.items.reduce((acc, item) => {
+                        const key = item.productName;
+                        if (!acc[key]) acc[key] = [];
+                        acc[key].push(item);
+                        return acc;
+                      }, {} as Record<string, OrderItemDetail[]>);
+
+                      return Object.entries(grouped).map(([productName, groupItems]) => (
+                        <>
+                          {/* Product Group Header */}
+                          <TableRow key={`group-${productName}`} className="hover:bg-muted/10">
+                            <TableCell className="font-bold text-sm align-top pt-3 pb-1">
+                              {productName}
+                            </TableCell>
+                            <TableCell colSpan={4} className="p-0"></TableCell>
+                          </TableRow>
+                          
+                          {/* Variant Items */}
+                          {groupItems.map((item) => (
+                            <TableRow key={item.id} className="border-0 hover:bg-transparent">
+                              <TableCell className="py-1"></TableCell>
+                              <TableCell className="py-1 align-top">
+                                <div className="text-sm font-medium">{item.variantName}</div>
+                                {item.variantType && (
+                                  <div className="text-xs text-muted-foreground capitalize">
+                                    {item.variantType}
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right py-1 align-top text-sm">
+                                {item.quantity}
+                              </TableCell>
+                              <TableCell className="text-right py-1 align-top text-sm">
+                                ₱{item.unitPrice.toLocaleString()}
+                              </TableCell>
+                              <TableCell className="text-right py-1 align-top font-medium text-sm">
+                                ₱{item.subtotal.toLocaleString()}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {/* Spacer Row for visual separation between groups */}
+                          <TableRow className="h-2 border-0 hover:bg-transparent"><TableCell colSpan={5} className="p-0" /></TableRow>
+                        </>
+                      ));
+                    })()}
+
+                    {selectedOrderDetails.items.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
+                          No items found.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="flex justify-end pt-2 border-t">
+                 <div className="text-right space-y-1">
+                    {(selectedOrderDetails.summary.cashPortion > 0) && (
+                      <div className="text-sm text-muted-foreground">
+                        Cash Portion: <span className="font-semibold text-foreground">₱{selectedOrderDetails.summary.cashPortion.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {(selectedOrderDetails.summary.chequePortion > 0) && (
+                      <div className="text-sm text-muted-foreground">
+                        Cheque Portion: <span className="font-semibold text-foreground">₱{selectedOrderDetails.summary.chequePortion.toLocaleString()}</span>
+                      </div>
+                    )}
+                 </div>
+              </div>
+
+            </div>
+          ) : (
+            <div className="py-8 text-center text-muted-foreground">
+              No order details available.
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button onClick={() => setOrderDialogOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

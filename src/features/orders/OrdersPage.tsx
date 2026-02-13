@@ -200,8 +200,15 @@ export default function OrdersPage() {
   const handleConfirmApprove = async () => {
     if (!orderToApprove) return;
 
-    // Safety check: Block approval of cash/cheque orders without deposit OR without bank details recorded
-    if ((orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE') && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
+    // Safety check: Block approval of cash/cheque orders (FULL or SPLIT) without deposit OR without bank details recorded
+    let hasCashOrCheque = false;
+    if (orderToApprove.paymentMode === 'SPLIT' && orderToApprove.paymentSplits) {
+      hasCashOrCheque = orderToApprove.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
+    } else {
+      hasCashOrCheque = orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE';
+    }
+
+    if (hasCashOrCheque && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
       toast({
         title: 'Cannot Approve',
         description: orderToApprove.depositId
@@ -220,7 +227,7 @@ export default function OrdersPage() {
         await updateOrderStatus(orderToApprove.id, 'approved');
 
         // Show appropriate success message
-        const successMessage = (orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE') && orderToApprove.depositId
+        const successMessage = hasCashOrCheque && orderToApprove.depositId
           ? 'Order approved and deposit verified.'
           : 'Order approval complete.';
 
@@ -338,8 +345,29 @@ export default function OrdersPage() {
     }
 
     // One row per order item, including brand/variant, quantity, and pricing strategy
-    const exportData = visibleOrders.flatMap((o) =>
-      o.items.map((item, index) => ({
+    const exportData = visibleOrders.flatMap((o) => {
+      // Format payment method for export
+      let paymentMethodStr = o.paymentMethod || '';
+      if (o.paymentMode === 'SPLIT' && o.paymentSplits) {
+        const parts = o.paymentSplits.map(s => {
+          if (s.method === 'BANK_TRANSFER') return s.bank ? `Bank Transfer (${s.bank})` : 'Bank Transfer';
+          if (s.method === 'GCASH') return 'GCash';
+          if (s.method === 'CASH') return 'Cash';
+          if (s.method === 'CHEQUE') return 'Cheque';
+          return s.method;
+        });
+        paymentMethodStr = `Split: ${parts.join(' + ')}`;
+      } else if (o.paymentMethod === 'BANK_TRANSFER' && o.bankType) {
+        paymentMethodStr = `Bank Transfer (${o.bankType})`;
+      } else if (o.paymentMethod === 'GCASH') {
+        paymentMethodStr = 'GCash';
+      } else if (o.paymentMethod === 'CASH') {
+        paymentMethodStr = 'Cash';
+      } else if (o.paymentMethod === 'CHEQUE') {
+        paymentMethodStr = 'Cheque';
+      }
+
+      return o.items.map((item, index) => ({
         order_number: o.orderNumber,
         order_item_index: index + 1,
         agent_id: o.agentId,
@@ -353,7 +381,7 @@ export default function OrdersPage() {
         total_amount: o.total,
         status: o.status,
         stage: o.stage || '',
-        payment_method: o.paymentMethod || '',
+        payment_method: paymentMethodStr,
         bank_type: o.bankType || '',
         deposit_id: o.depositId || '',
         notes: o.notes || '',
@@ -363,8 +391,8 @@ export default function OrdersPage() {
         item_quantity: item.quantity,
         item_unit_price: item.unitPrice,
         item_pricing_strategy: o.pricingStrategy || '',
-      })),
-    );
+      }));
+    });
 
     await exportClientsToExcel(
       exportData,
@@ -1031,10 +1059,16 @@ export default function OrdersPage() {
   const handleBulkApprove = async () => {
     if (agentOrders.length === 0) return;
 
-    // Check for cash/cheque orders without deposits OR without bank details recorded
-    const ordersWithoutDeposit = agentOrders.filter(
-      order => (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (!order.depositId || !order.depositBankAccount)
-    );
+    // Check for cash/cheque orders (FULL or SPLIT) without deposits OR without bank details recorded
+    const ordersWithoutDeposit = agentOrders.filter(order => {
+      let hasCashOrCheque = false;
+      if (order.paymentMode === 'SPLIT' && order.paymentSplits) {
+        hasCashOrCheque = order.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
+      } else {
+        hasCashOrCheque = order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
+      }
+      return hasCashOrCheque && (!order.depositId || !order.depositBankAccount);
+    });
 
     if (ordersWithoutDeposit.length > 0) {
       toast({
@@ -1055,7 +1089,14 @@ export default function OrdersPage() {
       for (const order of agentOrders) {
         try {
           // Double-check cash/cheque orders before approval (safety net)
-          if ((order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (!order.depositId || !order.depositBankAccount)) {
+          let hasCashOrCheque = false;
+          if (order.paymentMode === 'SPLIT' && order.paymentSplits) {
+            hasCashOrCheque = order.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
+          } else {
+            hasCashOrCheque = order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
+          }
+
+          if (hasCashOrCheque && (!order.depositId || !order.depositBankAccount)) {
             console.warn(`Skipping cash/cheque order ${order.orderNumber} - deposit not recorded or bank details missing`);
             skippedCash++;
             continue;
@@ -1128,7 +1169,9 @@ export default function OrdersPage() {
                       <Badge variant={getStatusVariant(order) as any}>
                         {getStatusLabel(order)}
                       </Badge>
-                      {(order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (order.stage === 'finance_pending' || order.status === 'pending') && (
+                      {(order.stage === 'finance_pending' || order.status === 'pending') && (
+                        (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
+                      ) && (
                         order.depositId && order.depositBankAccount ? (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
                             Deposit Recorded
@@ -1205,7 +1248,9 @@ export default function OrdersPage() {
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
-                          {(order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (order.stage === 'finance_pending' || order.status === 'pending') && (
+                          {(order.stage === 'finance_pending' || order.status === 'pending') && (
+                            (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
+                          ) && (
                             order.depositId && order.depositBankAccount ? (
                               <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
                                 Deposit Recorded
@@ -1665,39 +1710,87 @@ export default function OrdersPage() {
                 <div className="border rounded-lg overflow-hidden">
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Product</TableHead>
+                      <TableRow className="bg-muted/50">
+                        <TableHead className="w-[30%]">Product</TableHead>
+                        <TableHead className="w-[30%]">Variant</TableHead>
                         <TableHead className="text-right">Quantity</TableHead>
                         <TableHead className="text-right">Unit Price</TableHead>
                         <TableHead className="text-right">Subtotal</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {viewingOrder.items.map((item, index) => (
-                        <TableRow key={index}>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Package className="h-4 w-4 text-muted-foreground" />
-                              <div>
-                                <p className="font-medium">{item.brandName}</p>
-                                <p className="text-sm text-muted-foreground">{item.variantName}</p>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right">{item.quantity}</TableCell>
-                          <TableCell className="text-right">₱{item.unitPrice.toLocaleString()}</TableCell>
-                          <TableCell className="text-right font-semibold">
-                            ₱{item.total.toLocaleString()}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {(() => {
+                        // Group items by Brand Name
+                        const grouped = viewingOrder.items.reduce((acc, item) => {
+                          const key = item.brandName;
+                          if (!acc[key]) acc[key] = [];
+                          acc[key].push(item);
+                          return acc;
+                        }, {} as Record<string, typeof viewingOrder.items>);
+
+                        return Object.entries(grouped).map(([brandName, groupItems]) => (
+                          <>
+                            {/* Product Group Header */}
+                            <TableRow key={`group-${brandName}`} className="hover:bg-muted/10">
+                              <TableCell className="font-bold text-sm align-top pt-3 pb-1">
+                                {brandName}
+                              </TableCell>
+                              <TableCell colSpan={4} className="p-0"></TableCell>
+                            </TableRow>
+
+                            {/* Variant Items */}
+                            {groupItems.map((item, index) => (
+                              <TableRow key={`${brandName}-${index}`} className="border-0 hover:bg-transparent">
+                                <TableCell className="py-1"></TableCell>
+                                <TableCell className="py-1 align-top">
+                                  <div className="text-sm font-medium">{item.variantName}</div>
+                                  {item.variantType && (
+                                    <div className="text-xs text-muted-foreground capitalize">
+                                      {item.variantType}
+                                    </div>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right py-1 align-top text-sm">
+                                  {item.quantity}
+                                </TableCell>
+                                <TableCell className="text-right py-1 align-top text-sm">
+                                  ₱{item.unitPrice.toLocaleString()}
+                                </TableCell>
+                                <TableCell className="text-right py-1 align-top font-medium text-sm">
+                                  ₱{item.total.toLocaleString()}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            {/* Spacer Row */}
+                            <TableRow className="h-2 border-0 hover:bg-transparent"><TableCell colSpan={5} className="p-0" /></TableRow>
+                          </>
+                        ));
+                      })()}
                     </TableBody>
                   </Table>
                 </div>
               </div>
 
               {/* Order Total */}
+              {/* Order Total */}
               <div className="space-y-3 p-4 bg-primary/5 rounded-lg border-2 border-primary/20">
+                {/* Split Payment Breakdown */}
+                {viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits && (
+                  <div className="mb-2 pb-2 border-b border-primary/10 space-y-1">
+                    <p className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wider">Payment Breakdown</p>
+                    {viewingOrder.paymentSplits.map((split, idx) => (
+                      <div key={idx} className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">
+                          {split.method === 'GCASH' ? 'GCash' : 
+                           split.method === 'BANK_TRANSFER' ? `Bank (${split.bank || 'Transfer'})` :
+                           split.method === 'CHEQUE' ? 'Cheque' : 'Cash'}
+                        </span>
+                        <span className="font-medium">₱{split.amount.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex justify-between items-center text-xl">
                   <Label className="font-semibold">Order Total:</Label>
                   <p className="font-bold text-primary">₱{viewingOrder.total.toLocaleString()}</p>
@@ -1838,73 +1931,85 @@ export default function OrdersPage() {
               )}
 
               {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (
-                <>
-                  {/* Show warning if CASH/CHEQUE order without deposit (unlikely if remitted, but good safety) */}
-                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositId && (
-                    <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                      <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="font-semibold text-amber-900">Deposit Required</p>
-                        <p className="text-sm text-amber-700 mt-1">
-                          This order cannot be approved until the team leader has deposited the payment (cash/cheque) and recorded it in the system.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                (() => {
+                  const hasCashOrChequeComponent = viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits
+                    ? viewingOrder.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE')
+                    : viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE';
 
-                  {/* Show warning if CASH/CHEQUE order with deposit but bank details not recorded yet */}
-                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && !viewingOrder.depositBankAccount && (
-                    <div className="flex items-start gap-3 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-                      <AlertCircle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="font-semibold text-orange-900">Deposit Details Pending</p>
-                        <p className="text-sm text-orange-700 mt-1">
-                          The team leader must record the deposit details (bank account and reference number) before this order can be approved.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  const needsDeposit = hasCashOrChequeComponent && !viewingOrder.depositId;
+                  const needsBankDetails = hasCashOrChequeComponent && viewingOrder.depositId && !viewingOrder.depositBankAccount;
+                  const depositReady = hasCashOrChequeComponent && viewingOrder.depositId && viewingOrder.depositBankAccount;
 
-                  {/* Show info if CASH/CHEQUE order with deposit AND bank details recorded */}
-                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && viewingOrder.depositBankAccount && (
-                    <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <CheckCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="font-semibold text-blue-900">Deposit Recorded</p>
-                        <p className="text-sm text-blue-700 mt-1">
-                          Team leader has deposited the payment to {viewingOrder.depositBankAccount}. Approving this order will also verify the deposit.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  return (
+                    <>
+                      {/* Show warning if CASH/CHEQUE component without deposit */}
+                      {needsDeposit && (
+                        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                          <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="font-semibold text-amber-900">Deposit Required (Cash/Cheque)</p>
+                            <p className="text-sm text-amber-700 mt-1">
+                              This order contains a cash/cheque payment component. It cannot be approved until the team leader has deposited the payment and recorded it in the system.
+                            </p>
+                          </div>
+                        </div>
+                      )}
 
-                  <div className="flex gap-3 pt-4 border-t">
-                    <Button
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                      onClick={() => {
-                        setViewDialogOpen(false);
-                        handleOpenApprove(viewingOrder);
-                      }}
-                      disabled={(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && (!viewingOrder.depositId || !viewingOrder.depositBankAccount)}
-                    >
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && viewingOrder.depositBankAccount
-                        ? 'Approve Order & Verify Deposit'
-                        : 'Finance Approve'}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      className="flex-1 bg-red-600 hover:bg-red-700"
-                      onClick={() => {
-                        setViewDialogOpen(false);
-                        handleOpenReject(viewingOrder);
-                      }}
-                    >
-                      <XCircle className="h-4 w-4 mr-2" />
-                      Finance Deny
-                    </Button>
-                  </div>
-                </>
+                      {/* Show warning if CASH/CHEQUE component with deposit but bank details not recorded yet */}
+                      {needsBankDetails && (
+                        <div className="flex items-start gap-3 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                          <AlertCircle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="font-semibold text-orange-900">Deposit Details Pending</p>
+                            <p className="text-sm text-orange-700 mt-1">
+                              The team leader must record the deposit details (bank account and reference number) for the cash/cheque portion before this order can be approved.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Show info if CASH/CHEQUE component with deposit AND bank details recorded */}
+                      {depositReady && (
+                        <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                          <CheckCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="font-semibold text-blue-900">Deposit Recorded</p>
+                            <p className="text-sm text-blue-700 mt-1">
+                              Team leader has deposited the payment to {viewingOrder.depositBankAccount}. Approving this order will also verify the deposit.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-3 pt-4 border-t">
+                        <Button
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                          onClick={() => {
+                            setViewDialogOpen(false);
+                            handleOpenApprove(viewingOrder);
+                          }}
+                          disabled={needsDeposit || needsBankDetails}
+                        >
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          {depositReady
+                            ? 'Approve Order & Verify Deposit'
+                            : 'Finance Approve'}
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          className="flex-1 bg-red-600 hover:bg-red-700"
+                          onClick={() => {
+                            setViewDialogOpen(false);
+                            handleOpenReject(viewingOrder);
+                          }}
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          Finance Deny
+                        </Button>
+                      </div>
+                    </>
+                  );
+                })()
               )}
             </div>
           )}
