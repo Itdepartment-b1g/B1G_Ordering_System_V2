@@ -177,8 +177,25 @@ export function WarRoomPage() {
     return map;
   }, [cityOptions]);
 
+  // Check if any filters have been applied (for lazy loading markers)
+  const hasActiveFilters = useMemo(() => {
+    return (
+      selectedManagerId !== 'all' ||
+      selectedCities.length > 0 ||
+      selectedBrandIds.length > 0 ||
+      selectedAgentIds.length > 0 ||
+      searchQuery.length > 0 ||
+      (isExecutive && selectedCompanyIds.length > 0)
+    );
+  }, [selectedManagerId, selectedCities, selectedBrandIds, selectedAgentIds, searchQuery, isExecutive, selectedCompanyIds]);
+
   // 4. Final Filtered Clients (Manager + Cities + Brands + Agents + Search)
   const finalFilteredClients = useMemo(() => {
+    // If no filters are active, return empty array (no markers shown)
+    if (!hasActiveFilters) {
+      return [];
+    }
+
     return clientsInManagerScope.filter(client => {
       // City Filter
       if (selectedCities.length > 0) {
@@ -206,13 +223,15 @@ export function WarRoomPage() {
           client.name.toLowerCase().includes(q) ||
           client.company.toLowerCase().includes(q) ||
           (client.city || '').toLowerCase().includes(q) ||
-          (client.region || '').toLowerCase().includes(q);
+          (client.region || '').toLowerCase().includes(q) ||
+          (client.address || '').toLowerCase().includes(q) ||
+          (client.agent_name || '').toLowerCase().includes(q);
         if (!match) return false;
       }
 
       return true;
     });
-  }, [clientsInManagerScope, selectedCities, selectedBrandIds, selectedAgentIds, searchQuery]);
+  }, [clientsInManagerScope, selectedCities, selectedBrandIds, selectedAgentIds, searchQuery, hasActiveFilters]);
 
   // Handlers
   const handleClientClick = (client: WarRoomClient) => {
@@ -383,37 +402,46 @@ export function WarRoomPage() {
               {/* Professional Info Card */}
               {!(isMobile && filtersOpen) && (
                 <div className="absolute top-4 right-4 bg-background/98 backdrop-blur-sm px-4 py-3 rounded-lg shadow-lg border border-border/50 z-[5] min-w-[200px]">
-                  <div className="flex items-baseline gap-2 mb-2">
-                    <span className="text-2xl font-bold text-foreground">
-                      {finalFilteredClients.length}
-                    </span>
-                    <span className="text-sm font-medium text-muted-foreground">
-                      {finalFilteredClients.length === 1 ? 'Client' : 'Clients'}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    {isExecutive && (
-                      <>
+                  {hasActiveFilters ? (
+                    <>
+                      <div className="flex items-baseline gap-2 mb-2">
+                        <span className="text-2xl font-bold text-foreground">
+                          {finalFilteredClients.length}
+                        </span>
+                        <span className="text-sm font-medium text-muted-foreground">
+                          {finalFilteredClients.length === 1 ? 'Client' : 'Clients'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        {isExecutive && (
+                          <>
+                            <span className="font-medium text-foreground/80">
+                              {selectedCompanyIds.length === 0 
+                                ? 'All Companies' 
+                                : `${selectedCompanyIds.length} Company${selectedCompanyIds.length === 1 ? '' : 'ies'}`}
+                            </span>
+                            <span className="text-muted-foreground/50">•</span>
+                          </>
+                        )}
                         <span className="font-medium text-foreground/80">
-                          {selectedCompanyIds.length === 0 
-                            ? 'All Companies' 
-                            : `${selectedCompanyIds.length} Company${selectedCompanyIds.length === 1 ? '' : 'ies'}`}
+                          {selectedManagerId === 'all' 
+                            ? 'All Teams' 
+                            : managerOptions.find(m => m.id === selectedManagerId)?.name}
                         </span>
                         <span className="text-muted-foreground/50">•</span>
-                      </>
-                    )}
-                    <span className="font-medium text-foreground/80">
-                      {selectedManagerId === 'all' 
-                        ? 'All Teams' 
-                        : managerOptions.find(m => m.id === selectedManagerId)?.name}
-                    </span>
-                    <span className="text-muted-foreground/50">•</span>
-                    <span className="font-medium text-foreground/80">
-                      {selectedCities.length === 0 
-                        ? 'All Cities' 
-                        : `${selectedCities.length} Cities`}
-                    </span>
-                  </div>
+                        <span className="font-medium text-foreground/80">
+                          {selectedCities.length === 0 
+                            ? 'All Cities' 
+                            : `${selectedCities.length} Cities`}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      <p className="font-medium text-foreground mb-1">No filters applied</p>
+                      <p className="text-xs">Use filters to display clients on the map</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

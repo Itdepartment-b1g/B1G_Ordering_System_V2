@@ -106,7 +106,7 @@ export function WarRoomFilters({
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="Name, shop, or address..."
+                placeholder="Name, shop, address, or agent..."
                 value={searchQuery}
                 onChange={(e) => onSearchChange(e.target.value)}
                 className="pl-8 h-8 text-sm"
