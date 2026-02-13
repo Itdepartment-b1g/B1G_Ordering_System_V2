@@ -511,7 +511,7 @@ export function ReturnInventoryDialog({
               setSignatureDataUrl(dataUrl);
               setShowSignatureModal(false);
             }}
-            signatureDataUrl={signatureDataUrl}
+            onCancel={() => setShowSignatureModal(false)}
           />
         </DialogContent>
       </Dialog>

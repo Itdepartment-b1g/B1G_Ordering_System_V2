@@ -428,11 +428,11 @@ export function TeamManagementTab({
         const assignedAgent = agents.find(a => a.id === selectedAgent);
         const assignedLeader = leaders.find(l => l.id === selectedLeader);
 
-        if (user?.company_id && assignedAgent && assignedLeader) {
+        if ((user as any)?.company_id && assignedAgent && assignedLeader) {
           // Notify the mobile sales agent
           await sendNotification({
             userId: assignedAgent.id,
-            companyId: user.company_id,
+            companyId: (user as any).company_id,
             type: 'system_message',
             title: 'Assigned to Team Leader',
             message: `You have been assigned to ${assignedLeader.name}'s team.`,
@@ -443,7 +443,7 @@ export function TeamManagementTab({
           // Notify the team leader
           await sendNotification({
             userId: assignedLeader.id,
-            companyId: user.company_id,
+            companyId: (user as any).company_id,
             type: 'system_message',
             title: 'New Team Member Assigned',
             message: `${assignedAgent.name} has been assigned to your team.`,
@@ -534,11 +534,11 @@ export function TeamManagementTab({
 
       // Notify agent, their leader, and manager (if part of a sub-team) - non-blocking
       try {
-        if (agent && user?.company_id) {
+        if (agent && (user as any)?.company_id) {
           // Notify the mobile sales agent
           await sendNotification({
             userId: agent.id,
-            companyId: user.company_id,
+            companyId: (user as any).company_id,
             type: 'system_message',
             title: 'Removed from Team',
             message: `You have been removed from your team leader's team.`,
@@ -550,7 +550,7 @@ export function TeamManagementTab({
           if (agent.leaderId) {
             await sendNotification({
               userId: agent.leaderId,
-              companyId: user.company_id,
+              companyId: (user as any).company_id,
               type: 'system_message',
               title: 'Team Member Removed',
               message: `${agent.name} has been removed from your team.`,
@@ -570,7 +570,7 @@ export function TeamManagementTab({
             if (!subTeamError && subTeamRow?.manager_id) {
               await sendNotification({
                 userId: subTeamRow.manager_id,
-                companyId: user.company_id,
+                companyId: (user as any).company_id,
                 type: 'system_message',
                 title: 'Sub-Team Member Removed',
                 message: `${agent.name} has been removed from one of your sub-teams.`,
