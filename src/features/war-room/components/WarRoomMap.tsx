@@ -174,14 +174,13 @@ export function WarRoomMap({ clients, cityHolders, onClientClick, onCityStatusCh
   const geoJsonKey = cityHolders ? Array.from(cityHolders.entries()).map(([k,v]) => `${k}:${v}`).join(',') : 'empty';
 
   return (
-    <div className="relative h-full w-full rounded-lg overflow-hidden shadow-lg">
-      <MapContainer
-        center={defaultCenter}
-        zoom={defaultZoom}
-        style={{ height: '100%', width: '100%' }}
-        scrollWheelZoom={true}
-        className="z-0"
-      >
+    <MapContainer
+      center={defaultCenter}
+      zoom={defaultZoom}
+      style={{ height: '100%', width: '100%', zIndex: 0 }}
+      scrollWheelZoom={true}
+      className="map-container"
+    >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
           url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
@@ -235,8 +234,7 @@ export function WarRoomMap({ clients, cityHolders, onClientClick, onCityStatusCh
             </Marker>
           );
         })}
-      </MapContainer>
-    </div>
+    </MapContainer>
   );
 }
 

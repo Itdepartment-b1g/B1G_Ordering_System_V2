@@ -1,17 +1,23 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, Filter } from 'lucide-react';
 import { WarRoomMap } from './components/WarRoomMap';
 import { WarRoomFilters } from './components/WarRoomFilters';
 import { ClientMapPopup } from './components/ClientMapPopup';
 import { useWarRoomClients, WarRoomClient } from './hooks/useWarRoomClients';
 import { useWarRoomHierarchy } from './hooks/useWarRoomHierarchy';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useExecutiveCompanies } from '@/features/dashboard/executiveHooks';
+import { useIsMobile } from '@/hooks/use-mobile';
+import './WarRoomPage.css';
 
 export function WarRoomPage() {
   const { user } = useAuth();
+  const isMobile = useIsMobile();
+  const [filtersOpen, setFiltersOpen] = useState(false);
   
   // For executive accounts, get assigned companies
   const { data: executiveCompanies, isLoading: executiveCompaniesLoading } = useExecutiveCompanies();
@@ -42,7 +48,9 @@ export function WarRoomPage() {
   const [selectedManagerId, setSelectedManagerId] = useState<string>('all');
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
+  const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
   const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Fetch all brands (for all companies if executive, otherwise single company)
@@ -69,6 +77,34 @@ export function WarRoomPage() {
       }
     };
     fetchBrands();
+    return () => { cancelled = true; };
+  }, [effectiveCompanyIds?.join(','), user?.company_id]);
+
+  // Fetch mobile sales agents (for all companies if executive, otherwise single company)
+  useEffect(() => {
+    const agentCompanyIds = effectiveCompanyIds && effectiveCompanyIds.length > 0 
+      ? effectiveCompanyIds 
+      : (user?.company_id ? [user.company_id] : []);
+    
+    if (agentCompanyIds.length === 0) return;
+    
+    let cancelled = false;
+    const fetchAgents = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('company_id', agentCompanyIds)
+          .eq('role', 'mobile_sales')
+          .order('full_name');
+
+        if (error) throw error;
+        if (!cancelled) setAgents((data || []).map(a => ({ id: a.id, name: a.full_name || 'Unknown' })));
+      } catch (err) {
+        console.error('Error fetching agents:', err);
+      }
+    };
+    fetchAgents();
     return () => { cancelled = true; };
   }, [effectiveCompanyIds?.join(','), user?.company_id]);
 
@@ -141,7 +177,7 @@ export function WarRoomPage() {
     return map;
   }, [cityOptions]);
 
-  // 4. Final Filtered Clients (Manager + Cities + Brands + Search)
+  // 4. Final Filtered Clients (Manager + Cities + Brands + Agents + Search)
   const finalFilteredClients = useMemo(() => {
     return clientsInManagerScope.filter(client => {
       // City Filter
@@ -157,6 +193,12 @@ export function WarRoomPage() {
         if (!hasBrand) return false;
       }
 
+      // Agent Filter
+      if (selectedAgentIds.length > 0) {
+        if (!client.agent_id) return false;
+        if (!selectedAgentIds.includes(client.agent_id)) return false;
+      }
+
       // Search Query
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
@@ -170,7 +212,7 @@ export function WarRoomPage() {
 
       return true;
     });
-  }, [clientsInManagerScope, selectedCities, selectedBrandIds, searchQuery]);
+  }, [clientsInManagerScope, selectedCities, selectedBrandIds, selectedAgentIds, searchQuery]);
 
   // Handlers
   const handleClientClick = (client: WarRoomClient) => {
@@ -220,6 +262,25 @@ export function WarRoomPage() {
     }
   };
 
+  // Agent filter handlers
+  const handleAgentToggle = (agentId: string, checked: boolean) => {
+    setSelectedAgentIds(prev => {
+      if (checked) {
+        return prev.includes(agentId) ? prev : [...prev, agentId];
+      } else {
+        return prev.filter(id => id !== agentId);
+      }
+    });
+  };
+
+  const handleSelectAllAgents = (checked: boolean) => {
+    if (checked) {
+      setSelectedAgentIds(agents.map(a => a.id));
+    } else {
+      setSelectedAgentIds([]);
+    }
+  };
+
   const loading = clientsLoading || hierarchyLoading || (isExecutive && executiveCompaniesLoading);
 
   if (loading) {
@@ -240,80 +301,121 @@ export function WarRoomPage() {
 
   const managerOptions = hierarchy?.map(h => ({ id: h.id, name: h.name })) || [];
 
+  const filtersContent = (
+    <WarRoomFilters
+      managers={managerOptions}
+      selectedManagerId={selectedManagerId}
+      onManagerChange={handleManagerChange}
+      cityOptions={cityOptions}
+      selectedCities={selectedCities}
+      onCityToggle={handleCityToggle}
+      onSelectAllCities={handleSelectAllCities}
+      brands={brands}
+      selectedBrandIds={selectedBrandIds}
+      onBrandToggle={(id, checked) => 
+        setSelectedBrandIds(prev => checked ? [...prev, id] : prev.filter(b => b !== id))
+      }
+      agents={agents}
+      selectedAgentIds={selectedAgentIds}
+      onAgentToggle={handleAgentToggle}
+      onSelectAllAgents={handleSelectAllAgents}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      // Executive company filter
+      isExecutive={isExecutive}
+      companies={executiveCompanies?.companies || []}
+      selectedCompanyIds={selectedCompanyIds}
+      onCompanyToggle={handleCompanyToggle}
+      onSelectAllCompanies={handleSelectAllCompanies}
+    />
+  );
+
   return (
     <div className="flex flex-col h-[calc(100vh-64px)]">
-      {/* Header */}
-      <div className="p-6 pb-4">
-        <h1 className="text-3xl font-bold">War Room</h1>
-        <p className="text-muted-foreground mt-1">
-          Interactive map of client locations and territory management
-        </p>
+      {/* Responsive Header */}
+      <div className="px-4 py-4 md:p-6 md:pb-4 border-b bg-background">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-2xl md:text-3xl font-bold">War Room</h1>
+            <p className="text-sm md:text-base text-muted-foreground mt-1 hidden sm:block">
+              Interactive map of client locations and territory management
+            </p>
+          </div>
+          
+          {/* Mobile Filter Button */}
+          {isMobile && (
+            <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm" className="shrink-0">
+                  <Filter className="h-4 w-4 mr-2" />
+                  Filters
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-[85vw] sm:w-[400px] p-0 overflow-hidden">
+                <div className="h-full overflow-y-auto">
+                  {filtersContent}
+                </div>
+              </SheetContent>
+            </Sheet>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 p-6 overflow-hidden">
-        <div className="h-full flex flex-col gap-4">
-
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
-            {/* Filters Sidebar */}
-            <div className="lg:col-span-3 overflow-y-auto">
-              <WarRoomFilters
-                managers={managerOptions}
-                selectedManagerId={selectedManagerId}
-                onManagerChange={handleManagerChange}
-                cityOptions={cityOptions}
-                selectedCities={selectedCities}
-                onCityToggle={handleCityToggle}
-                onSelectAllCities={handleSelectAllCities}
-                brands={brands}
-                selectedBrandIds={selectedBrandIds}
-                onBrandToggle={(id, checked) => 
-                  setSelectedBrandIds(prev => checked ? [...prev, id] : prev.filter(b => b !== id))
-                }
-                searchQuery={searchQuery}
-                onSearchChange={setSearchQuery}
-                // Executive company filter
-                isExecutive={isExecutive}
-                companies={executiveCompanies?.companies || []}
-                selectedCompanyIds={selectedCompanyIds}
-                onCompanyToggle={handleCompanyToggle}
-                onSelectAllCompanies={handleSelectAllCompanies}
-              />
+      <div className="flex-1 overflow-hidden bg-muted/20">
+        <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-0">
+          {/* Desktop Filters Sidebar */}
+          {!isMobile && (
+            <div className="hidden lg:block lg:col-span-3 border-r bg-background overflow-hidden">
+              {filtersContent}
             </div>
+          )}
 
-            {/* Map Area */}
-            <div className="lg:col-span-9 h-[750px] lg:h-[calc(100vh-180px)] flex flex-col gap-4">
-              <div className="flex-1 relative rounded-xl overflow-hidden border">
-                <WarRoomMap
-                  clients={finalFilteredClients}
-                  cityHolders={cityHolderMap} // Pass the color/boundary mapping
-                  onClientClick={handleClientClick}
-                  onCityStatusChange={handleCityToggle}
-                />
-                
-                {/* Floating Info Overlay */}
-                <div className="absolute top-4 right-4 bg-background/90 backdrop-blur-sm p-3 rounded-lg shadow-lg border text-sm max-w-xs z-[400]">
-                  <p className="font-semibold mb-1">
-                    Showing {finalFilteredClients.length} Clients
-                  </p>
-                  <p className="text-muted-foreground text-xs">
+          {/* Map Area */}
+          <div className="col-span-1 lg:col-span-9 h-full relative p-4 lg:p-6">
+            <div className="h-full w-full rounded-lg overflow-hidden shadow-lg border border-border/50 bg-background">
+              <WarRoomMap
+                clients={finalFilteredClients}
+                cityHolders={cityHolderMap}
+                onClientClick={handleClientClick}
+                onCityStatusChange={handleCityToggle}
+              />
+              
+              {/* Professional Info Card */}
+              {!(isMobile && filtersOpen) && (
+                <div className="absolute top-4 right-4 bg-background/98 backdrop-blur-sm px-4 py-3 rounded-lg shadow-lg border border-border/50 z-[5] min-w-[200px]">
+                  <div className="flex items-baseline gap-2 mb-2">
+                    <span className="text-2xl font-bold text-foreground">
+                      {finalFilteredClients.length}
+                    </span>
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {finalFilteredClients.length === 1 ? 'Client' : 'Clients'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     {isExecutive && (
                       <>
-                        {selectedCompanyIds.length === 0 
-                          ? 'All Companies' 
-                          : `${selectedCompanyIds.length} Company${selectedCompanyIds.length === 1 ? '' : 'ies'} Selected`}
-                        {' • '}
+                        <span className="font-medium text-foreground/80">
+                          {selectedCompanyIds.length === 0 
+                            ? 'All Companies' 
+                            : `${selectedCompanyIds.length} Company${selectedCompanyIds.length === 1 ? '' : 'ies'}`}
+                        </span>
+                        <span className="text-muted-foreground/50">•</span>
                       </>
                     )}
-                    {selectedManagerId === 'all' 
-                      ? 'All Teams' 
-                      : `Team ${managerOptions.find(m => m.id === selectedManagerId)?.name}`}
-                   {' • '}
-                   {selectedCities.length === 0 
-                     ? 'All Cities' 
-                     : `${selectedCities.length} Cities Selected`}
-                  </p>
+                    <span className="font-medium text-foreground/80">
+                      {selectedManagerId === 'all' 
+                        ? 'All Teams' 
+                        : managerOptions.find(m => m.id === selectedManagerId)?.name}
+                    </span>
+                    <span className="text-muted-foreground/50">•</span>
+                    <span className="font-medium text-foreground/80">
+                      {selectedCities.length === 0 
+                        ? 'All Cities' 
+                        : `${selectedCities.length} Cities`}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </div>
