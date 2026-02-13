@@ -22,6 +22,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { sendOrderConfirmationEmail } from '@/lib/email.helpers';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import type { BankAccount } from '@/types/database.types';
+import { PRICING_OPTIONS, type PricingColumn } from '@/types/database.types';
 
 interface SelectedItem {
   variantId: string;
@@ -34,6 +35,7 @@ interface SelectedItem {
   rspPrice?: number;
   availableStock: number;
   quantity: number;
+  customPrice?: number; // For special pricing
 }
 
 export default function MyOrdersPage() {
@@ -193,7 +195,8 @@ export default function MyOrdersPage() {
   const [clientName, setClientName] = useState('');
   const [clientCompany, setClientCompany] = useState('');
   const [selectedBrandName, setSelectedBrandName] = useState('');
-  const [pricingType, setPricingType] = useState<'rsp' | 'dsp' | 'special'>('rsp'); // Auto-determined from company config
+  const [pricingType, setPricingType] = useState<'rsp' | 'dsp' | 'special' | ''>(''); // No default - user must select
+  const [customPrices, setCustomPrices] = useState<Record<string, number>>({}); // For special pricing
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [taxRate, setTaxRate] = useState(0);
   const [discount, setDiscount] = useState(0);
@@ -206,7 +209,7 @@ export default function MyOrdersPage() {
 
   const myOrders = user ? getOrdersByAgent(user.id) : [];
 
-  // Fetch company pricing configuration on mount
+  // Fetch company pricing configuration on mount and subscribe to real-time changes
   useEffect(() => {
     const fetchPricingConfig = async () => {
       if (!user?.company_id) {
@@ -243,35 +246,75 @@ export default function MyOrdersPage() {
 
         setAllowedPricingStrategies(allowedStrategies);
 
-        // Auto-determine pricing type based on priority: rsp_price > dsp_price > selling_price
-        if (allowedStrategies.includes('rsp_price')) {
-          setPricingType('rsp');
-        } else if (allowedStrategies.includes('dsp_price')) {
-          setPricingType('dsp');
-        } else if (allowedStrategies.includes('selling_price')) {
-          setPricingType('special');
+        // If only ONE strategy is enabled, auto-select it (backward compatibility)
+        // Otherwise, user must manually select
+        if (allowedStrategies.length === 1) {
+          const strategy = allowedStrategies[0];
+          if (strategy === 'rsp_price') {
+            setPricingType('rsp');
+          } else if (strategy === 'dsp_price') {
+            setPricingType('dsp');
+          } else if (strategy === 'selling_price') {
+            setPricingType('special');
+          }
         } else {
-          // Fallback to RSP
-          setPricingType('rsp');
+          // Multiple strategies - no default, user must select
+          setPricingType('');
         }
 
         console.log('✅ [Pricing Config] Loaded:', {
           role: user.role,
           allowedStrategies,
-          autoDeterminedType: allowedStrategies.includes('rsp_price') ? 'rsp' : allowedStrategies.includes('dsp_price') ? 'dsp' : 'special'
+          autoSelected: allowedStrategies.length === 1
         });
 
       } catch (error) {
         console.error('Error in pricing config fetch:', error);
         setAllowedPricingStrategies(['rsp_price']);
-        setPricingType('rsp');
+        setPricingType('rsp'); // Single option, auto-select
       } finally {
         setLoadingPricingConfig(false);
       }
     };
 
     fetchPricingConfig();
-  }, [user?.company_id, user?.role]);
+
+    // Set up real-time subscription for pricing configuration changes
+    if (user?.company_id) {
+      console.log('🔄 [Pricing Config] Setting up real-time subscription for company:', user.company_id);
+      
+      const pricingChannel = supabase
+        .channel(`pricing-config-${user.company_id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'companies',
+            filter: `id=eq.${user.company_id}`
+          },
+          (payload) => {
+            console.log('🔔 [Pricing Config] Real-time update received:', payload);
+            
+            // Re-fetch pricing config when company settings change
+            fetchPricingConfig();
+            
+            // Show toast notification
+            toast({
+              title: 'Pricing Settings Updated',
+              description: 'Your available pricing options have been updated by an administrator.',
+            });
+          }
+        )
+        .subscribe();
+
+      // Cleanup subscription on unmount
+      return () => {
+        console.log('🔌 [Pricing Config] Unsubscribing from real-time updates');
+        supabase.removeChannel(pricingChannel);
+      };
+    }
+  }, [user?.company_id, user?.role, toast]);
 
   // Apply all filters
   const filteredOrders = myOrders.filter(order => {
@@ -385,19 +428,20 @@ export default function MyOrdersPage() {
     const safeQuantity = Math.min(Math.max(0, quantity), availableStock);
     const existingItemIndex = selectedItems.findIndex(item => item.variantId === variantId);
 
-    // Determine the correct unit price based on privacy type strategy
+    // Determine the correct unit price based on pricing type strategy
     let finalUnitPrice = baseUnitPrice;
     const validDsp = dspPrice && dspPrice > 0 ? dspPrice : undefined;
     const validRsp = rspPrice && rspPrice > 0 ? rspPrice : undefined;
     const validSelling = sellingPrice && sellingPrice > 0 ? sellingPrice : undefined;
 
-    // For Special Price, if item exists, keep its edited price
-    // If it's new, we use the baseUnitPrice (which usually falls back to selling/rsp)
+    // For Special Pricing, use custom price from customPrices state
     if (pricingType === 'special') {
       if (existingItemIndex >= 0) {
-        finalUnitPrice = selectedItems[existingItemIndex].unitPrice;
+        // Keep existing custom price
+        finalUnitPrice = selectedItems[existingItemIndex].customPrice || customPrices[variantId] || 0;
       } else {
-        finalUnitPrice = 0;
+        // Use custom price from state, or 0 if not set
+        finalUnitPrice = customPrices[variantId] || 0;
       }
     } else if (pricingType === 'dsp') {
       finalUnitPrice = validDsp ?? validSelling ?? baseUnitPrice;
@@ -411,7 +455,7 @@ export default function MyOrdersPage() {
         // Update existing item
         setSelectedItems(selectedItems.map(item =>
           item.variantId === variantId
-            ? { ...item, quantity: safeQuantity, unitPrice: finalUnitPrice }
+            ? { ...item, quantity: safeQuantity, unitPrice: finalUnitPrice, customPrice: pricingType === 'special' ? finalUnitPrice : undefined }
             : item
         ));
       } else {
@@ -426,13 +470,20 @@ export default function MyOrdersPage() {
           dspPrice,
           rspPrice,
           availableStock,
-          quantity: safeQuantity
+          quantity: safeQuantity,
+          customPrice: pricingType === 'special' ? finalUnitPrice : undefined
         }]);
       }
     } else {
       // Remove item if quantity is 0
       if (existingItemIndex >= 0) {
         setSelectedItems(selectedItems.filter(item => item.variantId !== variantId));
+        // Also remove custom price
+        if (pricingType === 'special') {
+          const newPrices = { ...customPrices };
+          delete newPrices[variantId];
+          setCustomPrices(newPrices);
+        }
       }
     }
   };
@@ -443,9 +494,25 @@ export default function MyOrdersPage() {
 
     setSelectedItems(selectedItems.map(item =>
       item.variantId === variantId
-        ? { ...item, unitPrice: newPrice }
+        ? { ...item, unitPrice: newPrice, customPrice: newPrice }
         : item
     ));
+  };
+
+  // Handle custom price input change
+  const handleCustomPriceChange = (variantId: string, priceStr: string) => {
+    const price = parseFloat(priceStr) || 0;
+    setCustomPrices(prev => ({ ...prev, [variantId]: price }));
+    
+    // Update existing item if already selected
+    const existingItem = selectedItems.find(item => item.variantId === variantId);
+    if (existingItem) {
+      setSelectedItems(selectedItems.map(item =>
+        item.variantId === variantId
+          ? { ...item, unitPrice: price, customPrice: price }
+          : item
+      ));
+    }
   };
 
   // Update prices when pricing type changes (except for 'special', where we might reset or keep)
@@ -513,7 +580,24 @@ export default function MyOrdersPage() {
     setClientCompany('');
     setClientEmail('');
     setSelectedBrandName('');
-    setPricingType('rsp'); // Reset to RSP
+    
+    // Reset pricing type based on allowed strategies
+    if (allowedPricingStrategies.length === 1) {
+      // Auto-select if only one option
+      const strategy = allowedPricingStrategies[0];
+      if (strategy === 'rsp_price') {
+        setPricingType('rsp');
+      } else if (strategy === 'dsp_price') {
+        setPricingType('dsp');
+      } else if (strategy === 'selling_price') {
+        setPricingType('special');
+      }
+    } else {
+      // No default if multiple options
+      setPricingType('');
+    }
+    
+    setCustomPrices({}); // Reset custom prices
     setSelectedItems([]);
     setDiscount(0);
     setNotes('');
@@ -554,6 +638,33 @@ export default function MyOrdersPage() {
     if (!user) {
       toast({ title: 'Error', description: 'User not authenticated', variant: 'destructive' });
       return;
+    }
+
+    // Validate pricing strategy selection
+    if (allowedPricingStrategies.length > 1 && !pricingType) {
+      toast({ 
+        title: 'Pricing Strategy Required', 
+        description: 'Please select a pricing strategy before creating the order', 
+        variant: 'destructive' 
+      });
+      return;
+    }
+
+    // Validate custom prices for special pricing
+    if (pricingType === 'special') {
+      const itemsWithoutPrice = selectedItems.filter(item => {
+        const customPrice = customPrices[item.variantId];
+        return !customPrice || customPrice <= 0;
+      });
+
+      if (itemsWithoutPrice.length > 0) {
+        toast({ 
+          title: 'Custom Prices Required', 
+          description: `Please enter valid prices for all selected items. ${itemsWithoutPrice.length} item(s) missing prices.`, 
+          variant: 'destructive' 
+        });
+        return;
+      }
     }
 
     // Close the create dialog and open signature modal
@@ -1071,6 +1182,7 @@ export default function MyOrdersPage() {
         sellingPrice: item.sellingPrice,
         dspPrice: item.dspPrice,
         rspPrice: item.rspPrice,
+        customPrice: pricingType === 'special' ? item.customPrice : undefined,
         total: item.quantity * item.unitPrice
       }));
 
@@ -1121,7 +1233,7 @@ export default function MyOrdersPage() {
         bankType: paymentMode === 'FULL' && paymentMethod === 'BANK_TRANSFER' && selectedBank ? selectedBank.name as 'Unionbank' | 'BPI' | 'PBCOM' : undefined, // Only for FULL bank transfer
         paymentProofUrl: paymentMode === 'FULL' ? paymentProofUrl : undefined, // Only for FULL
         paymentSplits: paymentMode === 'SPLIT' ? uploadedSplits : undefined, // NEW: Only for SPLIT
-        pricingStrategy: pricingType // Add pricing strategy selection
+        pricingStrategy: pricingType || 'rsp' // Add pricing strategy selection, fallback to RSP (should never be empty due to validation)
       };
 
       console.log('🛒 Creating order with signature:', newOrder);
@@ -1461,18 +1573,84 @@ export default function MyOrdersPage() {
                 </p>
               </div>
 
-              {/* Pricing Strategy Indicator (Auto-configured by Super Admin) */}
+              {/* Pricing Strategy Selection */}
               {!loadingPricingConfig && (
-                <div className="flex items-center justify-between pt-2 border-t mt-4 bg-muted/30 p-3 rounded-lg">
+                <div className="space-y-3 pt-2 border-t mt-4 bg-muted/30 p-4 rounded-lg">
                   <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Pricing Strategy</Label>
-                    <p className="text-xs text-muted-foreground mt-0.5">Auto-configured by your company</p>
+                    <Label className="text-sm font-medium">Pricing Strategy *</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {allowedPricingStrategies.length === 1 
+                        ? 'Auto-configured by your company' 
+                        : 'Select the pricing strategy for this order'}
+                    </p>
                   </div>
-                  <Badge variant="secondary" className="text-sm font-medium">
-                    {pricingType === 'rsp' && 'RSP Pricing'}
-                    {pricingType === 'dsp' && 'DSP Pricing'}
-                    {pricingType === 'special' && 'Special Pricing'}
-                  </Badge>
+                  
+                  {allowedPricingStrategies.length === 1 ? (
+                    // Single strategy - show as badge
+                    <Badge variant="secondary" className="text-sm font-medium">
+                      {pricingType === 'rsp' && 'RSP Pricing'}
+                      {pricingType === 'dsp' && 'DSP Pricing'}
+                      {pricingType === 'special' && 'Special Pricing'}
+                    </Badge>
+                  ) : (
+                    // Multiple strategies - show radio buttons
+                    <RadioGroup 
+                      value={pricingType} 
+                      onValueChange={(value) => {
+                        setPricingType(value as 'rsp' | 'dsp' | 'special');
+                        // Reset custom prices when changing strategy
+                        if (value !== 'special') {
+                          setCustomPrices({});
+                        }
+                      }}
+                      className="gap-3"
+                    >
+                      {allowedPricingStrategies.includes('rsp_price') && (
+                        <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                          <RadioGroupItem value="rsp" id="pricing-rsp" />
+                          <Label htmlFor="pricing-rsp" className="flex-1 cursor-pointer">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium">{PRICING_OPTIONS.rsp_price.label}</div>
+                                <div className="text-xs text-muted-foreground">{PRICING_OPTIONS.rsp_price.description}</div>
+                              </div>
+                              <Badge variant="outline">{PRICING_OPTIONS.rsp_price.badge}</Badge>
+                            </div>
+                          </Label>
+                        </div>
+                      )}
+                      
+                      {allowedPricingStrategies.includes('dsp_price') && (
+                        <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                          <RadioGroupItem value="dsp" id="pricing-dsp" />
+                          <Label htmlFor="pricing-dsp" className="flex-1 cursor-pointer">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium">{PRICING_OPTIONS.dsp_price.label}</div>
+                                <div className="text-xs text-muted-foreground">{PRICING_OPTIONS.dsp_price.description}</div>
+                              </div>
+                              <Badge variant="outline">{PRICING_OPTIONS.dsp_price.badge}</Badge>
+                            </div>
+                          </Label>
+                        </div>
+                      )}
+                      
+                      {allowedPricingStrategies.includes('selling_price') && (
+                        <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                          <RadioGroupItem value="special" id="pricing-special" />
+                          <Label htmlFor="pricing-special" className="flex-1 cursor-pointer">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium">{PRICING_OPTIONS.selling_price.label}</div>
+                                <div className="text-xs text-muted-foreground">{PRICING_OPTIONS.selling_price.description}</div>
+                              </div>
+                              <Badge variant="outline">{PRICING_OPTIONS.selling_price.badge}</Badge>
+                            </div>
+                          </Label>
+                        </div>
+                      )}
+                    </RadioGroup>
+                  )}
                 </div>
               )}
 
@@ -1536,56 +1714,18 @@ export default function MyOrdersPage() {
                                       <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                         {flavor.stock} in stock
                                       </Badge>
-                                      <span className="text-sm font-semibold text-blue-700">₱{displayPrice.toFixed(2)}</span>
+                                      {pricingType !== 'special' && (
+                                        <span className="text-sm font-semibold text-blue-700">₱{displayPrice.toFixed(2)}</span>
+                                      )}
                                     </div>
                                     {flavor.stock === 0 && (
                                       <p className="text-xs text-red-600 mt-1">No more stock available</p>
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 pt-2 border-t border-blue-200">
-                                  <Label className="text-xs font-medium">Qty:</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    max={flavor.stock}
-                                    value={currentQuantity === 0 ? '' : currentQuantity}
-                                    placeholder="0"
-                                    onChange={(e) => {
-                                      const value = e.target.value;
-                                      const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                      handleQuantityChange(
-                                        flavor.id,
-                                        quantity,
-                                        selectedBrand.name,
-                                        flavor.name,
-                                        'flavor',
-                                        displayPrice,
-                                        flavor.stock,
-                                        (flavor as any).sellingPrice,
-                                        (flavor as any).dspPrice,
-                                        (flavor as any).rspPrice
-                                      );
-                                    }}
-                                    className="w-24 h-9"
-                                    disabled={flavor.stock === 0}
-                                  />
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{flavor.name}</span>
-                                  <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {flavor.stock} in stock
-                                  </Badge>
-                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                </div>
-                                {flavor.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
+                                <div className="flex flex-col gap-2 pt-2 border-t border-blue-200">
                                   <div className="flex items-center gap-2">
-                                    <Label className="text-xs">Qty:</Label>
+                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
                                     <Input
                                       type="number"
                                       min="0"
@@ -1602,12 +1742,91 @@ export default function MyOrdersPage() {
                                           flavor.name,
                                           'flavor',
                                           displayPrice,
-                                          flavor.stock
+                                          flavor.stock,
+                                          (flavor as any).sellingPrice,
+                                          (flavor as any).dspPrice,
+                                          (flavor as any).rspPrice
                                         );
                                       }}
-                                      className="w-20 h-8"
+                                      className="w-24 h-9"
                                       disabled={flavor.stock === 0}
                                     />
+                                  </div>
+                                  {pricingType === 'special' && (
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={customPrices[flavor.id] || ''}
+                                        placeholder={(flavor as any).sellingPrice?.toFixed(2) || '0.00'}
+                                        onChange={(e) => handleCustomPriceChange(flavor.id, e.target.value)}
+                                        className="w-24 h-9"
+                                        disabled={flavor.stock === 0}
+                                      />
+                                      <span className="text-xs text-muted-foreground">₱</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Desktop: Row Layout */}
+                              <div className="hidden sm:flex items-center justify-between">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <span className="font-medium">{flavor.name}</span>
+                                  <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                    {flavor.stock} in stock
+                                  </Badge>
+                                  {pricingType !== 'special' && (
+                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
+                                  )}
+                                </div>
+                                {flavor.stock === 0 ? (
+                                  <span className="text-xs text-red-600">No more stock available</span>
+                                ) : (
+                                  <div className="flex items-center gap-3">
+                                    {pricingType === 'special' && (
+                                      <div className="flex items-center gap-2">
+                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                        <Input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={customPrices[flavor.id] || ''}
+                                          placeholder={(flavor as any).sellingPrice?.toFixed(2) || '0.00'}
+                                          onChange={(e) => handleCustomPriceChange(flavor.id, e.target.value)}
+                                          className="w-24 h-8"
+                                        />
+                                        <span className="text-xs text-muted-foreground">₱</span>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs">Qty:</Label>
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        max={flavor.stock}
+                                        value={currentQuantity === 0 ? '' : currentQuantity}
+                                        placeholder="0"
+                                        onChange={(e) => {
+                                          const value = e.target.value;
+                                          const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                          handleQuantityChange(
+                                            flavor.id,
+                                            quantity,
+                                            selectedBrand.name,
+                                            flavor.name,
+                                            'flavor',
+                                            displayPrice,
+                                            flavor.stock,
+                                            (flavor as any).sellingPrice,
+                                            (flavor as any).dspPrice,
+                                            (flavor as any).rspPrice
+                                          );
+                                        }}
+                                        className="w-20 h-8"
+                                      />
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -1649,56 +1868,18 @@ export default function MyOrdersPage() {
                                       <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                         {battery.stock} in stock
                                       </Badge>
-                                      <span className="text-sm font-semibold text-green-700">₱{displayPrice.toFixed(2)}</span>
+                                      {pricingType !== 'special' && (
+                                        <span className="text-sm font-semibold text-green-700">₱{displayPrice.toFixed(2)}</span>
+                                      )}
                                     </div>
                                     {battery.stock === 0 && (
                                       <p className="text-xs text-red-600 mt-1">No more stock available</p>
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 pt-2 border-t border-green-200">
-                                  <Label className="text-xs font-medium">Qty:</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    max={battery.stock}
-                                    value={currentQuantity === 0 ? '' : currentQuantity}
-                                    placeholder="0"
-                                    onChange={(e) => {
-                                      const value = e.target.value;
-                                      const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                      handleQuantityChange(
-                                        battery.id,
-                                        quantity,
-                                        selectedBrand.name,
-                                        battery.name,
-                                        'battery',
-                                        displayPrice,
-                                        battery.stock,
-                                        (battery as any).sellingPrice,
-                                        (battery as any).dspPrice,
-                                        (battery as any).rspPrice
-                                      );
-                                    }}
-                                    className="w-24 h-9"
-                                    disabled={battery.stock === 0}
-                                  />
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{battery.name}</span>
-                                  <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {battery.stock} in stock
-                                  </Badge>
-                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                </div>
-                                {battery.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
+                                <div className="flex flex-col gap-2 pt-2 border-t border-green-200">
                                   <div className="flex items-center gap-2">
-                                    <Label className="text-xs">Qty:</Label>
+                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
                                     <Input
                                       type="number"
                                       min="0"
@@ -1715,12 +1896,91 @@ export default function MyOrdersPage() {
                                           battery.name,
                                           'battery',
                                           displayPrice,
-                                          battery.stock
+                                          battery.stock,
+                                          (battery as any).sellingPrice,
+                                          (battery as any).dspPrice,
+                                          (battery as any).rspPrice
                                         );
                                       }}
-                                      className="w-20 h-8"
+                                      className="w-24 h-9"
                                       disabled={battery.stock === 0}
                                     />
+                                  </div>
+                                  {pricingType === 'special' && (
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={customPrices[battery.id] || ''}
+                                        placeholder={(battery as any).sellingPrice?.toFixed(2) || '0.00'}
+                                        onChange={(e) => handleCustomPriceChange(battery.id, e.target.value)}
+                                        className="w-24 h-9"
+                                        disabled={battery.stock === 0}
+                                      />
+                                      <span className="text-xs text-muted-foreground">₱</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Desktop: Row Layout */}
+                              <div className="hidden sm:flex items-center justify-between">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <span className="font-medium">{battery.name}</span>
+                                  <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                    {battery.stock} in stock
+                                  </Badge>
+                                  {pricingType !== 'special' && (
+                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
+                                  )}
+                                </div>
+                                {battery.stock === 0 ? (
+                                  <span className="text-xs text-red-600">No more stock available</span>
+                                ) : (
+                                  <div className="flex items-center gap-3">
+                                    {pricingType === 'special' && (
+                                      <div className="flex items-center gap-2">
+                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                        <Input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={customPrices[battery.id] || ''}
+                                          placeholder={(battery as any).sellingPrice?.toFixed(2) || '0.00'}
+                                          onChange={(e) => handleCustomPriceChange(battery.id, e.target.value)}
+                                          className="w-24 h-8"
+                                        />
+                                        <span className="text-xs text-muted-foreground">₱</span>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs">Qty:</Label>
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        max={battery.stock}
+                                        value={currentQuantity === 0 ? '' : currentQuantity}
+                                        placeholder="0"
+                                        onChange={(e) => {
+                                          const value = e.target.value;
+                                          const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                          handleQuantityChange(
+                                            battery.id,
+                                            quantity,
+                                            selectedBrand.name,
+                                            battery.name,
+                                            'battery',
+                                            displayPrice,
+                                            battery.stock,
+                                            (battery as any).sellingPrice,
+                                            (battery as any).dspPrice,
+                                            (battery as any).rspPrice
+                                          );
+                                        }}
+                                        className="w-20 h-8"
+                                      />
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -1762,56 +2022,18 @@ export default function MyOrdersPage() {
                                       <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                         {posm.stock} in stock
                                       </Badge>
-                                      <span className="text-sm font-semibold text-purple-700">₱{displayPrice.toFixed(2)}</span>
+                                      {pricingType !== 'special' && (
+                                        <span className="text-sm font-semibold text-purple-700">₱{displayPrice.toFixed(2)}</span>
+                                      )}
                                     </div>
                                     {posm.stock === 0 && (
                                       <p className="text-xs text-red-600 mt-1">No more stock available</p>
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 pt-2 border-t border-purple-200">
-                                  <Label className="text-xs font-medium">Qty:</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    max={posm.stock}
-                                    value={currentQuantity === 0 ? '' : currentQuantity}
-                                    placeholder="0"
-                                    onChange={(e) => {
-                                      const value = e.target.value;
-                                      const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                      handleQuantityChange(
-                                        posm.id,
-                                        quantity,
-                                        selectedBrand.name,
-                                        posm.name,
-                                        'posm',
-                                        displayPrice,
-                                        posm.stock,
-                                        (posm as any).sellingPrice,
-                                        (posm as any).dspPrice,
-                                        (posm as any).rspPrice
-                                      );
-                                    }}
-                                    className="w-24 h-9"
-                                    disabled={posm.stock === 0}
-                                  />
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{posm.name}</span>
-                                  <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {posm.stock} in stock
-                                  </Badge>
-                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                </div>
-                                {posm.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
+                                <div className="flex flex-col gap-2 pt-2 border-t border-purple-200">
                                   <div className="flex items-center gap-2">
-                                    <Label className="text-xs">Qty:</Label>
+                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
                                     <Input
                                       type="number"
                                       min="0"
@@ -1828,12 +2050,91 @@ export default function MyOrdersPage() {
                                           posm.name,
                                           'posm',
                                           displayPrice,
-                                          posm.stock
+                                          posm.stock,
+                                          (posm as any).sellingPrice,
+                                          (posm as any).dspPrice,
+                                          (posm as any).rspPrice
                                         );
                                       }}
-                                      className="w-20 h-8"
+                                      className="w-24 h-9"
                                       disabled={posm.stock === 0}
                                     />
+                                  </div>
+                                  {pricingType === 'special' && (
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={customPrices[posm.id] || ''}
+                                        placeholder={(posm as any).sellingPrice?.toFixed(2) || '0.00'}
+                                        onChange={(e) => handleCustomPriceChange(posm.id, e.target.value)}
+                                        className="w-24 h-9"
+                                        disabled={posm.stock === 0}
+                                      />
+                                      <span className="text-xs text-muted-foreground">₱</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Desktop: Row Layout */}
+                              <div className="hidden sm:flex items-center justify-between">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <span className="font-medium">{posm.name}</span>
+                                  <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                    {posm.stock} in stock
+                                  </Badge>
+                                  {pricingType !== 'special' && (
+                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
+                                  )}
+                                </div>
+                                {posm.stock === 0 ? (
+                                  <span className="text-xs text-red-600">No more stock available</span>
+                                ) : (
+                                  <div className="flex items-center gap-3">
+                                    {pricingType === 'special' && (
+                                      <div className="flex items-center gap-2">
+                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                        <Input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={customPrices[posm.id] || ''}
+                                          placeholder={(posm as any).sellingPrice?.toFixed(2) || '0.00'}
+                                          onChange={(e) => handleCustomPriceChange(posm.id, e.target.value)}
+                                          className="w-24 h-8"
+                                        />
+                                        <span className="text-xs text-muted-foreground">₱</span>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs">Qty:</Label>
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        max={posm.stock}
+                                        value={currentQuantity === 0 ? '' : currentQuantity}
+                                        placeholder="0"
+                                        onChange={(e) => {
+                                          const value = e.target.value;
+                                          const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                          handleQuantityChange(
+                                            posm.id,
+                                            quantity,
+                                            selectedBrand.name,
+                                            posm.name,
+                                            'posm',
+                                            displayPrice,
+                                            posm.stock,
+                                            (posm as any).sellingPrice,
+                                            (posm as any).dspPrice,
+                                            (posm as any).rspPrice
+                                          );
+                                        }}
+                                        className="w-20 h-8"
+                                      />
+                                    </div>
                                   </div>
                                 )}
                               </div>

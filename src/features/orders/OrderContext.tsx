@@ -15,6 +15,7 @@ export interface OrderItem {
   sellingPrice?: number;
   dspPrice?: number;
   rspPrice?: number;
+  customPrice?: number; // For special pricing
   total: number;
 }
 
@@ -508,13 +509,19 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       const orderItemsWithPrices = order.items.map((item) => {
         const agentInv = inventoryMap.get(item.id);
 
+        // For special pricing, use custom price if provided
+        let finalSellingPrice = item.sellingPrice ?? agentInv?.selling_price ?? null;
+        if (order.pricingStrategy === 'special' && item.customPrice !== undefined) {
+          finalSellingPrice = item.customPrice;
+        }
+
         return {
           company_id: companyId,
           client_order_id: newOrder.id,
           variant_id: item.id,
           quantity: item.quantity,
           unit_price: item.unitPrice,
-          selling_price: item.sellingPrice ?? agentInv?.selling_price ?? null,
+          selling_price: finalSellingPrice,
           dsp_price: item.dspPrice ?? agentInv?.dsp_price ?? null,
           rsp_price: item.rspPrice ?? agentInv?.rsp_price ?? null,
           total_price: item.total
