@@ -910,6 +910,10 @@ export default function PendingRequestsPage() {
                           onClick={() => {
                             setSelectedGroup(group);
                             setSelectedRequest(group.requests[0]);
+                            setReviewAction(null);
+                            setNotes('');
+                            setDenialReason('');
+                            setLeaderAdditionalQuantities({});
                             setReviewDialogOpen(true);
                           }}
                         >
@@ -965,6 +969,10 @@ export default function PendingRequestsPage() {
                               onClick={() => {
                                 setSelectedGroup(group);
                                 setSelectedRequest(group.requests[0]); // Set first request for compatibility
+                                setReviewAction(null);
+                                setNotes('');
+                                setDenialReason('');
+                                setLeaderAdditionalQuantities({});
                                 setReviewDialogOpen(true);
                               }}
                             >
@@ -1133,6 +1141,9 @@ export default function PendingRequestsPage() {
                                   setSelectedGroup(null);
                                   setSelectedRequest(req);
                                   setReviewAction(null);
+                                  setNotes('');
+                                  setDenialReason('');
+                                  setLeaderAdditionalQuantities({});
                                   setReviewDialogOpen(true);
                                 }}
                               >
