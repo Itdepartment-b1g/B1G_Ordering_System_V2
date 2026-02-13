@@ -28,7 +28,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-
+/** Normalize N/A-style email inputs to na@gmail.com */
+function normalizeEmail(value: string): string {
+  const v = (value || '').trim();
+  const lower = v.toLowerCase();
+  if (['n/a', 'na', 'n-a', 'n a'].includes(lower)) return 'na@gmail.com';
+  return v;
+}
 
 export default function MyClientsPage() {
   const { user } = useAuth();
@@ -377,7 +383,7 @@ export default function MyClientsPage() {
         .from('clients')
         .update({
           name: editForm.name,
-          email: editForm.email,
+          email: normalizeEmail(editForm.email),
           phone: editForm.phone ? `+63 ${editForm.phone}` : null,
           company: editForm.company || null,
           contact_person: editForm.contact_person || null,
@@ -1609,8 +1615,8 @@ export default function MyClientsPage() {
         corUrl = corUrlData.signedUrl;
       }
 
-      // Upload Inside Store Photo if present (optional)
-      let insideStorePhotoUrl = null;
+      // Upload Inside Store Photo if present (optional) — store path in DB so we can always resolve a fresh signed URL
+      let insideStorePhotoPath: string | null = null;
       if (newInsideStorePhoto) {
         console.log('📸 [Inside Store Photo] Starting upload process');
         
@@ -1660,17 +1666,8 @@ export default function MyClientsPage() {
           throw new Error(`Failed to upload inside store photo: ${insideStoreUploadError.message}`);
         }
 
-        // Get signed URL
-        const { data: insideStoreUrlData, error: insideStoreUrlError } = await supabase.storage
-          .from('client-photos')
-          .createSignedUrl(insideStoreFileName, 31536000); // 1 year expiry
-
-        if (insideStoreUrlError || !insideStoreUrlData?.signedUrl) {
-          console.error('📸 [Inside Store Photo] URL generation error:', insideStoreUrlError);
-          throw new Error(`Failed to generate inside store photo signed URL`);
-        }
-
-        insideStorePhotoUrl = insideStoreUrlData.signedUrl;
+        // Store the storage path in DB so we can generate fresh signed URLs when displaying
+        insideStorePhotoPath = insideStoreFileName;
         console.log('✅ [Inside Store Photo] Upload successful');
       }
 
@@ -1734,7 +1731,7 @@ export default function MyClientsPage() {
           company_id: user.company_id,
           agent_id: user.id,
           name: formData.name,
-          email: formData.email,
+          email: normalizeEmail(formData.email),
           phone: formData.phone ? `+63 ${formData.phone}` : null,
           company: formData.company || null,
           city: formData.city || null,
@@ -1753,6 +1750,7 @@ export default function MyClientsPage() {
           location_longitude: capturedLocation?.longitude || null,
           location_accuracy: capturedLocation?.accuracy || null,
           location_captured_at: capturedLocation ? new Date().toISOString() : null,
+          inside_store_photo_url: insideStorePhotoPath,
           approval_status: approvalStatus,
           approval_requested_at: approvalRequestedAt,
           approval_notes: approvalNotes,
@@ -2175,6 +2173,7 @@ export default function MyClientsPage() {
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 />
+                <p className="text-xs text-muted-foreground">If no email please put na@gmail.com</p>
               </div>
               <div className="space-y-2">
                 <Label>Phone Number</Label>
@@ -2647,6 +2646,25 @@ export default function MyClientsPage() {
                       Captured: {new Date(viewingClient.photoTimestamp).toLocaleString()}
                     </div>
                   )}
+
+                  {/* Inside Store Photo - always show section so user knows it exists */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">Inside Store Photo</p>
+                    {viewingClient.insideStorePhotoUrl ? (
+                      <div className="relative aspect-video w-full rounded-lg overflow-hidden border bg-gray-50">
+                        <img
+                          src={viewingClient.insideStorePhotoUrl}
+                          alt="Inside store"
+                          className="w-full h-full object-cover cursor-pointer hover:opacity-95"
+                          onClick={() => window.open(viewingClient.insideStorePhotoUrl!, '_blank')}
+                        />
+                      </div>
+                    ) : (
+                      <div className="aspect-video w-full rounded-lg border border-dashed bg-muted/30 flex items-center justify-center text-muted-foreground text-xs">
+                        No inside store photo
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Basic Info Column */}
@@ -2947,6 +2965,21 @@ export default function MyClientsPage() {
                     )}
                   </div>
 
+                  {/* Inside Store Photo (read-only) */}
+                  {editingClient.insideStorePhotoUrl && (
+                    <div className="space-y-1">
+                      <Label className="text-sm font-semibold">Inside Store Photo</Label>
+                      <div className="relative aspect-video w-full rounded-xl overflow-hidden border-2 border-gray-200 bg-gray-50">
+                        <img
+                          src={editingClient.insideStorePhotoUrl}
+                          alt="Inside store"
+                          className="w-full h-full object-cover cursor-pointer hover:opacity-95"
+                          onClick={() => window.open(editingClient.insideStorePhotoUrl!, '_blank')}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Photo Actions */}
                   {!isEditCameraOpen && (
                     <div className="grid grid-cols-2 gap-2">
@@ -3117,6 +3150,7 @@ export default function MyClientsPage() {
                         value={editForm.email}
                         onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                       />
+                      <p className="text-xs text-muted-foreground">If no email please put na@gmail.com</p>
                     </div>
                     <div className="space-y-2">
                       <Label>Phone Number</Label>

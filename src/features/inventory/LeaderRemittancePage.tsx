@@ -8,8 +8,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { CalendarIcon, Package, AlertCircle, Eye, FileSignature, ShoppingCart, Loader2 } from 'lucide-react';
+import { CalendarIcon, Package, AlertCircle, Eye, FileSignature, ShoppingCart, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -45,6 +46,10 @@ export default function LeaderRemittancePage() {
   const [unsoldItems, setUnsoldItems] = useState<any[]>([]);
   const [loadingUnsoldItems, setLoadingUnsoldItems] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [teamAgents, setTeamAgents] = useState<{ id: string; name: string }[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   // Mobile detection
   useEffect(() => {
@@ -134,7 +139,37 @@ export default function LeaderRemittancePage() {
       supabase.removeChannel(remittancesChannel);
       supabase.removeChannel(ordersChannel);
     };
-  }, [user?.id, user?.role, selectedDate, selectedRemittance]);
+  }, [user?.id, user?.role, selectedDate, selectedAgentId, selectedRemittance]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedDate, selectedAgentId]);
+
+  // Fetch team agents for filter (team leaders only)
+  useEffect(() => {
+    if (!user?.id || user?.role !== 'team_leader') return;
+    (async () => {
+      const { data, error } = await supabase
+        .from('leader_teams')
+        .select(`
+          agent_id,
+          profiles!leader_teams_agent_id_fkey (id, full_name)
+        `)
+        .eq('leader_id', user.id);
+      if (error) {
+        console.error('Error fetching team agents:', error);
+        return;
+      }
+      const list = (data || [])
+        .map((r: any) => ({
+          id: r.agent_id,
+          name: r.profiles?.full_name || 'Unknown'
+        }))
+        .filter((a: { id: string; name: string }) => a.id);
+      setTeamAgents(list);
+    })();
+  }, [user?.id, user?.role]);
 
   const fetchTeamRemittances = async () => {
     if (!user?.id) return;
@@ -155,6 +190,10 @@ export default function LeaderRemittancePage() {
       if (selectedDate) {
         const dateStr = format(selectedDate, 'yyyy-MM-dd');
         query = query.eq('remittance_date', dateStr);
+      }
+      // Apply agent filter if selected
+      if (selectedAgentId && selectedAgentId !== 'all') {
+        query = query.eq('agent_id', selectedAgentId);
       }
 
       const { data, error } = await query;
@@ -404,6 +443,14 @@ export default function LeaderRemittancePage() {
   const totalRevenue = remittances.reduce((sum, r) => sum + r.total_revenue, 0);
   const totalOrders = remittances.reduce((sum, r) => sum + r.orders_count, 0);
 
+  const totalPages = Math.max(1, Math.ceil(totalRemittances / PAGE_SIZE));
+  const paginatedRemittances = remittances.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+  const rangeStart = totalRemittances === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(currentPage * PAGE_SIZE, totalRemittances);
+
   if (!canLeadTeam(user?.role)) {
     return (
       <div className="container mx-auto p-6">
@@ -430,34 +477,48 @@ export default function LeaderRemittancePage() {
           </p>
         </div>
 
-        {/* Date Filter */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" className="w-full md:w-[240px] justify-start text-left font-normal h-9 md:h-10 text-sm">
-              <CalendarIcon className="mr-2 h-3 w-3 md:h-4 md:w-4" />
-              {selectedDate ? format(selectedDate, 'MMM dd, yyyy') : <span>Filter by date</span>}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="end">
-            <Calendar
-              mode="single"
-              selected={selectedDate}
-              onSelect={setSelectedDate}
-              initialFocus
-            />
-            {selectedDate && (
-              <div className="p-3 border-t">
-                <Button
-                  variant="ghost"
-                  className="w-full text-xs md:text-sm"
-                  onClick={() => setSelectedDate(undefined)}
-                >
-                  Clear filter
-                </Button>
-              </div>
-            )}
-          </PopoverContent>
-        </Popover>
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+          {/* Agent Filter */}
+          <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+            <SelectTrigger className="w-full md:w-[200px] h-9 md:h-10 text-sm">
+              <SelectValue placeholder="All agents" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All agents</SelectItem>
+              {teamAgents.map((a) => (
+                <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {/* Date Filter */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="w-full md:w-[240px] justify-start text-left font-normal h-9 md:h-10 text-sm">
+                <CalendarIcon className="mr-2 h-3 w-3 md:h-4 md:w-4" />
+                {selectedDate ? format(selectedDate, 'MMM dd, yyyy') : <span>Filter by date</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar
+                mode="single"
+                selected={selectedDate}
+                onSelect={setSelectedDate}
+                initialFocus
+              />
+              {selectedDate && (
+                <div className="p-3 border-t">
+                  <Button
+                    variant="ghost"
+                    className="w-full text-xs md:text-sm"
+                    onClick={() => setSelectedDate(undefined)}
+                  >
+                    Clear filter
+                  </Button>
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -530,16 +591,16 @@ export default function LeaderRemittancePage() {
             <div className="text-center py-8 text-muted-foreground">
               <Package className="h-10 w-10 md:h-12 md:w-12 mx-auto mb-2 opacity-50" />
               <p className="text-sm md:text-base">No remittances found</p>
-              {selectedDate && (
+              {(selectedDate || (selectedAgentId && selectedAgentId !== 'all')) && (
                 <p className="text-xs md:text-sm mt-2">
-                  Try selecting a different date or clear the filter
+                  Try selecting a different date/agent or clear the filters
                 </p>
               )}
             </div>
           ) : isMobile ? (
             // Mobile Cards View
             <div className="space-y-3">
-              {remittances.map((remittance) => (
+              {paginatedRemittances.map((remittance) => (
                 <Card key={remittance.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="p-3">
                     {/* Header */}
@@ -599,7 +660,7 @@ export default function LeaderRemittancePage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {remittances.map((remittance) => (
+                {paginatedRemittances.map((remittance) => (
                   <TableRow key={remittance.id}>
                     <TableCell>
                       <div>
@@ -642,6 +703,38 @@ export default function LeaderRemittancePage() {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {remittances.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 py-3 border-t text-sm text-muted-foreground">
+              <span>
+                Showing {rangeStart}–{rangeEnd} of {totalRemittances}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+                <span className="px-2 min-w-[4rem] text-center">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

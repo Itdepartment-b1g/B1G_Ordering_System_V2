@@ -34,6 +34,7 @@ export interface Client {
     status?: 'active' | 'inactive';
     visitCount: number;
     corUrl?: string;
+    insideStorePhotoUrl?: string | null;
     tin?: string;
     contactPerson?: string;
     taxStatus?: 'Tax on Sales' | 'Tax Exempt';
@@ -44,6 +45,15 @@ export interface Client {
 const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<string | null> => {
     if (!photoUrl) return null;
     if (photoUrl.includes('?token=')) return photoUrl;
+
+    // If it's a storage path (e.g. inside_store/2026/02/13_ad/photo_xxx.jpg), get a signed URL
+    if (!photoUrl.startsWith('http')) {
+        const { data, error } = await supabase.storage
+            .from('client-photos')
+            .createSignedUrl(photoUrl, 3600);
+        if (!error && data?.signedUrl) return data.signedUrl;
+        return photoUrl;
+    }
 
     const publicUrlMatch = photoUrl.match(/\/storage\/v1\/object\/public\/client-photos\/(.+)$/);
     if (publicUrlMatch) {
@@ -69,6 +79,52 @@ const getSignedPhotoUrl = async (photoUrl: string | null | undefined): Promise<s
     return photoUrl;
 };
 
+/** Sanitize client name to match folder naming used when uploading inside store photo */
+function sanitizeClientNameForPath(str: string): string {
+    return str
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '') || 'client';
+}
+
+/** Try to find an inside store photo in storage when DB has no path (e.g. client created before we saved path) */
+async function discoverInsideStorePhotoPath(clientName: string): Promise<string | null> {
+    try {
+        const prefix = 'inside_store/';
+        const { data: listData } = await supabase.storage
+            .from('client-photos')
+            .list(prefix, { limit: 500 });
+        if (!listData?.length) return null;
+        const sanitized = sanitizeClientNameForPath(clientName);
+        // Folders are named like "2026/02/13_ad" - we need to find one ending with _clientName
+        for (const item of listData) {
+            if (item.name && item.name.endsWith(`_${sanitized}`) && item.id == null) {
+                const folderPath = prefix + item.name;
+                const { data: files } = await supabase.storage
+                    .from('client-photos')
+                    .list(folderPath, { limit: 10 });
+                const photo = files?.find((f) => f.name?.startsWith('photo_') && f.name?.endsWith('.jpg'));
+                if (photo?.name) return `${folderPath}/${photo.name}`;
+            }
+        }
+        // Fallback: any folder whose name contains the sanitized client name
+        for (const item of listData) {
+            if (!item.name || item.id != null) continue;
+            if (!item.name.includes(`_${sanitized}`) && item.name !== sanitized) continue;
+            const folderPath = prefix + item.name;
+            const { data: files } = await supabase.storage
+                .from('client-photos')
+                .list(folderPath, { limit: 10 });
+            const photo = files?.find((f) => f.name?.startsWith('photo_') && f.name?.endsWith('.jpg'));
+            if (photo?.name) return `${folderPath}/${photo.name}`;
+        }
+    } catch (e) {
+        console.warn('Discover inside store photo:', e);
+    }
+    return null;
+}
+
 export function useMyClients() {
     const { user } = useAuth();
     const queryClient = useQueryClient();
@@ -81,7 +137,7 @@ export function useMyClients() {
 
             const { data, error } = await supabase
                 .from('clients')
-                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status, cor_url, tin, contact_person, tax_status, brand_ids, shop_type, visit_logs(count)')
+                .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, inside_store_photo_url, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status, cor_url, tin, contact_person, tax_status, brand_ids, shop_type, visit_logs(count)')
                 .eq('agent_id', user.id)
                 .eq('status', 'active')
                 .order('created_at', { ascending: false });
@@ -118,6 +174,7 @@ export function useMyClients() {
             const formattedClients = await Promise.all(
                 (data || []).map(async (c: any) => {
                     const signedPhotoUrl = await getSignedPhotoUrl(c.photo_url);
+                    const signedInsideStoreUrl = c.inside_store_photo_url ? await getSignedPhotoUrl(c.inside_store_photo_url) : null;
                     return {
                         id: c.id,
                         name: c.name,
@@ -135,6 +192,7 @@ export function useMyClients() {
                         photoTimestamp: c.photo_timestamp || c.created_at,
                         visitCount: c.visit_logs?.[0]?.count || 0,
                         corUrl: c.cor_url,
+                        insideStorePhotoUrl: signedInsideStoreUrl ?? c.inside_store_photo_url ?? null,
                         tin: c.tin,
                         contactPerson: c.contact_person,
                         taxStatus: c.tax_status,

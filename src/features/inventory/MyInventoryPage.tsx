@@ -21,6 +21,9 @@ import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import type { RemittanceOrder, BankOrderNote } from './types';
 
+const LOW_STOCK_THRESHOLD = 10;
+const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
+
 export default function MyInventory() {
   const { agentBrands } = useAgentInventory();
   const { user } = useAuth();
@@ -101,9 +104,9 @@ export default function MyInventory() {
   const getLowStockCount = () => {
     let count = 0;
     activeBrands.forEach(brand => {
-      count += brand.flavors.filter(f => f.status === 'low').length;
-      count += brand.batteries.filter(b => b.status === 'low').length;
-      count += brand.posms.filter(p => p.status === 'low').length;
+      count += brand.flavors.filter((f: any) => f.status === 'low' || isLowStock(f.stock)).length;
+      count += brand.batteries.filter((b: any) => b.status === 'low' || isLowStock(b.stock)).length;
+      count += brand.posms.filter((p: any) => p.status === 'low' || isLowStock(p.stock)).length;
     });
     return count;
   };
@@ -629,15 +632,17 @@ export default function MyInventory() {
           <p className="text-sm text-muted-foreground mt-1">Manage your stock and remittance</p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
-          <Button
-            onClick={() => setRemitDialogOpen(true)}
-            variant="default"
-            className="gap-2 flex-1 sm:flex-initial"
-            disabled={!canRemit}
-          >
-            <ClipboardCheck className="h-4 w-4" />
-            Remit
-          </Button>
+          {user?.role !== 'team_leader' && (
+            <Button
+              onClick={() => setRemitDialogOpen(true)}
+              variant="default"
+              className="gap-2 flex-1 sm:flex-initial"
+              disabled={!canRemit}
+            >
+              <ClipboardCheck className="h-4 w-4" />
+              Remit
+            </Button>
+          )}
           <Button
             onClick={() => setReturnDialogOpen(true)}
             variant="outline"
@@ -710,13 +715,15 @@ export default function MyInventory() {
                         </div>
                       </div>
                       <div className="text-right ml-3">
-                        <div className="text-xl font-bold">{getTotalStock(brand)}</div>
                         {(() => {
-                          const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low') || (brand.posms || []).some((p: any) => p.status === 'low');
                           const total = getTotalStock(brand);
-                          if (total === 0) return <div className="text-xs text-red-600">Out</div>;
-                          if (hasLow) return <div className="text-xs text-yellow-600">Low</div>;
-                          return <div className="text-xs text-green-600">OK</div>;
+                          const hasLow = brand.flavors.some((f: any) => f.status === 'low' || isLowStock(f.stock)) || brand.batteries.some((b: any) => b.status === 'low' || isLowStock(b.stock)) || (brand.posms || []).some((p: any) => p.status === 'low' || isLowStock(p.stock));
+                          return (
+                            <>
+                              <div className={`text-xl font-bold ${hasLow && total > 0 ? 'text-amber-600' : ''}`}>{total}</div>
+                              {total === 0 ? <div className="text-xs text-red-600">Out</div> : hasLow ? <div className="text-xs text-yellow-600">Low</div> : <div className="text-xs text-green-600">OK</div>}
+                            </>
+                          );
                         })()}
                       </div>
                     </div>
@@ -731,7 +738,7 @@ export default function MyInventory() {
                                 <div key={f.id} className="flex items-center justify-between text-sm py-1">
                                   <span className="truncate">{f.name}</span>
                                   <div className="text-right ml-2 flex-shrink-0">
-                                    <span className="font-semibold">{f.stock}</span>
+                                    <span className={`font-semibold ${isLowStock(f.stock) ? 'text-amber-600' : ''}`}>{f.stock}</span>
                                     <span className="text-xs text-muted-foreground ml-1">₱{f.price.toFixed(2)}</span>
                                   </div>
                                 </div>
@@ -747,7 +754,7 @@ export default function MyInventory() {
                                 <div key={b.id} className="flex items-center justify-between text-sm py-1">
                                   <span className="truncate">{b.name}</span>
                                   <div className="text-right ml-2 flex-shrink-0">
-                                    <span className="font-semibold">{b.stock}</span>
+                                    <span className={`font-semibold ${isLowStock(b.stock) ? 'text-amber-600' : ''}`}>{b.stock}</span>
                                     <span className="text-xs text-muted-foreground ml-1">₱{b.price.toFixed(2)}</span>
                                   </div>
                                 </div>
@@ -763,7 +770,7 @@ export default function MyInventory() {
                                 <div key={p.id} className="flex items-center justify-between text-sm py-1">
                                   <span className="truncate">{p.name}</span>
                                   <div className="text-right ml-2 flex-shrink-0">
-                                    <span className="font-semibold">{p.stock}</span>
+                                    <span className={`font-semibold ${isLowStock(p.stock) ? 'text-amber-600' : ''}`}>{p.stock}</span>
                                     <span className="text-xs text-muted-foreground ml-1">₱{p.price.toFixed(2)}</span>
                                   </div>
                                 </div>
@@ -807,7 +814,11 @@ export default function MyInventory() {
                 {filteredBrands.map((brand) => (
                   <React.Fragment key={brand.id}>
                     {/* Brand Row */}
-                    <TableRow className="hover:bg-muted/50 bg-primary/5">
+                    <TableRow className={`hover:bg-muted/50 ${(() => {
+                      const total = getTotalStock(brand);
+                      const hasLow = brand.flavors.some((f: any) => isLowStock(f.stock)) || brand.batteries.some((b: any) => isLowStock(b.stock)) || (brand.posms || []).some((p: any) => isLowStock(p.stock));
+                      return hasLow && total > 0 ? 'bg-amber-50/60' : 'bg-primary/5';
+                    })()}`}>
                       <TableCell className="cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
                         {expandedBrands.includes(brand.id) ? (
                           <ChevronDown className="h-4 w-4" />
@@ -828,8 +839,14 @@ export default function MyInventory() {
                           {(brand.posms || []).length > 0 && ` • ${(brand.posms || []).length} POSM${(brand.posms || []).length === 1 ? '' : 's'}`}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right font-semibold cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
-                        {getTotalStock(brand)}
+                      <TableCell className="text-right cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
+                        <span className={(() => {
+                          const total = getTotalStock(brand);
+                          const hasLow = brand.flavors.some((f: any) => isLowStock(f.stock)) || brand.batteries.some((b: any) => isLowStock(b.stock)) || (brand.posms || []).some((p: any) => isLowStock(p.stock));
+                          return hasLow && total > 0 ? 'font-semibold text-amber-600' : 'font-semibold';
+                        })()}>
+                          {getTotalStock(brand)}
+                        </span>
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">-</TableCell>
                       <TableCell className="text-right text-muted-foreground">-</TableCell>
@@ -837,9 +854,9 @@ export default function MyInventory() {
                       <TableCell className="text-right">
                         {(() => {
                           const total = getTotalStock(brand);
-                          const hasLow = brand.flavors.some((f: any) => f.status === 'low') || brand.batteries.some((b: any) => b.status === 'low') || (brand.posms || []).some((p: any) => p.status === 'low');
-                          const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700';
-                          const label = total === 0 ? 'Out of Stock' : hasLow ? 'Low Stock' : 'In Stock';
+                          const hasLow = brand.flavors.some((f: any) => f.status === 'low' || isLowStock(f.stock)) || brand.batteries.some((b: any) => b.status === 'low' || isLowStock(b.stock)) || (brand.posms || []).some((p: any) => p.status === 'low' || isLowStock(p.stock));
+                          const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
+                          const label = total === 0 ? 'Out of Stock' : hasLow ? 'Low stock' : 'In Stock';
                           return <span className={`px-2 py-1 rounded-full text-xs font-medium ${pillClass}`}>{label}</span>;
                         })()}
                       </TableCell>
@@ -855,7 +872,7 @@ export default function MyInventory() {
                       </TableRow>
                     )}
                     {expandedBrands.includes(brand.id) && brand.flavors.map((flavor) => (
-                      <TableRow key={flavor.id} className="bg-muted/10 hover:bg-muted/20">
+                      <TableRow key={flavor.id} className={`hover:bg-muted/20 ${isLowStock(flavor.stock) && flavor.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
                         <TableCell></TableCell>
                         <TableCell className="pl-12 text-sm font-medium">
                           <span className="text-muted-foreground">↳</span> {flavor.name}
@@ -865,7 +882,9 @@ export default function MyInventory() {
                         </TableCell>
                         {/* Variants column (empty for child rows to keep alignment) */}
                         <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
-                        <TableCell className="text-right font-semibold">{flavor.stock}</TableCell>
+                        <TableCell className={`text-right font-semibold ${isLowStock(flavor.stock) ? 'text-amber-600' : ''}`}>
+                          {flavor.stock}
+                        </TableCell>
                         <TableCell className="text-right font-medium">₱{flavor.price.toFixed(2)}</TableCell>
                         <TableCell className="text-right text-muted-foreground text-sm">
                           {flavor.dspPrice ? `₱${flavor.dspPrice.toFixed(2)}` : '-'}
@@ -876,13 +895,12 @@ export default function MyInventory() {
                         <TableCell className="text-right">
                           <Badge
                             variant={
-                              flavor.status === 'available' ? 'default' :
-                                flavor.status === 'low' ? 'secondary' :
-                                  'destructive'
+                              flavor.stock === 0 ? 'destructive' :
+                                isLowStock(flavor.stock) ? 'secondary' : 'default'
                             }
-                            className="text-xs"
+                            className={`text-xs ${isLowStock(flavor.stock) && flavor.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
                           >
-                            {flavor.status}
+                            {flavor.stock === 0 ? 'Out of stock' : isLowStock(flavor.stock) ? 'Low stock' : flavor.status === 'available' ? 'available' : flavor.status}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -898,7 +916,7 @@ export default function MyInventory() {
                       </TableRow>
                     )}
                     {expandedBrands.includes(brand.id) && brand.batteries.map((battery) => (
-                      <TableRow key={battery.id} className="bg-muted/10 hover:bg-muted/20">
+                      <TableRow key={battery.id} className={`hover:bg-muted/20 ${isLowStock(battery.stock) && battery.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
                         <TableCell></TableCell>
                         <TableCell className="pl-12 text-sm font-medium">
                           <span className="text-muted-foreground">↳</span> {battery.name}
@@ -908,7 +926,9 @@ export default function MyInventory() {
                         </TableCell>
                         {/* Variants column (empty for child rows to keep alignment) */}
                         <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
-                        <TableCell className="text-right font-semibold">{battery.stock}</TableCell>
+                        <TableCell className={`text-right font-semibold ${isLowStock(battery.stock) ? 'text-amber-600' : ''}`}>
+                          {battery.stock}
+                        </TableCell>
                         <TableCell className="text-right font-medium">₱{battery.price.toFixed(2)}</TableCell>
                         <TableCell className="text-right text-muted-foreground text-sm">
                           {battery.dspPrice ? `₱${battery.dspPrice.toFixed(2)}` : '-'}
@@ -919,13 +939,12 @@ export default function MyInventory() {
                         <TableCell className="text-right">
                           <Badge
                             variant={
-                              battery.status === 'available' ? 'default' :
-                                battery.status === 'low' ? 'secondary' :
-                                  'destructive'
+                              battery.stock === 0 ? 'destructive' :
+                                isLowStock(battery.stock) ? 'secondary' : 'default'
                             }
-                            className="text-xs"
+                            className={`text-xs ${isLowStock(battery.stock) && battery.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
                           >
-                            {battery.status}
+                            {battery.stock === 0 ? 'Out of stock' : isLowStock(battery.stock) ? 'Low stock' : battery.status === 'available' ? 'available' : battery.status}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -941,7 +960,7 @@ export default function MyInventory() {
                       </TableRow>
                     )}
                     {expandedBrands.includes(brand.id) && (brand.posms || []).map((posm) => (
-                      <TableRow key={posm.id} className="bg-muted/10 hover:bg-muted/20">
+                      <TableRow key={posm.id} className={`hover:bg-muted/20 ${isLowStock(posm.stock) && posm.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
                         <TableCell></TableCell>
                         <TableCell className="pl-12 text-sm font-medium">
                           <span className="text-muted-foreground">↳</span> {posm.name}
@@ -951,7 +970,9 @@ export default function MyInventory() {
                         </TableCell>
                         {/* Variants column (empty for child rows to keep alignment) */}
                         <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
-                        <TableCell className="text-right font-semibold">{posm.stock}</TableCell>
+                        <TableCell className={`text-right font-semibold ${isLowStock(posm.stock) ? 'text-amber-600' : ''}`}>
+                          {posm.stock}
+                        </TableCell>
                         <TableCell className="text-right font-medium">₱{posm.price.toFixed(2)}</TableCell>
                         <TableCell className="text-right text-muted-foreground text-sm">
                           {posm.dspPrice ? `₱${posm.dspPrice.toFixed(2)}` : '-'}
@@ -962,13 +983,12 @@ export default function MyInventory() {
                         <TableCell className="text-right">
                           <Badge
                             variant={
-                              posm.status === 'available' ? 'default' :
-                                posm.status === 'low' ? 'secondary' :
-                                  'destructive'
+                              posm.stock === 0 ? 'destructive' :
+                                isLowStock(posm.stock) ? 'secondary' : 'default'
                             }
-                            className="text-xs"
+                            className={`text-xs ${isLowStock(posm.stock) && posm.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
                           >
-                            {posm.status}
+                            {posm.stock === 0 ? 'Out of stock' : isLowStock(posm.stock) ? 'Low stock' : posm.status === 'available' ? 'available' : posm.status}
                           </Badge>
                         </TableCell>
                       </TableRow>

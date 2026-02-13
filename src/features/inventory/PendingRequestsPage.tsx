@@ -260,6 +260,12 @@ export default function PendingRequestsPage() {
               .eq('agent_id', user.id)
               .eq('variant_id', req.variant_id)
               .maybeSingle();
+            
+            console.log(`[Stock Check] Variant ${req.variant_id}:`, {
+              inventoryData,
+              leaderStock: inventoryData?.stock || 0,
+              userId: user.id
+            });
 
             if (inventoryError || !inventoryData) {
               return {
@@ -306,26 +312,27 @@ export default function PendingRequestsPage() {
               };
             }
 
-            // Get allocated stock (sum of team members' stock for this variant)
-            const { data: allocatedData } = await supabase
-              .from('agent_inventory')
-              .select('stock')
+            // Get pending stock requests from team members for this variant
+            // These requests are already counted in this fetch, so we should exclude the current request
+            const { data: otherPendingRequests } = await supabase
+              .from('stock_requests')
+              .select('requested_quantity')
               .eq('variant_id', req.variant_id)
-              .in('agent_id', teamMemberIds);
+              .eq('leader_id', user.id)
+              .eq('status', 'pending')
+              .neq('id', req.id);
 
-            const allocatedStock = allocatedData?.reduce((sum, item) => sum + (item.stock || 0), 0) || 0;
+            const otherPendingQuantity = otherPendingRequests?.reduce((sum, r) => sum + (r.requested_quantity || 0), 0) || 0;
 
-            // Get pending orders quantity from ALL team members
-            // These orders reserve stock, so it should not be available for allocation
-            // Filter out orders that have been approved (stage = 'leader_approved' or 'admin_approved')
-            // because stock has already been deducted from leader's inventory
+            // Get pending orders quantity from team members that haven't been approved yet
+            // These orders will need stock allocation, so they should be reserved
             const { data: allPendingOrders } = await supabase
               .from('client_orders')
-              .select('id, stage')
+              .select('id, stage, agent_id')
               .in('agent_id', teamMemberIds)
               .eq('status', 'pending');
 
-            // Filter out orders that have been approved (stage = 'leader_approved' or 'admin_approved')
+            // Only count orders that are still pending approval (not yet approved by leader/admin)
             const pendingOrders = allPendingOrders?.filter((o: any) =>
               o.stage !== 'leader_approved' && o.stage !== 'admin_approved'
             ) || [];
@@ -345,9 +352,17 @@ export default function PendingRequestsPage() {
               return sum + (orderItem.quantity || 0);
             }, 0);
 
-            // Available = Total - Allocated - Pending Orders
-            // Pending orders reserve stock, so it's not available for new allocations
-            const availableStock = Math.max(0, leaderStock - allocatedStock - pendingOrdersQuantity);
+            // Available = Total Stock - Other Pending Requests - Pending Orders
+            // Note: We don't subtract already allocated stock because allocations already deducted from inventory
+            const availableStock = Math.max(0, leaderStock - otherPendingQuantity - pendingOrdersQuantity);
+            
+            console.log(`[Available Stock Calculation] Variant ${req.variant_id}:`, {
+              leaderStock,
+              otherPendingQuantity,
+              pendingOrdersQuantity,
+              availableStock,
+              formula: `${leaderStock} - ${otherPendingQuantity} - ${pendingOrdersQuantity} = ${availableStock}`
+            });
 
             return {
               ...req,

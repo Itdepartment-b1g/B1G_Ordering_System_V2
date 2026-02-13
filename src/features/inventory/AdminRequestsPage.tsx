@@ -5,24 +5,21 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { 
-  Package, 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
-  ArrowRight, 
-  Loader2, 
-  Search, 
-  CalendarDays, 
-  User, 
+  Package,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  ArrowRight,
+  Loader2,
+  Search,
   History,
   Clock,
-  Briefcase,
-  Layers,
-  Box,
-  Hash
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
@@ -115,6 +112,14 @@ export default function AdminRequestsPage() {
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Pagination
+  const PAGE_SIZE = 10;
+  const [pendingPage, setPendingPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+
+  // History status filter: all | approved_by_admin | fulfilled | rejected
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
 
   useEffect(() => {
     if (user?.id) {
@@ -295,11 +300,38 @@ export default function AdminRequestsPage() {
   const getFilteredGroups = (groups: GroupedRequest[]) => {
       if (!searchQuery) return groups;
       const lower = searchQuery.toLowerCase();
-      return groups.filter(g => 
-          g.requester_name.toLowerCase().includes(lower) || 
+      return groups.filter(g =>
+          g.requester_name.toLowerCase().includes(lower) ||
           g.request_number.toLowerCase().includes(lower)
       );
   };
+
+  const filteredPending = getFilteredGroups(groupedPending);
+  const filteredHistory = getFilteredGroups(groupedHistory);
+
+  // History filtered by status (after search) — hooks must run before any early return
+  const historyFilteredByStatus = useMemo(() => {
+    if (historyStatusFilter === 'all') return filteredHistory;
+    return filteredHistory.filter((g) => g.status === historyStatusFilter);
+  }, [filteredHistory, historyStatusFilter]);
+
+  const totalPendingPages = Math.max(1, Math.ceil(filteredPending.length / PAGE_SIZE));
+  const totalHistoryPages = Math.max(1, Math.ceil(historyFilteredByStatus.length / PAGE_SIZE));
+  const paginatedPending = useMemo(
+    () => filteredPending.slice((pendingPage - 1) * PAGE_SIZE, pendingPage * PAGE_SIZE),
+    [filteredPending, pendingPage]
+  );
+  const paginatedHistory = useMemo(
+    () => historyFilteredByStatus.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE),
+    [historyFilteredByStatus, historyPage]
+  );
+
+  useEffect(() => {
+    setPendingPage(1);
+  }, [searchQuery]);
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [searchQuery, historyStatusFilter]);
 
   // UI Components
   const StatusBadge = ({ status }: { status: string }) => {
@@ -313,35 +345,82 @@ export default function AdminRequestsPage() {
   };
 
   if (loading && groupedPending.length === 0) {
-      return <div className="min-h-[60vh] flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary/30" /></div>;
+    return <div className="min-h-[60vh] flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary/30" /></div>;
   }
 
-  return (
-    <div className="container mx-auto max-w-7xl p-6 md:p-8 space-y-8 animate-in fade-in duration-500">
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b pb-6">
-        <div className="space-y-1">
-           <h1 className="text-3xl font-bold tracking-tight text-foreground">Stock Requests</h1>
-           <p className="text-muted-foreground text-sm max-w-lg">
-             Manage inventory allocation requests from your team leaders. 
-             Review stock availability and approve bulk requests efficiently.
-           </p>
-        </div>
-        <div className="relative w-full md:w-80">
-           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
-           <Input 
-              placeholder="Search by request #, name..." 
-              className="pl-9 h-10 bg-background/50 border-muted-foreground/20 focus:border-primary/50 transition-all" 
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-           />
+  const PaginationBar = ({
+    currentPage,
+    totalPages,
+    totalItems,
+    onPrev,
+    onNext,
+    pageSize,
+  }: {
+    currentPage: number;
+    totalPages: number;
+    totalItems: number;
+    onPrev: () => void;
+    onNext: () => void;
+    pageSize: number;
+  }) => {
+    const start = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const end = Math.min(currentPage * pageSize, totalItems);
+    return (
+      <div className="flex items-center justify-between px-4 py-3 border-t bg-muted/20 text-sm text-muted-foreground">
+        <span>
+          Showing {start}–{end} of {totalItems}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onPrev}
+            disabled={currentPage <= 1}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Previous
+          </Button>
+          <span className="min-w-[100px] text-center">
+            Page {currentPage} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onNext}
+            disabled={currentPage >= totalPages}
+          >
+            Next
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       </div>
+    );
+  };
 
-      <Tabs defaultValue="pending" className="w-full space-y-6">
-        <div className="flex items-center justify-between">
-          <TabsList className="bg-muted/30 p-1 border h-auto">
-            <TabsTrigger value="pending" className="px-6 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+  return (
+    <div className="p-6 md:p-8 space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Stock Requests</h1>
+        <p className="text-muted-foreground text-sm mt-1">
+          Manage inventory allocation requests from your team leaders. Review stock availability and approve requests.
+        </p>
+      </div>
+
+      <Tabs defaultValue="pending" className="w-full space-y-4">
+        {/* Search + Tab triggers */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by request # or requester name..."
+              className="pl-9"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <TabsList className="bg-muted/30 p-1 border h-auto w-full sm:w-auto">
+            <TabsTrigger value="pending" className="px-4 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 sm:flex-none">
               <Clock className="w-4 h-4" /> Pending
               {groupedPending.length > 0 && (
                 <span className="ml-1.5 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-200">
@@ -349,178 +428,159 @@ export default function AdminRequestsPage() {
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="history" className="px-6 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm">
-              <History className="w-4 h-4" /> Request History
+            <TabsTrigger value="history" className="px-4 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 sm:flex-none">
+              <History className="w-4 h-4" /> History
             </TabsTrigger>
           </TabsList>
         </div>
-
-        {/* PENDING REQUESTS - CARD VIEW */}
+        {/* PENDING - TABLE VIEW */}
         <TabsContent value="pending" className="mt-0">
-            {getFilteredGroups(groupedPending).length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed rounded-xl bg-muted/5">
-                    <div className="bg-background p-4 rounded-full shadow-sm mb-4">
-                      <CheckCircle2 className="h-8 w-8 text-green-500" />
-                    </div>
-                    <h3 className="text-lg font-semibold">All Caught Up!</h3>
-                    <p className="text-muted-foreground text-sm max-w-xs text-center mt-2">
-                        There are no pending stock requests requiring your attention right now.
-                    </p>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {getFilteredGroups(groupedPending).map(group => (
-                        <Card 
-                          key={group.group_id} 
-                          className="group relative overflow-hidden border-muted/60 hover:border-primary/20 hover:shadow-lg transition-all duration-300"
-                        >
-                            {/* Status Stripe */}
-                            <div className={`absolute top-0 left-0 w-1 h-full ${
-                              group.is_fully_stocked ? 'bg-emerald-500' : 'bg-amber-500' 
-                            }`} />
-
-                            <CardHeader className="pl-6 pb-4">
-                                <div className="flex justify-between items-start mb-2">
-                                  <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground bg-muted/50 px-2 py-1 rounded">
-                                    <Hash className="w-3 h-3" />
-                                    {group.request_number}
-                                  </div>
-                                  <StatusBadge status={group.status} />
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
-                                    {group.requester_name.charAt(0)}
-                                  </div>
-                                  <div>
-                                    <CardTitle className="text-base font-bold text-foreground leading-tight">
-                                      {group.requester_name}
-                                    </CardTitle>
-                                    <CardDescription className="text-xs mt-0.5 flex items-center gap-1">
-                                      <CalendarDays className="w-3 h-3" />
-                                      {format(new Date(group.requested_at), 'MMM dd, h:mm a')}
-                                    </CardDescription>
-                                  </div>
-                                </div>
-                            </CardHeader>
-                            
-                            <CardContent className="pl-6 py-2 space-y-4">
-                                {/* Stats Grid */}
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div className="bg-muted/30 p-3 rounded-lg border border-muted/50">
-                                    <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
-                                      <Layers className="w-3 h-3" /> Products
-                                    </p>
-                                    <p className="text-lg font-bold text-foreground">{group.total_items}</p>
-                                  </div>
-                                  <div className="bg-muted/30 p-3 rounded-lg border border-muted/50">
-                                    <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
-                                      <Box className="w-3 h-3" /> Units
-                                    </p>
-                                    <p className="text-lg font-bold text-foreground">{group.total_quantity}</p>
-                                  </div>
-                                </div>
-
-                                {/* Stock Status */}
-                                <div className={`p-3 rounded-lg border text-sm flex items-start gap-3 ${
-                                  group.is_fully_stocked 
-                                    ? 'bg-emerald-50/50 border-emerald-100 text-emerald-800' 
-                                    : 'bg-amber-50/50 border-amber-100 text-amber-800'
-                                }`}>
-                                   {group.is_fully_stocked ? (
-                                     <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600" />
-                                   ) : (
-                                     <AlertCircle className="w-5 h-5 shrink-0 text-amber-600" />
-                                   )}
-                                   <div>
-                                     <p className="font-semibold">
-                                       {group.is_fully_stocked ? 'Stock Available' : 'Stock Shortage'}
-                                     </p>
-                                     <p className="text-xs opacity-90 mt-0.5">
-                                       {group.is_fully_stocked 
-                                         ? 'All items can be fulfilled immediately.' 
-                                         : `${group.missing_stock_count} item(s) have insufficient stock.`}
-                                     </p>
-                                   </div>
-                                </div>
-
-                                {group.notes && (
-                                    <div className="text-xs text-muted-foreground italic pl-3 border-l-2 border-muted">
-                                        "{group.notes}"
-                                    </div>
-                                )}
-                            </CardContent>
-
-                            <CardFooter className="pl-6 pt-4 pb-6 bg-muted/5 border-t">
-                                <Button className="w-full group-hover:translate-x-1 transition-transform" onClick={() => handleOpenDetail(group, false)}>
-                                   Review Request <ArrowRight className="w-4 h-4 ml-2" />
-                                </Button>
-                            </CardFooter>
-                        </Card>
-                    ))}
-                </div>
-            )}
+          <Card className="border rounded-lg overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/30 hover:bg-muted/30">
+                  <TableHead className="pl-6">Request</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Items / Stocks</TableHead>
+                  <TableHead>Stock</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right pr-6">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedPending.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-40 text-center text-muted-foreground">
+                      <CheckCircle2 className="h-10 w-10 mx-auto mb-2 text-green-500 opacity-70" />
+                      <p className="font-medium">All caught up</p>
+                      <p className="text-sm">No pending stock requests right now.</p>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  paginatedPending.map((group) => (
+                    <TableRow key={group.group_id} className="hover:bg-muted/5">
+                      <TableCell className="pl-6">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center text-sm font-semibold text-primary">
+                            {group.requester_name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="font-medium">{group.requester_name}</div>
+                            <div className="text-xs text-muted-foreground font-mono">{group.request_number}</div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {format(new Date(group.requested_at), 'MMM dd, yyyy HH:mm')}
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-medium">{group.total_items}</span> items · <span className="font-medium">{group.total_quantity}</span> units
+                      </TableCell>
+                      <TableCell>
+                        {group.is_fully_stocked ? (
+                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">In stock</Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                            {group.missing_stock_count} short
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell><StatusBadge status={group.status} /></TableCell>
+                      <TableCell className="text-right pr-6">
+                        <Button size="sm" onClick={() => handleOpenDetail(group, false)}>
+                          Review <ArrowRight className="w-3 h-3 ml-1" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+            <PaginationBar
+              currentPage={pendingPage}
+              totalPages={totalPendingPages}
+              totalItems={filteredPending.length}
+              onPrev={() => setPendingPage((p) => Math.max(1, p - 1))}
+              onNext={() => setPendingPage((p) => Math.min(totalPendingPages, p + 1))}
+              pageSize={PAGE_SIZE}
+            />
+          </Card>
         </TabsContent>
 
-        {/* HISTORY - LIST VIEW (Kept Clean) */}
+        {/* HISTORY - TABLE VIEW */}
         <TabsContent value="history" className="mt-0">
-            <Card className="border-muted/60 shadow-sm">
-                <CardContent className="p-0">
-                    <Table>
-                        <TableHeader className="bg-muted/20">
-                            <TableRow>
-                                <TableHead className="pl-6">Request Details</TableHead>
-                                <TableHead>Timeline</TableHead>
-                                <TableHead>Quantities</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead className="text-right pr-6">Actions</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {getFilteredGroups(groupedHistory).length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
-                                      No history records found.
-                                    </TableCell>
-                                </TableRow>
-                            ) : (
-                                getFilteredGroups(groupedHistory).map(group => (
-                                    <TableRow key={group.group_id} className="hover:bg-muted/5">
-                                        <TableCell className="pl-6">
-                                            <div className="flex items-center gap-3">
-                                              <div className="h-8 w-8 rounded bg-muted/50 flex items-center justify-center text-xs font-bold text-muted-foreground">
-                                                {group.requester_name.charAt(0)}
-                                              </div>
-                                              <div>
-                                                <div className="font-medium text-sm">{group.requester_name}</div>
-                                                <div className="text-xs text-muted-foreground font-mono">{group.request_number}</div>
-                                              </div>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex flex-col text-xs">
-                                              <span className="text-muted-foreground">Requested</span>
-                                              <span className="font-medium">{format(new Date(group.requested_at), 'MMM dd, yyyy')}</span>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-sm">
-                                            <div className="flex items-center gap-2">
-                                              <Badge variant="secondary" className="font-normal">{group.total_items} Items</Badge>
-                                              <span className="text-muted-foreground text-xs">{group.total_quantity} Units</span>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell><StatusBadge status={group.status} /></TableCell>
-                                        <TableCell className="text-right pr-6">
-                                            <Button variant="ghost" size="sm" onClick={() => handleOpenDetail(group, true)} className="hover:bg-muted">
-                                                View Details
-                                            </Button>
-                                        </TableCell>
-                                    </TableRow>
-                                ))
-                            )}
-                        </TableBody>
-                    </Table>
-                </CardContent>
-            </Card>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+            <span className="text-sm text-muted-foreground">Filter by status:</span>
+            <Select value={historyStatusFilter} onValueChange={setHistoryStatusFilter}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <SelectValue placeholder="All statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                <SelectItem value="approved_by_admin">Approved</SelectItem>
+                <SelectItem value="fulfilled">Fulfilled</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Card className="border rounded-lg overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/30 hover:bg-muted/30">
+                  <TableHead className="pl-6">Request</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Items / Units</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right pr-6">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedHistory.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                      No history records found.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  paginatedHistory.map((group) => (
+                    <TableRow key={group.group_id} className="hover:bg-muted/5">
+                      <TableCell className="pl-6">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-full bg-muted flex items-center justify-center text-sm font-semibold text-muted-foreground">
+                            {group.requester_name.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="font-medium">{group.requester_name}</div>
+                            <div className="text-xs text-muted-foreground font-mono">{group.request_number}</div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                        {format(new Date(group.requested_at), 'MMM dd, yyyy')}
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-medium">{group.total_items}</span> items · <span className="font-medium">{group.total_quantity}</span> Stocks
+                      </TableCell>
+                      <TableCell><StatusBadge status={group.status} /></TableCell>
+                      <TableCell className="text-right pr-6">
+                        <Button variant="ghost" size="sm" onClick={() => handleOpenDetail(group, true)}>
+                          View Details
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+            <PaginationBar
+              currentPage={historyPage}
+              totalPages={totalHistoryPages}
+              totalItems={historyFilteredByStatus.length}
+              onPrev={() => setHistoryPage((p) => Math.max(1, p - 1))}
+              onNext={() => setHistoryPage((p) => Math.min(totalHistoryPages, p + 1))}
+              pageSize={PAGE_SIZE}
+            />
+          </Card>
         </TabsContent>
       </Tabs>
 

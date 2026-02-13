@@ -170,6 +170,8 @@ export default function TasksPage() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  /** When false: task is due today only (current behavior). When true: leader can pick any date. */
+  const [plotForSpecificDate, setPlotForSpecificDate] = useState(false);
 
   // Form states
   const [formData, setFormData] = useState({
@@ -549,6 +551,7 @@ export default function TasksPage() {
   };
 
   const resetForm = () => {
+    setPlotForSpecificDate(false);
     setFormData({
       agent_id: '',
       title: '',
@@ -978,18 +981,41 @@ export default function TasksPage() {
                 </div>
 
                 <div>
-                  <Label htmlFor="due_date" className="flex items-center gap-2">
-                    Due Date
-                    <Badge variant="secondary" className="text-xs">Today Only</Badge>
-                  </Label>
-                  <Input
-                    id="due_date"
-                    type="date"
-                    value={formData.due_date}
-                    readOnly
-                    disabled
-                    className="bg-gray-50 cursor-not-allowed"
-                  />
+                  <Label className="mb-2 block">When should this task be due?</Label>
+                  <Select
+                    value={plotForSpecificDate ? 'specific' : 'today'}
+                    onValueChange={(value) => {
+                      const useSpecific = value === 'specific';
+                      setPlotForSpecificDate(useSpecific);
+                      if (!useSpecific) setFormData((prev) => ({ ...prev, due_date: getTodayDate() }));
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:max-w-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="today">Today</SelectItem>
+                      <SelectItem value="specific">Pick a date (plot for another day)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {plotForSpecificDate && (
+                    <div className="mt-2">
+                      <Label htmlFor="due_date">Due Date</Label>
+                      <Input
+                        id="due_date"
+                        type="date"
+                        min={getTodayDate()}
+                        value={formData.due_date}
+                        onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                        className="mt-1"
+                      />
+                    </div>
+                  )}
+                  {!plotForSpecificDate && (
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      Due: {formData.due_date} (today)
+                    </p>
+                  )}
                 </div>
 
                 <div className="sm:col-span-2">
@@ -1626,7 +1652,20 @@ export default function TasksPage() {
             <Button
               className="w-full"
               onClick={handleRecordVisit}
-              disabled={isUploading || !visitPhoto || !visitLocation}
+              disabled={
+                isUploading ||
+                !visitPhoto ||
+                !visitLocation ||
+                (!!visitLocation &&
+                  visitedTask?.client_latitude != null &&
+                  visitedTask?.client_longitude != null &&
+                  calculateDistance(
+                    visitLocation.latitude,
+                    visitLocation.longitude,
+                    visitedTask.client_latitude,
+                    visitedTask.client_longitude
+                  ) > 100)
+              }
             >
               {isUploading ? 'Recording...' : 'Submit Visit Log'}
             </Button>

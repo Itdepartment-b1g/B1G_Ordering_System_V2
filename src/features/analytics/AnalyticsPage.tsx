@@ -149,6 +149,7 @@ export default function AnalyticsPage() {
   
   // Team filtering for Leaders and Managers
   const [teamAgentIds, setTeamAgentIds] = useState<string[]>([]);
+  const [teamAgentsResolved, setTeamAgentsResolved] = useState(false);
   
   // Analytics Data
   const [cityPerformance, setCityPerformance] = useState<CityPerformance[]>([]);
@@ -285,7 +286,10 @@ export default function AnalyticsPage() {
   
   useEffect(() => {
     if (user) {
+      setTeamAgentsResolved(false);
       fetchTeamAgents();
+    } else {
+      setTeamAgentsResolved(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.role]);
@@ -315,10 +319,15 @@ export default function AnalyticsPage() {
     
     if (isLeader) {
       try {
-        const { data: teamData, error } = await supabase
+        // Team leader: only their direct sub-team (agents assigned to them in leader_teams), same company
+        let leaderTeamsQuery = supabase
           .from('leader_teams')
           .select('agent_id')
           .eq('leader_id', user.id);
+        if (user.company_id) {
+          leaderTeamsQuery = leaderTeamsQuery.eq('company_id', user.company_id);
+        }
+        const { data: teamData, error } = await leaderTeamsQuery;
 
         if (error) {
           console.error('Error fetching team agents for leader:', error);
@@ -332,11 +341,13 @@ export default function AnalyticsPage() {
         }
         
         const agentIds = (teamData || []).map((member: any) => member.agent_id).filter(Boolean);
-        console.log('Leader team agents loaded:', agentIds.length);
+        console.log('Leader team agents loaded (sub-team only):', agentIds.length);
         setTeamAgentIds(agentIds);
+        setTeamAgentsResolved(true);
       } catch (error) {
         console.error('Error fetching team agents for leader:', error);
         setTeamAgentIds([]);
+        setTeamAgentsResolved(true);
       }
     } else if (isManager) {
       try {
@@ -384,14 +395,19 @@ export default function AnalyticsPage() {
         });
         
         setTeamAgentIds(allTeamIds);
+        setTeamAgentsResolved(true);
       } catch (error) {
         console.error('Error in manager team fetch:', error);
         setTeamAgentIds([]);
+        setTeamAgentsResolved(true);
       }
     } else if (isAdmin) {
       // Admin sees all, no need to filter
       console.log('Admin user - no team filtering');
       setTeamAgentIds([]);
+      setTeamAgentsResolved(true);
+    } else {
+      setTeamAgentsResolved(true);
     }
   };
 

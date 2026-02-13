@@ -15,6 +15,7 @@ ALTER TABLE public.sub_teams ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Admins view all sub-teams" ON public.sub_teams;
 DROP POLICY IF EXISTS "Managers view own sub-teams" ON public.sub_teams;
 DROP POLICY IF EXISTS "Leaders view own sub-team" ON public.sub_teams;
+DROP POLICY IF EXISTS "Leaders view company sub-teams" ON public.sub_teams;
 DROP POLICY IF EXISTS "Members view assigned sub-team" ON public.sub_teams;
 
 -- 1. Admin Policy (View All)
@@ -37,12 +38,20 @@ USING (
     manager_id = auth.uid()
 );
 
--- 3. Team Leader Policy (View Own Lead Team)
-CREATE POLICY "Leaders view own sub-team" 
+-- 3. Team Leader Policy (View All Sub-Teams in Company)
+-- Updated to support TL-to-TL stock requests
+CREATE POLICY "Leaders view company sub-teams" 
 ON public.sub_teams FOR SELECT 
 TO authenticated 
 USING (
-    leader_id = auth.uid()
+    leader_id = auth.uid()  -- Can see their own team
+    OR 
+    EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE profiles.id = auth.uid()
+        AND profiles.role = 'team_leader'
+        AND profiles.company_id = sub_teams.company_id  -- Can see all teams in their company
+    )
 );
 
 -- 4. Mobile Sales Policy (View Team They Are Assigned To)

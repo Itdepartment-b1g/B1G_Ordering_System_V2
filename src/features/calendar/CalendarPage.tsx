@@ -93,6 +93,7 @@ interface Task {
   client_id?: string;
   client_name?: string;
   client_company?: string;
+  client_address?: string;
   client_latitude?: number;
   client_longitude?: number;
   visit_logs?: any[]; // To store attached visit verification
@@ -542,7 +543,7 @@ export default function CalendarPage() {
         const { data: managerViewTasks, error: managerTasksError } = await supabase
           .from('tasks')
           .select(
-            '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, location_latitude, location_longitude), visit_logs(*)'
+            '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, address, location_latitude, location_longitude), visit_logs(*)'
           )
           .in('agent_id', teamAgentIds)
           .order('created_at', { ascending: false });
@@ -553,6 +554,7 @@ export default function CalendarPage() {
           ...task,
           client_name: task.client?.name || '',
           client_company: task.client?.company || '',
+          client_address: task.client?.address || '',
           client_latitude: task.client?.location_latitude,
           client_longitude: task.client?.location_longitude,
           leader_name: task.leader?.full_name || 'Unknown',
@@ -565,7 +567,7 @@ export default function CalendarPage() {
         const { data: agentTasks, error } = await supabase
           .from('tasks')
           .select(
-            '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, location_latitude, location_longitude), visit_logs(*)'
+            '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, address, location_latitude, location_longitude), visit_logs(*)'
           )
           .eq('agent_id', user?.id)
           .order('created_at', { ascending: false });
@@ -576,6 +578,7 @@ export default function CalendarPage() {
           ...task,
           client_name: task.client?.name || '',
           client_company: task.client?.company || '',
+          client_address: task.client?.address || '',
           client_latitude: task.client?.location_latitude,
           client_longitude: task.client?.location_longitude,
         })) || [];
@@ -1602,7 +1605,21 @@ export default function CalendarPage() {
                   <Button
                     className="w-full"
                     onClick={handleRecordVisit}
-                    disabled={isUploading || !visitPhoto || !visitLocation || !selectedClient}
+                    disabled={
+                      isUploading ||
+                      !visitPhoto ||
+                      !visitLocation ||
+                      !selectedClient ||
+                      (!!visitLocation &&
+                        selectedClient?.location_latitude != null &&
+                        selectedClient?.location_longitude != null &&
+                        calculateDistance(
+                          visitLocation.latitude,
+                          visitLocation.longitude,
+                          selectedClient.location_latitude,
+                          selectedClient.location_longitude
+                        ) > 100)
+                    }
                   >
                     {isUploading ? 'Recording...' : 'Submit Visit Log'}
                   </Button>
@@ -2179,10 +2196,10 @@ export default function CalendarPage() {
                             )}
                           </div>
 
-                          {/* Action Buttons - Compact */}
+                          {/* Action Buttons - Compact (Complete only for mobile sales) */}
                           <div className="flex items-center justify-between pt-2 border-t border-gray-200">
                             <div className="flex items-center gap-2">
-                              {event.taskData && event.taskData.status !== 'completed' && (
+                              {isMobileSales && event.taskData && event.taskData.status !== 'completed' && (
                                 <Button
                                   size="sm"
                                   className="h-7 px-2 text-xs"
@@ -2278,7 +2295,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {event.taskData.status !== 'completed' && (
+                                {isMobileSales && event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2346,7 +2363,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {event.taskData.status !== 'completed' && (
+                                {isMobileSales && event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2422,7 +2439,7 @@ export default function CalendarPage() {
                                       </div>
                                       {event.type === 'task' && event.taskData && (
                                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                          {event.taskData.status !== 'completed' && (
+                                          {isMobileSales && event.taskData.status !== 'completed' && (
                                             <Button
                                               variant="outline"
                                               size="sm"
@@ -2501,7 +2518,7 @@ export default function CalendarPage() {
                                   <div className="text-xs opacity-75">{event.startTime} - {event.endTime}</div>
                                   {event.type === 'task' && event.taskData && (
                                     <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                      {event.taskData.status !== 'completed' && (
+                                      {isMobileSales && event.taskData.status !== 'completed' && (
                                         <Button
                                           variant="outline"
                                           size="sm"
@@ -2726,17 +2743,19 @@ export default function CalendarPage() {
                               </div>
 
                               <div className="flex items-center justify-between pt-2 border-t">
-                                <Button
-                                  size="sm"
-                                  className="h-6 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCompleteTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <CheckCircle className="h-3 w-3 mr-1" />
-                                  Complete
-                                </Button>
+                                {isMobileSales && (
+                                  <Button
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleCompleteTask(event.taskData!.id);
+                                    }}
+                                  >
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    Complete
+                                  </Button>
+                                )}
                                 <span className="text-xs text-gray-500">
                                   {new Date(event.taskData?.created_at || '').toLocaleDateString()}
                                 </span>
@@ -2903,9 +2922,6 @@ export default function CalendarPage() {
                       {selectedEvent.title}
                     </DialogTitle>
                   </div>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 -mr-2" onClick={() => setShowEventDetails(false)}>
-                    <X className="h-4 w-4" />
-                  </Button>
                 </div>
 
                 {/* Sub-header info row */}
@@ -2962,14 +2978,14 @@ export default function CalendarPage() {
                             </div>
                           )}
                           
-                          {(selectedEvent.location || selectedEvent.taskData?.client_latitude) && (
+                          {(selectedEvent.taskData?.client_address || selectedEvent.location || selectedEvent.taskData?.client_latitude) && (
                             <div className="flex items-start gap-3">
                               <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
                                 <MapPin className="h-4 w-4 text-green-600" />
                               </div>
                               <div className="text-sm">
                                 <p className="text-gray-700">
-                                  {selectedEvent.location || (selectedEvent.taskData?.client_latitude ? "Client Location" : "No location specified")}
+                                  {selectedEvent.taskData?.client_address || selectedEvent.location || (selectedEvent.taskData?.client_latitude ? "Client Location" : "No location specified")}
                                 </p>
                               </div>
                             </div>
@@ -3128,8 +3144,8 @@ export default function CalendarPage() {
 
                 {/* Right Column: Actions & Meta (md:col-span-5) */}
                 <div className="md:col-span-5 space-y-6 flex flex-col h-full">
-                  {/* Event Actions - hidden for managers and completed tasks */}
-                  {!isManager && !(selectedEvent.type === 'task' && selectedEvent.taskData?.status === 'completed') && (
+                  {/* Event Actions - hidden for managers, team leaders (viewing team tasks), and completed tasks */}
+                  {!isManager && !isTeamLeader && !(selectedEvent.type === 'task' && selectedEvent.taskData?.status === 'completed') && (
                     <div className="bg-gray-50/50 p-4 rounded-xl border space-y-4">
                       <h3 className="text-sm font-semibold text-gray-900">Event Actions</h3>
 
@@ -3162,11 +3178,11 @@ export default function CalendarPage() {
                             </Button>
                           )}
 
-                        {/* Complete Button */}
-                        {selectedEvent.type === 'task' && selectedEvent.taskData?.status !== 'completed' && (
+                        {/* Complete Button - only for mobile sales (assignee); team leaders/managers cannot mark tasks completed */}
+                        {isMobileSales && selectedEvent.type === 'task' && selectedEvent.taskData?.status !== 'completed' && (
                           <Button
-                            variant={isMobileSales && selectedEvent.taskData?.client_id ? "outline" : "default"} // Demote if "Record Visit" is primary
-                            className={`w-full ${!(isMobileSales && selectedEvent.taskData?.client_id) ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}`}
+                            variant={selectedEvent.taskData?.client_id ? "outline" : "default"} // Demote if "Record Visit" is primary
+                            className={`w-full ${!selectedEvent.taskData?.client_id ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}`}
                             onClick={() => handleCompleteTaskWithConfirmation()}
                           >
                             <CheckCircle className="h-4 w-4 mr-2" />
@@ -3220,8 +3236,7 @@ export default function CalendarPage() {
               </div>
 
                {/* Footer */}
-               <div className="bg-gray-50 px-6 py-4 border-t flex justify-between items-center text-xs text-gray-500">
-                  <span>ID: {selectedEvent.id}</span>
+               <div className="bg-gray-50 px-6 py-4 border-t flex justify-end items-center">
                   <Button variant="outline" size="sm" onClick={() => setShowEventDetails(false)}>
                     Close Details
                   </Button>

@@ -34,6 +34,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { canLeadTeam } from '@/lib/roleUtils';
+import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
 
 export default function LeaderInventoryPage() {
   const { user } = useAuth();
@@ -1366,6 +1367,9 @@ export default function LeaderInventoryPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Incoming TL Stock Requests Section */}
+      {user.role === 'team_leader' && <IncomingTLRequestsSection />}
 
       {/* Team Members Inventory Section */}
       <Card>

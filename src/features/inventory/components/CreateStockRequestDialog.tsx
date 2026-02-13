@@ -18,7 +18,17 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Plus, Trash2, ShoppingCart, Package } from 'lucide-react';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Loader2, Plus, Trash2, ShoppingCart, Package, ClipboardCheck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -76,6 +86,7 @@ export function CreateStockRequestDialog({
     const { user } = useAuth();
     const { toast } = useToast();
     const [loading, setLoading] = useState(false);
+    const [showConfirmDialog, setShowConfirmDialog] = useState(false);
     
     // Request State
     const [items, setItems] = useState<RequestItem[]>([]);
@@ -248,6 +259,7 @@ export function CreateStockRequestDialog({
                 title: 'Success',
                 description: `Stock Request ${requestNumber} ${initialData ? 'updated' : 'created'} with ${items.length} items.`,
             });
+            setShowConfirmDialog(false);
             onRequestSubmitted();
             onOpenChange(false);
         } catch (error: any) {
@@ -292,6 +304,7 @@ export function CreateStockRequestDialog({
     const totalQty = items.reduce((acc, item) => acc + item.quantity, 0);
 
     return (
+        <>
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
                 <DialogHeader>
@@ -459,12 +472,67 @@ export function CreateStockRequestDialog({
 
                 <DialogFooter className="gap-2 sm:gap-0">
                     <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                    <Button onClick={handleSubmit} disabled={loading || items.length === 0} className="w-full sm:w-auto">
-                        {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                        {initialData ? 'Update Request' : 'Submit Stock Request'}
+                    <Button onClick={() => setShowConfirmDialog(true)} disabled={loading || items.length === 0} className="w-full sm:w-auto">
+                        {initialData ? 'Update Request' : 'Review & Submit'}
                     </Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
+
+        {/* Confirmation dialog with review */}
+        <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+            <AlertDialogContent className="max-w-md">
+                <AlertDialogHeader>
+                    <AlertDialogTitle className="flex items-center gap-2">
+                        <ClipboardCheck className="h-5 w-5" />
+                        Review & Confirm Stock Request
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                        <div className="space-y-3">
+                            <p className="text-sm text-muted-foreground">
+                                Please review your request before submitting. You are about to request the following items:
+                            </p>
+                            <div className="border rounded-lg divide-y max-h-[240px] overflow-y-auto bg-muted/30">
+                                {items.map((item, index) => (
+                                    <div key={index} className="flex justify-between items-center px-3 py-2.5 text-sm">
+                                        <span className="font-medium truncate flex-1 mr-2">{item.product_name}</span>
+                                        <span className="text-muted-foreground shrink-0">{item.brand_name}</span>
+                                        <span className="font-semibold text-primary shrink-0 ml-2 w-8 text-right">{item.quantity}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex justify-between text-sm font-medium pt-1 border-t">
+                                <span>Total items:</span>
+                                <span>{items.length}</span>
+                            </div>
+                            <div className="flex justify-between text-sm font-medium">
+                                <span>Total quantity:</span>
+                                <span className="text-primary">{totalQty}</span>
+                            </div>
+                            {notes.trim() && (
+                                <div className="pt-2 border-t">
+                                    <p className="text-xs text-muted-foreground mb-1">Notes:</p>
+                                    <p className="text-sm bg-muted/50 p-2 rounded">{notes}</p>
+                                </div>
+                            )}
+                        </div>
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleSubmit} disabled={loading} className="bg-primary text-primary-foreground">
+                        {loading ? (
+                            <>
+                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                Submitting...
+                            </>
+                        ) : (
+                            initialData ? 'Update Request' : 'Submit Stock Request'
+                        )}
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+        </>
     );
 }

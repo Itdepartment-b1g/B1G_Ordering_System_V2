@@ -66,6 +66,7 @@ interface Leader {
   teamSize: number;
   role: 'team_leader' | 'manager';
   leaderId?: string; // Added to track if assigned to Admin
+  teamName?: string; // Team name for manager teams
 }
 
 
@@ -169,7 +170,7 @@ export function TeamManagementTab({
         // Fetch team assignments (trimmed and capped)
         supabase
           .from('leader_teams')
-          .select('agent_id, leader_id')
+          .select('agent_id, leader_id, team_name')
           .match(companyFilter)
           .limit(200),
 
@@ -190,6 +191,7 @@ export function TeamManagementTab({
 
       // Create lookup maps for O(1) access
       const teamMap = new Map(teamData.map(t => [t.agent_id, t.leader_id]));
+      const teamNameMap = new Map(teamData.map(t => [t.agent_id, t.team_name]));
       const profileMap = new Map(agentsData.map(p => [p.id, p]));
 
       // Process agents data in a single pass
@@ -231,6 +233,7 @@ export function TeamManagementTab({
             teamSize: teamSizeMap.get(agent.id) || 0,
             role: agent.role as 'team_leader' | 'manager',
             leaderId: agent.leaderId, // Store assignment status
+            teamName: teamNameMap.get(agent.id), // Store team name
           });
         }
       }
@@ -1339,6 +1342,11 @@ export function TeamManagementTab({
                                 </Badge>
                               )}
                             </div>
+                            {leader.teamName && (
+                              <p className="text-xs text-foreground mt-0.5 truncate font-medium">
+                                Team: {leader.teamName}
+                              </p>
+                            )}
                             <div className="flex items-center gap-1 md:gap-1.5 mt-1">
                               <MapPin className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                               <p className="text-xs md:text-sm text-muted-foreground truncate">{leader.region}</p>

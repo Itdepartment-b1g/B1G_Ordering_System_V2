@@ -41,9 +41,12 @@ interface InventoryContextType {
 
 const InventoryContext = createContext<InventoryContextType | undefined>(undefined);
 
-const calculateStatus = (stock: number, reorderLevel: number = 50): 'in-stock' | 'low-stock' | 'out-of-stock' => {
+/** Variants with stock at or below this are shown as low stock. */
+export const LOW_STOCK_THRESHOLD = 10;
+
+const calculateStatus = (stock: number, reorderLevel: number = LOW_STOCK_THRESHOLD): 'in-stock' | 'low-stock' | 'out-of-stock' => {
   if (stock === 0) return 'out-of-stock';
-  if (stock < reorderLevel) return 'low-stock';
+  if (stock <= reorderLevel) return 'low-stock';
   return 'in-stock';
 };
 
@@ -97,7 +100,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
             sellingPrice: inventory.selling_price,
             dspPrice: inventory.dsp_price,
             rspPrice: inventory.rsp_price,
-            status: calculateStatus(inventory.stock, inventory.reorder_level || 50),
+            status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
           };
         }) || []).filter(Boolean) as any,
       batteries: (brand.variants
@@ -115,7 +118,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
             sellingPrice: inventory.selling_price,
             dspPrice: inventory.dsp_price,
             rspPrice: inventory.rsp_price,
-            status: calculateStatus(inventory.stock, inventory.reorder_level || 30),
+            status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
           };
         }) || []).filter(Boolean) as any,
       posms: (brand.variants
@@ -133,7 +136,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
             sellingPrice: inventory.selling_price ?? 0,
             dspPrice: inventory.dsp_price ?? 0,
             rspPrice: inventory.rsp_price ?? 0,
-            status: calculateStatus(inventory.stock, inventory.reorder_level || 30),
+            status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
           };
         }) || []).filter(Boolean) as any,
     };
