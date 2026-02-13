@@ -539,12 +539,86 @@ export function useFinanceStats() {
                 .order('deposit_date', { ascending: false })
                 .limit(10);
 
-            const recentDeposits = depositsData || [];
+            const recentDepositsRaw = depositsData || [];
+
+            // Apply split-payment logic: compute cash + cheque portions from client_orders.payment_splits
+            let recentDeposits = recentDepositsRaw;
+            if (recentDepositsRaw.length > 0) {
+                const depositIds = recentDepositsRaw.map(d => d.id);
+
+                const { data: orderData, error: orderError } = await supabase
+                    .from('client_orders')
+                    .select('id, deposit_id, total_amount, payment_method, payment_mode, payment_splits')
+                    .in('deposit_id', depositIds);
+
+                if (!orderError && orderData) {
+                    const summaries: Record<string, { cashPortion: number; chequePortion: number; nonCashPortion: number }> = {};
+
+                    orderData.forEach((order: any) => {
+                        const depositId = order.deposit_id as string | null;
+                        if (!depositId) return;
+
+                        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+                        const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+                        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+                        let cashPortion = 0;
+                        let chequePortion = 0;
+                        let nonCashPortion = 0;
+
+                        if (paymentMode === 'SPLIT') {
+                            splits.forEach((s: any) => {
+                                const amount = s.amount || 0;
+                                if (s.method === 'CASH') {
+                                    cashPortion += amount;
+                                } else if (s.method === 'CHEQUE') {
+                                    chequePortion += amount;
+                                } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+                                    nonCashPortion += amount;
+                                }
+                            });
+                        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+                            const amt = order.total_amount || 0;
+                            if (paymentMethod === 'CASH') {
+                                cashPortion = amt;
+                            } else {
+                                chequePortion = amt;
+                            }
+                        }
+
+                        if (!summaries[depositId]) {
+                            summaries[depositId] = { cashPortion: 0, chequePortion: 0, nonCashPortion: 0 };
+                        }
+
+                        summaries[depositId].cashPortion += cashPortion;
+                        summaries[depositId].chequePortion += chequePortion;
+                        summaries[depositId].nonCashPortion += nonCashPortion;
+                    });
+
+                    recentDeposits = recentDepositsRaw.map(deposit => {
+                        const summary = summaries[deposit.id];
+                        const effectiveAmount =
+                            summary && (summary.cashPortion > 0 || summary.chequePortion > 0)
+                                ? summary.cashPortion + summary.chequePortion
+                                : deposit.amount || 0;
+
+                        return {
+                            ...deposit,
+                            amount: effectiveAmount,
+                            _rawAmount: deposit.amount || 0,
+                            _cashPortion: summary?.cashPortion ?? null,
+                            _chequePortion: summary?.chequePortion ?? null,
+                            _nonCashPortion: summary?.nonCashPortion ?? null,
+                        };
+                    });
+                }
+            }
 
             // Simple stats
             const totalPendingRevenue = pendingOrders.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
+            const todayStr = new Date().toDateString();
             const totalDepositsToday = (recentDeposits || [])
-                .filter((d: any) => new Date(d.deposit_date).toDateString() === new Date().toDateString())
+                .filter((d: any) => new Date(d.deposit_date).toDateString() === todayStr)
                 .reduce((sum: number, d: any) => sum + (d.amount || 0), 0);
 
             return {
