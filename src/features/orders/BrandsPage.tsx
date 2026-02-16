@@ -58,6 +58,9 @@ export default function BrandsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBrand, setSelectedBrand] = useState<string>('');
+  // Variant panel: search and type filter (when a brand is open)
+  const [variantSearchQuery, setVariantSearchQuery] = useState('');
+  const [variantTypeFilter, setVariantTypeFilter] = useState<'all' | 'flavor' | 'battery' | 'posm'>('all');
 
   // Dialog states
   const [createBrandDialogOpen, setCreateBrandDialogOpen] = useState(false);
@@ -161,6 +164,12 @@ export default function BrandsPage() {
     fetchData();
   }, []);
 
+  // Reset variant search and type filter when switching to another brand
+  useEffect(() => {
+    setVariantSearchQuery('');
+    setVariantTypeFilter('all');
+  }, [selectedBrand]);
+
   // Filter brands by search query
   const filteredBrands = brands.filter(brand =>
     brand.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -170,6 +179,19 @@ export default function BrandsPage() {
   const brandVariants = selectedBrand
     ? variants.filter(v => v.brand_id === selectedBrand)
     : [];
+
+  // Filter variants by search (name, SKU, description) and type (flavor / battery / posm / all)
+  const filteredBrandVariants = brandVariants.filter(v => {
+    const matchSearch = !variantSearchQuery.trim() || [
+      v.name,
+      v.sku ?? '',
+      v.description ?? ''
+    ].some(field => field.toLowerCase().includes(variantSearchQuery.toLowerCase()));
+    const matchType =
+      variantTypeFilter === 'all' ||
+      v.variant_type?.toLowerCase() === variantTypeFilter;
+    return matchSearch && matchType;
+  });
 
   // Create Brand
   const handleCreateBrand = async () => {
@@ -602,8 +624,8 @@ export default function BrandsPage() {
         </Card>
 
         {/* Variants for Selected Brand */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
+        <Card className="lg:col-span-2 flex flex-col min-h-0">
+          <CardHeader className="flex-shrink-0">
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle>
@@ -629,15 +651,46 @@ export default function BrandsPage() {
                 </Button>
               )}
             </div>
+            {/* Search and type filter - only when a brand is selected */}
+            {selectedBrand && brandVariants.length > 0 && (
+              <div className="flex flex-col sm:flex-row gap-3 mt-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search variants by name, SKU, or description..."
+                    value={variantSearchQuery}
+                    onChange={(e) => setVariantSearchQuery(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Label className="text-sm text-muted-foreground whitespace-nowrap">Type:</Label>
+                  <Select
+                    value={variantTypeFilter}
+                    onValueChange={(v: 'all' | 'flavor' | 'battery' | 'posm') => setVariantTypeFilter(v)}
+                  >
+                    <SelectTrigger className="w-[130px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="flavor">Flavor</SelectItem>
+                      <SelectItem value="battery">Battery</SelectItem>
+                      <SelectItem value="posm">POSM</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex-1 min-h-0 flex flex-col pt-0">
             {!selectedBrand ? (
-              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground flex-1">
                 <Package className="h-12 w-12 mb-2" />
                 <p>Select a brand to view and manage its variants</p>
               </div>
             ) : brandVariants.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground flex-1">
                 <Package className="h-12 w-12 mb-2" />
                 <p>No variants found for this brand</p>
                 <Button
@@ -653,54 +706,63 @@ export default function BrandsPage() {
                 </Button>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>SKU</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {brandVariants.map(variant => (
-                    <TableRow key={variant.id}>
-                      <TableCell className="font-medium">{variant.name}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className={getVariantTypeBadge(variant.variant_type)}>
-                          {getVariantTypeDisplayName(variant.variant_type)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{variant.sku || '-'}</TableCell>
-                      <TableCell className="max-w-xs truncate">
-                        {variant.description || '-'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openEditVariantDialog(variant)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setDeletingVariant(variant);
-                              setDeleteVariantDialogOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="flex-1 min-h-0 border rounded-md overflow-hidden flex flex-col">
+                <div className="overflow-auto flex-1 min-h-0" style={{ maxHeight: '400px' }}>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>SKU</TableHead>
+                        <TableHead>Description</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredBrandVariants.map(variant => (
+                        <TableRow key={variant.id}>
+                          <TableCell className="font-medium">{variant.name}</TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className={getVariantTypeBadge(variant.variant_type)}>
+                              {getVariantTypeDisplayName(variant.variant_type)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{variant.sku || '-'}</TableCell>
+                          <TableCell className="max-w-xs truncate">
+                            {variant.description || '-'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => openEditVariantDialog(variant)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  setDeletingVariant(variant);
+                                  setDeleteVariantDialogOpen(true);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                {filteredBrandVariants.length === 0 && (variantSearchQuery.trim() || variantTypeFilter !== 'all') && (
+                  <p className="text-sm text-muted-foreground text-center py-4 border-t">
+                    No variants match your search or filter.
+                  </p>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>
