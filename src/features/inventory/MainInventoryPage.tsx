@@ -117,16 +117,11 @@ export default function MainInventoryPage() {
   };
 
   const getTotalStock = (brand: Brand) => {
-    return brand.flavors.reduce((sum, f) => sum + f.stock, 0) +
-      brand.batteries.reduce((sum, b) => sum + b.stock, 0) +
-      (brand.posms || []).reduce((sum, p) => sum + p.stock, 0);
+    return brand.allVariants.reduce((sum, v) => sum + v.stock, 0);
   };
 
   const getAllocatedStock = (brand: Brand) => {
-    const flavorAllocated = brand.flavors.reduce((sum, f) => sum + (f.allocatedStock || 0), 0);
-    const batteryAllocated = brand.batteries.reduce((sum, b) => sum + (b.allocatedStock || 0), 0);
-    const posmAllocated = (brand.posms || []).reduce((sum, p) => sum + (p.allocatedStock || 0), 0);
-    return flavorAllocated + batteryAllocated + posmAllocated;
+    return brand.allVariants.reduce((sum, v) => sum + (v.allocatedStock || 0), 0);
   };
 
   const getAvailableStock = (brand: Brand) => {
@@ -139,6 +134,17 @@ export default function MainInventoryPage() {
 
   const getVariantAvailableStock = (variant: Variant) => {
     return variant.stock - getVariantAllocatedStock(variant);
+  };
+
+  // Helper to get color scheme for variant type
+  const getVariantTypeColor = (variantType: string) => {
+    const normalized = variantType.toLowerCase();
+    if (normalized === 'flavor') return { bg: 'blue', color: 'blue-800', dot: 'blue-500', border: 'blue-200', hover: 'blue-100' };
+    if (normalized === 'battery') return { bg: 'green', color: 'green-800', dot: 'green-500', border: 'green-200', hover: 'green-100' };
+    if (normalized === 'posm') return { bg: 'purple', color: 'purple-800', dot: 'purple-500', border: 'purple-200', hover: 'purple-100' };
+    if (normalized === 'foc') return { bg: 'orange', color: 'orange-800', dot: 'orange-500', border: 'orange-200', hover: 'orange-100' };
+    // Default for any other custom type
+    return { bg: 'gray', color: 'gray-800', dot: 'gray-500', border: 'gray-200', hover: 'gray-100' };
   };
 
   const handleEditVariant = (brandId: string, variant: Variant, type: 'flavor' | 'battery' | 'posm') => {
@@ -532,22 +538,24 @@ export default function MainInventoryPage() {
                         className={`h-4 w-4 transition-transform ${expandedBrands.includes(brand.id) ? 'rotate-90' : ''
                           }`}
                       />
-                      {(brand.flavors.some((f: any) => {
-                        const sp = (f as any).sellingPrice;
+                      {brand.allVariants.some((v: any) => {
+                        const sp = v.sellingPrice;
                         return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                      }) ||
-                        brand.batteries.some((b: any) => {
-                          const sp = (b as any).sellingPrice;
-                          return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                        })) && (
+                      }) && (
                           <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
                         )}
                       <div>
                         <h3 className="font-semibold text-lg">{brand.name}</h3>
                         <div className="text-sm text-muted-foreground">
-                          {brand.flavors.length} Flavors • {brand.batteries.length} Batteries • {(brand.posms || []).length} POSM •
+                          {Array.from(brand.variantsByType.entries()).map(([type, variants], idx) => (
+                            <span key={type}>
+                              {idx > 0 && ' • '}
+                              {variants.length} {type.charAt(0).toUpperCase() + type.slice(1)}
+                              {variants.length !== 1 && type.toLowerCase() !== 'posm' && 's'}
+                            </span>
+                          ))}
                           <span className={`ml-1 ${getTotalStock(brand) > 0 ? 'text-blue-700' : 'text-red-600'}`}>
-                            Total Stock: {getTotalStock(brand)}
+                            • Total Stock: {getTotalStock(brand)}
                           </span>
                         </div>
                       </div>
@@ -568,31 +576,19 @@ export default function MainInventoryPage() {
                       <Badge
                         variant={
                           getTotalStock(brand) === 0 ? 'destructive' :
-                            (brand.flavors.some((f: any) => {
-                              const sp = (f as any).sellingPrice;
+                            brand.allVariants.some((v: any) => {
+                              const sp = v.sellingPrice;
                               return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                            }) ||
-                              brand.batteries.some((b: any) => {
-                                const sp = (b as any).sellingPrice;
-                                return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                              })) ? 'secondary' :
-                              (brand.flavors.some((f: any) => f.status === 'low-stock') ||
-                                brand.batteries.some((b: any) => b.status === 'low-stock') ||
-                                (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'secondary' : 'default'
+                            }) ? 'secondary' :
+                              brand.allVariants.some((v: any) => v.status === 'low-stock') ? 'secondary' : 'default'
                         }
                       >
                         {getTotalStock(brand) === 0 ? 'Out of Stock' :
-                          (brand.flavors.some((f: any) => {
-                            const sp = (f as any).sellingPrice;
+                          brand.allVariants.some((v: any) => {
+                            const sp = v.sellingPrice;
                             return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                          }) ||
-                            brand.batteries.some((b: any) => {
-                              const sp = (b as any).sellingPrice;
-                              return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                            })) ? 'Missing Prices' :
-                            (brand.flavors.some((f: any) => f.status === 'low-stock') ||
-                              brand.batteries.some((b: any) => b.status === 'low-stock') ||
-                              (brand.posms || []).some((p: any) => p.status === 'low-stock')) ? 'Low Stock' : 'In Stock'}
+                          }) ? 'Missing Prices' :
+                            brand.allVariants.some((v: any) => v.status === 'low-stock') ? 'Low Stock' : 'In Stock'}
                       </Badge>
                     </div>
                   </div>
@@ -940,8 +936,135 @@ export default function MainInventoryPage() {
                       </div>
                     )}
 
+                    {/* All Other Custom Variant Types */}
+                    {Array.from(brand.variantsByType.entries())
+                      .filter(([type]) => type !== 'flavor' && type !== 'battery' && type !== 'POSM' && type !== 'posm')
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([variantType, variants]) => {
+                        if (variants.length === 0) return null;
+                        
+                        const colors = getVariantTypeColor(variantType);
+                        const typeDisplay = variantType.toUpperCase();
+                        
+                        return (
+                          <div key={variantType} className="bg-gray-50/20">
+                            <div className="px-4 py-3 border-b border-gray-200">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className={`h-2 w-2 rounded-full bg-${colors.dot}`}></div>
+                                  <h4 className={`font-semibold text-${colors.color}`}>{typeDisplay} ({variants.length})</h4>
+                                </div>
+                              </div>
+                            </div>
+                            <Table>
+                              <TableHeader>
+                                <TableRow className="bg-gray-50/30">
+                                  <TableHead className="text-gray-800 text-center">Name</TableHead>
+                                  <TableHead className="text-gray-800 text-center">Total Stock</TableHead>
+                                  <TableHead className="text-gray-800 text-center">Allocated</TableHead>
+                                  <TableHead className="text-gray-800 text-center">Available</TableHead>
+                                  <TableHead className="text-gray-800 text-center">Selling Price</TableHead>
+                                  <TableHead className="text-gray-800 text-center">DSP</TableHead>
+                                  <TableHead className="text-gray-800 text-center">RSP</TableHead>
+                                  <TableHead className="text-gray-800 text-center">Status</TableHead>
+                                  <TableHead className="text-gray-800 text-center">Actions</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {variants.map((variant) => {
+                                  const allocated = getVariantAllocatedStock(variant);
+                                  const available = getVariantAvailableStock(variant);
+                                  const sellingPriceRaw = (variant as any).sellingPrice;
+                                  const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
+                                  
+                                  return (
+                                    <TableRow
+                                      key={variant.id}
+                                      className={`hover:bg-gray-50/20 ${hasNoPrice ? 'bg-yellow-50/50 border-l-4 border-l-yellow-500' : 'bg-gray-50/10'}`}
+                                    >
+                                      <TableCell className="font-medium text-center">
+                                        <div className="flex items-center justify-center gap-2">
+                                          {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600 flex-shrink-0" />}
+                                          <span>{variant.name}</span>
+                                        </div>
+                                      </TableCell>
+                                      <TableCell className="font-semibold text-center">{variant.stock}</TableCell>
+                                      <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
+                                      <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+                                      <TableCell className="text-center">
+                                        {typeof (variant as any).sellingPrice === 'number' ? `₱${(variant as any).sellingPrice.toFixed(2)}` : '-'}
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        {typeof (variant as any).dspPrice === 'number' ? `₱${(variant as any).dspPrice.toFixed(2)}` : '-'}
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        {typeof (variant as any).rspPrice === 'number' ? `₱${(variant as any).rspPrice.toFixed(2)}` : '-'}
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        <Badge
+                                          variant={
+                                            variant.stock === 0 ? 'destructive' :
+                                              hasNoPrice ? 'secondary' :
+                                                (variant as any).status === 'low-stock' ? 'secondary' : 'default'
+                                          }
+                                        >
+                                          {variant.stock === 0 ? 'Out of Stock' :
+                                            hasNoPrice ? 'No Price Set' :
+                                              (variant as any).status === 'low-stock' ? 'Low Stock' : 'In Stock'}
+                                        </Badge>
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        <div className="flex items-center justify-center gap-1">
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => handleEditVariant(brand.id, variant, variantType as any)}
+                                          >
+                                            <Edit className="h-4 w-4" />
+                                          </Button>
+                                          <AlertDialog>
+                                            <AlertDialogTrigger asChild>
+                                              <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                onClick={() => setDeleteVariantId(variant.id)}
+                                              >
+                                                <Trash2 className="h-4 w-4" />
+                                              </Button>
+                                            </AlertDialogTrigger>
+                                            <AlertDialogContent>
+                                              <AlertDialogHeader>
+                                                <AlertDialogTitle>Archive this product?</AlertDialogTitle>
+                                                <AlertDialogDescription>
+                                                  This will hide <strong>{variant.name}</strong> from inventory. Existing purchase orders and history will be preserved.
+                                                </AlertDialogDescription>
+                                              </AlertDialogHeader>
+                                              <AlertDialogFooter>
+                                                <AlertDialogCancel onClick={() => setDeleteVariantId(null)}>Cancel</AlertDialogCancel>
+                                                <AlertDialogAction
+                                                  onClick={() => deleteVariantId && handleDeleteVariant(deleteVariantId)}
+                                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                                  disabled={isDeleting}
+                                                >
+                                                  {isDeleting ? "Archiving..." : "Archive"}
+                                                </AlertDialogAction>
+                                              </AlertDialogFooter>
+                                            </AlertDialogContent>
+                                          </AlertDialog>
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        );
+                      })}
+
                     {/* Empty state if no variants */}
-                    {brand.flavors.length === 0 && brand.batteries.length === 0 && brand.posms.length === 0 && (
+                    {brand.allVariants.length === 0 && (
                       <div className="text-center py-8 text-muted-foreground">
                         <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
                         <p>No variants found for this brand</p>

@@ -136,10 +136,11 @@ export default function BrandsPage() {
       if (typesError) {
         console.warn('Error fetching variant types (may not exist yet):', typesError);
         // If table doesn't exist, use fallback hardcoded types
+        // Note: names must match DB constraint ('flavor', 'battery', 'POSM')
         setVariantTypes([
-          { id: 'flavor', name: 'flavor', display_name: 'Flavor', color_code: 'blue', sort_order: 1 },
-          { id: 'battery', name: 'battery', display_name: 'Battery', color_code: 'green', sort_order: 2 },
-          { id: 'posm', name: 'POSM', display_name: 'POSM', color_code: 'purple', sort_order: 3 },
+          { id: 'flavor', name: 'flavor', display_name: 'Flavor', color_code: 'blue', sort_order: 1, description: undefined },
+          { id: 'battery', name: 'battery', display_name: 'Battery', color_code: 'green', sort_order: 2, description: undefined },
+          { id: 'posm', name: 'posm', display_name: 'POSM', color_code: 'purple', sort_order: 3, description: undefined },
         ]);
       } else {
         setVariantTypes(sortedTypes);
@@ -326,22 +327,16 @@ export default function BrandsPage() {
         return;
       }
 
-      // Use variant_type_id if available, otherwise fall back to variant_type string
+      // Use variant_type_id as the primary reference
+      // The trigger will automatically sync variant_type from variant_type_id
       const insertData: any = {
         company_id: user.company_id,
         brand_id: variantForm.brand_id,
         name: variantForm.name.trim(),
-        variant_type: selectedType.name, // Keep for backward compatibility
+        variant_type_id: selectedType.id,
         description: variantForm.description.trim() || null,
         sku: variantForm.sku.trim() || null
       };
-
-      // Try to use variant_type_id if the column exists
-      try {
-        insertData.variant_type_id = selectedType.id;
-      } catch (e) {
-        // Column might not exist yet, that's okay
-      }
 
       const { error } = await supabase
         .from('variants')
@@ -386,19 +381,14 @@ export default function BrandsPage() {
         return;
       }
 
+      // Use variant_type_id as the primary reference
+      // The trigger will automatically sync variant_type from variant_type_id
       const updateData: any = {
         name: variantForm.name.trim(),
-        variant_type: selectedType.name, // Keep for backward compatibility
+        variant_type_id: selectedType.id,
         description: variantForm.description.trim() || null,
         sku: variantForm.sku.trim() || null
       };
-
-      // Try to use variant_type_id if the column exists
-      try {
-        updateData.variant_type_id = selectedType.id;
-      } catch (e) {
-        // Column might not exist yet, that's okay
-      }
 
       const { error } = await supabase
         .from('variants')

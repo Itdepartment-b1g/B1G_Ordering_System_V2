@@ -6,6 +6,7 @@ import { AuthContext } from '@/features/auth/hooks';
 export interface Variant {
   id: string;
   name: string;
+  variantType: string;
   stock: number;
   allocatedStock: number;
   price: number;
@@ -21,6 +22,9 @@ export interface Brand {
   flavors: Variant[];
   batteries: Variant[];
   posms: Variant[];
+  // Dynamic variants grouped by type
+  variantsByType: Map<string, Variant[]>;
+  allVariants: Variant[];
 }
 
 interface InventoryContextType {
@@ -82,67 +86,52 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
   if (error) throw error;
 
   const transformedBrands: Brand[] = (brandsData || []).map(brand => {
+    // Process all variants
+    const allVariants: Variant[] = (brand.variants || [])
+      .filter((v: any) => v.is_active !== false)
+      .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      .map((v: any) => {
+        const inventory = Array.isArray(v.main_inventory) ? v.main_inventory[0] : v.main_inventory;
+        if (!inventory) return null;
+        return {
+          id: v.id,
+          name: v.name,
+          variantType: v.variant_type,
+          stock: inventory.stock,
+          allocatedStock: inventory.allocated_stock || 0,
+          price: inventory.unit_price,
+          sellingPrice: inventory.selling_price ?? 0,
+          dspPrice: inventory.dsp_price ?? 0,
+          rspPrice: inventory.rsp_price ?? 0,
+          status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
+        };
+      })
+      .filter(Boolean) as Variant[];
+
+    // Group variants by type
+    const variantsByType = new Map<string, Variant[]>();
+    allVariants.forEach(variant => {
+      const type = variant.variantType;
+      if (!variantsByType.has(type)) {
+        variantsByType.set(type, []);
+      }
+      variantsByType.get(type)!.push(variant);
+    });
+
     return {
       id: brand.id,
       name: brand.name,
-      flavors: (brand.variants
-        ?.filter((v: any) => v.variant_type === 'flavor' && v.is_active !== false)
-        .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-        .map((v: any) => {
-          const inventory = Array.isArray(v.main_inventory) ? v.main_inventory[0] : v.main_inventory;
-          if (!inventory) return null;
-          return {
-            id: v.id,
-            name: v.name,
-            stock: inventory.stock,
-            allocatedStock: inventory.allocated_stock || 0,
-            price: inventory.unit_price,
-            sellingPrice: inventory.selling_price,
-            dspPrice: inventory.dsp_price,
-            rspPrice: inventory.rsp_price,
-            status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
-          };
-        }) || []).filter(Boolean) as any,
-      batteries: (brand.variants
-        ?.filter((v: any) => v.variant_type === 'battery' && v.is_active !== false)
-        .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-        .map((v: any) => {
-          const inventory = Array.isArray(v.main_inventory) ? v.main_inventory[0] : v.main_inventory;
-          if (!inventory) return null;
-          return {
-            id: v.id,
-            name: v.name,
-            stock: inventory.stock,
-            allocatedStock: inventory.allocated_stock || 0,
-            price: inventory.unit_price,
-            sellingPrice: inventory.selling_price,
-            dspPrice: inventory.dsp_price,
-            rspPrice: inventory.rsp_price,
-            status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
-          };
-        }) || []).filter(Boolean) as any,
-      posms: (brand.variants
-        ?.filter((v: any) => v.variant_type === 'POSM' || v.variant_type === 'posm')
-        .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-        .map((v: any) => {
-          const inventory = Array.isArray(v.main_inventory) ? v.main_inventory[0] : v.main_inventory;
-          if (!inventory) return null;
-          return {
-            id: v.id,
-            name: v.name,
-            stock: inventory.stock,
-            allocatedStock: inventory.allocated_stock || 0,
-            price: inventory.unit_price,
-            sellingPrice: inventory.selling_price ?? 0,
-            dspPrice: inventory.dsp_price ?? 0,
-            rspPrice: inventory.rsp_price ?? 0,
-            status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
-          };
-        }) || []).filter(Boolean) as any,
+      // Keep legacy arrays for backward compatibility
+      flavors: allVariants.filter(v => v.variantType === 'flavor'),
+      batteries: allVariants.filter(v => v.variantType === 'battery'),
+      posms: allVariants.filter(v => v.variantType === 'POSM' || v.variantType === 'posm'),
+      // New dynamic structure
+      variantsByType,
+      allVariants,
     };
   });
 
-  return transformedBrands.filter(b => (b.flavors.length + b.batteries.length + b.posms.length) > 0);
+  return transformedBrands.filter(b => b.allVariants.length > 0);
 };
 
 export function InventoryProvider({ children }: { children: ReactNode }) {
