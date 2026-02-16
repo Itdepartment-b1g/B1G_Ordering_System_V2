@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Package, AlertCircle, Eye, ShoppingCart, Loader2, Search, ChevronRight, ChevronDown, FileSignature } from 'lucide-react';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Package, AlertCircle, Eye, ShoppingCart, Loader2, Search, ChevronRight, ChevronDown, FileSignature, CalendarIcon, ChevronLeft } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -45,6 +48,11 @@ export default function AdminTeamRemittancesPage() {
     const [teamStats, setTeamStats] = useState<TeamStats[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedLeaders, setExpandedLeaders] = useState<Set<string>>(new Set());
+    const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+    const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+    const [selectedAgentId, setSelectedAgentId] = useState<string>('all');
+    const [currentPage, setCurrentPage] = useState(1);
+    const PAGE_SIZE = 10;
 
     // View Details State
     const [selectedRemittance, setSelectedRemittance] = useState<RemittanceLog | null>(null);
@@ -56,12 +64,16 @@ export default function AdminTeamRemittancesPage() {
         if (user?.role === 'admin' || user?.role === 'super_admin') {
             fetchTeamRemittances();
         }
-    }, [user]);
+    }, [user, dateFrom, dateTo]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, dateFrom, dateTo, selectedAgentId]);
 
     const fetchTeamRemittances = async () => {
         setLoading(true);
         try {
-            const { data, error } = await supabase
+            let query = supabase
                 .from('remittances_log')
                 .select(`
           *,
@@ -69,6 +81,17 @@ export default function AdminTeamRemittancesPage() {
           leader:profiles!remittances_log_leader_id_fkey(full_name)
         `)
                 .order('remitted_at', { ascending: false });
+
+            if (dateFrom) {
+                const fromStr = format(dateFrom, 'yyyy-MM-dd');
+                query = query.gte('remittance_date', fromStr);
+            }
+            if (dateTo) {
+                const toStr = format(dateTo, 'yyyy-MM-dd');
+                query = query.lte('remittance_date', toStr);
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
 
@@ -153,6 +176,9 @@ export default function AdminTeamRemittancesPage() {
                   id,
                   order_number,
                   total_amount,
+                  payment_method,
+                  payment_mode,
+                  payment_splits,
                   created_at,
                   clients(name),
                   items:client_order_items(
@@ -164,18 +190,49 @@ export default function AdminTeamRemittancesPage() {
 
             if (error) throw error;
 
-            const formattedOrders = (data || []).flatMap((order: any) =>
-                (order.items || []).map((item: any) => ({
+            const formattedOrders = (data || []).flatMap((order: any) => {
+                const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+                const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+                const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+                let cashPortion = 0;
+                let chequePortion = 0;
+
+                if (paymentMode === 'SPLIT') {
+                    splits.forEach((s: any) => {
+                        if (s.method === 'CASH') {
+                            cashPortion += s.amount || 0;
+                        } else if (s.method === 'CHEQUE') {
+                            chequePortion += s.amount || 0;
+                        }
+                    });
+                } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+                    const amt = order.total_amount || 0;
+                    if (paymentMethod === 'CASH') {
+                        cashPortion = amt;
+                    } else {
+                        chequePortion = amt;
+                    }
+                }
+
+                const remittanceAmount = cashPortion + chequePortion;
+
+                return (order.items || []).map((item: any) => ({
                     orderId: order.id,
                     orderNumber: order.order_number,
                     clientName: order.clients?.name || 'Unknown',
                     variantName: item.variant?.name || 'Unknown',
                     brandName: item.variant?.brand?.name || 'Unknown',
                     quantity: item.quantity,
-                    totalAmount: order.total_amount,
+                    totalAmount: remittanceAmount,
+                    fullOrderTotal: order.total_amount,
+                    cashPortion,
+                    chequePortion,
+                    paymentMode,
+                    paymentMethod,
                     createdAt: order.created_at
-                }))
-            );
+                }));
+            });
 
             setRemittanceOrders(formattedOrders);
         } catch (error: any) {
@@ -203,9 +260,39 @@ export default function AdminTeamRemittancesPage() {
         }
     };
 
-    const filteredStats = teamStats.filter(stat =>
-        stat.leaderName.toLowerCase().includes(searchQuery.toLowerCase())
+    // Unique agents from all remittances (for filter dropdown)
+    const agentOptions = (() => {
+        const seen = new Set<string>();
+        const list: { id: string; name: string }[] = [];
+        teamStats.forEach(stat => {
+            stat.remittances.forEach(rem => {
+                if (rem.agent_id && !seen.has(rem.agent_id)) {
+                    seen.add(rem.agent_id);
+                    list.push({ id: rem.agent_id, name: rem.agent_name || 'Unknown' });
+                }
+            });
+        });
+        return list.sort((a, b) => a.name.localeCompare(b.name));
+    })();
+
+    const filteredStats = teamStats
+        .map(stat => ({
+            ...stat,
+            remittances: selectedAgentId === 'all'
+                ? stat.remittances
+                : stat.remittances.filter(r => r.agent_id === selectedAgentId)
+        }))
+        .filter(stat => stat.remittances.length > 0)
+        .filter(stat => stat.leaderName.toLowerCase().includes(searchQuery.toLowerCase()));
+
+    const totalLeaders = filteredStats.length;
+    const totalPages = Math.max(1, Math.ceil(totalLeaders / PAGE_SIZE));
+    const paginatedStats = filteredStats.slice(
+        (currentPage - 1) * PAGE_SIZE,
+        currentPage * PAGE_SIZE
     );
+    const rangeStart = totalLeaders === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+    const rangeEnd = Math.min(currentPage * PAGE_SIZE, totalLeaders);
 
     if (!user || !['admin', 'super_admin'].includes(user.role || '')) {
         return (
@@ -224,21 +311,71 @@ export default function AdminTeamRemittancesPage() {
 
     return (
         <div className="container mx-auto p-6 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-4">
                 <div>
                     <h1 className="text-3xl font-bold">Team Remittances</h1>
                     <p className="text-muted-foreground mt-1">
                         Overview of stock remittances by team
                     </p>
                 </div>
-                <div className="relative w-72">
-                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search team leader..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-8"
-                    />
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative w-72">
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Search team leader..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-8"
+                        />
+                    </div>
+                    <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+                        <SelectTrigger className="w-[180px]">
+                            <SelectValue placeholder="All agents" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All agents</SelectItem>
+                            {agentOptions.map((a) => (
+                                <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button variant="outline" className="w-[200px] justify-start text-left font-normal">
+                                <CalendarIcon className="mr-2 h-4 w-4" />
+                                {dateFrom && dateTo
+                                    ? `${format(dateFrom, 'MMM d')} – ${format(dateTo, 'MMM d')}`
+                                    : dateFrom
+                                        ? format(dateFrom, 'MMM d, yyyy')
+                                        : 'Date range'}
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                            <div className="p-3 border-b">
+                                <p className="text-sm font-medium text-muted-foreground">From</p>
+                                <Calendar
+                                    mode="single"
+                                    selected={dateFrom}
+                                    onSelect={setDateFrom}
+                                />
+                            </div>
+                            <div className="p-3">
+                                <p className="text-sm font-medium text-muted-foreground">To</p>
+                                <Calendar
+                                    mode="single"
+                                    selected={dateTo}
+                                    onSelect={setDateTo}
+                                />
+                            </div>
+                            {(dateFrom || dateTo) && (
+                                <div className="p-2 border-t">
+                                    <Button variant="ghost" size="sm" className="w-full" onClick={() => { setDateFrom(undefined); setDateTo(undefined); }}>
+                                        Clear dates
+                                    </Button>
+                                </div>
+                            )}
+                        </PopoverContent>
+                    </Popover>
                 </div>
             </div>
 
@@ -255,6 +392,9 @@ export default function AdminTeamRemittancesPage() {
                         <div className="text-center py-8 text-muted-foreground">
                             <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
                             <p>No team remittances found</p>
+                            {(searchQuery || dateFrom || dateTo || selectedAgentId !== 'all') && (
+                                <p className="text-sm mt-1">Try adjusting filters.</p>
+                            )}
                         </div>
                     ) : (
                         <div className="space-y-4">
@@ -270,7 +410,7 @@ export default function AdminTeamRemittancesPage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {filteredStats.map(stat => (
+                                    {paginatedStats.map(stat => (
                                         <Fragment key={stat.leaderId}>
                                             <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => toggleLeader(stat.leaderId)}>
                                                 <TableCell>
@@ -325,6 +465,20 @@ export default function AdminTeamRemittancesPage() {
                                     ))}
                                 </TableBody>
                             </Table>
+                            {filteredStats.length > 0 && (
+                                <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-3 border-t text-sm text-muted-foreground">
+                                    <span>Showing {rangeStart}–{rangeEnd} of {totalLeaders}</span>
+                                    <div className="flex items-center gap-1">
+                                        <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>
+                                            <ChevronLeft className="h-4 w-4" /> Previous
+                                        </Button>
+                                        <span className="px-2 min-w-[4rem] text-center">Page {currentPage} of {totalPages}</span>
+                                        <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>
+                                            Next <ChevronRight className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </CardContent>
@@ -376,7 +530,7 @@ export default function AdminTeamRemittancesPage() {
                                                         <TableHead>Client</TableHead>
                                                         <TableHead>Item (Brand - Variant)</TableHead>
                                                         <TableHead className="text-right">Qty</TableHead>
-                                                        <TableHead className="text-right">Amount</TableHead>
+                                                        <TableHead className="text-right">Remittance Amount</TableHead>
                                                     </TableRow>
                                                 </TableHeader>
                                                 <TableBody>
@@ -391,7 +545,27 @@ export default function AdminTeamRemittancesPage() {
                                                                 </div>
                                                             </TableCell>
                                                             <TableCell className="text-right">{order.quantity}</TableCell>
-                                                            <TableCell className="text-right">₱{(order.totalAmount || 0).toLocaleString()}</TableCell>
+                                                            <TableCell className="text-right align-top">
+                                                                <div className="space-y-1">
+                                                                    <div>₱{(order.totalAmount || 0).toLocaleString()}</div>
+                                                                    {order.paymentMode === 'SPLIT' && (order.cashPortion > 0 || order.chequePortion > 0) && (
+                                                                        <div className="text-xs text-muted-foreground">
+                                                                            {order.cashPortion > 0 && `Cash ₱${order.cashPortion.toLocaleString()}`}
+                                                                            {order.chequePortion > 0 && (
+                                                                                <>
+                                                                                    {order.cashPortion > 0 ? ' • ' : ''}
+                                                                                    {`Cheque ₱${order.chequePortion.toLocaleString()}`}
+                                                                                </>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                    {order.paymentMode === 'SPLIT' && order.fullOrderTotal && order.nonCashPortion && order.nonCashPortion > 0 && (
+                                                                        <div className="text-[10px] text-muted-foreground">
+                                                                            {(order.nonCashLabel || 'Non-cash') + ' ₱' + order.nonCashPortion.toLocaleString()} (handled by Finance)
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </TableCell>
                                                         </TableRow>
                                                     ))}
                                                 </TableBody>

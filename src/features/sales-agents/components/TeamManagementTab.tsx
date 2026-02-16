@@ -44,6 +44,7 @@ import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useAuth } from '@/features/auth';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 
 // Database interfaces
 interface Agent {
@@ -65,6 +66,7 @@ interface Leader {
   teamSize: number;
   role: 'team_leader' | 'manager';
   leaderId?: string; // Added to track if assigned to Admin
+  teamName?: string; // Team name for manager teams
 }
 
 
@@ -168,7 +170,7 @@ export function TeamManagementTab({
         // Fetch team assignments (trimmed and capped)
         supabase
           .from('leader_teams')
-          .select('agent_id, leader_id')
+          .select('agent_id, leader_id, team_name')
           .match(companyFilter)
           .limit(200),
 
@@ -189,6 +191,7 @@ export function TeamManagementTab({
 
       // Create lookup maps for O(1) access
       const teamMap = new Map(teamData.map(t => [t.agent_id, t.leader_id]));
+      const teamNameMap = new Map(teamData.map(t => [t.agent_id, t.team_name]));
       const profileMap = new Map(agentsData.map(p => [p.id, p]));
 
       // Process agents data in a single pass
@@ -230,6 +233,7 @@ export function TeamManagementTab({
             teamSize: teamSizeMap.get(agent.id) || 0,
             role: agent.role as 'team_leader' | 'manager',
             leaderId: agent.leaderId, // Store assignment status
+            teamName: teamNameMap.get(agent.id), // Store team name
           });
         }
       }
@@ -419,6 +423,38 @@ export function TeamManagementTab({
         description: 'Agent has been assigned to the team successfully'
       });
 
+      // Notify leader and agent (non-blocking)
+      try {
+        const assignedAgent = agents.find(a => a.id === selectedAgent);
+        const assignedLeader = leaders.find(l => l.id === selectedLeader);
+
+        if ((user as any)?.company_id && assignedAgent && assignedLeader) {
+          // Notify the mobile sales agent
+          await sendNotification({
+            userId: assignedAgent.id,
+            companyId: (user as any).company_id,
+            type: 'system_message',
+            title: 'Assigned to Team Leader',
+            message: `You have been assigned to ${assignedLeader.name}'s team.`,
+            referenceType: 'leader_team',
+            referenceId: selectedLeader,
+          });
+
+          // Notify the team leader
+          await sendNotification({
+            userId: assignedLeader.id,
+            companyId: (user as any).company_id,
+            type: 'system_message',
+            title: 'New Team Member Assigned',
+            message: `${assignedAgent.name} has been assigned to your team.`,
+            referenceType: 'leader_team',
+            referenceId: selectedAgent,
+          });
+        }
+      } catch (e) {
+        console.warn('Team assignment notification failed (non-blocking):', e);
+      }
+
       // Refresh data
       await fetchData();
 
@@ -495,6 +531,58 @@ export function TeamManagementTab({
         title: 'Success',
         description: `${agent?.name} has been unassigned from the team`
       });
+
+      // Notify agent, their leader, and manager (if part of a sub-team) - non-blocking
+      try {
+        if (agent && (user as any)?.company_id) {
+          // Notify the mobile sales agent
+          await sendNotification({
+            userId: agent.id,
+            companyId: (user as any).company_id,
+            type: 'system_message',
+            title: 'Removed from Team',
+            message: `You have been removed from your team leader's team.`,
+            referenceType: 'leader_team',
+            referenceId: agent.id,
+          });
+
+          // Notify the team leader if we know them
+          if (agent.leaderId) {
+            await sendNotification({
+              userId: agent.leaderId,
+              companyId: (user as any).company_id,
+              type: 'system_message',
+              title: 'Team Member Removed',
+              message: `${agent.name} has been removed from your team.`,
+              referenceType: 'leader_team',
+              referenceId: agent.id,
+            });
+          }
+
+          // Notify the manager overseeing the sub-team, if applicable
+          if (agent.subTeamId) {
+            const { data: subTeamRow, error: subTeamError } = await supabase
+              .from('sub_teams')
+              .select('manager_id')
+              .eq('id', agent.subTeamId)
+              .maybeSingle();
+
+            if (!subTeamError && subTeamRow?.manager_id) {
+              await sendNotification({
+                userId: subTeamRow.manager_id,
+                companyId: (user as any).company_id,
+                type: 'system_message',
+                title: 'Sub-Team Member Removed',
+                message: `${agent.name} has been removed from one of your sub-teams.`,
+                referenceType: 'sub_team',
+                referenceId: agent.subTeamId,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Team unassignment notification failed (non-blocking):', e);
+      }
 
       // Refresh data
       await fetchData();
@@ -1254,6 +1342,11 @@ export function TeamManagementTab({
                                 </Badge>
                               )}
                             </div>
+                            {leader.teamName && (
+                              <p className="text-xs text-foreground mt-0.5 truncate font-medium">
+                                Team: {leader.teamName}
+                              </p>
+                            )}
                             <div className="flex items-center gap-1 md:gap-1.5 mt-1">
                               <MapPin className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                               <p className="text-xs md:text-sm text-muted-foreground truncate">{leader.region}</p>

@@ -35,6 +35,7 @@ export function UserImportExport({ users, onRefresh }: UserImportExportProps) {
             setIsExporting(true);
 
             const exportData = users.map(user => ({
+                'ID': user.id,
                 'Full Name': user.name,
                 'Email': user.email,
                 'Phone': user.phone,
@@ -62,6 +63,7 @@ export function UserImportExport({ users, onRefresh }: UserImportExportProps) {
     const handleDownloadTemplate = () => {
         const templateData = [
             {
+                'ID': '',
                 'Full Name': 'John Doe',
                 'Email': 'john@example.com',
                 'Phone': '09123456789',
@@ -71,6 +73,7 @@ export function UserImportExport({ users, onRefresh }: UserImportExportProps) {
                 'Password': 'tempPassword123!'
             },
             {
+                'ID': '',
                 'Full Name': 'Jane Smith',
                 'Email': 'jane@example.com',
                 'Phone': '09987654321',

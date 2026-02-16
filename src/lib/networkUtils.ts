@@ -3,7 +3,7 @@
  * Provides timeout handling and network status detection
  */
 
-export const NETWORK_TIMEOUT = 10000; // 10 seconds
+export const NETWORK_TIMEOUT = 30000; // 30 seconds — PKCE flow needs multiple round-trips
 export const SESSION_CHECK_COOLDOWN = 30000; // 30 seconds between focus checks
 
 // Track last session check time to prevent spamming
@@ -30,8 +30,9 @@ export function resetSessionCheckCooldown(): void {
 }
 
 /**
- * Fetch with timeout wrapper
- * Prevents requests from hanging indefinitely when server is unreachable
+ * Fetch with timeout wrapper.
+ * If Supabase already passed its own signal, we race our timeout against it
+ * instead of replacing it — this preserves Supabase's internal abort logic.
  */
 export async function fetchWithTimeout(
     input: RequestInfo | URL,
@@ -41,10 +42,20 @@ export async function fetchWithTimeout(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
+    // If Supabase passed its own signal, link it so either one can abort
+    if (init?.signal) {
+        const externalSignal = init.signal as AbortSignal;
+        if (externalSignal.aborted) {
+            clearTimeout(timeoutId);
+            throw new DOMException('Aborted', 'AbortError');
+        }
+        externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+
     try {
         const response = await fetch(input, {
             ...init,
-            signal: controller.signal,
+            signal: controller.signal, // our signal now also listens to Supabase's
         });
         return response;
     } finally {
@@ -109,7 +120,10 @@ export function withTimeout<T>(
 }
 
 /**
- * Detect if error is a network/timeout error
+ * Detect if error is a network/timeout error.
+ * Intentionally does NOT include TypeError — that's too broad and catches
+ * unrelated bugs (bad data parsing, undefined access, etc.) which then get
+ * silently swallowed as "network errors" by AuthContext.
  */
 export function isNetworkError(error: any): boolean {
     if (!error) return false;
@@ -119,7 +133,6 @@ export function isNetworkError(error: any): boolean {
 
     return (
         name === 'aborterror' ||
-        name === 'typeerror' ||
         message.includes('fetch') ||
         message.includes('network') ||
         message.includes('timeout') ||

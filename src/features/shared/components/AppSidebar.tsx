@@ -1,5 +1,5 @@
 import { useAuth } from '@/features/auth';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useState, useMemo } from 'react';
 import {
   LayoutDashboard,
@@ -27,7 +27,9 @@ import {
   Map,
   LayoutGrid,
   Activity,
-  Settings
+  Settings,
+  ShieldCheck,
+  CreditCard
 } from 'lucide-react';
 import {
   Sidebar,
@@ -75,6 +77,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
+      { title: 'TL Stock Requests', url: '/inventory/admin-tl-requests', icon: Users },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
     ]
   },
@@ -98,6 +101,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   {
@@ -122,7 +126,7 @@ const adminMenuItems: MenuItem[] = [
 const agentMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'My Inventory', url: '/my-inventory', icon: Package },
-  { title: 'Request Inventory', url: '/inventory/request', icon: Send },
+  { title: 'Request Inventory', url: '/inventory/mobile-request', icon: Send },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'My Activity', url: '/system-history', icon: History },
@@ -145,6 +149,7 @@ const leaderMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'My Inventory', url: '/my-inventory', icon: Package },
+      { title: 'Request Stock', url: '/leader-inventory/request', icon: Send },
       { title: 'Teams Inventory', url: '/leader-inventory', icon: Crown },
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
@@ -162,6 +167,7 @@ const leaderMenuItems: MenuItem[] = [
     ]
   },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
+  { title: "My Team's Clients", url: '/my-teams', icon: Users },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
@@ -170,14 +176,22 @@ const leaderMenuItems: MenuItem[] = [
 
 const systemAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/sys-admin-dashboard', icon: LayoutDashboard },
+  { title: 'Executive Account', url: '/system-admin', icon: ShieldCheck },
   { title: 'Management Portal', url: '/system-management', icon: LayoutGrid },
   { title: 'System History', url: '/system-history', icon: History },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
+const executiveMenuItems: MenuItem[] = [
+  { title: 'Executive Dashboard', url: '/executive-dashboard', icon: LayoutDashboard },
+  { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
 const managerMenuItems: MenuItem[] = [
   { title: 'Manager Dashboard', url: '/manager-dashboard', icon: LayoutDashboard },
   { title: 'My Team', url: '/manager-teams', icon: Users },
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   {
     title: 'Inventory',
     url: '/inventory',
@@ -192,6 +206,7 @@ const managerMenuItems: MenuItem[] = [
   },
   { title: 'Team Clients', url: '/manager-clients', icon: ShoppingBag },
   { title: 'Team Activity', url: '/system-history', icon: History },
+  { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -206,6 +221,7 @@ const financeMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   { title: 'System History', url: '/system-history', icon: History },
@@ -257,6 +273,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
   {
@@ -287,6 +304,7 @@ const superAdminMenuItems: MenuItem[] = [
 ];
 
 export function AppSidebar() {
+  const navigate = useNavigate();
   const { user, logout, impersonatedCompany, stopImpersonation } = useAuth();
   const { state, setOpenMobile } = useSidebar();
   const { checkPermission } = usePermissions();
@@ -332,6 +350,8 @@ export function AppSidebar() {
       baseMenuItems = superAdminMenuItems;
     } else if (user?.role === 'system_administrator') {
       baseMenuItems = systemAdminMenuItems;
+    } else if (user?.role === 'executive') {
+      baseMenuItems = executiveMenuItems;
     } else if (user?.role === 'super_admin') {
       baseMenuItems = superAdminMenuItems;
     } else if (user?.role === 'admin') {
@@ -475,7 +495,10 @@ export function AppSidebar() {
           <Button
             variant="default"
             className="w-full justify-start bg-primary hover:bg-primary/90 text-primary-foreground mb-2 shadow-lg shadow-primary/20 nav-allow"
-            onClick={stopImpersonation}
+            onClick={() => {
+              stopImpersonation();
+              navigate('/sys-admin-dashboard');
+            }}
           >
             <ArrowLeft className="h-4 w-4 mr-2 nav-allow" />
             {!isCollapsed && <span className="nav-allow">Exit Live View</span>}

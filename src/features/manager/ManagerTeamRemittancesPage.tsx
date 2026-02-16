@@ -11,6 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
     CalendarIcon,
     Package,
@@ -22,7 +23,9 @@ import {
     Search,
     Users,
     Crown,
-    Box
+    Box,
+    ChevronLeft,
+    ChevronRight
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -66,6 +69,9 @@ export default function ManagerTeamRemittancesPage() {
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [remittanceOrders, setRemittanceOrders] = useState<any[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedAgentId, setSelectedAgentId] = useState<string>('all');
+    const [currentPage, setCurrentPage] = useState(1);
+    const PAGE_SIZE = 10;
     const [isMobile, setIsMobile] = useState(false);
     const [signatureError, setSignatureError] = useState(false);
     const [signedSignatureUrl, setSignedSignatureUrl] = useState<string | null>(null);
@@ -91,7 +97,11 @@ export default function ManagerTeamRemittancesPage() {
     useEffect(() => {
         if (!user?.id || user.role !== 'manager') return;
         fetchTeamRemittances();
-    }, [user?.id, user?.role, selectedDate]);
+    }, [user?.id, user?.role, selectedDate, selectedAgentId]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, selectedAgentId, selectedDate]);
 
     const fetchTeamRemittances = async () => {
         if (!user?.id || !user.company_id) return;
@@ -205,40 +215,13 @@ export default function ManagerTeamRemittancesPage() {
                 group.totalUnits += rem.total_units;
             });
 
-            // Filter out empty groups if any (though logic above populates them)
-            // And apply Search Query
-            const processedGroups = Array.from(groups.values()).map(group => {
-                if (!searchQuery) return group;
-
-                const lowerQ = searchQuery.toLowerCase();
-                const filteredRemittances = group.remittances.filter(r =>
-                    (r.agent_name?.toLowerCase().includes(lowerQ) || '') ||
-                    (r.id.toLowerCase().includes(lowerQ))
-                );
-
-                // If the group header matches (e.g. searching for a leader), show all their remittances ?? 
-                // Or if searching for "Leader A", show "Leader A's" group.
-                if (group.leaderName.toLowerCase().includes(lowerQ) && !group.isDirect) {
-                    return group; // Return full group if leader matches
-                }
-
-                return {
-                    ...group,
-                    remittances: filteredRemittances,
-                    // Recalculate totals for filtered view? Maybe safer to keep group totals visually consistent or update them.
-                    // Let's update them to reflect search results
-                    totalRevenue: filteredRemittances.reduce((sum, r) => sum + r.total_revenue, 0),
-                    totalUnits: filteredRemittances.reduce((sum, r) => sum + r.total_units, 0)
-                };
-            }).filter(g => g.remittances.length > 0);
-
-            // Sort: Direct team first, then others alphabetically
+            // Filter out empty groups, sort (search and agent filter applied client-side)
+            const processedGroups = Array.from(groups.values()).filter(g => g.remittances.length > 0);
             processedGroups.sort((a, b) => {
                 if (a.isDirect) return -1;
                 if (b.isDirect) return 1;
                 return a.leaderName.localeCompare(b.leaderName);
             });
-
             setGroupedData(processedGroups);
 
         } catch (error: any) {

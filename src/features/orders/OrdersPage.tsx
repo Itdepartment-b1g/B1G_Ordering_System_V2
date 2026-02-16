@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,12 +8,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, FileText, AlertCircle } from 'lucide-react';
+import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, FileText, AlertCircle, Filter, Download, Upload, Loader2 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { exportClientsToExcel } from '@/lib/excel.helpers';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,12 +25,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import * as XLSX from 'xlsx';
 
 export default function OrdersPage() {
   const { getAllOrders, updateOrderStatus } = useOrders();
   const orders = getAllOrders();
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
@@ -61,6 +64,62 @@ export default function OrdersPage() {
   const [bulkClientDetails, setBulkClientDetails] = useState<any | null>(null);
   const [loadingBulkClient, setLoadingBulkClient] = useState(false);
   const [processingBulkApproval, setProcessingBulkApproval] = useState(false);
+
+  // Import orders preview state
+  type ImportOrder = {
+    order_number: string;
+    order_date: string;
+    agent_id: string | null;
+    agent_name: string | null;
+    client_id: string | null;
+    client_name: string | null;
+    subtotal: number;
+    tax: number;
+    discount: number;
+    total_amount: number;
+    status: string;
+    stage: string;
+    payment_method: string | null;
+    bank_type: string | null;
+    deposit_id: string | null;
+    notes: string | null;
+  };
+
+  type ImportOrderItem = {
+    order_number: string;
+    item_brand_name: string | null;
+    item_variant_name: string | null;
+    item_variant_type: string | null;
+    item_quantity: number;
+    item_unit_price: number;
+    item_pricing_strategy: string | null;
+  };
+
+  const [importOrders, setImportOrders] = useState<ImportOrder[]>([]);
+  const [importOrderItems, setImportOrderItems] = useState<ImportOrderItem[]>([]);
+  const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [importingOrders, setImportingOrders] = useState(false);
+
+  // Normalize free-text names from CSV / DB so we are resilient to
+  // casing and spacing differences (e.g. double spaces).
+  const normalizeName = (value: string | null | undefined): string => {
+    return (value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  };
+
+  // Normalize variant type values from CSV / DB so we accept
+  // different casings like "flavor" / "Flavor" or "battery" / "Battery".
+  const normalizeVariantType = (value: string | null | undefined): string => {
+    const t = (value ?? '').trim().toLowerCase();
+    if (t === 'flavor' || t === 'flavour') return 'flavor';
+    if (t === 'battery') return 'battery';
+    return t;
+  };
+
+  // Import / export references
+  const importOrdersInputRef = useRef<HTMLInputElement | null>(null);
 
   // Load team logic removed as orders now go directly to finance
 
@@ -141,8 +200,15 @@ export default function OrdersPage() {
   const handleConfirmApprove = async () => {
     if (!orderToApprove) return;
 
-    // Safety check: Block approval of cash/cheque orders without deposit OR without bank details recorded
-    if ((orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE') && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
+    // Safety check: Block approval of cash/cheque orders (FULL or SPLIT) without deposit OR without bank details recorded
+    let hasCashOrCheque = false;
+    if (orderToApprove.paymentMode === 'SPLIT' && orderToApprove.paymentSplits) {
+      hasCashOrCheque = orderToApprove.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
+    } else {
+      hasCashOrCheque = orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE';
+    }
+
+    if (hasCashOrCheque && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
       toast({
         title: 'Cannot Approve',
         description: orderToApprove.depositId
@@ -161,7 +227,7 @@ export default function OrdersPage() {
         await updateOrderStatus(orderToApprove.id, 'approved');
 
         // Show appropriate success message
-        const successMessage = (orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE') && orderToApprove.depositId
+        const successMessage = hasCashOrCheque && orderToApprove.depositId
           ? 'Order approved and deposit verified.'
           : 'Order approval complete.';
 
@@ -208,6 +274,24 @@ export default function OrdersPage() {
     }
   };
 
+  // Helper: does an order use the given payment method?
+  // Includes BOTH full payments and split payments.
+  const orderMatchesPaymentMethod = (order: Order, method: string) => {
+    if (!method || method === 'all') return true;
+
+    // Full payment (or legacy orders without paymentMode)
+    if (order.paymentMode !== 'SPLIT') {
+      return order.paymentMethod === method;
+    }
+
+    // Split payment – check any split method
+    if (Array.isArray(order.paymentSplits)) {
+      return order.paymentSplits.some((s) => s.method === method);
+    }
+
+    return false;
+  };
+
   const filterOrders = (status?: Order['status']) => {
     let filtered = visibleOrders;
     if (status) {
@@ -219,6 +303,9 @@ export default function OrdersPage() {
         filtered = filtered.filter(o => o.status === 'rejected' || o.stage === 'admin_rejected');
       }
     }
+    if (selectedPaymentMethod && selectedPaymentMethod !== "all") {
+      filtered = filtered.filter(o => orderMatchesPaymentMethod(o, selectedPaymentMethod));
+    }
     if (searchQuery) {
       filtered = filtered.filter(o =>
         o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -227,6 +314,706 @@ export default function OrdersPage() {
       );
     }
     return filtered;
+  };
+
+  // -------------------------
+  // Import / Export Handlers
+  // -------------------------
+
+  const handleDownloadOrderTemplate = () => {
+    const header =
+      'order_number,order_item_index,agent_id,agent_name,client_id,client_name,order_date,subtotal,tax,discount,total_amount,status,stage,payment_method,bank_type,deposit_id,notes,item_brand_name,item_variant_name,item_variant_type,item_quantity,item_unit_price,item_pricing_strategy\n';
+    const blob = new Blob([header], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'orders_template.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportOrders = async () => {
+    if (!visibleOrders.length) {
+      toast({
+        title: 'No Data',
+        description: 'There are no orders to export.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // One row per order item, including brand/variant, quantity, and pricing strategy
+    const exportData = visibleOrders.flatMap((o) => {
+      // Format payment method for export
+      let paymentMethodStr = o.paymentMethod || '';
+      if (o.paymentMode === 'SPLIT' && o.paymentSplits) {
+        const parts = o.paymentSplits.map(s => {
+          if (s.method === 'BANK_TRANSFER') return s.bank ? `Bank Transfer (${s.bank})` : 'Bank Transfer';
+          if (s.method === 'GCASH') return 'GCash';
+          if (s.method === 'CASH') return 'Cash';
+          if (s.method === 'CHEQUE') return 'Cheque';
+          return s.method;
+        });
+        paymentMethodStr = `Split: ${parts.join(' + ')}`;
+      } else if (o.paymentMethod === 'BANK_TRANSFER' && o.bankType) {
+        paymentMethodStr = `Bank Transfer (${o.bankType})`;
+      } else if (o.paymentMethod === 'GCASH') {
+        paymentMethodStr = 'GCash';
+      } else if (o.paymentMethod === 'CASH') {
+        paymentMethodStr = 'Cash';
+      } else if (o.paymentMethod === 'CHEQUE') {
+        paymentMethodStr = 'Cheque';
+      }
+
+      return o.items.map((item, index) => ({
+        order_number: o.orderNumber,
+        order_item_index: index + 1,
+        agent_id: o.agentId,
+        agent_name: o.agentName,
+        client_id: o.clientId,
+        client_name: o.clientName,
+        order_date: o.date,
+        subtotal: o.subtotal,
+        tax: o.tax,
+        discount: o.discount,
+        total_amount: o.total,
+        status: o.status,
+        stage: o.stage || '',
+        payment_method: paymentMethodStr,
+        bank_type: o.bankType || '',
+        deposit_id: o.depositId || '',
+        notes: o.notes || '',
+        item_brand_name: item.brandName,
+        item_variant_name: item.variantName,
+        item_variant_type: item.variantType,
+        item_quantity: item.quantity,
+        item_unit_price: item.unitPrice,
+        item_pricing_strategy: o.pricingStrategy || '',
+      }));
+    });
+
+    await exportClientsToExcel(
+      exportData,
+      undefined,
+      `orders_export_${new Date().toISOString().split('T')[0]}.csv`,
+    );
+
+    toast({
+      title: 'Export Successful',
+      description: `Successfully exported ${visibleOrders.length} order(s).`,
+    });
+  };
+
+  const handleImportOrders = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!user?.company_id) {
+      toast({
+        title: 'Import failed',
+        description: 'User company_id not found. Please re-login and try again.',
+        variant: 'destructive',
+      });
+      event.target.value = '';
+      return;
+    }
+
+    // Only admin / finance / super_admin can import historical orders
+    if (!isAdmin && !isFinance) {
+      toast({
+        title: 'Not authorized',
+        description: 'Only admin or finance can import orders.',
+        variant: 'destructive',
+      });
+      event.target.value = '';
+      return;
+    }
+
+    try {
+      const fileName = file.name.toLowerCase();
+      const isExcel = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
+
+      let headers: string[] = [];
+      let rows: string[][] = [];
+
+      if (isExcel) {
+        const ab = await file.arrayBuffer();
+        const wb = XLSX.read(ab, { type: 'array' });
+        const firstSheet = wb.SheetNames[0];
+        if (!firstSheet) {
+          toast({ title: 'No data', description: 'The Excel file has no sheets.', variant: 'destructive' });
+          event.target.value = '';
+          return;
+        }
+        const sheet = wb.Sheets[firstSheet];
+        const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][];
+        if (!raw.length) {
+          toast({ title: 'No data', description: 'The sheet is empty.', variant: 'destructive' });
+          event.target.value = '';
+          return;
+        }
+        headers = (raw[0] as unknown[]).map((h: unknown) => String(h ?? '').trim().toLowerCase());
+        rows = raw.slice(1).map((row: unknown[]) =>
+          (row || []).map((c: unknown) => (c == null ? '' : String(c)).trim()),
+        );
+      } else {
+        const text = await file.text();
+        const lines = text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0);
+
+        if (lines.length <= 1) {
+          toast({ title: 'No data', description: 'The file appears to be empty.', variant: 'destructive' });
+          event.target.value = '';
+          return;
+        }
+
+        const [headerLine, ...lineRows] = lines;
+        headers = headerLine.split(',').map((h) => h.trim().toLowerCase());
+        rows = lineRows.map((row) => row.split(',').map((c) => c.trim()));
+      }
+
+      // Helper to normalize order_date into YYYY-MM-DD, handling:
+      // - Already-formatted strings like "2026-02-08"
+      // - Excel serial numbers like "46060"
+      // - Other parseable date strings
+      const normalizeOrderDate = (raw: string): string | null => {
+        const value = String(raw ?? '').trim();
+        if (!value) return null;
+
+        // Exact YYYY-MM-DD
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          return value;
+        }
+
+        // Excel serial number (days since 1899-12-30)
+        if (/^\d+$/.test(value)) {
+          const serial = Number(value);
+          if (!Number.isFinite(serial)) return null;
+          const base = new Date(Date.UTC(1899, 11, 30)); // 1899-12-30
+          base.setUTCDate(base.getUTCDate() + serial);
+          if (isNaN(base.getTime())) return null;
+          return base.toISOString().split('T')[0];
+        }
+
+        // Fallback: let JS parse
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) {
+          return d.toISOString().split('T')[0];
+        }
+
+        return null;
+      };
+
+      // IMPORTANT: We expect the exact headers from order_list_import.xlsx.
+      // All headers were already lowercased when building `headers`.
+      console.log('[Order Import] Raw headers:', headers);
+
+      const orderNumberIdx = headers.indexOf('order_number');
+      const orderDateIdx = headers.indexOf('order_date');
+      const agentIdIdx = headers.indexOf('agent_id');
+      const agentNameIdx = headers.indexOf('agent_name');
+      const clientIdIdx = headers.indexOf('client_id');
+      const clientNameIdx = headers.indexOf('client_name');
+      const subtotalIdx = headers.indexOf('subtotal');
+      const taxIdx = headers.indexOf('tax');
+      const discountIdx = headers.indexOf('discount');
+      const totalAmountIdx = headers.indexOf('total_amount');
+      const statusIdx = headers.indexOf('status');
+      const stageIdx = headers.indexOf('stage');
+      const paymentMethodIdx = headers.indexOf('payment_method');
+      const bankTypeIdx = headers.indexOf('bank_type');
+      const depositIdIdx = headers.indexOf('deposit_id');
+      const notesIdx = headers.indexOf('notes');
+      const itemBrandIdx = headers.indexOf('item_brand_name');
+      const itemVariantIdx = headers.indexOf('item_variant_name');
+      const itemVariantTypeIdx = headers.indexOf('item_variant_type');
+      const itemQuantityIdx = headers.indexOf('item_quantity');
+      const itemUnitPriceIdx = headers.indexOf('item_unit_price');
+      const itemPricingStrategyIdx = headers.indexOf('item_pricing_strategy');
+
+      console.log('[Order Import] Indexes:', {
+        orderNumberIdx,
+        orderDateIdx,
+        agentIdIdx,
+        agentNameIdx,
+        clientIdIdx,
+        clientNameIdx,
+        subtotalIdx,
+        taxIdx,
+        discountIdx,
+        totalAmountIdx,
+        statusIdx,
+        stageIdx,
+        paymentMethodIdx,
+        bankTypeIdx,
+        depositIdIdx,
+        notesIdx,
+      });
+
+      if (orderNumberIdx === -1 || orderDateIdx === -1) {
+        toast({
+          title: 'Invalid template',
+          description: 'The template must include at least "order_number" and "order_date" columns.',
+          variant: 'destructive',
+        });
+        event.target.value = '';
+        return;
+      }
+
+      // Group rows by order_number for order headers
+      const ordersMap = new Map<string, ImportOrder>();
+      // Collect raw item rows (one per CSV/XLSX row)
+      const itemRows: ImportOrderItem[] = [];
+
+      for (const cols of rows) {
+        const orderNumber = cols[orderNumberIdx] ?? '';
+        if (!orderNumber) continue;
+
+        // Collect item row if present
+        const getString = (idx: number) => (idx >= 0 ? (cols[idx] ?? '') || null : null);
+        const parseNumber = (idx: number) => {
+          if (idx < 0) return 0;
+          const v = parseFloat(cols[idx] ?? '');
+          return Number.isFinite(v) ? v : 0;
+        };
+
+        const rawItemBrand = getString(itemBrandIdx);
+        const rawItemVariant = getString(itemVariantIdx);
+        const rawItemQty = parseNumber(itemQuantityIdx);
+        const rawItemUnitPrice = parseNumber(itemUnitPriceIdx);
+
+        if (rawItemBrand || rawItemVariant || rawItemQty > 0 || rawItemUnitPrice > 0) {
+          itemRows.push({
+            order_number: orderNumber,
+            item_brand_name: rawItemBrand,
+            item_variant_name: rawItemVariant,
+            item_variant_type: getString(itemVariantTypeIdx),
+            item_quantity: rawItemQty,
+            item_unit_price: rawItemUnitPrice,
+            item_pricing_strategy: getString(itemPricingStrategyIdx),
+          });
+        }
+
+        if (!ordersMap.has(orderNumber)) {
+          const order_date_raw = cols[orderDateIdx] ?? '';
+          const normalizedDate = normalizeOrderDate(order_date_raw);
+          if (!normalizedDate) {
+            console.warn('[Order Import] Invalid order_date detected, aborting import', {
+              orderNumber,
+              raw: order_date_raw,
+            });
+            toast({
+              title: 'Invalid order date',
+              description: `Order "${orderNumber}" has an invalid order_date value: "${order_date_raw}". Please fix it in the file (use YYYY-MM-DD or a valid Excel date) and try again.`,
+              variant: 'destructive',
+            });
+            event.target.value = '';
+            return;
+          }
+
+          const status = (getString(statusIdx) || 'approved') as string;
+          const stage = (getString(stageIdx) || 'admin_approved') as string;
+
+          ordersMap.set(orderNumber, {
+            order_number: orderNumber,
+            order_date: normalizedDate,
+            agent_id: getString(agentIdIdx),
+            agent_name: getString(agentNameIdx),
+            client_id: getString(clientIdIdx),
+            client_name: getString(clientNameIdx),
+            subtotal: parseNumber(subtotalIdx),
+            tax: parseNumber(taxIdx),
+            discount: parseNumber(discountIdx),
+            total_amount: parseNumber(totalAmountIdx),
+            status,
+            stage,
+            payment_method: getString(paymentMethodIdx),
+            bank_type: getString(bankTypeIdx),
+            deposit_id: getString(depositIdIdx),
+            notes: getString(notesIdx),
+          });
+        }
+      }
+
+      if (ordersMap.size === 0) {
+        toast({
+          title: 'No valid rows',
+          description: 'No valid orders were found in the file.',
+          variant: 'destructive',
+        });
+        event.target.value = '';
+        return;
+      }
+
+      // Store parsed orders + items and open preview dialog; actual DB insert happens on confirm
+      const ordersArray = Array.from(ordersMap.values());
+      setImportOrders(ordersArray);
+      setImportOrderItems(itemRows);
+      setImportPreviewOpen(true);
+    } catch (err: any) {
+      console.error('Error importing orders:', err);
+      toast({
+        title: 'Import failed',
+        description: err.message || 'An unexpected error occurred while importing orders.',
+        variant: 'destructive',
+      });
+    } finally {
+      // Reset input so the same file can be selected again later
+      event.target.value = '';
+    }
+  };
+
+  const handleConfirmImportOrders = async () => {
+    if (!user?.company_id) {
+      toast({
+        title: 'Import failed',
+        description: 'User company_id not found. Please re-login and try again.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!isAdmin && !isFinance) {
+      toast({
+        title: 'Not authorized',
+        description: 'Only admin or finance can import orders.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!importOrders.length) {
+      toast({
+        title: 'Nothing to import',
+        description: 'There are no parsed orders to import.',
+      });
+      return;
+    }
+
+    try {
+      setImportingOrders(true);
+
+      // Ensure all orders have a client_id and prefetch their account_type
+      const ordersArray = importOrders;
+      const missingClientIdOrders = ordersArray.filter((o) => !o.client_id);
+      if (missingClientIdOrders.length > 0) {
+        const sample = missingClientIdOrders.slice(0, 5).map((o) => o.order_number).join(', ');
+        toast({
+          title: 'Missing client_id',
+          description: `The following order(s) have no client_id: ${sample}${
+            missingClientIdOrders.length > 5 ? '...' : ''
+          }. Please fill in client_id for all orders and try again.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const clientIds = Array.from(
+        new Set(ordersArray.map((o) => o.client_id).filter(Boolean) as string[]),
+      );
+
+      const { data: clientRows, error: clientsError } = await supabase
+        .from('clients')
+        .select('id, account_type')
+        .eq('company_id', user.company_id)
+        .in('id', clientIds);
+
+      if (clientsError) {
+        console.error('Error fetching clients for import:', clientsError);
+        toast({
+          title: 'Import failed',
+          description: clientsError.message || 'Failed to fetch clients for order import.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const clientAccountTypeMap = new Map<string, string>();
+      (clientRows || []).forEach((c: any) => {
+        clientAccountTypeMap.set(c.id, c.account_type || 'Standard Accounts');
+      });
+
+      const missingClients = clientIds.filter((id) => !clientAccountTypeMap.has(id));
+      if (missingClients.length > 0) {
+        const sample = missingClients.slice(0, 5).join(', ');
+        toast({
+          title: 'Unknown clients',
+          description: `Some client_id values from the file do not exist for this company: ${sample}${
+            missingClients.length > 5 ? '...' : ''
+          }. Please verify the client IDs before importing.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const companyOrderNumbers = ordersArray.map((o) => o.order_number);
+      const orderDateMap = new Map<string, string>();
+      ordersArray.forEach((o) => {
+        if (o.order_number && o.order_date) {
+          orderDateMap.set(o.order_number, o.order_date);
+        }
+      });
+
+      // Skip orders that already exist for this company_id
+      const { data: existingOrders, error: existingError } = await supabase
+        .from('client_orders')
+        .select('order_number')
+        .eq('company_id', user.company_id)
+        .in('order_number', companyOrderNumbers);
+
+      if (existingError) {
+        console.error('Error checking existing orders:', existingError);
+        toast({
+          title: 'Import failed',
+          description: existingError.message || 'Failed to check existing orders.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const existingSet = new Set((existingOrders || []).map((o: any) => o.order_number));
+
+      const payload = ordersArray
+        .filter((o) => !existingSet.has(o.order_number))
+        .map((o) => ({
+          company_id: user.company_id,
+          agent_id: o.agent_id,
+          client_id: o.client_id,
+          order_number: o.order_number,
+          order_date: o.order_date,
+          // Align with actual client_orders schema: subtotal, tax_amount, discount, total_amount
+          subtotal: o.subtotal,
+          tax_amount: o.tax,
+          discount: o.discount,
+          total_amount: o.total_amount,
+          client_account_type: clientAccountTypeMap.get(o.client_id as string) || 'Standard Accounts',
+          status: o.status,
+          notes: o.notes,
+          payment_method: o.payment_method,
+          bank_type: o.bank_type,
+          deposit_id: o.deposit_id,
+          stage: o.stage,
+          // Ensure created_at/updated_at align with the original order date
+          created_at: o.order_date,
+          updated_at: o.order_date,
+        }));
+
+      if (!payload.length) {
+        toast({
+          title: 'Nothing to import',
+          description: 'All orders in the file already exist for this company.',
+        });
+        return;
+      }
+
+      const { data: insertedOrders, error: orderInsertError } = await supabase
+        .from('client_orders')
+        .insert(payload as any[])
+        .select('id, order_number');
+
+      if (orderInsertError) {
+        console.error('Order import error:', orderInsertError);
+        toast({
+          title: 'Import failed',
+          description: orderInsertError.message || 'Failed to import orders.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Map order_number -> client_order_id for newly inserted orders
+      const orderIdMap = new Map<string, string>();
+      (insertedOrders || []).forEach((o: any) => {
+        if (o.order_number && o.id) {
+          orderIdMap.set(o.order_number, o.id as string);
+        }
+      });
+
+      // Build variant lookup from existing brands + variants
+      const distinctCombos = new Map<
+        string,
+        { brandName: string; variantName: string; variantType: string | null }
+      >();
+
+      importOrderItems.forEach((item) => {
+        const brandNameRaw = (item.item_brand_name || '').trim();
+        const variantNameRaw = (item.item_variant_name || '').trim();
+        const rawVariantType = (item.item_variant_type || '').trim();
+        const normalizedVariantType = normalizeVariantType(rawVariantType);
+        if (!brandNameRaw || !variantNameRaw) return;
+
+        const brandNameKey = normalizeName(brandNameRaw);
+        const variantNameKey = normalizeName(variantNameRaw);
+        const key = `${brandNameKey}||${variantNameKey}||${normalizedVariantType}`;
+        if (!distinctCombos.has(key)) {
+          // Store the original variant type text (for display) but use the
+          // normalized form for matching against DB variants.
+          const storedVariantType = rawVariantType || null;
+          distinctCombos.set(key, {
+            brandName: brandNameRaw,
+            variantName: variantNameRaw,
+            variantType: storedVariantType,
+          });
+        }
+      });
+
+      let variantIdMap = new Map<string, string>();
+
+      if (distinctCombos.size > 0) {
+        const { data: brands, error: brandsError } = await supabase
+          .from('brands')
+          .select('id, name')
+          .eq('company_id', user.company_id);
+
+        if (brandsError) {
+          console.error('Error fetching brands for order import:', brandsError);
+          toast({
+            title: 'Import failed',
+            description: brandsError.message || 'Failed to fetch brands for order items.',
+            variant: 'destructive',
+          });
+          return;
+        }
+
+        const { data: variants, error: variantsError } = await supabase
+          .from('variants')
+          .select('id, name, variant_type, brand_id')
+          .eq('company_id', user.company_id);
+
+        if (variantsError) {
+          console.error('Error fetching variants for order import:', variantsError);
+          toast({
+            title: 'Import failed',
+            description: variantsError.message || 'Failed to fetch variants for order items.',
+            variant: 'destructive',
+          });
+          return;
+        }
+
+        const brandNameToId = new Map<string, string>();
+        (brands || []).forEach((b: any) => {
+          if (b.name && b.id) {
+            const key = normalizeName(String(b.name));
+            brandNameToId.set(key, b.id as string);
+          }
+        });
+
+        const variantKeyToId = new Map<string, string>();
+        (variants || []).forEach((v: any) => {
+          const brandId = v.brand_id as string;
+          const nameKey = normalizeName(String(v.name || ''));
+          const type = normalizeVariantType(v.variant_type as string | null);
+          const key = `${brandId}||${nameKey}||${type}`;
+          if (brandId && nameKey) {
+            variantKeyToId.set(key, v.id as string);
+          }
+        });
+
+        const missingCombos: string[] = [];
+
+        distinctCombos.forEach(({ brandName, variantName, variantType }) => {
+          const brandId = brandNameToId.get(normalizeName(brandName));
+          if (!brandId) {
+            missingCombos.push(`${brandName} / ${variantName} (${variantType || 'unknown type'})`);
+            return;
+          }
+          const normalizedType = normalizeVariantType(variantType);
+          const key = `${brandId}||${normalizeName(variantName)}||${normalizedType}`;
+          const variantId = variantKeyToId.get(key);
+          if (!variantId) {
+            missingCombos.push(`${brandName} / ${variantName} (${variantType || 'unknown type'})`);
+            return;
+          }
+          const comboKey = `${normalizeName(brandName)}||${normalizeName(variantName)}||${normalizedType}`;
+          variantIdMap.set(comboKey, variantId);
+        });
+
+        if (missingCombos.length > 0) {
+          const sample = missingCombos.slice(0, 5).join('; ');
+          toast({
+            title: 'Unknown variants',
+            description: `Some brand/variant/type combinations from the file do not exist: ${sample}${
+              missingCombos.length > 5 ? '...' : ''
+            }. Please ensure all items exist in Brands & Variants before importing.`,
+            variant: 'destructive',
+          });
+          return;
+        }
+      }
+
+      // Build client_order_items payload (does NOT touch inventory)
+        const itemPayload = importOrderItems
+          .map((item) => {
+            const orderId = orderIdMap.get(item.order_number);
+            if (!orderId) return null; // order may have been skipped as duplicate
+
+            const brandNameRaw = (item.item_brand_name || '').trim();
+            const variantNameRaw = (item.item_variant_name || '').trim();
+            const variantTypeRaw = (item.item_variant_type || '').trim();
+            if (!brandNameRaw || !variantNameRaw) return null;
+
+            const normalizedType = normalizeVariantType(variantTypeRaw);
+            const comboKey = `${normalizeName(brandNameRaw)}||${normalizeName(
+              variantNameRaw
+            )}||${normalizedType}`;
+            const variantId = variantIdMap.get(comboKey);
+            if (!variantId) return null;
+
+            const quantity = item.item_quantity || 0;
+            const unitPrice = item.item_unit_price || 0;
+            const totalPrice = quantity * unitPrice;
+
+            const pricingStrategy = (item.item_pricing_strategy || '').toLowerCase();
+            const rspPrice = pricingStrategy === 'rsp' ? unitPrice : 0;
+
+            const orderDateForItem = orderDateMap.get(item.order_number);
+
+            return {
+              company_id: user.company_id,
+              client_order_id: orderId,
+              variant_id: variantId,
+              quantity,
+              unit_price: unitPrice,
+              selling_price: 0,
+              dsp_price: 0,
+              rsp_price: rspPrice,
+              total_price: totalPrice,
+              // Align created_at date with the parent order's date when available
+              ...(orderDateForItem ? { created_at: orderDateForItem } : {}),
+            };
+          })
+          .filter(Boolean) as any[];
+
+      if (itemPayload.length > 0) {
+        const { error: itemInsertError } = await supabase
+          .from('client_order_items')
+          .insert(itemPayload);
+
+        if (itemInsertError) {
+          console.error('Order items import error:', itemInsertError);
+          toast({
+            title: 'Import warning',
+            description:
+              itemInsertError.message ||
+              'Orders were created, but there was an error creating order items.',
+            variant: 'destructive',
+          });
+        }
+      }
+
+      toast({
+        title: 'Import complete',
+        description: `${payload.length} order(s) imported successfully.`,
+      });
+    } finally {
+      setImportingOrders(false);
+      setImportPreviewOpen(false);
+      setImportOrders([]);
+    }
   };
 
   // Bulk approval handlers
@@ -272,10 +1059,16 @@ export default function OrdersPage() {
   const handleBulkApprove = async () => {
     if (agentOrders.length === 0) return;
 
-    // Check for cash/cheque orders without deposits OR without bank details recorded
-    const ordersWithoutDeposit = agentOrders.filter(
-      order => (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (!order.depositId || !order.depositBankAccount)
-    );
+    // Check for cash/cheque orders (FULL or SPLIT) without deposits OR without bank details recorded
+    const ordersWithoutDeposit = agentOrders.filter(order => {
+      let hasCashOrCheque = false;
+      if (order.paymentMode === 'SPLIT' && order.paymentSplits) {
+        hasCashOrCheque = order.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
+      } else {
+        hasCashOrCheque = order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
+      }
+      return hasCashOrCheque && (!order.depositId || !order.depositBankAccount);
+    });
 
     if (ordersWithoutDeposit.length > 0) {
       toast({
@@ -296,7 +1089,14 @@ export default function OrdersPage() {
       for (const order of agentOrders) {
         try {
           // Double-check cash/cheque orders before approval (safety net)
-          if ((order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (!order.depositId || !order.depositBankAccount)) {
+          let hasCashOrCheque = false;
+          if (order.paymentMode === 'SPLIT' && order.paymentSplits) {
+            hasCashOrCheque = order.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
+          } else {
+            hasCashOrCheque = order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
+          }
+
+          if (hasCashOrCheque && (!order.depositId || !order.depositBankAccount)) {
             console.warn(`Skipping cash/cheque order ${order.orderNumber} - deposit not recorded or bank details missing`);
             skippedCash++;
             continue;
@@ -369,7 +1169,9 @@ export default function OrdersPage() {
                       <Badge variant={getStatusVariant(order) as any}>
                         {getStatusLabel(order)}
                       </Badge>
-                      {(order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (order.stage === 'finance_pending' || order.status === 'pending') && (
+                      {(order.stage === 'finance_pending' || order.status === 'pending') && (
+                        (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
+                      ) && (
                         order.depositId && order.depositBankAccount ? (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
                             Deposit Recorded
@@ -446,7 +1248,9 @@ export default function OrdersPage() {
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
-                          {(order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE') && (order.stage === 'finance_pending' || order.status === 'pending') && (
+                          {(order.stage === 'finance_pending' || order.status === 'pending') && (
+                            (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
+                          ) && (
                             order.depositId && order.depositBankAccount ? (
                               <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
                                 Deposit Recorded
@@ -486,7 +1290,7 @@ export default function OrdersPage() {
                 <div className="text-sm text-muted-foreground">
                   Showing {startIndex + 1} to {Math.min(endIndex, orderList.length)} of {orderList.length} orders
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <Button
                     variant="outline"
                     size="sm"
@@ -496,7 +1300,6 @@ export default function OrdersPage() {
                     <ChevronLeft className="h-4 w-4" />
                     Previous
                   </Button>
-                  <div className="flex items-center gap-1">
                     {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                       let pageNum;
                       if (totalPages <= 5) {
@@ -520,7 +1323,6 @@ export default function OrdersPage() {
                         </Button>
                       );
                     })}
-                  </div>
                   <Button
                     variant="outline"
                     size="sm"
@@ -554,11 +1356,40 @@ export default function OrdersPage() {
           <h1 className="text-3xl font-bold">Order Management</h1>
           <p className="text-muted-foreground">Review and approve purchase orders from sales agents</p>
         </div>
-        {isFinance && (
-          <Button onClick={handleOpenBulkApprove} className="gap-2">
-            <CheckSquare className="h-4 w-4" />
-            Bulk Approve Orders
-          </Button>
+        {(isAdmin || isFinance) && (
+          <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+            <Button variant="outline" onClick={handleDownloadOrderTemplate} className="gap-2">
+              <Download className="h-4 w-4" />
+              Template
+            </Button>
+            <div className="relative">
+              <input
+                type="file"
+                ref={importOrdersInputRef}
+                onChange={handleImportOrders}
+                accept=".csv,.xlsx,.xls"
+                className="hidden"
+              />
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => importOrdersInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4" />
+                Import
+              </Button>
+            </div>
+            <Button variant="outline" onClick={handleExportOrders} className="gap-2">
+              <FileText className="h-4 w-4" />
+              Export
+            </Button>
+            {isFinance && (
+              <Button onClick={handleOpenBulkApprove} className="gap-2">
+                <CheckSquare className="h-4 w-4" />
+                Bulk Approve Orders
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -598,14 +1429,34 @@ export default function OrdersPage() {
 
       <Card>
         <CardHeader>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search orders by number, client, or agent..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search orders by number, client, or agent..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select
+              value={selectedPaymentMethod}
+              onValueChange={setSelectedPaymentMethod}
+            >
+              <SelectTrigger className="w-full md:w-[200px]">
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <SelectValue placeholder="Filter Method" />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Payment Methods</SelectItem>
+                <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                <SelectItem value="CASH">Cash</SelectItem>
+                <SelectItem value="CHEQUE">Cheque</SelectItem>
+                <SelectItem value="GCASH">GCash</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -651,6 +1502,152 @@ export default function OrdersPage() {
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* Import Orders Preview Dialog */}
+      <Dialog open={importPreviewOpen} onOpenChange={(open) => !importingOrders && setImportPreviewOpen(open)}>
+        <DialogContent className="max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>Import Orders Preview</DialogTitle>
+            <DialogDescription>
+              Review the data below. The first table shows what will be inserted into the{' '}
+              <span className="font-semibold">client_orders</span> table, and the second shows what will be inserted
+              into the <span className="font-semibold">client_order_items</span> table.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Client Orders (headers) */}
+          <h3 className="mt-4 text-sm font-semibold text-muted-foreground">
+            Client Orders (`client_orders`)
+          </h3>
+          <div className="mt-2 max-h-[40vh] overflow-auto border rounded-md">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Order #</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Agent</TableHead>
+                  <TableHead className="text-right">Subtotal</TableHead>
+                  <TableHead className="text-right">Tax</TableHead>
+                  <TableHead className="text-right">Discount</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead>Payment</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {importOrders.map((o) => (
+                  <TableRow key={o.order_number}>
+                    <TableCell className="font-mono text-xs">{o.order_number}</TableCell>
+                    <TableCell>{o.order_date}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium">{o.client_name || '—'}</span>
+                        <span className="text-xs text-muted-foreground">{o.client_id}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium">{o.agent_name || '—'}</span>
+                        <span className="text-xs text-muted-foreground">{o.agent_id}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">₱{o.subtotal.toLocaleString()}</TableCell>
+                    <TableCell className="text-right">₱{o.tax.toLocaleString()}</TableCell>
+                    <TableCell className="text-right">₱{o.discount.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-semibold">₱{o.total_amount.toLocaleString()}</TableCell>
+                    <TableCell>{o.status}</TableCell>
+                    <TableCell>{o.stage}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="text-sm">{o.payment_method || '—'}</span>
+                        {o.bank_type && (
+                          <span className="text-xs text-muted-foreground">{o.bank_type}</span>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!importOrders.length && (
+                  <TableRow>
+                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                      No orders parsed from file.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Client Order Items (line items) */}
+          <h3 className="mt-6 text-sm font-semibold text-muted-foreground">
+            Order Items (`client_order_items`)
+          </h3>
+          <div className="mt-2 max-h-[40vh] overflow-auto border rounded-md">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Order #</TableHead>
+                  <TableHead>Brand</TableHead>
+                  <TableHead>Variant</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-right">Quantity</TableHead>
+                  <TableHead className="text-right">Unit Price</TableHead>
+                  <TableHead className="text-right">Total Price</TableHead>
+                  <TableHead>Pricing Strategy</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {importOrderItems.map((item, idx) => {
+                  const qty = item.item_quantity || 0;
+                  const unit = item.item_unit_price || 0;
+                  const total = qty * unit;
+                  return (
+                    <TableRow key={`${item.order_number}-${idx}`}>
+                      <TableCell className="font-mono text-xs">{item.order_number}</TableCell>
+                      <TableCell>{item.item_brand_name || '—'}</TableCell>
+                      <TableCell>{item.item_variant_name || '—'}</TableCell>
+                      <TableCell>{item.item_variant_type || '—'}</TableCell>
+                      <TableCell className="text-right">{qty}</TableCell>
+                      <TableCell className="text-right">₱{unit.toLocaleString()}</TableCell>
+                      <TableCell className="text-right">₱{total.toLocaleString()}</TableCell>
+                      <TableCell>{item.item_pricing_strategy || '—'}</TableCell>
+                    </TableRow>
+                  );
+                })}
+                {!importOrderItems.length && (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
+                      No order items parsed from file. Only order headers will be imported.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => !importingOrders && setImportPreviewOpen(false)}
+              disabled={importingOrders}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmImportOrders} disabled={importingOrders || !importOrders.length}>
+              {importingOrders ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                'Confirm Import'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* View Order Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
@@ -713,39 +1710,87 @@ export default function OrdersPage() {
                 <div className="border rounded-lg overflow-hidden">
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Product</TableHead>
+                      <TableRow className="bg-muted/50">
+                        <TableHead className="w-[30%]">Product</TableHead>
+                        <TableHead className="w-[30%]">Variant</TableHead>
                         <TableHead className="text-right">Quantity</TableHead>
                         <TableHead className="text-right">Unit Price</TableHead>
                         <TableHead className="text-right">Subtotal</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {viewingOrder.items.map((item, index) => (
-                        <TableRow key={index}>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Package className="h-4 w-4 text-muted-foreground" />
-                              <div>
-                                <p className="font-medium">{item.brandName}</p>
-                                <p className="text-sm text-muted-foreground">{item.variantName}</p>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right">{item.quantity}</TableCell>
-                          <TableCell className="text-right">₱{item.unitPrice.toLocaleString()}</TableCell>
-                          <TableCell className="text-right font-semibold">
-                            ₱{item.total.toLocaleString()}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {(() => {
+                        // Group items by Brand Name
+                        const grouped = viewingOrder.items.reduce((acc, item) => {
+                          const key = item.brandName;
+                          if (!acc[key]) acc[key] = [];
+                          acc[key].push(item);
+                          return acc;
+                        }, {} as Record<string, typeof viewingOrder.items>);
+
+                        return Object.entries(grouped).map(([brandName, groupItems]) => (
+                          <>
+                            {/* Product Group Header */}
+                            <TableRow key={`group-${brandName}`} className="hover:bg-muted/10">
+                              <TableCell className="font-bold text-sm align-top pt-3 pb-1">
+                                {brandName}
+                              </TableCell>
+                              <TableCell colSpan={4} className="p-0"></TableCell>
+                            </TableRow>
+
+                            {/* Variant Items */}
+                            {groupItems.map((item, index) => (
+                              <TableRow key={`${brandName}-${index}`} className="border-0 hover:bg-transparent">
+                                <TableCell className="py-1"></TableCell>
+                                <TableCell className="py-1 align-top">
+                                  <div className="text-sm font-medium">{item.variantName}</div>
+                                  {item.variantType && (
+                                    <div className="text-xs text-muted-foreground capitalize">
+                                      {item.variantType}
+                                    </div>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right py-1 align-top text-sm">
+                                  {item.quantity}
+                                </TableCell>
+                                <TableCell className="text-right py-1 align-top text-sm">
+                                  ₱{item.unitPrice.toLocaleString()}
+                                </TableCell>
+                                <TableCell className="text-right py-1 align-top font-medium text-sm">
+                                  ₱{item.total.toLocaleString()}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            {/* Spacer Row */}
+                            <TableRow className="h-2 border-0 hover:bg-transparent"><TableCell colSpan={5} className="p-0" /></TableRow>
+                          </>
+                        ));
+                      })()}
                     </TableBody>
                   </Table>
                 </div>
               </div>
 
               {/* Order Total */}
+              {/* Order Total */}
               <div className="space-y-3 p-4 bg-primary/5 rounded-lg border-2 border-primary/20">
+                {/* Split Payment Breakdown */}
+                {viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits && (
+                  <div className="mb-2 pb-2 border-b border-primary/10 space-y-1">
+                    <p className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wider">Payment Breakdown</p>
+                    {viewingOrder.paymentSplits.map((split, idx) => (
+                      <div key={idx} className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">
+                          {split.method === 'GCASH' ? 'GCash' : 
+                           split.method === 'BANK_TRANSFER' ? `Bank (${split.bank || 'Transfer'})` :
+                           split.method === 'CHEQUE' ? 'Cheque' : 'Cash'}
+                        </span>
+                        <span className="font-medium">₱{split.amount.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex justify-between items-center text-xl">
                   <Label className="font-semibold">Order Total:</Label>
                   <p className="font-bold text-primary">₱{viewingOrder.total.toLocaleString()}</p>
@@ -753,148 +1798,218 @@ export default function OrdersPage() {
               </div>
 
               {/* Payment Information */}
-              {viewingOrder.paymentMethod && (
-                <div className="space-y-3 p-4 bg-muted rounded-lg border">
-                  <Label className="text-lg font-semibold">Payment Information</Label>
-                  <div className="space-y-2">
-                    <div>
-                      <Label className="text-muted-foreground">Payment Method</Label>
-                      <p className="font-medium">
-                        {viewingOrder.paymentMethod === 'GCASH' ? 'GCash' :
-                          viewingOrder.paymentMethod === 'BANK_TRANSFER' ? (
-                            <>
-                              Bank Transfer
-                              {viewingOrder.bankType && (
-                                <span className="ml-2 text-sm text-muted-foreground">({viewingOrder.bankType})</span>
-                              )}
-                            </>
-                          ) : viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}
-                      </p>
+              {viewingOrder && (
+                viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits && viewingOrder.paymentSplits.length > 0 ? (
+                  <div className="space-y-3 p-4 bg-muted rounded-lg border">
+                    <Label className="text-lg font-semibold">Payment Information</Label>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-muted-foreground">Payment Mode</Label>
+                          <p className="font-medium">Split Payment ({viewingOrder.paymentSplits.length} methods)</p>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {viewingOrder.paymentSplits.map((split, index) => (
+                          <div key={index} className="border rounded-lg p-3 bg-background space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <Label className="text-muted-foreground text-xs">Method</Label>
+                                <p className="font-medium text-sm">
+                                  {split.method === 'GCASH'
+                                    ? 'GCash'
+                                    : split.method === 'BANK_TRANSFER'
+                                    ? split.bank
+                                      ? `Bank Transfer (${split.bank})`
+                                      : 'Bank Transfer'
+                                    : split.method === 'CHEQUE'
+                                    ? 'Cheque'
+                                    : 'Cash'}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <Label className="text-muted-foreground text-xs">Amount</Label>
+                                <p className="font-semibold text-sm">₱{split.amount.toLocaleString()}</p>
+                              </div>
+                            </div>
+
+                            {split.proofUrl && (
+                              <div>
+                                <Label className="text-muted-foreground text-xs">Payment Proof</Label>
+                                <div className="mt-1 border rounded-md overflow-hidden bg-white">
+                                  <img
+                                    src={split.proofUrl}
+                                    alt={`Payment Proof ${index + 1}`}
+                                    className="w-full h-auto max-h-64 object-contain"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src =
+                                        'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    {viewingOrder.paymentProofUrl && (
-                      <div>
-                        <Label className="text-muted-foreground">Payment Proof</Label>
-                        <div className="mt-2 border rounded-lg overflow-hidden bg-white">
-                          <img
-                            src={viewingOrder.paymentProofUrl}
-                            alt="Payment Proof"
-                            className="w-full h-auto max-h-96 object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* CASH/CHEQUE Orders: Show deposit slip if recorded */}
-                    {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositSlipUrl && (
-                      <div className="pt-3 border-t">
-                        <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
-                        {viewingOrder.depositReferenceNumber && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Reference: {viewingOrder.depositReferenceNumber}
-                          </p>
-                        )}
-                        <div className="mt-2 border rounded-lg overflow-hidden bg-white">
-                          <img
-                            src={viewingOrder.depositSlipUrl}
-                            alt="Deposit Slip"
-                            className="w-full h-auto max-h-96 object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                            }}
-                          />
-                        </div>
-                        <p className="text-xs text-green-700 mt-2 flex items-center gap-1">
-                          <CheckCircle className="h-3 w-3" />
-                          Deposit slip uploaded by team leader
-                        </p>
-                      </div>
-                    )}
-
-                    {/* CASH/CHEQUE Orders: Show message if deposit not recorded yet */}
-                    {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositSlipUrl && viewingOrder.depositId && (
-                      <div className="pt-3 border-t">
-                        <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
-                        <p className="text-sm text-amber-700 mt-2 flex items-center gap-1">
-                          <AlertCircle className="h-4 w-4" />
-                          Waiting for team leader to upload deposit image
-                        </p>
-                      </div>
-                    )}
                   </div>
-                </div>
+                ) : viewingOrder.paymentMethod ? (
+                  <div className="space-y-3 p-4 bg-muted rounded-lg border">
+                    <Label className="text-lg font-semibold">Payment Information</Label>
+                    <div className="space-y-2">
+                      <div>
+                        <Label className="text-muted-foreground">Payment Method</Label>
+                        <p className="font-medium">
+                          {viewingOrder.paymentMethod === 'GCASH' ? 'GCash' :
+                            viewingOrder.paymentMethod === 'BANK_TRANSFER' ? (
+                              <>
+                                Bank Transfer
+                                {viewingOrder.bankType && (
+                                  <span className="ml-2 text-sm text-muted-foreground">({viewingOrder.bankType})</span>
+                                )}
+                              </>
+                            ) : viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque' : 'Cash'}
+                        </p>
+                      </div>
+                      {viewingOrder.paymentProofUrl && (
+                        <div>
+                          <Label className="text-muted-foreground">Payment Proof</Label>
+                          <div className="mt-2 border rounded-lg overflow-hidden bg-white">
+                            <img
+                              src={viewingOrder.paymentProofUrl}
+                              alt="Payment Proof"
+                              className="w-full h-auto max-h-96 object-contain"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* CASH/CHEQUE Orders: Show deposit slip if recorded */}
+                      {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositSlipUrl && (
+                        <div className="pt-3 border-t">
+                          <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
+                          {viewingOrder.depositReferenceNumber && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Reference: {viewingOrder.depositReferenceNumber}
+                            </p>
+                          )}
+                          <div className="mt-2 border rounded-lg overflow-hidden bg-white">
+                            <img
+                              src={viewingOrder.depositSlipUrl}
+                              alt="Deposit Slip"
+                              className="w-full h-auto max-h-96 object-contain"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                              }}
+                            />
+                          </div>
+                          <p className="text-xs text-green-700 mt-2 flex items-center gap-1">
+                            <CheckCircle className="h-3 w-3" />
+                            Deposit slip uploaded by team leader
+                          </p>
+                        </div>
+                      )}
+
+                      {/* CASH/CHEQUE Orders: Show message if deposit not recorded yet */}
+                      {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositSlipUrl && viewingOrder.depositId && (
+                        <div className="pt-3 border-t">
+                          <Label className="text-muted-foreground">{viewingOrder.paymentMethod === 'CHEQUE' ? 'Cheque Deposit Image' : 'Cash Deposit Slip'}</Label>
+                          <p className="text-sm text-amber-700 mt-2 flex items-center gap-1">
+                            <AlertCircle className="h-4 w-4" />
+                            Waiting for team leader to upload deposit image
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null
               )}
 
               {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (
-                <>
-                  {/* Show warning if CASH/CHEQUE order without deposit (unlikely if remitted, but good safety) */}
-                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && !viewingOrder.depositId && (
-                    <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                      <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="font-semibold text-amber-900">Deposit Required</p>
-                        <p className="text-sm text-amber-700 mt-1">
-                          This order cannot be approved until the team leader has deposited the payment (cash/cheque) and recorded it in the system.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                (() => {
+                  const hasCashOrChequeComponent = viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits
+                    ? viewingOrder.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE')
+                    : viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE';
 
-                  {/* Show warning if CASH/CHEQUE order with deposit but bank details not recorded yet */}
-                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && !viewingOrder.depositBankAccount && (
-                    <div className="flex items-start gap-3 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-                      <AlertCircle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="font-semibold text-orange-900">Deposit Details Pending</p>
-                        <p className="text-sm text-orange-700 mt-1">
-                          The team leader must record the deposit details (bank account and reference number) before this order can be approved.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  const needsDeposit = hasCashOrChequeComponent && !viewingOrder.depositId;
+                  const needsBankDetails = hasCashOrChequeComponent && viewingOrder.depositId && !viewingOrder.depositBankAccount;
+                  const depositReady = hasCashOrChequeComponent && viewingOrder.depositId && viewingOrder.depositBankAccount;
 
-                  {/* Show info if CASH/CHEQUE order with deposit AND bank details recorded */}
-                  {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && viewingOrder.depositBankAccount && (
-                    <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <CheckCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="font-semibold text-blue-900">Deposit Recorded</p>
-                        <p className="text-sm text-blue-700 mt-1">
-                          Team leader has deposited the payment to {viewingOrder.depositBankAccount}. Approving this order will also verify the deposit.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  return (
+                    <>
+                      {/* Show warning if CASH/CHEQUE component without deposit */}
+                      {needsDeposit && (
+                        <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                          <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="font-semibold text-amber-900">Deposit Required (Cash/Cheque)</p>
+                            <p className="text-sm text-amber-700 mt-1">
+                              This order contains a cash/cheque payment component. It cannot be approved until the team leader has deposited the payment and recorded it in the system.
+                            </p>
+                          </div>
+                        </div>
+                      )}
 
-                  <div className="flex gap-3 pt-4 border-t">
-                    <Button
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                      onClick={() => {
-                        setViewDialogOpen(false);
-                        handleOpenApprove(viewingOrder);
-                      }}
-                      disabled={(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && (!viewingOrder.depositId || !viewingOrder.depositBankAccount)}
-                    >
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                      {(viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE') && viewingOrder.depositId && viewingOrder.depositBankAccount
-                        ? 'Approve Order & Verify Deposit'
-                        : 'Finance Approve'}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      className="flex-1 bg-red-600 hover:bg-red-700"
-                      onClick={() => {
-                        setViewDialogOpen(false);
-                        handleOpenReject(viewingOrder);
-                      }}
-                    >
-                      <XCircle className="h-4 w-4 mr-2" />
-                      Finance Deny
-                    </Button>
-                  </div>
-                </>
+                      {/* Show warning if CASH/CHEQUE component with deposit but bank details not recorded yet */}
+                      {needsBankDetails && (
+                        <div className="flex items-start gap-3 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                          <AlertCircle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="font-semibold text-orange-900">Deposit Details Pending</p>
+                            <p className="text-sm text-orange-700 mt-1">
+                              The team leader must record the deposit details (bank account and reference number) for the cash/cheque portion before this order can be approved.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Show info if CASH/CHEQUE component with deposit AND bank details recorded */}
+                      {depositReady && (
+                        <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                          <CheckCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="font-semibold text-blue-900">Deposit Recorded</p>
+                            <p className="text-sm text-blue-700 mt-1">
+                              Team leader has deposited the payment to {viewingOrder.depositBankAccount}. Approving this order will also verify the deposit.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-3 pt-4 border-t">
+                        <Button
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                          onClick={() => {
+                            setViewDialogOpen(false);
+                            handleOpenApprove(viewingOrder);
+                          }}
+                          disabled={needsDeposit || needsBankDetails}
+                        >
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          {depositReady
+                            ? 'Approve Order & Verify Deposit'
+                            : 'Finance Approve'}
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          className="flex-1 bg-red-600 hover:bg-red-700"
+                          onClick={() => {
+                            setViewDialogOpen(false);
+                            handleOpenReject(viewingOrder);
+                          }}
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          Finance Deny
+                        </Button>
+                      </div>
+                    </>
+                  );
+                })()
               )}
             </div>
           )}

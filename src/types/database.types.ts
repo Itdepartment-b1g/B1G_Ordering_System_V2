@@ -1,7 +1,7 @@
 // B1G Ordering System - Database Types
 // Auto-generated TypeScript types for Supabase tables
 
-export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent';
+export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent' | 'executive';
 export type UserStatus = 'active' | 'inactive';
 export type VariantType = 'flavor' | 'battery' | 'posm';
 export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
@@ -45,6 +45,7 @@ export interface Company {
   super_admin_email: string;
   role: string; // Default: 'Super Admin'
   status: UserStatus;
+  company_account_type: 'Key Accounts' | 'Standard Accounts';
   team_leader_allowed_pricing?: PricingColumn[];
   mobile_sales_allowed_pricing?: PricingColumn[];
   created_at: string;
@@ -86,7 +87,7 @@ export const PRICING_OPTIONS = {
 
 export interface Profile {
   id: string;
-  company_id: string;
+  company_id: string | null; // Null for executives and system_administrator
   email: string;
   full_name: string;
   role: UserRole;
@@ -99,6 +100,19 @@ export interface Profile {
   avatar_url?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ExecutiveCompanyAssignment {
+  id: string;
+  executive_id: string;
+  company_id: string;
+  assigned_by?: string;
+  created_at: string;
+  updated_at: string;
+  // For joined queries
+  company?: Company;
+  executive?: Profile;
+  assigner?: Profile;
 }
 
 export interface Brand {
@@ -210,6 +224,15 @@ export type ClientApprovalStatus = 'pending' | 'approved' | 'rejected';
 export type ClientAccountType = 'Key Accounts' | 'Standard Accounts';
 export type ClientCategory = 'Permanently Closed' | 'Renovating' | 'Open';
 
+export interface ShopType {
+  id: string;
+  company_id: string;
+  type_name: string;
+  is_default: boolean;
+  created_at: string;
+  created_by?: string;
+}
+
 export interface Client {
   id: string;
   company_id: string;
@@ -241,8 +264,16 @@ export interface Client {
   contact_person?: string;
   tin?: string;
   tax_status?: 'Tax on Sales' | 'Tax Exempt';
+  shop_type?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PaymentSplit {
+  method: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
+  bank?: string; // For BANK_TRANSFER
+  amount: number;
+  proof_url?: string;
 }
 
 export interface ClientOrder {
@@ -261,9 +292,11 @@ export interface ClientOrder {
   status: OrderStatus;
   notes?: string;
   signature_url?: string;
-  payment_method?: 'GCASH' | 'BANK_TRANSFER' | 'CASH';
+  payment_method?: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
   bank_type?: 'Unionbank' | 'BPI' | 'PBCOM';
   payment_proof_url?: string;
+  payment_mode?: 'FULL' | 'SPLIT'; // NEW: Payment mode
+  payment_splits?: PaymentSplit[]; // NEW: Split payment data
   stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected';
   remitted?: boolean;
   created_at: string;
@@ -574,6 +607,32 @@ export interface LeaderInventoryItem {
 }
 
 // ============================================================================
+// PAYMENT SETTINGS TYPES
+// ============================================================================
+
+export interface BankAccount {
+  name: string;
+  account_number: string;
+  enabled: boolean;
+  qr_code_url?: string;
+}
+
+export interface CompanyPaymentSettings {
+  id: string;
+  company_id: string;
+  bank_accounts: BankAccount[];
+  gcash_number?: string;
+  gcash_name?: string;
+  gcash_qr_url?: string;
+  cash_enabled: boolean;
+  cheque_enabled: boolean;
+  gcash_enabled: boolean;
+  bank_transfer_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================================================
 // DASHBOARD STATS TYPES
 // ============================================================================
 
@@ -731,6 +790,11 @@ export interface Database {
         Row: Notification;
         Insert: Omit<Notification, 'id' | 'created_at'>;
         Update: Partial<Omit<Notification, 'id' | 'created_at'>>;
+      };
+      company_payment_settings: {
+        Row: CompanyPaymentSettings;
+        Insert: Omit<CompanyPaymentSettings, 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<Omit<CompanyPaymentSettings, 'id' | 'created_at'>>;
       };
     };
     Functions: {

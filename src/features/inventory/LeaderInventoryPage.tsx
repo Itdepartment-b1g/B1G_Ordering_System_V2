@@ -34,6 +34,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { canLeadTeam } from '@/lib/roleUtils';
+import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
 
 export default function LeaderInventoryPage() {
   const { user } = useAuth();
@@ -1367,6 +1368,9 @@ export default function LeaderInventoryPage() {
         </CardContent>
       </Card>
 
+      {/* Incoming TL Stock Requests Section */}
+      {user.role === 'team_leader' && <IncomingTLRequestsSection />}
+
       {/* Team Members Inventory Section */}
       <Card>
         <CardHeader className="p-4 md:p-6">
@@ -1375,17 +1379,7 @@ export default function LeaderInventoryPage() {
               <Users className="h-4 w-4 md:h-5 md:w-5 text-blue-600 flex-shrink-0" />
               <span className="truncate">Team Members</span>
             </CardTitle>
-            {user.role !== 'admin' && user.role !== 'manager' && (
-              <Button
-                onClick={() => setAllocationOpen(true)}
-                disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
-                size="sm"
-                className="w-full sm:w-auto h-9 text-xs"
-              >
-                <ArrowRight className="mr-2 h-3 w-3" />
-                Allocate
-              </Button>
-            )}
+
           </div>
         </CardHeader>
         <CardContent className="p-4 md:p-6">

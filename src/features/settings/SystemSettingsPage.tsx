@@ -146,7 +146,7 @@ export default function SystemSettingsPage() {
 
       toast({
         title: 'Success',
-        description: 'Pricing permissions updated successfully',
+        description: 'Pricing permissions updated successfully. Changes are now live for all users.',
       });
 
       // Refresh data

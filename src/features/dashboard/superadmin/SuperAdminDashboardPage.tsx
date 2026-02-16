@@ -13,13 +13,17 @@ export default function SuperAdminDashboardPage() {
     totalUsers: 0,
     activeUsers: 0,
     totalInventory: 0,
+    totalStock: 0,
+    totalAllocated: 0,
+    totalAvailable: 0,
     totalRevenue: 0,
   });
   const [recentUsers, setRecentUsers] = useState<Profile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (user?.company_id) {
+    const companyId = (user as any)?.company_id;
+    if (companyId) {
       fetchDashboardData();
     } else if (user) {
       // User exists but no company_id - stop loading to prevent infinite loading state
@@ -29,7 +33,8 @@ export default function SuperAdminDashboardPage() {
   }, [user]);
 
   const fetchDashboardData = async () => {
-    if (!user?.company_id) {
+    const companyId = (user as any)?.company_id;
+    if (!companyId) {
       setIsLoading(false);
       return;
     }
@@ -37,23 +42,56 @@ export default function SuperAdminDashboardPage() {
     try {
       setIsLoading(true);
 
-      // Fetch users in the company
-      const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('id, company_id, full_name, email, role, status, created_at, updated_at')
-        .eq('company_id', user.company_id)
-        .order('created_at', { ascending: false });
+      // Fetch users, main inventory, and approved orders in parallel
+      const [
+        { data: profiles, error: profilesError },
+        { data: mainInventoryRows, error: inventoryError },
+        { data: approvedOrders, error: ordersError },
+      ] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id, company_id, full_name, email, role, status, created_at, updated_at')
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('main_inventory')
+          .select('stock, allocated_stock')
+          .eq('company_id', companyId),
+        supabase
+          .from('client_orders')
+          .select('total_amount')
+          .eq('company_id', companyId)
+          .eq('stage', 'admin_approved'),
+      ]);
 
       if (profilesError) throw profilesError;
 
       const activeProfiles = profiles?.filter(p => p.status === 'active') || [];
       const recentProfiles = profiles?.slice(0, 5) || [];
 
+      // Inventory: total stock, allocated, available (from main_inventory)
+      let totalStock = 0;
+      let totalAllocated = 0;
+      if (!inventoryError && mainInventoryRows?.length) {
+        totalStock = mainInventoryRows.reduce((sum, row) => sum + (row.stock ?? 0), 0);
+        totalAllocated = mainInventoryRows.reduce((sum, row) => sum + (row.allocated_stock ?? 0), 0);
+      }
+      const totalAvailable = Math.max(0, totalStock - totalAllocated);
+
+      // Revenue: sum of total_amount from all approved (admin_approved) orders
+      let totalRevenue = 0;
+      if (!ordersError && approvedOrders?.length) {
+        totalRevenue = approvedOrders.reduce((sum, o) => sum + (Number(o.total_amount) ?? 0), 0);
+      }
+
       setStats({
         totalUsers: profiles?.length || 0,
         activeUsers: activeProfiles.length,
-        totalInventory: 0, // TODO: Calculate from inventory
-        totalRevenue: 0, // TODO: Calculate from orders
+        totalInventory: totalStock,
+        totalStock,
+        totalAllocated,
+        totalAvailable,
+        totalRevenue,
       });
 
       setRecentUsers(recentProfiles);
@@ -137,9 +175,9 @@ export default function SuperAdminDashboardPage() {
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalInventory}</div>
+            <div className="text-2xl font-bold">{stats.totalStock.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
-              Items in stock
+              Total stock · {stats.totalAllocated.toLocaleString()} allocated · {stats.totalAvailable.toLocaleString()} available
             </p>
           </CardContent>
         </Card>
@@ -152,7 +190,7 @@ export default function SuperAdminDashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
-              All-time revenue
+              From approved orders
             </p>
           </CardContent>
         </Card>

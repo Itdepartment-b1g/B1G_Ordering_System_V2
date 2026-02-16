@@ -9,12 +9,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
-import { useMyClients, useAgentCities, Client } from './hooks';
+import { useMyClients, Client } from './hooks';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   AlertDialog,
@@ -27,15 +28,27 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-
+/** Normalize N/A-style email inputs to na@gmail.com */
+function normalizeEmail(value: string): string {
+  const v = (value || '').trim();
+  const lower = v.toLowerCase();
+  if (['n/a', 'na', 'n-a', 'n a'].includes(lower)) return 'na@gmail.com';
+  return v;
+}
 
 export default function MyClientsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { data: clients = [], isLoading: loading } = useMyClients();
-  const { data: agentCities = [] } = useAgentCities();
+  // Derive assigned cities directly from the latest profile data.
+  // AuthContext already keeps `user.city` in sync via its own realtime subscription.
+  const agentCities = (user?.city || '')
+    .split(',')
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
@@ -48,9 +61,17 @@ export default function MyClientsPage() {
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
-    has_forge: false
+    has_forge: false,
+    brand_ids: [] as string[],
+    shop_type: ''
   });
 
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+  
+  // Shop Type States
+  const [shopTypes, setShopTypes] = useState<Array<{ id: string; type_name: string; is_default: boolean }>>([]);
+  const [isOtherShopType, setIsOtherShopType] = useState(false);
+  const [customShopType, setCustomShopType] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const corFileInputRef = useRef<HTMLInputElement>(null);
   const [newCorPhoto, setNewCorPhoto] = useState<string | null>(null);
@@ -58,6 +79,14 @@ export default function MyClientsPage() {
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isCameraLoading, setIsCameraLoading] = useState(false);
+  
+  // Inside Store Photo States
+  const [newInsideStorePhoto, setNewInsideStorePhoto] = useState<string | null>(null);
+  const insideStoreFileInputRef = useRef<HTMLInputElement>(null);
+  const insideStoreVideoRef = useRef<HTMLVideoElement>(null);
+  const [isInsideStoreCameraOpen, setIsInsideStoreCameraOpen] = useState(false);
+  const [insideStoreStream, setInsideStoreStream] = useState<MediaStream | null>(null);
+  const [isInsideStoreCameraLoading, setIsInsideStoreCameraLoading] = useState(false);
   const [capturedLocation, setCapturedLocation] = useState<{
     latitude: number;
     longitude: number;
@@ -79,8 +108,12 @@ export default function MyClientsPage() {
     contact_person: '',
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
-    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
+    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
+    shop_type: '',
+    brand_ids: [] as string[]
   });
+  const [isEditOtherShopType, setIsEditOtherShopType] = useState(false);
+  const [editCustomShopType, setEditCustomShopType] = useState('');
 
   // Edit Photo States
   const [editPhoto, setEditPhoto] = useState<string | null>(null);
@@ -96,64 +129,37 @@ export default function MyClientsPage() {
 
   // Update Confirmation States
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewingClient, setViewingClient] = useState<Client | null>(null);
 
   const { toast } = useToast();
+  const [companyAccountType, setCompanyAccountType] = useState<'Key Accounts' | 'Standard Accounts' | null>(null);
 
-  // Real-time subscription for clients table
   useEffect(() => {
-    if (!user?.id) return;
-
-    console.log('📡 Setting up real-time subscription for clients table');
-
-    const channel = supabase
-      .channel('clients-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*', // Listen to all events (INSERT, UPDATE, DELETE)
-          schema: 'public',
-          table: 'clients',
-          filter: `agent_id=eq.${user.id}` // Only listen to changes for this agent's clients
-        },
-        (payload) => {
-          console.log('📡 Real-time client change detected:', payload);
-
-          // Invalidate and refetch clients data
-          queryClient.invalidateQueries({ queryKey: ['my_clients', user.id] });
-
-          // Show toast notification based on event type
-          if (payload.eventType === 'INSERT') {
-            toast({
-              title: 'New Client Added',
-              description: 'A new client has been added to your list.',
-            });
-          } else if (payload.eventType === 'UPDATE') {
-            toast({
-              title: 'Client Updated',
-              description: 'Client information has been updated.',
-            });
-          } else if (payload.eventType === 'DELETE') {
-            toast({
-              title: 'Client Removed',
-              description: 'A client has been removed from your list.',
-            });
-          }
+    const fetchCompanyAccountType = async () => {
+      if (!user?.company_id) return;
+      try {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('company_account_type')
+          .eq('id', user.company_id)
+          .single();
+        
+        if (data && !error) {
+          setCompanyAccountType(data.company_account_type || 'Standard Accounts');
+          // Update form defaults if not already set by user interaction (though here we just set the default)
+          setFormData(prev => ({ ...prev, account_type: data.company_account_type || 'Standard Accounts' }));
         }
-      )
-      .subscribe((status) => {
-        console.log('📡 Clients subscription status:', status);
-      });
-
-    // Cleanup subscription on unmount
-    return () => {
-      console.log('📡 Cleaning up real-time subscription for clients table');
-      supabase.removeChannel(channel);
+      } catch (err) {
+        console.error('Error fetching company account type:', err);
+      }
     };
-  }, [user?.id, queryClient, toast]);
+    fetchCompanyAccountType();
+  }, [user?.company_id]);
 
   const filteredClients = clients.filter(client =>
     client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -177,11 +183,25 @@ export default function MyClientsPage() {
     setViewDialogOpen(true);
   };
 
-  const handleOpenEdit = (client: Client) => {
+  const handleOpenEdit = async (client: Client) => {
     setEditingClient(client);
     // Strip +63 prefix from phone for editing
     const phoneNumber = client.phone || '';
     const phoneWithoutPrefix = phoneNumber.startsWith('+63 ') ? phoneNumber.slice(4) : phoneNumber;
+
+    console.log('📝 [Edit Client] Opening edit for:', {
+      clientId: client.id,
+      name: client.name,
+      shopType: client.shopType
+    });
+
+    // Fetch client brands
+    const { data: clientBrands } = await supabase
+      .from('client_brands')
+      .select('brand_id')
+      .eq('client_id', client.id);
+
+    const brandIds = clientBrands?.map(cb => cb.brand_id) || [];
 
     setEditForm({
       photo: client.photo || '',
@@ -192,11 +212,19 @@ export default function MyClientsPage() {
       contact_person: client.contactPerson || '',
       tin: client.tin || '',
       account_type: client.accountType || 'Standard Accounts',
-      category: client.category || 'Open'
+      category: client.category || 'Open',
+      shop_type: client.shopType || '',
+      brand_ids: brandIds
     });
     setNewCorPhoto(null);
     setEditPhoto(client.photo || null);
     setEditDialogOpen(true);
+    fetchBrands(); // Fetch brands when opening edit dialog
+    fetchShopTypes(); // Fetch shop types when opening edit dialog
+    
+    // Reset edit shop type states
+    setIsEditOtherShopType(false);
+    setEditCustomShopType('');
   };
 
   const handleSaveEdit = () => {
@@ -210,9 +238,11 @@ export default function MyClientsPage() {
     setUpdateConfirmOpen(true);
   };
 
-  const handleConfirmUpdate = async () => {
+  const handleConfirmUpdate = async (e: React.MouseEvent) => {
+    e.preventDefault();
     if (!editingClient) return;
 
+    setIsUpdating(true);
     try {
       // Handle photo upload if there's a new photo
       let photoUrl = editForm.photo;
@@ -264,7 +294,6 @@ export default function MyClientsPage() {
         }
 
         photoUrl = urlData.signedUrl;
-        photoUrl = null;
       }
 
       // Handle COR Upload if new photo is selected (reuse logic or add similar block)
@@ -299,17 +328,69 @@ export default function MyClientsPage() {
         corUrl = corUrlData.signedUrl;
       }
 
+      // Validate shop type for duplicates (Edit)
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        const normalizedCustomType = editCustomShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${editCustomShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setIsUpdating(false);
+          setUpdateConfirmOpen(false);
+          return;
+        }
+      }
+
+      // Handle custom shop type if "Other" is selected
+      let finalShopType = editForm.shop_type;
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        // Insert custom shop type into shop_types table
+        const { error: shopTypeError } = await supabase
+          .from('shop_types')
+          .insert({
+            company_id: user.company_id,
+            type_name: editCustomShopType.trim(),
+            is_default: false,
+            created_by: user.id
+          });
+        
+        // If error is due to duplicate (UNIQUE constraint), it's okay - just use the value
+        if (shopTypeError && !shopTypeError.message.includes('duplicate')) {
+          console.error('Error inserting custom shop type:', shopTypeError);
+        }
+        
+        finalShopType = editCustomShopType.trim();
+        
+        // Refresh shop types list to include the new type
+        fetchShopTypes();
+      }
+
+      console.log('💾 [Update Client] Saving shop_type:', {
+        editFormShopType: editForm.shop_type,
+        isEditOtherShopType,
+        editCustomShopType,
+        finalShopType,
+        willSave: finalShopType || null
+      });
+
       const { error } = await supabase
         .from('clients')
         .update({
           name: editForm.name,
-          email: editForm.email,
+          email: normalizeEmail(editForm.email),
           phone: editForm.phone ? `+63 ${editForm.phone}` : null,
           company: editForm.company || null,
           contact_person: editForm.contact_person || null,
           tin: editForm.tin || null,
           account_type: editForm.account_type,
           category: editForm.category,
+          shop_type: finalShopType || null,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           cor_url: corUrl || null,
@@ -318,6 +399,32 @@ export default function MyClientsPage() {
         .eq('id', editingClient.id);
 
       if (error) throw error;
+
+      // Update client brands
+      // First, delete existing brand associations
+      await supabase
+        .from('client_brands')
+        .delete()
+        .eq('client_id', editingClient.id);
+
+      // Then, insert new brand associations
+      if (editForm.brand_ids.length > 0) {
+        const brandInserts = editForm.brand_ids.map(brandId => ({
+          client_id: editingClient.id,
+          brand_id: brandId
+        }));
+
+        const { error: brandError } = await supabase
+          .from('client_brands')
+          .insert(brandInserts);
+
+        if (brandError) {
+          console.error('Error updating client brands:', brandError);
+          throw brandError;
+        }
+      }
+      
+      console.log('✅ [Update Client] Save successful');
 
       toast({
         title: 'Success',
@@ -337,6 +444,8 @@ export default function MyClientsPage() {
         description: 'Failed to update client. Please try again.',
         variant: 'destructive'
       });
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -345,9 +454,11 @@ export default function MyClientsPage() {
     setDeleteDialogOpen(true);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async (e: React.MouseEvent) => {
+    e.preventDefault();
     if (!clientToDelete) return;
 
+    setIsDeleting(true);
     try {
       const { error } = await supabase
         .from('clients')
@@ -372,6 +483,8 @@ export default function MyClientsPage() {
         description: 'Failed to delete client. Please try again.',
         variant: 'destructive'
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -1094,6 +1207,199 @@ export default function MyClientsPage() {
     }
   };
 
+  // Inside Store Photo Functions
+  const openInsideStoreCamera = async () => {
+    console.log('📸 [Inside Store Photo] Opening camera');
+    setIsInsideStoreCameraLoading(true);
+    try {
+      let mediaStream: MediaStream | null = null;
+
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+      } catch (err) {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true
+        });
+      }
+
+      if (mediaStream) {
+        setInsideStoreStream(mediaStream);
+        setIsInsideStoreCameraOpen(true);
+
+        setTimeout(() => {
+          if (insideStoreVideoRef.current) {
+            insideStoreVideoRef.current.srcObject = mediaStream;
+            insideStoreVideoRef.current.play().catch(err => {
+              if (err.name !== 'AbortError') {
+                console.error('Error playing video:', err);
+              }
+            });
+          }
+          setIsInsideStoreCameraLoading(false);
+        }, 100);
+      } else {
+        setIsInsideStoreCameraLoading(false);
+      }
+    } catch (error) {
+      console.error('📸 [Inside Store Photo] Camera error:', error);
+      setIsInsideStoreCameraLoading(false);
+      toast({
+        title: 'Camera Error',
+        description: 'Unable to access camera. Please check permissions.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const captureInsideStorePhoto = async () => {
+    console.log('📸 [Inside Store Photo] Capturing photo');
+    if (insideStoreVideoRef.current && insideStoreVideoRef.current.videoWidth > 0 && insideStoreVideoRef.current.videoHeight > 0) {
+      const canvas = document.createElement('canvas');
+      canvas.width = insideStoreVideoRef.current.videoWidth;
+      canvas.height = insideStoreVideoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        ctx.drawImage(insideStoreVideoRef.current, 0, 0);
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+        setNewInsideStorePhoto(imageData);
+        closeInsideStoreCamera();
+        console.log('✅ [Inside Store Photo] Photo captured successfully');
+        toast({
+          title: 'Inside Store Photo Captured',
+          description: 'Photo captured successfully',
+        });
+      }
+    } else {
+      toast({
+        title: 'Camera Not Ready',
+        description: 'Please wait for the camera to fully initialize.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const closeInsideStoreCamera = () => {
+    console.log('📸 [Inside Store Photo] Closing camera');
+    if (insideStoreStream) {
+      insideStoreStream.getTracks().forEach(track => track.stop());
+      setInsideStoreStream(null);
+    }
+    setIsInsideStoreCameraOpen(false);
+    setIsInsideStoreCameraLoading(false);
+  };
+
+  const handleInsideStoreFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('📸 [Inside Store Photo] File upload initiated');
+    const file = event.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: 'Error',
+          description: 'Image size should be less than 5MB',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewInsideStorePhoto(reader.result as string);
+        console.log('✅ [Inside Store Photo] File uploaded successfully');
+        toast({
+          title: 'Inside Store Photo Uploaded',
+          description: 'Photo uploaded successfully',
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeInsideStorePhoto = () => {
+    console.log('📸 [Inside Store Photo] Removing photo');
+    setNewInsideStorePhoto(null);
+    if (insideStoreFileInputRef.current) {
+      insideStoreFileInputRef.current.value = '';
+    }
+  };
+
+  // Fetch shop types for the company
+  const fetchShopTypes = async () => {
+    if (!user?.company_id) {
+      setShopTypes([]);
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('shop_types')
+        .select('id, type_name, is_default')
+        .eq('company_id', user.company_id)
+        .order('is_default', { ascending: false })
+        .order('type_name', { ascending: true });
+      
+      if (error) throw error;
+      
+      console.log('🏪 [Shop Types] Loaded:', data);
+      setShopTypes(data || []);
+    } catch (error) {
+      console.error('Error fetching shop types:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load shop types',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  // Fetch brands for the company
+  const fetchBrands = async () => {
+    if (!user?.company_id) {
+      console.log('No company_id found, cannot fetch brands');
+      setBrands([]);
+      return;
+    }
+    
+    try {
+      console.log('Fetching brands for company_id:', user.company_id);
+      const { data, error } = await supabase
+        .from('brands')
+        .select('id, name')
+        .eq('company_id', user.company_id)
+        .order('name');
+      
+      if (error) {
+        console.error('Error fetching brands:', error);
+        throw error;
+      }
+      
+      console.log('Fetched brands:', data);
+      console.log('Number of brands found:', data?.length || 0);
+      
+      if (data && data.length > 0) {
+        setBrands(data);
+      } else {
+        console.log('No brands found for company_id:', user.company_id);
+        setBrands([]);
+      }
+    } catch (error: any) {
+      console.error('Error fetching brands:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+      setBrands([]);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -1106,13 +1412,17 @@ export default function MyClientsPage() {
       tin: '',
       account_type: 'Standard Accounts',
       category: 'Open',
-      has_forge: false
+      has_forge: false,
+      brand_ids: [],
+      shop_type: ''
     });
     setNewClientPhoto(null);
+    setNewInsideStorePhoto(null);
     setCapturedLocation(null);
     setPrewarmPosition(null);
     setIsPrewarmingLocation(false);
     closeCamera();
+    closeInsideStoreCamera();
   };
 
   // Philippine phone number formatter
@@ -1216,6 +1526,7 @@ export default function MyClientsPage() {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       // Upload photo to Supabase Storage
       let photoUrl = null;
@@ -1304,6 +1615,62 @@ export default function MyClientsPage() {
         corUrl = corUrlData.signedUrl;
       }
 
+      // Upload Inside Store Photo if present (optional) — store path in DB so we can always resolve a fresh signed URL
+      let insideStorePhotoPath: string | null = null;
+      if (newInsideStorePhoto) {
+        console.log('📸 [Inside Store Photo] Starting upload process');
+        
+        // Convert base64 to blob
+        const base64Data = newInsideStorePhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+        // Generate folder structure: inside_store/{yyyy/mm/dd}_{clientname}
+        const sanitizeName = (str: string) => {
+          return str
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        };
+
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const dateFolder = `${year}/${month}/${day}`;
+        
+        const clientName = sanitizeName(formData.name || 'client');
+        const timestamp = Date.now();
+        
+        // Folder structure: inside_store/{yyyy/mm/dd}_{clientname}/photo_{timestamp}.jpg
+        const insideStoreFileName = `inside_store/${dateFolder}_${clientName}/photo_${timestamp}.jpg`;
+        
+        console.log('📸 [Inside Store Photo] Upload path:', insideStoreFileName);
+
+        // Upload to Supabase Storage
+        const { error: insideStoreUploadError } = await supabase.storage
+          .from('client-photos')
+          .upload(insideStoreFileName, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          });
+
+        if (insideStoreUploadError) {
+          console.error('📸 [Inside Store Photo] Upload error:', insideStoreUploadError);
+          throw new Error(`Failed to upload inside store photo: ${insideStoreUploadError.message}`);
+        }
+
+        // Store the storage path in DB so we can generate fresh signed URLs when displaying
+        insideStorePhotoPath = insideStoreFileName;
+        console.log('✅ [Inside Store Photo] Upload successful');
+      }
+
       const nowIso = new Date().toISOString();
       const approvalStatus = cityMatches ? 'approved' : 'pending';
       const approvalRequestedAt = cityMatches ? null : nowIso;
@@ -1315,6 +1682,48 @@ export default function MyClientsPage() {
         throw new Error('User company_id not found');
       }
 
+      // Validate shop type for duplicates
+      if (isOtherShopType && customShopType.trim()) {
+        const normalizedCustomType = customShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${customShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      // Handle custom shop type if "Other" is selected
+      let finalShopType = formData.shop_type;
+      if (isOtherShopType && customShopType.trim()) {
+        // Insert custom shop type into shop_types table
+        const { error: shopTypeError } = await supabase
+          .from('shop_types')
+          .insert({
+            company_id: user.company_id,
+            type_name: customShopType.trim(),
+            is_default: false,
+            created_by: user.id
+          });
+        
+        // If error is due to duplicate (UNIQUE constraint), it's okay - just use the value
+        if (shopTypeError && !shopTypeError.message.includes('duplicate')) {
+          console.error('Error inserting custom shop type:', shopTypeError);
+        }
+        
+        finalShopType = customShopType.trim();
+        
+        // Refresh shop types list to include the new type
+        fetchShopTypes();
+      }
+
       // Save client to database
       const { data, error } = await supabase
         .from('clients')
@@ -1322,7 +1731,7 @@ export default function MyClientsPage() {
           company_id: user.company_id,
           agent_id: user.id,
           name: formData.name,
-          email: formData.email,
+          email: normalizeEmail(formData.email),
           phone: formData.phone ? `+63 ${formData.phone}` : null,
           company: formData.company || null,
           city: formData.city || null,
@@ -1332,6 +1741,8 @@ export default function MyClientsPage() {
           account_type: formData.account_type,
           category: formData.category,
           has_forge: formData.has_forge,
+          brand_ids: formData.brand_ids.length > 0 ? formData.brand_ids : null,
+          shop_type: finalShopType || null,
           cor_url: corUrl,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
@@ -1339,6 +1750,7 @@ export default function MyClientsPage() {
           location_longitude: capturedLocation?.longitude || null,
           location_accuracy: capturedLocation?.accuracy || null,
           location_captured_at: capturedLocation ? new Date().toISOString() : null,
+          inside_store_photo_url: insideStorePhotoPath,
           approval_status: approvalStatus,
           approval_requested_at: approvalRequestedAt,
           approval_notes: approvalNotes,
@@ -1398,6 +1810,8 @@ export default function MyClientsPage() {
         description: errorMessage,
         variant: 'destructive'
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1426,6 +1840,13 @@ export default function MyClientsPage() {
             startLocationPrewarm();
           } else {
             resetForm();
+          }
+          if (open) {
+            fetchBrands(); // Fetch brands when dialog opens
+            fetchShopTypes(); // Fetch shop types when dialog opens
+          } else {
+            setIsOtherShopType(false);
+            setCustomShopType('');
           }
         }}>
           <DialogTrigger asChild>
@@ -1601,6 +2022,116 @@ export default function MyClientsPage() {
                 )}
               </div>
 
+              {/* Inside Store Photo Section - Only available after Client Photo is taken */}
+              {newClientPhoto && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">
+                    Inside Store Photo <span className="text-muted-foreground font-normal">(Optional)</span>
+                  </Label>
+                  <p className="text-xs text-muted-foreground">Take a photo of the inside of the store</p>
+
+                  {!newInsideStorePhoto && !isInsideStoreCameraOpen && (
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={openInsideStoreCamera}
+                        className="flex-1"
+                      >
+                        <Camera className="h-4 w-4 mr-2" />
+                        Open Camera
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => insideStoreFileInputRef.current?.click()}
+                        className="flex-1"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload Photo
+                      </Button>
+                      <input
+                        ref={insideStoreFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleInsideStoreFileUpload}
+                        className="hidden"
+                      />
+                    </div>
+                  )}
+
+                  {isInsideStoreCameraOpen && (
+                    <div className="space-y-2">
+                      <div className="relative rounded-lg overflow-hidden bg-black">
+                        <video
+                          ref={insideStoreVideoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-64 object-cover"
+                          onLoadedMetadata={() => {
+                            if (insideStoreVideoRef.current) {
+                              insideStoreVideoRef.current.play().catch(err => {
+                                console.error('Error playing video:', err);
+                              });
+                              setIsInsideStoreCameraLoading(false);
+                            }
+                          }}
+                        />
+                        {isInsideStoreCameraLoading && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                            <div className="text-center text-white">
+                              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
+                              <p className="text-sm">Initializing camera...</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          onClick={captureInsideStorePhoto}
+                          className="flex-1"
+                          disabled={isInsideStoreCameraLoading}
+                        >
+                          <Camera className="h-4 w-4 mr-2" />
+                          Capture Photo
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={closeInsideStoreCamera}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {newInsideStorePhoto && !isInsideStoreCameraOpen && (
+                    <div className="relative">
+                      <img
+                        src={newInsideStorePhoto}
+                        alt="Inside store preview"
+                        className="w-full h-64 object-cover rounded-lg border"
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 right-2"
+                        onClick={removeInsideStorePhoto}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                      <div className="mt-2 text-xs text-green-600 font-medium">
+                        ✓ Inside store photo captured: {new Date().toLocaleString()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Client Information Fields */}
               <div className="space-y-2">
                 <Label>Trade Name *</Label>
@@ -1642,6 +2173,7 @@ export default function MyClientsPage() {
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 />
+                <p className="text-xs text-muted-foreground">If no email please put na@gmail.com</p>
               </div>
               <div className="space-y-2">
                 <Label>Phone Number</Label>
@@ -1752,20 +2284,26 @@ export default function MyClientsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Type Of Account</Label>
-                <Select
-                  value={formData.account_type}
-                  onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                    setFormData({ ...formData, account_type: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                    <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <Select
+                    value={formData.account_type}
+                    onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                      setFormData({ ...formData, account_type: value })
+                    }
+                    disabled={!!companyAccountType}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                      <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {companyAccountType && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Account type is set by your company settings.
+                    </p>
+                  )}
               </div>
               <div className="space-y-2">
                 <Label>Category</Label>
@@ -1786,31 +2324,103 @@ export default function MyClientsPage() {
                 </Select>
               </div>
 
-              {/* Has Forge Field */}
-              <div className="space-y-3">
-                <Label>Has Forge?</Label>
-                <RadioGroup
-                  value={formData.has_forge ? 'yes' : 'no'}
-                  onValueChange={(value) => setFormData({ ...formData, has_forge: value === 'yes' })}
-                  className="flex gap-4"
+              {/* Shop Type Selection */}
+              <div className="space-y-2">
+                <Label>Shop Type</Label>
+                <Select
+                  value={isOtherShopType ? 'Other' : formData.shop_type}
+                  onValueChange={(value) => {
+                    if (value === 'Other') {
+                      setIsOtherShopType(true);
+                      setFormData({ ...formData, shop_type: 'Other' });
+                    } else {
+                      setIsOtherShopType(false);
+                      setCustomShopType('');
+                      setFormData({ ...formData, shop_type: value });
+                    }
+                  }}
                 >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="yes" id="add-has-forge-yes" />
-                    <Label htmlFor="add-has-forge-yes" className="font-normal cursor-pointer">
-                      Yes
-                    </Label>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select shop type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {shopTypes.map((type) => (
+                      <SelectItem key={type.id} value={type.type_name}>
+                        {type.type_name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+                {isOtherShopType && (
+                  <div className="mt-2">
+                    <Input
+                      placeholder="Enter custom shop type"
+                      value={customShopType}
+                      onChange={(e) => setCustomShopType(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      This custom type will be available for all users in your company
+                    </p>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="no" id="add-has-forge-no" />
-                    <Label htmlFor="add-has-forge-no" className="font-normal cursor-pointer">
-                      No
-                    </Label>
-                  </div>
-                </RadioGroup>
+                )}
               </div>
 
-              <Button className="w-full" onClick={handleAddClient}>
-                Add Client
+              {/* Brands Selection */}
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
+                <p className="text-xs text-muted-foreground">Select all brands/products this client is currently holding</p>
+                {brands.length > 0 ? (
+                  <>
+                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                      {brands.map((brand) => (
+                        <div key={brand.id} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`brand-${brand.id}`}
+                            checked={formData.brand_ids.includes(brand.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setFormData({
+                                  ...formData,
+                                  brand_ids: [...formData.brand_ids, brand.id]
+                                });
+                              } else {
+                                setFormData({
+                                  ...formData,
+                                  brand_ids: formData.brand_ids.filter(id => id !== brand.id)
+                                });
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`brand-${brand.id}`} className="text-sm font-normal cursor-pointer">
+                            {brand.name}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                    {formData.brand_ids.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {formData.brand_ids.length} {formData.brand_ids.length === 1 ? 'brand' : 'brands'} selected
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="border rounded-lg p-4 text-center text-sm text-muted-foreground">
+                    <p>No brands available for this company.</p>
+                    <p className="text-xs mt-1">Add brands in the inventory section to see them here.</p>
+                  </div>
+                )}
+              </div>
+
+              <Button className="w-full" onClick={handleAddClient} disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Adding Client...
+                  </>
+                ) : (
+                  'Add Client'
+                )}
               </Button>
             </div>
           </DialogContent>
@@ -1975,16 +2585,18 @@ export default function MyClientsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      <div className="flex justify-center gap-2">
-                        <Button variant="ghost" size="icon" onClick={() => handleOpenView(client)} title="View Details">
-                          <Eye className="h-4 w-4" />
+                      <div className="flex justify-center gap-1 md:gap-2">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenView(client)} title="View Details">
+                          <Eye className="h-3.5 w-3.5 md:h-4 md:w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleOpenEdit(client)} title="Edit">
-                          <Edit className="h-4 w-4" />
+                        <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenEdit(client)} title="Edit">
+                          <Edit className="h-3.5 w-3.5 md:h-4 md:w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleOpenDelete(client)} title="Delete">
-                          <Trash2 className="h-4 w-4" />
+                        {user?.role !== 'mobile_sales' && (
+                        <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenDelete(client)} title="Delete">
+                          <Trash2 className="h-3.5 w-3.5 md:h-4 md:w-4" />
                         </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2034,6 +2646,25 @@ export default function MyClientsPage() {
                       Captured: {new Date(viewingClient.photoTimestamp).toLocaleString()}
                     </div>
                   )}
+
+                  {/* Inside Store Photo - always show section so user knows it exists */}
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">Inside Store Photo</p>
+                    {viewingClient.insideStorePhotoUrl ? (
+                      <div className="relative aspect-video w-full rounded-lg overflow-hidden border bg-gray-50">
+                        <img
+                          src={viewingClient.insideStorePhotoUrl}
+                          alt="Inside store"
+                          className="w-full h-full object-cover cursor-pointer hover:opacity-95"
+                          onClick={() => window.open(viewingClient.insideStorePhotoUrl!, '_blank')}
+                        />
+                      </div>
+                    ) : (
+                      <div className="aspect-video w-full rounded-lg border border-dashed bg-muted/30 flex items-center justify-center text-muted-foreground text-xs">
+                        No inside store photo
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Basic Info Column */}
@@ -2170,6 +2801,30 @@ export default function MyClientsPage() {
                       )}
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Brands */}
+              <div className="space-y-4">
+                <h4 className="font-semibold text-sm flex items-center gap-2 text-primary">
+                  <Tag className="h-4 w-4" />
+                  Brands they have
+                </h4>
+                <div className="bg-gray-50/50 p-4 rounded-xl border">
+                  {viewingClient.brandIds && viewingClient.brandIds.length > 0 && brands.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {viewingClient.brandIds
+                        .map((id) => brands.find((b) => b.id === id))
+                        .filter((b): b is { id: string; name: string } => !!b)
+                        .map((b) => (
+                          <Badge key={b.id} variant="secondary" className="font-normal">
+                            {b.name}
+                          </Badge>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No brands assigned</p>
+                  )}
                 </div>
               </div>
 
@@ -2310,6 +2965,21 @@ export default function MyClientsPage() {
                     )}
                   </div>
 
+                  {/* Inside Store Photo (read-only) */}
+                  {editingClient.insideStorePhotoUrl && (
+                    <div className="space-y-1">
+                      <Label className="text-sm font-semibold">Inside Store Photo</Label>
+                      <div className="relative aspect-video w-full rounded-xl overflow-hidden border-2 border-gray-200 bg-gray-50">
+                        <img
+                          src={editingClient.insideStorePhotoUrl}
+                          alt="Inside store"
+                          className="w-full h-full object-cover cursor-pointer hover:opacity-95"
+                          onClick={() => window.open(editingClient.insideStorePhotoUrl!, '_blank')}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Photo Actions */}
                   {!isEditCameraOpen && (
                     <div className="grid grid-cols-2 gap-2">
@@ -2373,6 +3043,7 @@ export default function MyClientsPage() {
                           onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
                             setEditForm({ ...editForm, account_type: value })
                           }
+                          disabled={!!companyAccountType}
                         >
                           <SelectTrigger className="h-10">
                             <SelectValue />
@@ -2382,6 +3053,11 @@ export default function MyClientsPage() {
                             <SelectItem value="Key Accounts">Key Accounts</SelectItem>
                           </SelectContent>
                         </Select>
+                        {companyAccountType && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Account type is set by your company settings.
+                          </p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label>Category</Label>
@@ -2400,6 +3076,47 @@ export default function MyClientsPage() {
                             <SelectItem value="Permanently Closed">Closed</SelectItem>
                           </SelectContent>
                         </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Shop Type</Label>
+                        <Select
+                          value={isEditOtherShopType ? 'Other' : editForm.shop_type}
+                          onValueChange={(value) => {
+                            if (value === 'Other') {
+                              setIsEditOtherShopType(true);
+                              setEditForm({ ...editForm, shop_type: 'Other' });
+                            } else {
+                              setIsEditOtherShopType(false);
+                              setEditCustomShopType('');
+                              setEditForm({ ...editForm, shop_type: value });
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="h-10">
+                            <SelectValue placeholder="Select shop type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {shopTypes.map((type) => (
+                              <SelectItem key={type.id} value={type.type_name}>
+                                {type.type_name}
+                              </SelectItem>
+                            ))}
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {isEditOtherShopType && (
+                          <div className="mt-2">
+                            <Input
+                              placeholder="Enter custom shop type"
+                              value={editCustomShopType}
+                              onChange={(e) => setEditCustomShopType(e.target.value)}
+                              className="h-10"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                              This custom type will be available for all users in your company
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2433,6 +3150,7 @@ export default function MyClientsPage() {
                         value={editForm.email}
                         onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
                       />
+                      <p className="text-xs text-muted-foreground">If no email please put na@gmail.com</p>
                     </div>
                     <div className="space-y-2">
                       <Label>Phone Number</Label>
@@ -2544,6 +3262,49 @@ export default function MyClientsPage() {
                 </div>
               </div>
 
+              {/* Products / Brands Section */}
+              <div className="space-y-3 border-t pt-6">
+                <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
+                <p className="text-xs text-muted-foreground">Select all brands/products this client is currently holding</p>
+                {brands.length > 0 ? (
+                  <>
+                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                      {brands.map((brand) => (
+                        <div key={brand.id} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`edit-brand-${brand.id}`}
+                            checked={editForm.brand_ids.includes(brand.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setEditForm({
+                                  ...editForm,
+                                  brand_ids: [...editForm.brand_ids, brand.id]
+                                });
+                              } else {
+                                setEditForm({
+                                  ...editForm,
+                                  brand_ids: editForm.brand_ids.filter(id => id !== brand.id)
+                                });
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`edit-brand-${brand.id}`} className="text-sm font-normal cursor-pointer">
+                            {brand.name}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                    {editForm.brand_ids.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {editForm.brand_ids.length} {editForm.brand_ids.length === 1 ? 'brand' : 'brands'} selected
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">No brands available in the system</p>
+                )}
+              </div>
+
               {/* Action Bar */}
               <div className="pt-2 flex justify-end gap-3">
                 <Button className="w-full sm:w-auto min-w-[120px]" onClick={handleSaveEdit}>
@@ -2566,8 +3327,15 @@ export default function MyClientsPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmUpdate}>
-              Confirm Update
+            <AlertDialogAction onClick={handleConfirmUpdate} disabled={isUpdating}>
+              {isUpdating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                'Confirm Update'
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2585,8 +3353,15 @@ export default function MyClientsPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Remove Client
+            <AlertDialogAction onClick={handleConfirmDelete} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Removing...
+                </>
+              ) : (
+                'Remove Client'
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

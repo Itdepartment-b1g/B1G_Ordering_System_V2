@@ -62,31 +62,71 @@ BEGIN
   -- 4. PROCESS SOLD INVENTORY (Orders)
   IF p_order_ids IS NOT NULL AND array_length(p_order_ids, 1) > 0 THEN
     
-    -- Calculate generic totals
-    SELECT 
-      COUNT(*), 
-      COALESCE(SUM(total_amount), 0)
-    INTO 
-      v_orders_count,
-      v_total_revenue
+    -- Calculate orders count
+    SELECT COUNT(*)
+    INTO v_orders_count
+    FROM client_orders
+    WHERE id = ANY(p_order_ids)
+    AND company_id = v_company_id;
+
+    -- Calculate total_revenue: ONLY cash + cheque portions (for both FULL and SPLIT payments)
+    -- For FULL payments: count total_amount only if payment_method is CASH or CHEQUE
+    -- For SPLIT payments: sum only cash + cheque amounts from payment_splits
+    SELECT COALESCE(SUM(
+      CASE 
+        -- FULL payment: only count if CASH or CHEQUE
+        WHEN payment_mode IS NULL OR payment_mode = 'FULL' THEN
+          CASE 
+            WHEN payment_method IN ('CASH', 'CHEQUE') THEN total_amount
+            ELSE 0
+          END
+        -- SPLIT payment: sum cash + cheque portions from payment_splits
+        WHEN payment_mode = 'SPLIT' THEN
+          COALESCE((
+            SELECT SUM((split->>'amount')::DECIMAL(10,2))
+            FROM jsonb_array_elements(payment_splits) AS split
+            WHERE (split->>'method') IN ('CASH', 'CHEQUE')
+          ), 0)
+        ELSE 0
+      END
+    ), 0)
+    INTO v_total_revenue
     FROM client_orders
     WHERE id = ANY(p_order_ids)
     AND company_id = v_company_id;
 
     -- ========================================================================
-    -- PROCESS CASH ORDERS
+    -- PROCESS CASH ORDERS (including cash portions from split payments)
     -- ========================================================================
+    -- Get orders with cash payment (FULL CASH or SPLIT with cash portion)
+    WITH cash_order_amounts AS (
+      SELECT 
+        id,
+        CASE 
+          -- FULL payment: use total_amount if CASH
+          WHEN (payment_mode IS NULL OR payment_mode = 'FULL') AND payment_method = 'CASH' THEN total_amount
+          -- SPLIT payment: sum cash portions
+          WHEN payment_mode = 'SPLIT' THEN
+            COALESCE((
+              SELECT SUM((split->>'amount')::DECIMAL(10,2))
+              FROM jsonb_array_elements(payment_splits) AS split
+              WHERE (split->>'method') = 'CASH'
+            ), 0)
+          ELSE 0
+        END AS cash_amount
+      FROM client_orders
+      WHERE id = ANY(p_order_ids)
+      AND company_id = v_company_id
+      AND deposit_id IS NULL
+    )
     SELECT 
       ARRAY_AGG(id),
-      COALESCE(SUM(total_amount), 0)
+      COALESCE(SUM(cash_amount), 0)
     INTO 
       v_cash_orders,
       v_cash_total
-    FROM client_orders
-    WHERE id = ANY(p_order_ids)
-    AND company_id = v_company_id
-    AND payment_method = 'CASH'
-    AND deposit_id IS NULL;
+    FROM cash_order_amounts
+    WHERE cash_amount > 0;
 
     -- If there are cash orders, create a CASH deposit
     IF v_cash_orders IS NOT NULL AND array_length(v_cash_orders, 1) > 0 AND v_cash_total > 0 THEN
@@ -134,19 +174,37 @@ BEGIN
     END IF;
 
     -- ========================================================================
-    -- PROCESS CHEQUE ORDERS
+    -- PROCESS CHEQUE ORDERS (including cheque portions from split payments)
     -- ========================================================================
+    -- Get orders with cheque payment (FULL CHEQUE or SPLIT with cheque portion)
+    WITH cheque_order_amounts AS (
+      SELECT 
+        id,
+        CASE 
+          -- FULL payment: use total_amount if CHEQUE
+          WHEN (payment_mode IS NULL OR payment_mode = 'FULL') AND payment_method = 'CHEQUE' THEN total_amount
+          -- SPLIT payment: sum cheque portions
+          WHEN payment_mode = 'SPLIT' THEN
+            COALESCE((
+              SELECT SUM((split->>'amount')::DECIMAL(10,2))
+              FROM jsonb_array_elements(payment_splits) AS split
+              WHERE (split->>'method') = 'CHEQUE'
+            ), 0)
+          ELSE 0
+        END AS cheque_amount
+      FROM client_orders
+      WHERE id = ANY(p_order_ids)
+      AND company_id = v_company_id
+      AND deposit_id IS NULL
+    )
     SELECT 
       ARRAY_AGG(id),
-      COALESCE(SUM(total_amount), 0)
+      COALESCE(SUM(cheque_amount), 0)
     INTO 
       v_cheque_orders,
       v_cheque_total
-    FROM client_orders
-    WHERE id = ANY(p_order_ids)
-    AND company_id = v_company_id
-    AND payment_method = 'CHEQUE' -- Handle Cheque orders
-    AND deposit_id IS NULL;
+    FROM cheque_order_amounts
+    WHERE cheque_amount > 0;
 
     -- If there are cheque orders, create a CHEQUE deposit
     IF v_cheque_orders IS NOT NULL AND array_length(v_cheque_orders, 1) > 0 AND v_cheque_total > 0 THEN

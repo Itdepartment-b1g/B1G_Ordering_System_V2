@@ -29,7 +29,8 @@ import {
   Search,
   BarChart3,
   Camera,
-  X
+  X,
+  RotateCcw
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
@@ -89,10 +90,13 @@ interface Task {
   notes: string | null;
   urgency_status: 'overdue' | 'due_soon' | 'on_time';
   attachment_url?: string | null;
-  client_id?: string; // Added for visit logs
-  location_latitude?: number; // Added for visit logs
-  location_longitude?: number; // Added for visit logs
-  location_address?: string; // Added for visit logs
+  client_id?: string;
+  client_name?: string;
+  client_company?: string;
+  client_address?: string;
+  client_latitude?: number;
+  client_longitude?: number;
+  visit_logs?: any[]; // To store attached visit verification
 }
 
 interface CalendarEvent {
@@ -102,14 +106,17 @@ interface CalendarEvent {
   startTime: string;
   endTime: string;
   date: string;
-  type: 'meeting' | 'appointment' | 'task' | 'reminder';
-  priority: 'low' | 'medium' | 'high';
+  type: 'task' | 'visit';
+  priority?: 'low' | 'medium' | 'high';
+  status?: 'scheduled' | 'pending' | 'completed' | 'cancelled';
+  taskData?: Task;
+  visitData?: VisitLog;
+  relatedVisit?: VisitLog; // Linked visit for task verification
+  attachment_url?: string | null;
+  agentColorClass?: string;
+  agentId?: string;
+  agentName?: string;
   location?: string;
-  attendees?: string[];
-  status: 'scheduled' | 'completed' | 'cancelled' | 'verified' | 'unverified';
-  taskData?: Task; // For tasks from database
-  visitData?: VisitLogWithClient; // For visit logs
-  attachment_url?: string | null; // For task attachments
 }
 
 interface CalendarDay {
@@ -141,6 +148,10 @@ export default function CalendarPage() {
   const [visits, setVisits] = useState<VisitLogWithClient[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+
+  // Team-leader specific state
+  const [teamAgents, setTeamAgents] = useState<Array<{ id: string; full_name: string }>>([]);
+  const [selectedAgentFilter, setSelectedAgentFilter] = useState<string>('all');
 
   // Daily task creation states
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
@@ -197,23 +208,66 @@ export default function CalendarPage() {
     location_latitude?: number;
     location_longitude?: number;
   } | null>(null);
+  const [visitedTask, setVisitedTask] = useState<Task | null>(null);
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
-
-
 
 
 
   const { toast } = useToast();
   const { user } = useAuth();
+  // Role helpers: managers (and admins) can see their full team; others only see their own tasks
+  const isManager = user?.role === 'manager' || user?.role === 'admin';
+  const isTeamLeader = user?.role === 'team_leader';
+  const isMobileSales = user?.role === 'mobile_sales';
+  const hasTeamView = isManager || isTeamLeader;
 
   // Convert tasks from database to calendar events
   const allEvents = useMemo(() => {
+    // When a team leader is viewing the calendar, assign each agent a unique color
+    const agentColorPalette = [
+      'bg-blue-100 text-blue-800 border-blue-200',
+      'bg-emerald-100 text-emerald-800 border-emerald-200',
+      'bg-amber-100 text-amber-800 border-amber-200',
+      'bg-rose-100 text-rose-800 border-rose-200',
+      'bg-violet-100 text-violet-800 border-violet-200',
+      'bg-cyan-100 text-cyan-800 border-cyan-200',
+      'bg-lime-100 text-lime-800 border-lime-200',
+      'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200'
+    ];
+
+    let agentColorMap: Record<string, string> = {};
+
+    if (hasTeamView) {
+      const uniqueAgentIds: string[] = [];
+      tasks.forEach(task => {
+        if (task.agent_id && !uniqueAgentIds.includes(task.agent_id)) {
+          uniqueAgentIds.push(task.agent_id);
+        }
+      });
+
+      uniqueAgentIds.forEach((agentId, index) => {
+        agentColorMap[agentId] = agentColorPalette[index % agentColorPalette.length];
+      });
+    }
+
     const taskEvents: CalendarEvent[] = tasks.map(task => {
       // Use the separate time field if available, otherwise default to 09:00
       let startTime = '09:00';
       let endTime = '10:00';
 
-      if (task.time) {
+      if (task.status === 'completed' && task.completed_at) {
+        // If completed, show at actual completion time
+        const completedDate = new Date(task.completed_at);
+        const hours = completedDate.getHours().toString().padStart(2, '0');
+        const minutes = completedDate.getMinutes().toString().padStart(2, '0');
+        startTime = `${hours}:${minutes}`;
+
+        // Set end time to +30 mins
+        const endDate = new Date(completedDate.getTime() + 30 * 60000);
+        const endHourStr = endDate.getHours().toString().padStart(2, '0');
+        const endMinuteStr = endDate.getMinutes().toString().padStart(2, '0');
+        endTime = `${endHourStr}:${endMinuteStr}`;
+      } else if (task.time) {
         // Extract hours and minutes from time field (format: HH:MM:SS)
         const timeParts = task.time.split(':');
         const hours = timeParts[0].padStart(2, '0');
@@ -234,16 +288,35 @@ export default function CalendarPage() {
         description: task.description,
         startTime,
         endTime,
-        date: task.due_date ? task.due_date.split('T')[0] : task.given_at.split('T')[0],
+        date: (task.status === 'completed' && task.completed_at)
+          ? task.completed_at.split('T')[0]
+          : (task.due_date ? task.due_date.split('T')[0] : task.given_at.split('T')[0]),
         type: 'task' as const,
         priority: task.priority === 'urgent' ? 'high' : task.priority === 'high' ? 'high' : task.priority === 'medium' ? 'medium' : 'low',
         status: task.status === 'completed' ? 'completed' : task.status === 'cancelled' ? 'cancelled' : 'scheduled',
         taskData: task,
-        attachment_url: task.attachment_url || null
+        visitData: undefined,
+        relatedVisit: task.visit_logs && task.visit_logs.length > 0 ? {
+          ...task.visit_logs[0],
+          client: {
+            location_latitude: task.client_latitude,
+            location_longitude: task.client_longitude
+          }
+        } : undefined,
+        attachment_url: task.attachment_url || null,
+        agentColorClass: hasTeamView ? agentColorMap[task.agent_id] : undefined,
+        agentId: task.agent_id,
+        agentName: task.agent_name
       };
     });
 
-    const visitEvents: CalendarEvent[] = visits.map(visit => {
+    const visitEvents: CalendarEvent[] = visits
+      .filter(visit => {
+         // Exclude visits that are already linked to a task in the list
+         // This prevents "double" events since the task acts as the record now
+         return !visit.task_id || !tasks.find(t => t.id === visit.task_id);
+      })
+      .map(visit => {
       const visitDate = new Date(visit.visited_at);
       const hours = visitDate.getHours().toString().padStart(2, '0');
       const minutes = visitDate.getMinutes().toString().padStart(2, '0');
@@ -261,9 +334,9 @@ export default function CalendarPage() {
         startTime,
         endTime,
         date: visit.visited_at.split('T')[0],
-        type: 'meeting' as const,
+        type: 'visit' as const,
         priority: 'medium',
-        status: visit.is_within_radius ? 'verified' : 'unverified',
+        status: visit.is_within_radius ? 'completed' : 'pending',
         visitData: visit,
         location: visit.address,
         attachment_url: visit.photo_url
@@ -271,7 +344,7 @@ export default function CalendarPage() {
     });
 
     return [...taskEvents, ...visitEvents];
-  }, [tasks, visits]);
+  }, [tasks, visits, hasTeamView]);
 
   // Update current time every minute
   useEffect(() => {
@@ -304,11 +377,15 @@ export default function CalendarPage() {
     }
   }, []);
 
-  // Fetch tasks for the current user
+  // Fetch tasks / visits for the current user (or team, for managers)
   useEffect(() => {
     if (user?.id) {
       fetchTasks();
       fetchVisits();
+
+      if (hasTeamView) {
+        fetchTeamAgents();
+      }
     }
 
     // Cleanup subscriptions on unmount
@@ -317,11 +394,15 @@ export default function CalendarPage() {
         supabase.removeAllChannels();
       }
     };
-  }, [user?.id]);
+  }, [user?.id, hasTeamView]);
 
   // Setup real-time subscriptions for tasks
   const setupRealtimeSubscriptions = () => {
     if (!user?.id) return;
+
+    const taskFilter = hasTeamView
+      ? `leader_id=eq.${user.id}`
+      : `agent_id=eq.${user.id}`;
 
     // Subscribe to task changes
     const tasksSubscription = supabase
@@ -332,7 +413,7 @@ export default function CalendarPage() {
           event: '*',
           schema: 'public',
           table: 'tasks',
-          filter: `agent_id=eq.${user.id}`
+          filter: taskFilter
         },
         (payload) => {
           console.log('Real-time task update:', payload);
@@ -350,22 +431,8 @@ export default function CalendarPage() {
               break;
 
             case 'UPDATE': {
-              // Task updated
-              const updatedTask = payload.new as Task;
-              if (updatedTask.status === 'completed') {
-                toast({
-                  title: 'Task Completed',
-                  description: 'Great job! Task marked as completed',
-                  duration: 2000
-                });
-              } else if (updatedTask.status === 'in_progress') {
-                toast({
-                  title: 'Task Started',
-                  description: 'Task is now in progress',
-                  duration: 2000
-                });
-              }
-              fetchTasks(); // Refresh tasks
+              // Task updated - just refresh tasks, no status toasts
+              fetchTasks();
               break;
             }
 
@@ -392,7 +459,7 @@ export default function CalendarPage() {
           event: '*',
           schema: 'public',
           table: 'task_details',
-          filter: `agent_id=eq.${user.id}`
+          filter: taskFilter
         },
         (payload) => {
           console.log('Real-time task_details update:', payload);
@@ -407,6 +474,45 @@ export default function CalendarPage() {
       taskDetailsSubscription.unsubscribe();
     };
   };
+
+  /**
+   * Helper: for managers, resolve all team member ids (team leaders + mobile sales)
+   * using the sub_teams_overview hierarchy view.
+   */
+  const getManagerTeamAgentIds = async (): Promise<string[]> => {
+    if (!user?.id) return [];
+
+    try {
+      const { data, error } = await supabase
+        .from('sub_teams_overview')
+        .select('leader_id, member_ids')
+        .eq('manager_id', user.id);
+
+      if (error) {
+        console.error('Error fetching manager sub-teams for calendar:', error);
+        return [user.id];
+      }
+
+      const idSet = new Set<string>();
+
+      (data || []).forEach((st: any) => {
+        if (st.leader_id) idSet.add(st.leader_id);
+        if (Array.isArray(st.member_ids)) {
+          st.member_ids.forEach((memberId: string | null) => {
+            if (memberId) idSet.add(memberId);
+          });
+        }
+      });
+
+      // Always include manager themselves
+      idSet.add(user.id);
+
+      return Array.from(idSet);
+    } catch (err) {
+      console.error('Error resolving manager team agent ids:', err);
+      return [user.id];
+    }
+  };
   const fetchTasks = async () => {
     try {
       // Only show loading on initial load, not on real-time updates
@@ -414,13 +520,70 @@ export default function CalendarPage() {
         setLoadingTasks(true);
       }
 
-      const { data, error } = await supabase
-        .from('task_details')
-        .select('id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, urgency_status, attachment_url')
-        .eq('agent_id', user?.id)
-        .order('created_at', { ascending: false });
+      let data: Task[] | null = null;
 
-      if (error) throw error;
+      if (hasTeamView) {
+        // Managers/Team Leaders: show tasks for all team members
+        let teamAgentIds: string[] = [];
+        
+        if (isManager) {
+             teamAgentIds = await getManagerTeamAgentIds();
+        } else if (isTeamLeader) {
+             // Team leaders: get agents reporting to them directly
+            const { data: teamData } = await supabase
+              .from('leader_teams')
+              .select('agent_id')
+              .eq('leader_id', user!.id);
+              
+            teamAgentIds = (teamData || []).map((t: any) => t.agent_id);
+            // Include themselves
+            teamAgentIds.push(user!.id);
+        }
+
+        const { data: managerViewTasks, error: managerTasksError } = await supabase
+          .from('tasks')
+          .select(
+            '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, address, location_latitude, location_longitude), visit_logs(*)'
+          )
+          .in('agent_id', teamAgentIds)
+          .order('created_at', { ascending: false });
+
+        if (managerTasksError) throw managerTasksError;
+
+        data = (managerViewTasks as any[] | null)?.map(task => ({
+          ...task,
+          client_name: task.client?.name || '',
+          client_company: task.client?.company || '',
+          client_address: task.client?.address || '',
+          client_latitude: task.client?.location_latitude,
+          client_longitude: task.client?.location_longitude,
+          leader_name: task.leader?.full_name || 'Unknown',
+          leader_email: task.leader?.email || '',
+          agent_name: task.agent?.full_name || 'Unassigned',
+          agent_email: task.agent?.email || '',
+        })) || [];
+      } else {
+        // Mobile sales see only their own tasks
+        const { data: agentTasks, error } = await supabase
+          .from('tasks')
+          .select(
+            '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, address, location_latitude, location_longitude), visit_logs(*)'
+          )
+          .eq('agent_id', user?.id)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        
+        data = (agentTasks as any[] | null)?.map(task => ({
+          ...task,
+          client_name: task.client?.name || '',
+          client_company: task.client?.company || '',
+          client_address: task.client?.address || '',
+          client_latitude: task.client?.location_latitude,
+          client_longitude: task.client?.location_longitude,
+        })) || [];
+      }
+
       setTasks(data || []);
 
       // Enable real-time subscriptions after initial load
@@ -442,6 +605,23 @@ export default function CalendarPage() {
 
   const fetchVisits = async () => {
     try {
+      if (!user?.id) return;
+
+      const isManagerRole = user.role === 'manager' || user.role === 'admin';
+      const isTeamLeaderRole = user.role === 'team_leader';
+
+      let agentIds: string[] = [user.id];
+      if (isManagerRole) {
+        agentIds = await getManagerTeamAgentIds();
+      } else if (isTeamLeaderRole) {
+         const { data: teamData } = await supabase
+              .from('leader_teams')
+              .select('agent_id')
+              .eq('leader_id', user.id);
+         const teamMembers = (teamData || []).map((t: any) => t.agent_id);
+         agentIds = [...agentIds, ...teamMembers];
+      }
+
       const { data, error } = await supabase
         .from('visit_logs')
         .select(`
@@ -452,7 +632,7 @@ export default function CalendarPage() {
             location_longitude
           )
         `)
-        .eq('agent_id', user?.id)
+        .in('agent_id', agentIds)
         .order('visited_at', { ascending: false });
 
       if (error) throw error;
@@ -462,49 +642,75 @@ export default function CalendarPage() {
     }
   };
 
-  const handleStartTask = async (taskId: string) => {
+  // Fetch team agents for filters
+  const fetchTeamAgents = async () => {
+    if (!user?.id) return;
+
     try {
-      // Optimistic update - update UI immediately
-      setTasks(prevTasks =>
-        prevTasks.map(task =>
-          task.id === taskId
-            ? { ...task, status: 'in_progress', updated_at: new Date().toISOString() }
-            : task
-        )
-      );
+      if (isManager) {
+        // Managers: derive leaders + mobile sales from sub_teams_overview
+        const { data, error } = await supabase
+          .from('sub_teams_overview')
+          .select('leader_id, leader_name, member_ids, members_details')
+          .eq('manager_id', user.id);
 
-      const { error } = await supabase
-        .from('tasks')
-        .update({
-          status: 'in_progress',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', taskId);
+        if (error) throw error;
 
-      if (error) {
-        // Revert optimistic update on error
-        setTasks(prevTasks =>
-          prevTasks.map(task =>
-            task.id === taskId
-              ? { ...task, status: 'pending' }
-              : task
-          )
-        );
-        throw error;
+        const map = new Map<string, { id: string; full_name: string }>();
+
+        (data || []).forEach((st: any) => {
+          if (st.leader_id && st.leader_name) {
+            map.set(st.leader_id, { id: st.leader_id, full_name: st.leader_name });
+          }
+          if (Array.isArray(st.member_ids)) {
+            st.member_ids.forEach((memberId: string | null, idx: number) => {
+              if (!memberId) return;
+              const memberName =
+                st.members_details?.[idx]?.name ||
+                st.members_details?.[idx]?.full_name ||
+                'Team Member';
+              map.set(memberId, { id: memberId, full_name: memberName });
+            });
+          }
+        });
+
+        setTeamAgents(Array.from(map.values()));
+      } else {
+        // Team leaders: mobile sales directly under them via leader_teams
+        const { data, error } = await supabase
+          .from('leader_teams')
+          .select(`
+            agent_id,
+            profiles!leader_teams_agent_id_fkey (
+              id,
+              full_name
+            )
+          `)
+          .eq('leader_id', user.id);
+
+        if (error) throw error;
+
+        const agents =
+          data?.map(item => ({
+            id: (item.profiles as any).id,
+            full_name: (item.profiles as any).full_name || 'Mobile Sales',
+          })) || [];
+
+        setTeamAgents(agents);
       }
-
-      toast({
-        title: 'Success',
-        description: 'Task started successfully'
-      });
     } catch (error) {
-      console.error('Error starting task:', error);
+      console.error('Error fetching team agents for calendar:', error);
       toast({
         title: 'Error',
-        description: 'Failed to start task',
-        variant: 'destructive'
+        description: 'Failed to load team members for calendar view',
+        variant: 'destructive',
       });
     }
+  };
+
+  // Deprecated: tasks are auto-completed for agent-created tasks; explicit "start" is no longer used in calendar.
+  const handleStartTask = async (_taskId: string) => {
+    return;
   };
 
   const handleCompleteTask = async (taskId: string) => {
@@ -581,6 +787,13 @@ export default function CalendarPage() {
 
     setIsUploading(true);
     try {
+      // Auto-capture current date & time for agent-created tasks
+      const now = new Date();
+      const isoNow = now.toISOString();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const timeStr = `${hours}:${minutes}:00`;
+
       // Create task in database
       const { data: taskData, error: taskError } = await supabase
         .from('tasks')
@@ -590,11 +803,12 @@ export default function CalendarPage() {
           client_id: selectedClient?.id || null, // Optional client link
           title: dailyTaskForm.title,
           description: dailyTaskForm.description || null,
-          due_date: dailyTaskForm.date || null,
-          time: dailyTaskForm.time || null,
+          due_date: isoNow,
+          time: timeStr,
           notes: dailyTaskForm.notes || null,
           priority: dailyTaskForm.priority,
-          status: 'pending'
+          status: 'completed',
+          completed_at: new Date().toISOString()
         })
         .select()
         .single();
@@ -731,7 +945,7 @@ export default function CalendarPage() {
           company_id: user.company_id || '', // Ensure company_id is available
           agent_id: user.id,
           client_id: selectedClient.id,
-          task_id: null, // Standalone visit
+          task_id: visitedTask?.id || null, // Link to task if available
           latitude: visitLocation.latitude,
           longitude: visitLocation.longitude,
           address: visitLocation.address,
@@ -744,9 +958,31 @@ export default function CalendarPage() {
 
       if (visitError) throw visitError;
 
+      // Auto-complete the task and save photo
+      if (visitedTask) {
+        const { error: taskError } = await supabase
+          .from('tasks')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            attachment_url: photoUrl
+          })
+          .eq('id', visitedTask.id);
+
+        if (taskError) {
+          console.error("Error auto-completing task:", taskError);
+          toast({ title: 'Warning', description: 'Visit recorded but failed to update task status.', variant: 'destructive' });
+        } else {
+          // Optimistic update or refetch can be handled by fetchTasks()
+        }
+      }
+
+      // Refresh tasks
+      fetchTasks();
+
       toast({
         title: 'Visit Recorded',
-        description: 'Visit logged successfully.'
+        description: 'Visit logged and task updated successfully.'
       });
 
       // Reset
@@ -950,6 +1186,12 @@ export default function CalendarPage() {
       const priorityMatch = priorityFilter === 'all' ||
         (event.taskData && event.taskData.priority === priorityFilter);
 
+      // Agent filter (managers only, tasks only)
+      const agentMatch =
+        !isManager ||
+        selectedAgentFilter === 'all' ||
+        (event.taskData && event.taskData.agent_id === selectedAgentFilter);
+
       // Mobile tab filter
       let mobileMatch = true;
       if (isMobile && mobileTab !== 'all') {
@@ -962,7 +1204,7 @@ export default function CalendarPage() {
         }
       }
 
-      return statusMatch && searchMatch && priorityMatch && mobileMatch;
+      return statusMatch && searchMatch && priorityMatch && agentMatch && mobileMatch;
     });
   };
 
@@ -1038,15 +1280,19 @@ export default function CalendarPage() {
     }).sort((a, b) => a.startTime.localeCompare(b.startTime));
   };
 
-  // Event type colors
-  const getEventTypeColor = (type: CalendarEvent['type']) => {
+  // Event colors (type-based, but tasks can be colored per-agent for leaders)
+  const getEventTypeColor = (event: CalendarEvent) => {
+    if (hasTeamView && event.type === 'task' && event.agentColorClass) {
+      return event.agentColorClass;
+    }
+
     const colors = {
       meeting: 'bg-blue-100 text-blue-800 border-blue-200',
       appointment: 'bg-green-100 text-green-800 border-green-200',
       task: 'bg-yellow-100 text-yellow-800 border-yellow-200',
       reminder: 'bg-purple-100 text-purple-800 border-purple-200'
     };
-    return colors[type];
+    return colors[event.type];
   };
 
   // Priority colors
@@ -1166,6 +1412,7 @@ export default function CalendarPage() {
             <h1 className="text-2xl font-bold tracking-tight">Calendar & Visits</h1>
             <p className="text-muted-foreground">Manage your schedule and record client visits.</p>
           </div>
+          {!isManager && (
           <div className="flex gap-2 w-full sm:w-auto">
             {/* Record Visit Button */}
             <Dialog open={showRecordVisitDialog} onOpenChange={(open) => {
@@ -1277,6 +1524,13 @@ export default function CalendarPage() {
                           >
                             <div className="w-12 h-12 rounded-full bg-red-500"></div>
                           </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={switchCamera}
+                            className="rounded-full w-12 h-12 p-0 flex items-center justify-center bg-gray-800/50 hover:bg-gray-800/70 text-white backdrop-blur-sm border border-white/20"
+                          >
+                            <RotateCcw className="h-5 w-5" />
+                          </Button>
                         </div>
                       </div>
                     )}
@@ -1351,7 +1605,21 @@ export default function CalendarPage() {
                   <Button
                     className="w-full"
                     onClick={handleRecordVisit}
-                    disabled={isUploading || !visitPhoto || !visitLocation || !selectedClient}
+                    disabled={
+                      isUploading ||
+                      !visitPhoto ||
+                      !visitLocation ||
+                      !selectedClient ||
+                      (!!visitLocation &&
+                        selectedClient?.location_latitude != null &&
+                        selectedClient?.location_longitude != null &&
+                        calculateDistance(
+                          visitLocation.latitude,
+                          visitLocation.longitude,
+                          selectedClient.location_latitude,
+                          selectedClient.location_longitude
+                        ) > 100)
+                    }
                   >
                     {isUploading ? 'Recording...' : 'Submit Visit Log'}
                   </Button>
@@ -1453,24 +1721,9 @@ export default function CalendarPage() {
                     />
                   </div>
 
-                  {/* Date and Time */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Date</Label>
-                      <Input
-                        type="date"
-                        value={dailyTaskForm.date}
-                        onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, date: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Time</Label>
-                      <Input
-                        type="time"
-                        value={dailyTaskForm.time}
-                        onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, time: e.target.value })}
-                      />
-                    </div>
+                  {/* Date and Time (auto-set to now for mobile sales; no manual selection) */}
+                  <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                    Date and time will be set automatically when you create this task.
                   </div>
 
                   <div className="space-y-2">
@@ -1512,6 +1765,7 @@ export default function CalendarPage() {
               </DialogContent>
             </Dialog>
           </div>
+          )}
         </div>
         <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4">
           {/* Mobile Tab Navigation */}
@@ -1600,7 +1854,7 @@ export default function CalendarPage() {
             </>
           )}
 
-          {/* Filter */}
+          {/* Status Filter */}
           <Select value={filterType} onValueChange={setFilterType}>
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -1613,6 +1867,23 @@ export default function CalendarPage() {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* Agent Filter (Managers & Team Leaders) */}
+          {hasTeamView && (
+            <Select value={selectedAgentFilter} onValueChange={setSelectedAgentFilter}>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Filter by agent" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Team Members</SelectItem>
+                {teamAgents.map(agent => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.full_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
 
         </div>
       </div>
@@ -1742,7 +2013,7 @@ export default function CalendarPage() {
                                 {hourEvents.map(event => (
                                   <div
                                     key={event.id}
-                                    className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 p-2 sm:px-3 sm:py-2 rounded border ${getEventTypeColor(event.type)} cursor-pointer active:opacity-80 transition-opacity min-h-[44px]`}
+                                    className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 p-2 sm:px-3 sm:py-2 rounded border ${getEventTypeColor(event)} cursor-pointer active:opacity-80 transition-opacity min-h-[44px]`}
                                     onClick={() => handleEventClick(event)}
                                   >
                                     <div className="font-semibold text-xs sm:text-sm truncate flex-1 min-w-0">{event.title}</div>
@@ -1750,34 +2021,7 @@ export default function CalendarPage() {
                                       <div className="text-[10px] sm:text-xs opacity-75 truncate">{event.startTime} - {event.endTime}</div>
                                       {event.type === 'task' && event.taskData && (
                                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                          {event.taskData.status === 'pending' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleStartTask(event.taskData!.id)}
-                                              className="h-8 w-8 p-0 min-h-[44px] min-w-[44px]"
-                                              aria-label="Start task"
-                                            >
-                                              <Play className="h-3.5 w-3.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'in_progress' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleCompleteTask(event.taskData!.id)}
-                                              className="h-8 w-8 p-0 min-h-[44px] min-w-[44px]"
-                                              aria-label="Complete task"
-                                            >
-                                              <CheckCircle className="h-3.5 w-3.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'completed' && (
-                                            <div className="flex items-center gap-1 text-green-600 text-[10px] sm:text-xs font-medium">
-                                              <CheckCircle className="h-3.5 w-3.5" />
-                                              <span className="hidden sm:inline">Completed</span>
-                                            </div>
-                                          )}
+                                      {/* Task actions hidden in calendar view */}
                                         </div>
                                       )}
                                     </div>
@@ -1895,8 +2139,7 @@ export default function CalendarPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <h4 className={`font-medium text-sm leading-tight truncate ${event.taskData?.status === 'completed' ? 'line-through text-muted-foreground' : ''
-                                  }`}>
+                                <h4 className="font-medium text-sm leading-tight truncate">
                                   {event.title}
                                 </h4>
                                 <Badge variant={
@@ -1906,15 +2149,6 @@ export default function CalendarPage() {
                                 } className="text-[10px] px-1.5 py-0 h-5 shrink-0">
                                   {event.taskData?.priority}
                                 </Badge>
-                                {event.taskData?.status === 'completed' && (
-                                  <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
-                                )}
-                                {event.taskData?.status === 'in_progress' && (
-                                  <Play className="h-4 w-4 text-blue-600 shrink-0" />
-                                )}
-                                {event.taskData?.status === 'pending' && (
-                                  <Clock className="h-4 w-4 text-gray-600 shrink-0" />
-                                )}
                               </div>
                               {event.taskData?.description && (
                                 <p className="text-xs text-gray-600 line-clamp-1">
@@ -1962,24 +2196,10 @@ export default function CalendarPage() {
                             )}
                           </div>
 
-                          {/* Action Buttons - Compact */}
+                          {/* Action Buttons - Compact (Complete only for mobile sales) */}
                           <div className="flex items-center justify-between pt-2 border-t border-gray-200">
                             <div className="flex items-center gap-2">
-                              {event.taskData?.status === 'pending' && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleStartTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <Play className="h-3 w-3 mr-1" />
-                                  Start
-                                </Button>
-                              )}
-                              {event.taskData?.status === 'in_progress' && (
+                              {isMobileSales && event.taskData && event.taskData.status !== 'completed' && (
                                 <Button
                                   size="sm"
                                   className="h-7 px-2 text-xs"
@@ -2064,7 +2284,7 @@ export default function CalendarPage() {
                       {day.events.slice(0, 3).map(event => (
                         <div
                           key={event.id}
-                          className={`text-xs p-1 rounded border ${getEventTypeColor(event.type)} cursor-pointer hover:opacity-80 transition-opacity`}
+                          className={`text-xs p-1 rounded border ${getEventTypeColor(event)} cursor-pointer hover:opacity-80 transition-opacity`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleEventClick(event);
@@ -2075,17 +2295,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {event.taskData.status === 'pending' && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleStartTask(event.taskData!.id)}
-                                    className="h-4 px-1 text-xs"
-                                  >
-                                    <Play className="h-2 w-2" />
-                                  </Button>
-                                )}
-                                {event.taskData.status === 'in_progress' && (
+                                {isMobileSales && event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2142,7 +2352,7 @@ export default function CalendarPage() {
                       {day.events.map(event => (
                         <div
                           key={event.id}
-                          className={`text-xs p-2 rounded border ${getEventTypeColor(event.type)} cursor-pointer hover:opacity-80 transition-opacity`}
+                          className={`text-xs p-2 rounded border ${getEventTypeColor(event)} cursor-pointer hover:opacity-80 transition-opacity`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleEventClick(event);
@@ -2153,17 +2363,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {event.taskData.status === 'pending' && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleStartTask(event.taskData!.id)}
-                                    className="h-4 px-1 text-xs"
-                                  >
-                                    <Play className="h-2 w-2" />
-                                  </Button>
-                                )}
-                                {event.taskData.status === 'in_progress' && (
+                                {isMobileSales && event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2229,7 +2429,7 @@ export default function CalendarPage() {
                                 hourEvents.map(event => (
                                   <div
                                     key={event.id}
-                                    className={`text-[10px] sm:text-xs p-1.5 sm:p-2 rounded border cursor-pointer active:opacity-80 transition-opacity ${getEventTypeColor(event.type)}`}
+                                    className={`text-[10px] sm:text-xs p-1.5 sm:p-2 rounded border cursor-pointer active:opacity-80 transition-opacity ${getEventTypeColor(event)}`}
                                     onClick={() => handleEventClick(event)}
                                   >
                                     <div className="font-medium truncate text-xs sm:text-sm">{event.title}</div>
@@ -2239,17 +2439,7 @@ export default function CalendarPage() {
                                       </div>
                                       {event.type === 'task' && event.taskData && (
                                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                          {event.taskData.status === 'pending' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleStartTask(event.taskData!.id)}
-                                              className="h-5 w-5 p-0"
-                                            >
-                                              <Play className="h-2.5 w-2.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'in_progress' && (
+                                          {isMobileSales && event.taskData.status !== 'completed' && (
                                             <Button
                                               variant="outline"
                                               size="sm"
@@ -2320,7 +2510,7 @@ export default function CalendarPage() {
                             {hourEvents.map(event => (
                               <div
                                 key={event.id}
-                                className={`text-xs p-2 rounded border cursor-pointer hover:opacity-80 transition-opacity ${getEventTypeColor(event.type)}`}
+                                className={`text-xs p-2 rounded border cursor-pointer hover:opacity-80 transition-opacity ${getEventTypeColor(event)}`}
                                 onClick={() => handleEventClick(event)}
                               >
                                 <div className="font-medium truncate">{event.title}</div>
@@ -2328,17 +2518,7 @@ export default function CalendarPage() {
                                   <div className="text-xs opacity-75">{event.startTime} - {event.endTime}</div>
                                   {event.type === 'task' && event.taskData && (
                                     <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                      {event.taskData.status === 'pending' && (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => handleStartTask(event.taskData!.id)}
-                                          className="h-4 px-1 text-xs"
-                                        >
-                                          <Play className="h-2 w-2" />
-                                        </Button>
-                                      )}
-                                      {event.taskData.status === 'in_progress' && (
+                                      {isMobileSales && event.taskData.status !== 'completed' && (
                                         <Button
                                           variant="outline"
                                           size="sm"
@@ -2487,18 +2667,6 @@ export default function CalendarPage() {
                               </div>
 
                               <div className="flex items-center justify-between pt-2 border-t">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-6 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleStartTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <Play className="h-3 w-3 mr-1" />
-                                  Start
-                                </Button>
                                 <span className="text-xs text-gray-500">
                                   {new Date(event.taskData?.created_at || '').toLocaleDateString()}
                                 </span>
@@ -2575,17 +2743,19 @@ export default function CalendarPage() {
                               </div>
 
                               <div className="flex items-center justify-between pt-2 border-t">
-                                <Button
-                                  size="sm"
-                                  className="h-6 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCompleteTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <CheckCircle className="h-3 w-3 mr-1" />
-                                  Complete
-                                </Button>
+                                {isMobileSales && (
+                                  <Button
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleCompleteTask(event.taskData!.id);
+                                    }}
+                                  >
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    Complete
+                                  </Button>
+                                )}
                                 <span className="text-xs text-gray-500">
                                   {new Date(event.taskData?.created_at || '').toLocaleDateString()}
                                 </span>
@@ -2723,311 +2893,356 @@ export default function CalendarPage() {
 
       {/* Event Details Dialog */}
       <Dialog open={showEventDetails} onOpenChange={setShowEventDetails}>
-        <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-lg sm:text-xl flex items-center gap-2">
-              <CalendarIcon className="h-5 w-5" />
-              Event Details
-            </DialogTitle>
-          </DialogHeader>
-
+        <DialogContent className="max-w-[95vw] sm:max-w-3xl max-h-[90vh] overflow-y-auto p-0 gap-0">
           {selectedEvent && (
-            <div className="space-y-6 py-4">
-              {/* Event Header */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <Badge className={getEventTypeColor(selectedEvent.type)}>
-                    {selectedEvent.type}
-                  </Badge>
-                  <Badge variant="outline" className={getPriorityColor(selectedEvent.priority)}>
-                    {selectedEvent.priority} priority
-                  </Badge>
-                  <Badge variant="outline" className="bg-gray-100 text-gray-600">
-                    {selectedEvent.status}
-                  </Badge>
-                </div>
-
-                <h2 className="text-xl sm:text-2xl font-bold">{selectedEvent.title}</h2>
-
-                {selectedEvent.description && (
-                  <p className="text-muted-foreground text-sm sm:text-lg">{selectedEvent.description}</p>
-                )}
-              </div>
-
-              {/* Event Details Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Date & Time */}
-                <div className="space-y-3">
-                  <h3 className="font-semibold text-lg flex items-center gap-2">
-                    <Clock className="h-5 w-5" />
-                    Schedule
-                  </h3>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">Date:</span>
-                      <span>{new Date(selectedEvent.date).toLocaleDateString('en-US', {
-                        weekday: 'long',
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      })}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">Time:</span>
-                      <span>{selectedEvent.startTime} - {selectedEvent.endTime}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">Duration:</span>
-                      <span>
-                        {(() => {
-                          const start = new Date(`2000-01-01T${selectedEvent.startTime}`);
-                          const end = new Date(`2000-01-01T${selectedEvent.endTime}`);
-                          const diff = end.getTime() - start.getTime();
-                          const hours = Math.floor(diff / (1000 * 60 * 60));
-                          const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                          return `${hours}h ${minutes}m`;
-                        })()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Task Completion Info */}
-                {selectedEvent.type === 'task' && selectedEvent.taskData && (
-                  <div className="space-y-3">
-                    <h3 className="font-semibold text-lg flex items-center gap-2">
-                      <CheckCircle className="h-5 w-5" />
-                      Task Status
-                    </h3>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Status:</span>
-                        <Badge variant="outline" className={
-                          selectedEvent.taskData.status === 'completed' ? 'bg-green-100 text-green-600' :
-                            selectedEvent.taskData.status === 'in_progress' ? 'bg-blue-100 text-blue-600' :
-                              selectedEvent.taskData.status === 'pending' ? 'bg-yellow-100 text-yellow-600' :
-                                'bg-gray-100 text-gray-600'
-                        }>
+            <>
+              {/* distinct Header Area */}
+              <div className={`px-6 py-4 border-b flex flex-col gap-2 ${selectedEvent.type === 'task' ? 'bg-slate-50' : 'bg-blue-50/50'
+                }`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className={`${getEventTypeColor(selectedEvent)} shadow-sm`}>
+                        {selectedEvent.type === 'task' ? 'Task' : selectedEvent.type}
+                      </Badge>
+                      <Badge variant="outline" className={`${getPriorityColor(selectedEvent.priority)} bg-white shadow-sm`}>
+                        {selectedEvent.priority} Priority
+                      </Badge>
+                      {/* Show Status Badge for Tasks */}
+                      {selectedEvent.type === 'task' && selectedEvent.taskData && (
+                        <Badge variant="outline" className={`bg-white shadow-sm capitalize ${selectedEvent.taskData.status === 'completed' ? 'text-green-700 border-green-200' :
+                          selectedEvent.taskData.status === 'cancelled' ? 'text-gray-500 border-gray-200' :
+                            'text-blue-700 border-blue-200'
+                          }`}>
                           {selectedEvent.taskData.status.replace('_', ' ')}
                         </Badge>
-                      </div>
-                      {selectedEvent.taskData.completed_at && (
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">Completed:</span>
-                          <span>{new Date(selectedEvent.taskData.completed_at).toLocaleString('en-US', {
-                            weekday: 'long',
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}</span>
-                        </div>
                       )}
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Assigned by:</span>
-                        <span>{selectedEvent.taskData.leader_name}</span>
-                      </div>
                     </div>
+                    <DialogTitle className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
+                      {selectedEvent.title}
+                    </DialogTitle>
                   </div>
-                )}
+                </div>
 
-                {/* Task Attachment/Photo */}
-                {selectedEvent.type === 'task' && selectedEvent.taskData?.attachment_url && (
-                  <div className="space-y-3">
-                    <h3 className="font-semibold text-lg flex items-center gap-2">
-                      <Camera className="h-5 w-5" />
-                      Attachment
-                    </h3>
-                    <div className="relative rounded-lg overflow-hidden border">
-                      <img
-                        src={selectedEvent.taskData.attachment_url}
-                        alt="Task attachment"
-                        className="w-full h-96 object-contain bg-gray-50"
-                        onClick={() => {
-                          const newWindow = window.open();
-                          if (newWindow) {
-                            newWindow.document.write(`
-                              <html>
-                                <head><title>Task Attachment</title></head>
-                                <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#000;">
-                                  <img src="${selectedEvent.taskData.attachment_url}" style="max-width:100%;max-height:100vh;object-fit:contain;" />
-                                </body>
-                              </html>
-                            `);
-                          }
-                        }}
-                        style={{ cursor: 'pointer' }}
-                      />
-                    </div>
-                    <p className="text-sm text-muted-foreground">Click image to view full size</p>
+                {/* Sub-header info row */}
+                <div className="flex items-center gap-4 text-sm text-gray-500 mt-1 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <CalendarIcon className="h-4 w-4" />
+                    <span>
+                      {new Date(selectedEvent.date).toLocaleDateString('en-US', {
+                        weekday: 'short', month: 'short', day: 'numeric'
+                      })}
+                    </span>
                   </div>
-                )}
-
-                {/* Visit Details (Photo & Map) */}
-                {selectedEvent.visitData && (
-                  <div className="col-span-1 md:col-span-2 space-y-4">
-                    <h3 className="font-semibold text-lg flex items-center gap-2">
-                      <MapPin className="h-5 w-5" />
-                      Visit Verification
-                    </h3>
-
-                    {/* Status Banner */}
-                    <div className={`p-3 rounded-lg border flex items-center gap-3 ${selectedEvent.visitData.is_within_radius ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'
-                      }`}>
-                      {selectedEvent.visitData.is_within_radius ? (
-                        <CheckCircle className="h-5 w-5" />
-                      ) : (
-                        <AlertCircle className="h-5 w-5" />
-                      )}
-                      <div className="flex-1">
-                        <p className="font-bold">
-                          {selectedEvent.visitData.is_within_radius ? 'Verified Visit' : 'Location Warning'}
-                        </p>
-                        <p className="text-sm">
-                          {selectedEvent.visitData.is_within_radius
-                            ? `Agent was within ${Math.round(selectedEvent.visitData.distance_meters || 0)}m of client location.`
-                            : `Agent was ${Math.round(selectedEvent.visitData.distance_meters || 0)}m away from client (Limit: ${selectedEvent.visitData.radius_limit_meters || 100}m).`
-                          }
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Photo */}
-                      {selectedEvent.visitData.photo_url ? (
-                        <div className="relative rounded-lg overflow-hidden border bg-black h-64">
-                          <img
-                            src={selectedEvent.visitData.photo_url}
-                            alt="Visit verification"
-                            className="w-full h-full object-contain cursor-pointer"
-                            onClick={() => window.open(selectedEvent.visitData!.photo_url, '_blank')}
-                          />
-                        </div>
-                      ) : (
-                        <div className="h-64 rounded-lg border bg-gray-50 flex items-center justify-center text-muted-foreground">
-                          No photo captured
-                        </div>
-                      )}
-
-                      {/* Map */}
-                      <div className="h-64 rounded-lg overflow-hidden border relative z-0">
-                        {selectedEvent.visitData.latitude && selectedEvent.visitData.longitude ? (
-                          <MapContainer
-                            center={[selectedEvent.visitData.latitude, selectedEvent.visitData.longitude]}
-                            zoom={16}
-                            style={{ height: '100%', width: '100%' }}
-                            dragging={!isMobile}
-                          >
-                            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                            {/* Client Location Circle */}
-                            {selectedEvent.visitData.client?.location_latitude && (
-                              <Circle
-                                center={[selectedEvent.visitData.client.location_latitude, selectedEvent.visitData.client.location_longitude]}
-                                pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.8, fillOpacity: 0.2 }}
-                                radius={selectedEvent.visitData.radius_limit_meters || 100}
-                              />
-                            )}
-                            {/* Visit Location */}
-                            <Marker position={[selectedEvent.visitData.latitude, selectedEvent.visitData.longitude]}>
-                              <Popup>
-                                Visit Location<br />
-                                {new Date(selectedEvent.visitData.visited_at).toLocaleTimeString()}
-                              </Popup>
-                            </Marker>
-                          </MapContainer>
-                        ) : (
-                          <div className="flex items-center justify-center h-full bg-muted text-muted-foreground">
-                            Map unavailable
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="h-4 w-4" />
+                    <span>{selectedEvent.startTime} - {selectedEvent.endTime}</span>
                   </div>
-                )}
-
-                {/* Location & Attendees */}
-                <div className="space-y-3">
-                  {selectedEvent.location && (
-                    <div>
-                      <h3 className="font-semibold text-lg flex items-center gap-2">
-                        <MapPin className="h-5 w-5" />
-                        Location
-                      </h3>
-                      <p className="text-muted-foreground">{selectedEvent.location}</p>
-                    </div>
-                  )}
-
-                  {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
-                    <div>
-                      <h3 className="font-semibold text-lg flex items-center gap-2">
-                        <Users className="h-5 w-5" />
-                        Attendees ({selectedEvent.attendees.length})
-                      </h3>
-                      <div className="space-y-1">
-                        {selectedEvent.attendees.map((attendee, index) => (
-                          <div key={index} className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-primary rounded-full"></div>
-                            <span className="text-muted-foreground">{attendee}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    <User className="h-4 w-4" />
+                    <span>{selectedEvent.type === 'task' ? selectedEvent.taskData?.agent_name : selectedEvent.agentName || 'Unassigned'}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <Button variant="outline" onClick={() => setShowEventDetails(false)}>
-                  Close
-                </Button>
+              {/* Main Content Grid */}
+              <div className="p-6 grid grid-cols-1 md:grid-cols-12 gap-6">
+                
+                {/* Left Column: Description & Primary Info (md:col-span-7) */}
+                <div className="md:col-span-7 space-y-6">
+                  {/* Description Section */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900 mb-2 uppercase tracking-wider text-xs">Description</h3>
+                    <div className="bg-gray-50 p-4 rounded-lg border text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                      {selectedEvent.description || "No description provided."}
+                    </div>
+                  </div>
 
-                {/* Task-specific actions */}
-                {selectedEvent.type === 'task' && selectedEvent.taskData && (
-                  <>
-                    {selectedEvent.taskData.status === 'pending' && (
-                      <Button
-                        variant="default"
-                        onClick={() => handleStartTask(selectedEvent.taskData!.id)}
-                        className="flex items-center gap-2"
-                      >
-                        <Play className="h-4 w-4" />
-                        Start Task
-                      </Button>
-                    )}
-                    {selectedEvent.taskData.status === 'in_progress' && (
-                      <Button
-                        variant="default"
-                        onClick={handleCompleteTaskWithConfirmation}
-                        className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
-                      >
-                        <CheckCircle className="h-4 w-4" />
-                        Complete Task
-                      </Button>
-                    )}
-                    {selectedEvent.taskData.status === 'completed' && (
-                      <div className="flex items-center gap-2 text-green-600 font-medium">
-                        <CheckCircle className="h-4 w-4" />
-                        Task Completed
+                  {/* Client / Location Context */}
+                  {(selectedEvent.taskData?.client_name || selectedEvent.location) && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-900 mb-2 uppercase tracking-wider text-xs">Client & Location</h3>
+                      <Card>
+                        <CardContent className="p-4 space-y-3">
+                          {selectedEvent.taskData?.client_name && (
+                            <div className="flex items-start gap-3">
+                              <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                                <Users className="h-4 w-4 text-blue-600" />
+                              </div>
+                              <div>
+                                <p className="font-medium text-sm text-gray-900">{selectedEvent.taskData.client_name}</p>
+                                {selectedEvent.taskData.client_company && (
+                                  <p className="text-xs text-gray-500">{selectedEvent.taskData.client_company}</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {(selectedEvent.taskData?.client_address || selectedEvent.location || selectedEvent.taskData?.client_latitude) && (
+                            <div className="flex items-start gap-3">
+                              <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
+                                <MapPin className="h-4 w-4 text-green-600" />
+                              </div>
+                              <div className="text-sm">
+                                <p className="text-gray-700">
+                                  {selectedEvent.taskData?.client_address || selectedEvent.location || (selectedEvent.taskData?.client_latitude ? "Client Location" : "No location specified")}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {/* Visit Verification / Attachments - Enhanced View */}
+                  {selectedEvent.type === 'task' && (
+                    (selectedEvent.relatedVisit || selectedEvent.taskData?.attachment_url) && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900 mb-2 uppercase tracking-wider text-xs flex items-center gap-2">
+                          <CheckCircle className="h-3 w-3" /> Verification Proof
+                        </h3>
+                        
+                        {selectedEvent.relatedVisit ? (
+                          <div className="space-y-3">
+                            {/* Verification Status Banner */}
+                            <div className={`p-3 rounded-lg border-l-4 text-sm flex items-start gap-3 ${
+                              selectedEvent.relatedVisit.is_within_radius 
+                                ? 'bg-green-50 border-l-green-500 text-green-800' 
+                                : 'bg-red-50 border-l-red-500 text-red-800'
+                            }`}>
+                              {selectedEvent.relatedVisit.is_within_radius ? (
+                                <CheckCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                              ) : (
+                                <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                              )}
+                              <div>
+                                <p className="font-bold">
+                                  {selectedEvent.relatedVisit.is_within_radius ? 'Verified Visit' : 'Location Check Failed'}
+                                </p>
+                                <p className="text-xs mt-1 opacity-90">
+                                  {selectedEvent.relatedVisit.is_within_radius
+                                    ? `Agent checked in within ${Math.round(selectedEvent.relatedVisit.distance_meters || 0)}m of client.`
+                                    : `Agent was ${Math.round(selectedEvent.relatedVisit.distance_meters || 0)}m away (Limit: 100m).`
+                                  }
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                {/* Photo Preview */}
+                                <div 
+                                  className="aspect-video bg-black rounded-lg overflow-hidden relative group cursor-pointer border"
+                                  onClick={() => window.open(selectedEvent.relatedVisit?.photo_url || '', '_blank')}  
+                                >
+                                  {selectedEvent.relatedVisit.photo_url ? (
+                                    <>
+                                      <img 
+                                        src={selectedEvent.relatedVisit.photo_url} 
+                                        className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" 
+                                        alt="Visit proof"
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="bg-white/90 p-2 rounded-full shadow-sm">
+                                          <Search className="h-4 w-4 text-black" />
+                                        </div>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-gray-500 text-xs">No Photo</div>
+                                  )}
+                                  <Badge className="absolute bottom-2 right-2 bg-black/50 text-white border-0 text-[10px]">Photo</Badge>
+                                </div>
+
+                                {/* Map Preview */}
+                                <div className="aspect-video bg-slate-100 rounded-lg overflow-hidden border relative z-0">
+                                   {selectedEvent.relatedVisit.latitude ? (
+                                      <MapContainer
+                                        center={[selectedEvent.relatedVisit.latitude, selectedEvent.relatedVisit.longitude]}
+                                        zoom={15}
+                                        style={{ height: '100%', width: '100%' }}
+                                        zoomControl={false}
+                                        dragging={false}
+                                        doubleClickZoom={false}
+                                        scrollWheelZoom={false}
+                                        attributionControl={false}
+                                      >
+                                        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                                        {/* Client Location */}
+                                        {(selectedEvent.relatedVisit as any).client?.location_latitude && (
+                                          <Circle
+                                            center={[(selectedEvent.relatedVisit as any).client.location_latitude, (selectedEvent.relatedVisit as any).client.location_longitude]}
+                                            pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.5 }}
+                                            radius={selectedEvent.relatedVisit.radius_limit_meters || 100}
+                                          />
+                                        )}
+                                        {/* Agent Location */}
+                                        <Marker position={[selectedEvent.relatedVisit.latitude, selectedEvent.relatedVisit.longitude]} />
+                                      </MapContainer>
+                                   ) : (
+                                     <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">No GPS Data</div>
+                                   )}
+                                   <Badge className="absolute bottom-2 right-2 bg-white/80 text-black border shadow-sm text-[10px] z-[400]">Map</Badge>
+                                </div>
+                            </div>
+                          </div>
+                        ) : selectedEvent.taskData?.attachment_url ? (
+                          <div 
+                            className="w-full aspect-video bg-gray-100 rounded-lg border overflow-hidden relative group cursor-pointer"
+                            onClick={() => window.open(selectedEvent.taskData?.attachment_url || '', '_blank')}
+                          >
+                            <img 
+                              src={selectedEvent.taskData.attachment_url} 
+                              className="w-full h-full object-contain" 
+                              alt="Attachment"
+                            />
+                            <div className="absolute inset-0 bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                               <Button variant="secondary" size="sm">View Fullscreen</Button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                    )}
-                  </>
-                )}
+                    )
+                  )}
 
-                {/* General event actions (for non-task events) */}
-                {selectedEvent.type !== 'task' && (
-                  <>
-                    <Button variant="outline">
-                      Edit Event
-                    </Button>
-                    <Button variant="destructive">
-                      Delete Event
-                    </Button>
-                  </>
-                )}
+                  {/* Visit Details for separate Visit Events */}
+                 {selectedEvent.visitData && (
+                     <div>
+                        <h3 className="text-sm font-semibold text-gray-900 mb-2 uppercase tracking-wider text-xs flex items-center gap-2">
+                           <CheckCircle className="h-3 w-3" /> Visit Log
+                        </h3>
+                        <div className="bg-white border rounded-lg overflow-hidden">
+                           {/* Similar rich verification UI for standalone visit events */}
+                            <div className={`p-4 border-b text-sm flex items-start gap-3 ${
+                              selectedEvent.visitData.is_within_radius 
+                                ? 'bg-green-50' 
+                                : 'bg-red-50'
+                            }`}>
+                              {selectedEvent.visitData.is_within_radius ? (
+                                <CheckCircle className="h-5 w-5 text-green-600 mt-0.5" />
+                              ) : (
+                                <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
+                              )}
+                              <div>
+                                <p className={`font-bold ${selectedEvent.visitData.is_within_radius ? 'text-green-800' : 'text-red-800'}`}>
+                                  {selectedEvent.visitData.is_within_radius ? 'Verified Location' : 'Location Mismatch'}
+                                </p>
+                              </div>
+                            </div>
+                            {selectedEvent.visitData.photo_url && (
+                                <div className="p-4 bg-gray-50 flex justify-center">
+                                  <div className="h-48 rounded overflow-hidden border shadow-sm cursor-pointer" onClick={() => window.open(selectedEvent.visitData!.photo_url, '_blank')}>
+                                     <img src={selectedEvent.visitData.photo_url} className="h-full object-contain" />
+                                  </div>
+                                </div>
+                            )}
+                        </div>
+                     </div>
+                 )}
+
+                </div>
+
+                {/* Right Column: Actions & Meta (md:col-span-5) */}
+                <div className="md:col-span-5 space-y-6 flex flex-col h-full">
+                  {/* Event Actions - hidden for managers, team leaders (viewing team tasks), and completed tasks */}
+                  {!isManager && !isTeamLeader && !(selectedEvent.type === 'task' && selectedEvent.taskData?.status === 'completed') && (
+                    <div className="bg-gray-50/50 p-4 rounded-xl border space-y-4">
+                      <h3 className="text-sm font-semibold text-gray-900">Event Actions</h3>
+
+                      <div className="flex flex-col gap-2">
+                        {/* Primary Action Button */}
+                        {isMobileSales &&
+                          selectedEvent.type === 'task' &&
+                          selectedEvent.taskData?.client_id &&
+                          (selectedEvent.taskData.status === 'pending' || selectedEvent.taskData.status === 'in_progress') && (
+                            <Button
+                              className="w-full bg-green-600 hover:bg-green-700 text-white shadow-sm"
+                              size="lg"
+                              onClick={() => {
+                                if (selectedEvent.taskData) {
+                                  setSelectedClient({
+                                    id: selectedEvent.taskData.client_id!,
+                                    name: selectedEvent.taskData.client_name || 'Unknown Client',
+                                    company: selectedEvent.taskData.client_company,
+                                    location_latitude: selectedEvent.taskData.client_latitude || 0,
+                                    location_longitude: selectedEvent.taskData.client_longitude || 0,
+                                  } as any);
+                                  setVisitedTask(selectedEvent.taskData);
+                                  setShowRecordVisitDialog(true);
+                                  setShowEventDetails(false);
+                                }
+                              }}
+                            >
+                              <MapPin className="h-4 w-4 mr-2" />
+                              Record Visit
+                            </Button>
+                          )}
+
+                        {/* Complete Button - only for mobile sales (assignee); team leaders/managers cannot mark tasks completed */}
+                        {isMobileSales && selectedEvent.type === 'task' && selectedEvent.taskData?.status !== 'completed' && (
+                          <Button
+                            variant={selectedEvent.taskData?.client_id ? "outline" : "default"} // Demote if "Record Visit" is primary
+                            className={`w-full ${!selectedEvent.taskData?.client_id ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}`}
+                            onClick={() => handleCompleteTaskWithConfirmation()}
+                          >
+                            <CheckCircle className="h-4 w-4 mr-2" />
+                            Mark as Completed
+                          </Button>
+                        )}
+
+                        {/* Secondary Actions */}
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          {selectedEvent.type !== 'task' && (
+                            <>
+                              <Button variant="outline" size="sm" className="w-full">
+                                Edit
+                              </Button>
+                              <Button variant="outline" size="sm" className="w-full text-red-600 hover:bg-red-50 hover:text-red-700">
+                                Delete
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Metadata Box */}
+                  <div className="border rounded-lg p-4 space-y-3 bg-white">
+                     <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">Timeline</h3>
+                     
+                     <div className="space-y-3 relative before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-100">
+                        <div className="relative pl-6">
+                           <div className="absolute left-0 top-1.5 w-3 h-3 rounded-full bg-blue-500 border-2 border-white shadow-sm z-10"></div>
+                           <p className="text-xs text-gray-500">Created</p>
+                           <p className="text-sm font-medium">
+                              {new Date(selectedEvent.taskData?.created_at || selectedEvent.date).toLocaleDateString()}
+                           </p>
+                        </div>
+                        
+                        {selectedEvent.type === 'task' && selectedEvent.taskData?.completed_at && (
+                           <div className="relative pl-6">
+                              <div className="absolute left-0 top-1.5 w-3 h-3 rounded-full bg-green-500 border-2 border-white shadow-sm z-10"></div>
+                              <p className="text-xs text-gray-500">Completed</p>
+                              <p className="text-sm font-medium">
+                                 {new Date(selectedEvent.taskData.completed_at).toLocaleDateString()} 
+                                 <span className="text-gray-400 ml-1">{new Date(selectedEvent.taskData.completed_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                              </p>
+                           </div>
+                        )}
+                     </div>
+                  </div>
+                </div>
               </div>
-            </div>
+
+               {/* Footer */}
+               <div className="bg-gray-50 px-6 py-4 border-t flex justify-end items-center">
+                  <Button variant="outline" size="sm" onClick={() => setShowEventDetails(false)}>
+                    Close Details
+                  </Button>
+               </div>
+
+            </>
           )}
         </DialogContent>
       </Dialog>

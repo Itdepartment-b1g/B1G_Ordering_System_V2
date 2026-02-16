@@ -26,6 +26,9 @@ import type { Company } from '@/types/database.types';
 import { PortalClients, PortalInventory, PortalOrders, PortalFinance } from './portal';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// System Administration company ID - should be hidden from the companies list
+const SYSTEM_ADMIN_COMPANY_ID = '6a3da573-af53-4def-a665-0f1782c70097';
+
 export default function ManagementPortal() {
     const { user, startImpersonation } = useAuth();
     const navigate = useNavigate();
@@ -52,6 +55,7 @@ export default function ManagementPortal() {
             const { data, error } = await supabase
                 .from('companies')
                 .select('id, company_name, company_email, super_admin_name, super_admin_email, role, status, created_at, updated_at')
+                .neq('id', SYSTEM_ADMIN_COMPANY_ID) // Exclude System Administration company
                 .order('company_name');
 
             if (error) throw error;

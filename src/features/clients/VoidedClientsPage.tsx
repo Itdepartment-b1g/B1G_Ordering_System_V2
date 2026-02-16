@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { useAuth } from '@/features/auth';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AlertDialog,
@@ -314,6 +315,41 @@ export default function VoidedClientsPage() {
         title: 'Success', 
         description: `${clientToRestore.name} has been restored successfully` 
       });
+
+      // Notify agent and leader (non-blocking)
+      try {
+        if (clientToRestore.agent_id && user?.company_id) {
+          await sendNotification({
+            userId: clientToRestore.agent_id,
+            companyId: user.company_id,
+            type: 'system_message',
+            title: 'Client Restored',
+            message: `Your client "${clientToRestore.name}" has been restored by Admin.`,
+            referenceType: 'client',
+            referenceId: clientToRestore.id
+          });
+
+          const { data: leaderRow } = await supabase
+            .from('leader_teams')
+            .select('leader_id')
+            .eq('agent_id', clientToRestore.agent_id)
+            .maybeSingle();
+
+          if (leaderRow?.leader_id) {
+            await sendNotification({
+              userId: leaderRow.leader_id,
+              companyId: user.company_id,
+              type: 'system_message',
+              title: 'Client Restored',
+              message: `A client "${clientToRestore.name}" from your team has been restored by Admin.`,
+              referenceType: 'client',
+              referenceId: clientToRestore.id
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Client restore notification failed (non-blocking):', e);
+      }
       
       setRestoreDialogOpen(false);
       setClientToRestore(null);
@@ -512,7 +548,7 @@ export default function VoidedClientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
-                  <TableHead className="text-center">Name</TableHead>
+                  <TableHead className="text-center">Trade Name</TableHead>
                   <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
@@ -602,7 +638,7 @@ export default function VoidedClientsPage() {
 
       {/* View Client Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="w-[92vw] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-3xl max-h-[85vh] overflow-y-auto md:max-h-none md:overflow-visible">
+        <DialogContent className="w-[95vw] sm:w-[90vw] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Voided Client Details</DialogTitle>
             <DialogDescription>

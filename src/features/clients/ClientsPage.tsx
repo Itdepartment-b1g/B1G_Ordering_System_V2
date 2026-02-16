@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, ChevronLeft, ChevronRight, BarChart3, Tag } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -14,6 +15,7 @@ import { useAuth } from '@/features/auth';
 import { exportClientsToExcel } from '@/lib/excel.helpers';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +32,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import * as XLSX from 'xlsx';
 
 interface Client {
   id: string;
@@ -66,6 +70,8 @@ interface Client {
   approved_by?: string | null;
   visit_count: number; // Added
   tax_status?: 'Tax on Sales' | 'Tax Exempt';
+  brand_ids?: string[];
+  shop_type?: string;
 }
 
 interface Agent {
@@ -78,6 +84,7 @@ interface Agent {
 
 export default function ClientsPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
   const [allClientsRevenue, setAllClientsRevenue] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -102,8 +109,12 @@ export default function ClientsPage() {
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
     category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
-    has_forge: false
+    has_forge: false,
+    brand_ids: [] as string[],
+    shop_type: ''
   });
+  const [isEditOtherShopType, setIsEditOtherShopType] = useState(false);
+  const [editCustomShopType, setEditCustomShopType] = useState('');
 
   // Delete Confirmation States
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -125,9 +136,17 @@ export default function ClientsPage() {
     contact_person: '',
     tin: '',
     account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
-    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
+    category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
+    brand_ids: [] as string[],
+    shop_type: ''
   });
   const [adding, setAdding] = useState(false);
+  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+  
+  // Shop Type States
+  const [shopTypes, setShopTypes] = useState<Array<{ id: string; type_name: string; is_default: boolean }>>([]);
+  const [isOtherShopType, setIsOtherShopType] = useState(false);
+  const [customShopType, setCustomShopType] = useState('');
 
   // Add Client Photo States
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
@@ -166,6 +185,30 @@ export default function ClientsPage() {
   const [importSummary, setImportSummary] = useState<{ total: number; valid: number; skipped: number }>({ total: 0, valid: 0, skipped: 0 });
 
   const { toast } = useToast();
+  const [companyAccountType, setCompanyAccountType] = useState<'Key Accounts' | 'Standard Accounts' | null>(null);
+
+  useEffect(() => {
+    const fetchCompanyAccountType = async () => {
+      if (!user?.company_id) return;
+      try {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('company_account_type')
+          .eq('id', user.company_id)
+          .single();
+        
+        if (data && !error) {
+          setCompanyAccountType(data.company_account_type || 'Standard Accounts');
+          // Update form defaults
+          setAddForm(prev => ({ ...prev, account_type: data.company_account_type || 'Standard Accounts' }));
+          setEditForm(prev => ({ ...prev, account_type: data.company_account_type || 'Standard Accounts' }));
+        }
+      } catch (err) {
+        console.error('Error fetching company account type:', err);
+      }
+    };
+    fetchCompanyAccountType();
+  }, [user?.company_id]);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize all agent city tags based on current client assignments
@@ -258,6 +301,8 @@ export default function ClientsPage() {
   const [selectedTransferAgent, setSelectedTransferAgent] = useState('');
   const [cityClients, setCityClients] = useState<Client[]>([]);
   const [cityTransferring, setCityTransferring] = useState(false);
+  const [agentSearchQuery, setAgentSearchQuery] = useState(''); // Search for agents in transfer dialogs
+
 
   // Export states
   const [exporting, setExporting] = useState(false);
@@ -288,6 +333,7 @@ export default function ClientsPage() {
     if (!roleResolved) return;
     fetchClients();
     fetchAllClientsRevenue(); // Fetch revenue from all clients (active + inactive)
+    fetchAgents(); // Load agents for Transfer to dropdown and Current Agent display
     // DISABLED: initializeAgentCities() - don't auto-update on page load
     // Cities will be merged automatically when clients are transferred
     // initializeAgentCities(); // Initialize city tags for all agents
@@ -303,9 +349,13 @@ export default function ClientsPage() {
       fetchClients();
       fetchAllClientsRevenue(); // Update revenue when orders change
     });
+    const profilesChannel = subscribeToTable('profiles', () => {
+      fetchAgents(); // Keep Transfer to dropdown and agent lists in sync
+    });
     return () => {
       unsubscribe(clientsChannel);
       unsubscribe(ordersChannel);
+      unsubscribe(profilesChannel);
     };
   }, [roleResolved, isAdmin, user?.id, user?.company_id]);
 
@@ -317,6 +367,13 @@ export default function ClientsPage() {
       setAgentCities([]);
     }
   }, [roleResolved, isAdmin, user?.id]);
+
+  // Clear agent search query when transfer dialogs are closed
+  useEffect(() => {
+    if (!transferDialogOpen && !bulkTransferDialogOpen && !cityBulkTransferOpen) {
+      setAgentSearchQuery('');
+    }
+  }, [transferDialogOpen, bulkTransferDialogOpen, cityBulkTransferOpen]);
 
   const fetchAgentCities = async () => {
     if (!user?.id) return;
@@ -524,6 +581,8 @@ export default function ClientsPage() {
         approved_by: client.approved_by || null,
         visit_count: client.visit_logs?.[0]?.count || 0, // Map count
         tax_status: client.tax_status,
+        brand_ids: client.brand_ids || [],
+        shop_type: client.shop_type || undefined,
       }));
 
       setClients(formattedClients);
@@ -543,8 +602,24 @@ export default function ClientsPage() {
   };
 
   const handleDownloadTemplate = () => {
-    const header = 'name,company,email,phone,address,city,account_type,category\n';
-    const blob = new Blob([header], { type: 'text/csv;charset=utf-8;' });
+    const guideLines =
+      '# GUIDE:\n' +
+      '# - id: OPTIONAL. If provided, will use this ID for the client (must be a valid UUID).\n' +
+      '#   If left blank, a new ID will be auto-generated. Use when re-importing exported data.\n' +
+      '# - created_at, updated_at: OPTIONAL. If provided, will preserve historical dates.\n' +
+      '#   If left blank, will use the current date/time. Use ISO format (e.g., 2024-01-15T10:30:00Z).\n' +
+      '# - approved_at, approval_requested_at: OPTIONAL. If provided, will preserve approval dates.\n' +
+      '#   If left blank, will be set based on approval_status. Use ISO format.\n' +
+      '# - account_type: \"Key Accounts\" or \"Standard Accounts\".\n' +
+      '# - category: \"Open\", \"Renovating\", or \"Permanently Closed\".\n' +
+      '# - agent_id: OPTIONAL. If provided, must match an existing user ID in this company.\n' +
+      '#   If left blank: admins create unassigned clients; other roles assign clients to themselves.\n';
+
+    const header =
+      'id,name,company,contact_person,email,phone,tin,address,city,agent_id,agent_name,account_type,category,status,total_orders,total_spent,visit_count,last_order_date,approval_status,approval_requested_at,approved_at,created_at,updated_at,location_latitude,location_longitude,location_accuracy,location_captured_at\n';
+
+    const csv = guideLines + header;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -567,29 +642,82 @@ export default function ClientsPage() {
     if (!file) return;
 
     try {
-      const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+      const name = file.name.toLowerCase();
+      const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls');
 
-      if (lines.length <= 1) {
-        toast({
-          title: 'No data',
-          description: 'The template file is empty.',
-          variant: 'destructive',
-        });
-        return;
+      let headers: string[];
+      let rows: string[][];
+
+      if (isExcel) {
+        const ab = await file.arrayBuffer();
+        const wb = XLSX.read(ab, { type: 'array' });
+        const firstSheet = wb.SheetNames[0];
+        if (!firstSheet) {
+          toast({ title: 'No data', description: 'The Excel file has no sheets.', variant: 'destructive' });
+          return;
+        }
+        const sheet = wb.Sheets[firstSheet];
+        const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][];
+        if (!raw.length) {
+          toast({ title: 'No data', description: 'The sheet is empty.', variant: 'destructive' });
+          return;
+        }
+        headers = (raw[0] as unknown[]).map((h: unknown) => String(h ?? '').trim().toLowerCase());
+        rows = raw.slice(1).map((row: unknown[]) =>
+          (row || []).map((c: unknown) => (c == null ? '' : String(c)).trim())
+        );
+      } else {
+        const text = await file.text();
+        const lines = text
+          .split(/\r?\n/)
+          .filter((line) => {
+            const trimmed = line.trim();
+            // Ignore empty lines and guide/comment lines starting with '#'
+            return trimmed.length > 0 && !trimmed.startsWith('#');
+          });
+        if (lines.length <= 1) {
+          toast({ title: 'No data', description: 'The template file is empty.', variant: 'destructive' });
+          return;
+        }
+        const [headerLine, ...lineRows] = lines;
+        headers = headerLine.split(',').map((h) => h.trim().toLowerCase());
+        rows = lineRows.map((row) => row.split(',').map((c) => c.trim()));
       }
 
-      const [headerLine, ...rows] = lines;
-      const headers = headerLine.split(',').map(h => h.trim().toLowerCase());
+      const findCol = (aliases: string[]) => {
+        for (const a of aliases) {
+          const i = headers.indexOf(a);
+          if (i >= 0) return i;
+        }
+        return -1;
+      };
 
-      const nameIdx = headers.indexOf('name');
-      const companyIdx = headers.indexOf('company');
-      const emailIdx = headers.indexOf('email');
-      const phoneIdx = headers.indexOf('phone');
-      const addressIdx = headers.indexOf('address');
-      const cityIdx = headers.indexOf('city');
-      const accountTypeIdx = headers.indexOf('account_type');
-      const categoryIdx = headers.indexOf('category');
+      const idIdx = findCol(['id']);
+      const nameIdx = findCol(['name', 'trade name', 'trade_name']);
+      const companyIdx = findCol(['company', 'shop name', 'shop_name']);
+      const contactPersonIdx = findCol(['contact_person', 'contact person']);
+      const emailIdx = findCol(['email']);
+      const phoneIdx = findCol(['phone']);
+      const tinIdx = findCol(['tin']);
+      const addressIdx = findCol(['address']);
+      const cityIdx = findCol(['city']);
+      const accountTypeIdx = findCol(['account_type', 'account type']);
+      const categoryIdx = findCol(['category']);
+      const agentIdIdx = findCol(['agent_id', 'agent id']);
+      const statusIdx = findCol(['status']);
+      const approvalStatusIdx = findCol(['approval_status', 'approval status']);
+      const locationLatIdx = findCol(['location_latitude', 'location latitude', 'latitude', 'lat']);
+      const locationLonIdx = findCol(['location_longitude', 'location longitude', 'longitude', 'lon', 'long']);
+      const locationAccuracyIdx = findCol(['location_accuracy', 'location accuracy', 'accuracy']);
+      const createdAtIdx = findCol(['created_at', 'created at', 'created']);
+      const updatedAtIdx = findCol(['updated_at', 'updated at', 'updated']);
+      const approvedAtIdx = findCol(['approved_at', 'approved at', 'approved']);
+      const approvalRequestedAtIdx = findCol(['approval_requested_at', 'approval requested at', 'approval requested']);
+      
+      // Template columns that are ignored (informational/auto-generated):
+      // agent_name, total_orders, total_spent, visit_count, last_order_date, location_captured_at
+      // These are gracefully ignored if present in the file
+      // Note: 'id', 'created_at', 'updated_at', 'approved_at', 'approval_requested_at' are now supported
 
       if (nameIdx === -1) {
         toast({
@@ -601,24 +729,24 @@ export default function ClientsPage() {
       }
 
       const isAdminUser = isAdmin || isSuperAdmin;
-
       let total = 0;
       let valid = 0;
       let skipped = 0;
 
       const previewRows = rows.map(row => {
-        const cols = row.split(',').map(c => c.trim());
+        const cols = row;
         if (cols.every(c => !c)) {
           return null;
         }
         total += 1;
-        if (!cols[nameIdx]) {
+        const nameVal = cols[nameIdx] ?? '';
+        if (!nameVal) {
           skipped += 1;
           return null;
         }
 
-        const rawAccountType = accountTypeIdx >= 0 ? cols[accountTypeIdx] : '';
-        const rawCategory = categoryIdx >= 0 ? cols[categoryIdx] : '';
+        const rawAccountType = accountTypeIdx >= 0 ? (cols[accountTypeIdx] ?? '') : '';
+        const rawCategory = categoryIdx >= 0 ? (cols[categoryIdx] ?? '') : '';
 
         const account_type: Client['account_type'] =
           rawAccountType === 'Key Accounts' ? 'Key Accounts' : 'Standard Accounts';
@@ -627,20 +755,91 @@ export default function ClientsPage() {
             ? (rawCategory as Client['category'])
             : 'Open';
 
+        // Optional status parsing: if provided in file, use it; otherwise default to 'active'
+        // Note: 'voided' maps to 'inactive' in the database
+        const rawStatus = statusIdx >= 0 ? String(cols[statusIdx] ?? '').trim().toLowerCase() : '';
+        const status: Client['status'] = (rawStatus === 'voided' || rawStatus === 'inactive') ? 'inactive' : 'active';
+
+        // Optional approval_status parsing: if provided in file, validate and use it; otherwise default based on role
+        const rawApprovalStatus = approvalStatusIdx >= 0 ? String(cols[approvalStatusIdx] ?? '').trim().toLowerCase() : '';
+        let approval_status: Client['approval_status'];
+        if (rawApprovalStatus === 'approved' || rawApprovalStatus === 'pending' || rawApprovalStatus === 'rejected') {
+          approval_status = rawApprovalStatus as Client['approval_status'];
+        } else {
+          approval_status = isAdminUser ? 'approved' : 'pending';
+        }
+
+        // Optional agent assignment from file: if agent_id is provided, use it.
+        // Otherwise fall back to previous behavior:
+        // - admins/super_admins: unassigned (null)
+        // - others: assign to the importing user.
+        let parsedAgentId: string | null = null;
+        if (agentIdIdx >= 0) {
+          const rawAgentId = String(cols[agentIdIdx] ?? '').trim();
+          if (rawAgentId) {
+            parsedAgentId = rawAgentId;
+          }
+        }
+        if (!parsedAgentId) {
+          parsedAgentId = isAdminUser ? null : user?.id || null;
+        }
+
+        // Optional id parsing: if provided in file, use it; otherwise let database auto-generate
+        const parsedId = idIdx >= 0 ? String(cols[idIdx] ?? '').trim() : null;
+
+        // Helper to parse date strings to ISO format
+        const parseDate = (dateStr: string | null | undefined): string | null => {
+          if (!dateStr || !dateStr.trim()) return null;
+          try {
+            const date = new Date(dateStr.trim());
+            return isNaN(date.getTime()) ? null : date.toISOString();
+          } catch {
+            return null;
+          }
+        };
+
+        // Parse date columns if present
+        const parsedCreatedAt = createdAtIdx >= 0 ? parseDate(cols[createdAtIdx]) : null;
+        const parsedUpdatedAt = updatedAtIdx >= 0 ? parseDate(cols[updatedAtIdx]) : null;
+        const parsedApprovedAt = approvedAtIdx >= 0 ? parseDate(cols[approvedAtIdx]) : null;
+        const parsedApprovalRequestedAt = approvalRequestedAtIdx >= 0 ? parseDate(cols[approvalRequestedAtIdx]) : null;
+
         valid += 1;
 
         const rowObj: Partial<Client> = {
-          name: cols[nameIdx],
-          company: companyIdx >= 0 ? cols[companyIdx] || null : null,
-          email: emailIdx >= 0 ? cols[emailIdx] || null : null,
-          phone: phoneIdx >= 0 ? cols[phoneIdx] || null : null,
-          address: addressIdx >= 0 ? cols[addressIdx] || null : null,
-          city: cityIdx >= 0 ? cols[cityIdx] || null : null,
+          ...(parsedId ? { id: parsedId } : {}),
+          name: nameVal,
+          company: companyIdx >= 0 ? (cols[companyIdx] ?? '') || null : null,
+          contact_person: contactPersonIdx >= 0 ? (cols[contactPersonIdx] ?? '') || null : null,
+          email: emailIdx >= 0 ? (cols[emailIdx] ?? '') || null : null,
+          phone: phoneIdx >= 0 ? (cols[phoneIdx] ?? '') || null : null,
+          tin: tinIdx >= 0 ? (cols[tinIdx] ?? '') || null : null,
+          address: addressIdx >= 0 ? (cols[addressIdx] ?? '') || null : null,
+          city: cityIdx >= 0 ? (cols[cityIdx] ?? '') || null : null,
           account_type,
           category,
-          status: 'active',
-          approval_status: isAdminUser ? 'approved' : 'pending',
-          agent_id: isAdminUser ? null : user?.id || null,
+          status,
+          approval_status,
+          agent_id: parsedAgentId,
+          location_latitude: (() => {
+            if (locationLatIdx < 0) return undefined;
+            const v = parseFloat(String(cols[locationLatIdx] ?? '').trim());
+            return Number.isFinite(v) ? v : undefined;
+          })(),
+          location_longitude: (() => {
+            if (locationLonIdx < 0) return undefined;
+            const v = parseFloat(String(cols[locationLonIdx] ?? '').trim());
+            return Number.isFinite(v) ? v : undefined;
+          })(),
+          location_accuracy: (() => {
+            if (locationAccuracyIdx < 0) return undefined;
+            const v = parseFloat(String(cols[locationAccuracyIdx] ?? '').trim());
+            return Number.isFinite(v) ? v : undefined;
+          })(),
+          ...(parsedCreatedAt ? { created_at: parsedCreatedAt } : {}),
+          ...(parsedUpdatedAt ? { updated_at: parsedUpdatedAt } : {}),
+          ...(parsedApprovedAt ? { approved_at: parsedApprovedAt } : {}),
+          ...(parsedApprovalRequestedAt ? { approval_requested_at: parsedApprovalRequestedAt } : {}),
         };
         return rowObj;
       }).filter(Boolean) as Partial<Client>[];
@@ -690,39 +889,58 @@ export default function ClientsPage() {
 
       // Build payload to match normal client creation and RLS expectations
       const insertPayload = importRows.map((row) => {
-        const approvalStatus: Client['approval_status'] = isAdminUser ? 'approved' : 'pending';
-        const approvalRequestedAt = !isAdminUser ? nowIso : null;
-        const approvedAt = approvalStatus === 'approved' ? nowIso : null;
+        // Use parsed approval_status from row, or default based on role
+        const approvalStatus: Client['approval_status'] = row.approval_status || (isAdminUser ? 'approved' : 'pending');
+        
+        // Use parsed dates from file if provided, otherwise use defaults
+        const created_at = (row as any).created_at || nowIso;
+        const updated_at = (row as any).updated_at || nowIso;
+        const approved_at = (row as any).approved_at || (approvalStatus === 'approved' ? nowIso : null);
+        const approval_requested_at = (row as any).approval_requested_at || (approvalStatus === 'pending' ? nowIso : null);
 
-        // For now, imports created by admins/super admins are unassigned (agent_id = null),
-        // imports by agents are assigned to themselves
-        const agentId = isAdminUser ? null : user.id;
+        // Agent assignment:
+        // - If the row already has an agent_id (from the file), use it
+        // - Otherwise:
+        //   - admins/super_admins: unassigned (null)
+        //   - others: assign to importing user
+        const agentId = row.agent_id || (isAdminUser ? null : user.id);
+
+        const lat = row.location_latitude != null ? (typeof row.location_latitude === 'number' ? row.location_latitude : parseFloat(String(row.location_latitude))) : null;
+        const lon = row.location_longitude != null ? (typeof row.location_longitude === 'number' ? row.location_longitude : parseFloat(String(row.location_longitude))) : null;
+        const acc = row.location_accuracy != null ? (typeof row.location_accuracy === 'number' ? row.location_accuracy : parseFloat(String(row.location_accuracy))) : null;
+        // Set location_captured_at to the date/time of import (ignore any file data)
+        const importTimestamp = new Date().toISOString();
 
         return {
+          ...(row.id ? { id: row.id } : {}), // Include id if provided, otherwise let database auto-generate
           company_id: user.company_id,
           name: row.name,
           company: row.company || null,
+          contact_person: row.contact_person || null,
           email: row.email || null,
           phone: row.phone || null,
+          tin: row.tin || null,
           address: row.address || null,
           city: row.city || null,
           account_type: row.account_type || 'Standard Accounts',
           category: row.category || 'Open',
-          status: 'active',
+          status: row.status || 'active',
           has_forge: false,
           total_orders: 0,
           total_spent: 0,
           photo_url: null,
           photo_timestamp: null,
-          location_latitude: null,
-          location_longitude: null,
-          location_accuracy: null,
-          location_captured_at: null,
+          location_latitude: Number.isFinite(lat) ? lat : null,
+          location_longitude: Number.isFinite(lon) ? lon : null,
+          location_accuracy: Number.isFinite(acc) ? acc : null,
+          location_captured_at: importTimestamp,
+          created_at,
+          updated_at,
           approval_status: approvalStatus,
-          approval_requested_at: approvalRequestedAt,
+          approval_requested_at,
           approval_notes: null,
-          approved_at: approvedAt,
-          approved_by: isAdminUser && approvedAt ? user.id : null,
+          approved_at,
+          approved_by: isAdminUser && approved_at ? user.id : null,
           agent_id: agentId,
           tax_status: 'Tax Exempt',
         };
@@ -849,11 +1067,19 @@ export default function ClientsPage() {
       tin: client.tin || '',
       account_type: client.account_type || 'Standard Accounts',
       category: client.category || 'Open',
-      has_forge: client.has_forge || false
+      has_forge: client.has_forge || false,
+      brand_ids: client.brand_ids || [],
+      shop_type: client.shop_type || ''
     });
     setEditCorPhoto(null); // Reset COR photo state
     setEditClientPhoto(null); // Reset client photo state
     setEditDialogOpen(true);
+    fetchBrands(); // Fetch brands when opening edit dialog
+    fetchShopTypes(); // Fetch shop types when opening edit dialog
+    
+    // Reset edit shop type states
+    setIsEditOtherShopType(false);
+    setEditCustomShopType('');
   };
 
   const handleSaveEdit = () => {
@@ -984,7 +1210,49 @@ export default function ClientsPage() {
         corUrl = corUrlData.signedUrl;
       }
 
+      // Validate shop type for duplicates (Edit)
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        const normalizedCustomType = editCustomShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${editCustomShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setUpdateConfirmOpen(false);
+          return;
+        }
+      }
+
       // Update client - exclude address and city (read-only fields)
+      // Handle custom shop type if "Other" is selected
+      let finalShopType = editForm.shop_type;
+      if (isEditOtherShopType && editCustomShopType.trim()) {
+        // Insert custom shop type into shop_types table
+        const { error: shopTypeError } = await supabase
+          .from('shop_types')
+          .insert({
+            company_id: user.company_id,
+            type_name: editCustomShopType.trim(),
+            is_default: false,
+            created_by: user.id
+          });
+        
+        // If error is due to duplicate (UNIQUE constraint), it's okay - just use the value
+        if (shopTypeError && !shopTypeError.message.includes('duplicate')) {
+          console.error('Error inserting custom shop type:', shopTypeError);
+        }
+        
+        finalShopType = editCustomShopType.trim();
+        
+        // Refresh shop types list to include the new type
+        fetchShopTypes();
+      }
+
       const updateData: any = {
         name: editForm.name,
         company: editForm.company || null,
@@ -995,6 +1263,8 @@ export default function ClientsPage() {
         account_type: editForm.account_type,
         category: editForm.category,
         has_forge: editForm.has_forge,
+        brand_ids: editForm.brand_ids.length > 0 ? editForm.brand_ids : null,
+        shop_type: finalShopType || null,
         updated_at: new Date().toISOString()
       };
 
@@ -1086,10 +1356,14 @@ export default function ClientsPage() {
     return agents.find(agent => agent.id === topAgent[0]);
   };
 
-  // Get available agents for transfer (excluding current holder)
+  // Get available agents for transfer: mobile_sales and team_leader only (excluding current holder)
   const getAvailableAgents = (city: string) => {
     const currentHolder = getCurrentCityHolder(city);
-    return agents.filter(agent => agent.id !== currentHolder?.id);
+    return agents.filter(
+      agent =>
+        (agent.role === 'mobile_sales' || agent.role === 'team_leader') &&
+        agent.id !== currentHolder?.id
+    );
   };
 
   // Load clients for selected city
@@ -1224,10 +1498,11 @@ export default function ClientsPage() {
   };
 
   // City-based bulk transfer functions
-  const handleOpenCityBulkTransfer = () => {
+  const handleOpenCityBulkTransfer = async () => {
     setSelectedCity('');
     setSelectedTransferAgent('');
     setCityClients([]);
+    await fetchAgents(); // Ensure Transfer to dropdown is populated (mobile_sales / team_leader)
     setCityBulkTransferOpen(true);
   };
 
@@ -1367,6 +1642,41 @@ export default function ClientsPage() {
         title: 'Success',
         description: `${clientToDelete.name} has been voided successfully`
       });
+
+      // Notify agent and leader (non-blocking)
+      try {
+        if (clientToDelete.agent_id && user?.company_id) {
+          await sendNotification({
+            userId: clientToDelete.agent_id,
+            companyId: user.company_id,
+            type: 'system_message',
+            title: 'Client Voided',
+            message: `Your client "${clientToDelete.name}" has been voided by Admin.`,
+            referenceType: 'client',
+            referenceId: clientToDelete.id
+          });
+
+          const { data: leaderRow } = await supabase
+            .from('leader_teams')
+            .select('leader_id')
+            .eq('agent_id', clientToDelete.agent_id)
+            .maybeSingle();
+
+          if (leaderRow?.leader_id) {
+            await sendNotification({
+              userId: leaderRow.leader_id,
+              companyId: user.company_id,
+              type: 'system_message',
+              title: 'Client Voided',
+              message: `A client "${clientToDelete.name}" from your team has been voided by Admin.`,
+              referenceType: 'client',
+              referenceId: clientToDelete.id
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Client void notification failed (non-blocking):', e);
+      }
 
       setDeleteDialogOpen(false);
       setClientToDelete(null);
@@ -1581,6 +1891,48 @@ export default function ClientsPage() {
         throw new Error('User company_id not found');
       }
 
+      // Validate shop type for duplicates
+      if (isOtherShopType && customShopType.trim()) {
+        const normalizedCustomType = customShopType.trim().toLowerCase();
+        const existingShopType = shopTypes.find(
+          (type) => type.type_name.toLowerCase() === normalizedCustomType
+        );
+
+        if (existingShopType) {
+          toast({
+            title: 'Duplicate Shop Type',
+            description: `"${customShopType.trim()}" already exists in the shop types. Please select it from the dropdown instead.`,
+            variant: 'destructive'
+          });
+          setAdding(false);
+          return;
+        }
+      }
+
+      // Handle custom shop type if "Other" is selected
+      let finalShopType = addForm.shop_type;
+      if (isOtherShopType && customShopType.trim()) {
+        // Insert custom shop type into shop_types table
+        const { error: shopTypeError } = await supabase
+          .from('shop_types')
+          .insert({
+            company_id: user.company_id,
+            type_name: customShopType.trim(),
+            is_default: false,
+            created_by: user.id
+          });
+        
+        // If error is due to duplicate (UNIQUE constraint), it's okay - just use the value
+        if (shopTypeError && !shopTypeError.message.includes('duplicate')) {
+          console.error('Error inserting custom shop type:', shopTypeError);
+        }
+        
+        finalShopType = customShopType.trim();
+        
+        // Refresh shop types list to include the new type
+        fetchShopTypes();
+      }
+
       const { error } = await supabase
         .from('clients')
         .insert({
@@ -1600,6 +1952,8 @@ export default function ClientsPage() {
           category: addForm.category,
           status: 'active',
           has_forge: addForm.has_forge,
+          brand_ids: addForm.brand_ids.length > 0 ? addForm.brand_ids : null,
+          shop_type: finalShopType || null,
           photo_url: photoUrl,
           photo_timestamp: photoUrl ? new Date().toISOString() : null,
           cor_url: corUrl,
@@ -2201,6 +2555,96 @@ export default function ClientsPage() {
     }
   };
 
+  // Fetch shop types for the company
+  const fetchShopTypes = async () => {
+    if (!user?.company_id) {
+      setShopTypes([]);
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('shop_types')
+        .select('id, type_name, is_default')
+        .eq('company_id', user.company_id)
+        .order('is_default', { ascending: false })
+        .order('type_name', { ascending: true });
+      
+      if (error) throw error;
+      
+      setShopTypes(data || []);
+    } catch (error) {
+      console.error('Error fetching shop types:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load shop types',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  // Fetch brands for the company
+  const fetchBrands = async () => {
+    console.log('🔍 fetchBrands called');
+    console.log('User:', user);
+    
+    if (!user?.company_id) {
+      console.log('❌ No company_id found, cannot fetch brands');
+      setBrands([]);
+      return;
+    }
+    
+    try {
+      console.log('✅ Fetching brands for company_id:', user.company_id);
+      
+      // Fetch brands - RLS should automatically filter by company_id based on user's profile
+      const { data, error } = await supabase
+        .from('brands')
+        .select('id, name')
+        .eq('company_id', user.company_id)
+        .order('name');
+      
+      console.log('📦 Brands query result:', { data, error });
+      
+      if (error) {
+        console.error('❌ Error fetching brands:', error);
+        throw error;
+      }
+      
+      console.log('✅ Fetched brands:', data);
+      console.log('📊 Number of brands found:', data?.length || 0);
+      
+      if (data && data.length > 0) {
+        console.log('✅ Setting brands:', data);
+        setBrands(data);
+      } else {
+        console.log('⚠️ No brands found for company_id:', user.company_id);
+        setBrands([]);
+      }
+    } catch (error: any) {
+      console.error('❌ Error fetching brands:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
+      setBrands([]); // Set empty array on error so section still shows
+    }
+  };
+
+  // Fetch brands when component mounts and user is available
+  useEffect(() => {
+    console.log('🔄 useEffect triggered, user:', user);
+    if (user?.company_id) {
+      console.log('🔄 useEffect: Fetching brands and shop types on mount for company_id:', user.company_id);
+      fetchBrands();
+      fetchShopTypes();
+    } else {
+      console.log('⚠️ useEffect: No user or company_id yet');
+    }
+  }, [user?.company_id]);
+
   const resetAddForm = () => {
     setAddForm({
       name: '',
@@ -2211,9 +2655,11 @@ export default function ClientsPage() {
       has_forge: false,
       city: '',
       contact_person: '',
+      shop_type: '',
       tin: '',
       account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
-      category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open'
+      category: 'Open' as 'Permanently Closed' | 'Renovating' | 'Open',
+      brand_ids: []
     });
     setNewClientPhoto(null);
     setNewCorPhoto(null);
@@ -2237,22 +2683,32 @@ export default function ClientsPage() {
     setExportProgress({ current: 0, total: clients.length });
 
     try {
-      // Prepare client data for export
+      // Prepare client data for export (column order = CSV order)
       const exportData = clients.map(client => ({
         id: client.id,
-        name: client.name,
+        trade_name: client.name,
+        shop_name: client.company || '',
+        contact_person: client.contact_person || '',
         email: client.email || '',
         phone: client.phone || '',
-        company: client.company || '',
+        tin: client.tin || '',
         address: client.address || '',
         city: client.city || '',
         agent_name: client.agent_name || 'Unassigned',
-        photo_url: client.photo_url || '',
+        account_type: client.account_type || 'Standard Accounts',
+        category: client.category || 'Open',
+        status: client.status || 'active',
         total_orders: client.total_orders || 0,
         total_spent: client.total_spent || 0,
-        status: client.status || 'active',
-        created_at: client.created_at,
+        visit_count: client.visit_count ?? 0,
+        last_order_date: client.last_order_date || '',
         approval_status: client.approval_status || 'approved',
+        created_at: client.created_at,
+        updated_at: client.updated_at,
+        location_latitude: client.location_latitude ?? '',
+        location_longitude: client.location_longitude ?? '',
+        location_accuracy: client.location_accuracy ?? '',
+        location_captured_at: client.location_captured_at ?? '',
       }));
 
       // Export to Excel with progress tracking
@@ -2292,26 +2748,50 @@ export default function ClientsPage() {
     <div className="p-8 space-y-6">
       {/* Import Preview Dialog */}
       <Dialog open={importPreviewOpen} onOpenChange={setImportPreviewOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="flex flex-col w-[95vw] max-w-4xl max-h-[90dvh] p-4 sm:p-6 overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Import Clients Preview</DialogTitle>
             <DialogDescription>
               Review the rows below. Only rows with a name will be imported.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="text-xs text-muted-foreground">
-              Total rows (excluding header): <span className="font-semibold">{importSummary.total}</span> ·{' '}
-              Valid: <span className="font-semibold text-green-600">{importSummary.valid}</span> ·{' '}
-              Skipped: <span className="font-semibold text-red-600">{importSummary.skipped}</span>
+          <div className="text-xs text-muted-foreground shrink-0 mb-3">
+            Total rows (excluding header): <span className="font-semibold">{importSummary.total}</span> ·{' '}
+            Valid: <span className="font-semibold text-green-600">{importSummary.valid}</span> ·{' '}
+            Skipped: <span className="font-semibold text-red-600">{importSummary.skipped}</span>
+          </div>
+          <div className="flex-1 min-h-0 overflow-auto border rounded-md -mx-1 px-1">
+            {/* Mobile: card list - no horizontal scroll */}
+            <div className="md:hidden space-y-3 py-2">
+              {importRows.map((row, idx) => (
+                <div key={idx} className="rounded-lg border bg-card p-3 shadow-sm space-y-2">
+                  <div className="text-xs font-medium text-muted-foreground border-b pb-1.5">
+                    Row {idx + 1}
+                  </div>
+                  <div className="grid gap-1.5">
+                    {importHeaders.map((h) => {
+                      const key = h as keyof Client;
+                      const value = (row as any)[key] ?? '';
+                      const label = h.charAt(0).toUpperCase() + h.slice(1).replace(/_/g, ' ');
+                      return (
+                        <div key={h} className="flex flex-wrap gap-x-2 text-sm">
+                          <span className="text-muted-foreground shrink-0">{label}:</span>
+                          <span className="break-words min-w-0">{String(value) || '—'}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="border rounded-md overflow-auto">
-              <Table>
+            {/* Desktop: scrollable table inside viewport */}
+            <div className="hidden md:block h-full min-h-[200px] overflow-auto">
+              <Table className="min-w-[600px]">
                 <TableHeader>
                   <TableRow>
                     {importHeaders.map((h) => (
-                      <TableHead key={h} className="uppercase text-[10px] tracking-wide">
-                        {h}
+                      <TableHead key={h} className="uppercase text-[10px] tracking-wide whitespace-nowrap">
+                        {h.replace(/_/g, ' ')}
                       </TableHead>
                     ))}
                   </TableRow>
@@ -2323,8 +2803,8 @@ export default function ClientsPage() {
                         const key = h as keyof Client;
                         const value = (row as any)[key] ?? '';
                         return (
-                          <TableCell key={h} className="text-xs">
-                            {String(value)}
+                          <TableCell key={h} className="text-xs max-w-[180px] truncate" title={String(value)}>
+                            {String(value) || '—'}
                           </TableCell>
                         );
                       })}
@@ -2334,7 +2814,7 @@ export default function ClientsPage() {
               </Table>
             </div>
           </div>
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="flex justify-end gap-2 mt-4 shrink-0 pt-2 border-t">
             <Button
               variant="outline"
               onClick={() => setImportPreviewOpen(false)}
@@ -2397,7 +2877,7 @@ export default function ClientsPage() {
                   type="file"
                   ref={importInputRef}
                   onChange={handleImportClients}
-                  accept=".csv,.txt"
+                  accept=".csv,.txt,.xlsx,.xls"
                   className="hidden"
                 />
                 <Button variant="outline" className="gap-2" onClick={handleImportClick} disabled={importing}>
@@ -2476,7 +2956,7 @@ export default function ClientsPage() {
                     type="file"
                     ref={importInputRef}
                     onChange={handleImportClients}
-                    accept=".csv,.txt"
+                    accept=".csv,.txt,.xlsx,.xls"
                     className="hidden"
                   />
                   <DropdownMenuItem onClick={handleOpenCityBulkTransfer}>
@@ -2492,11 +2972,17 @@ export default function ClientsPage() {
 
       {/* Add Client Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={(open) => {
+        console.log('🚪 Dialog onOpenChange called, open:', open);
         setAddDialogOpen(open);
         if (open) {
+          console.log('✅ Dialog opening, calling fetchBrands and fetchShopTypes');
           startLocationPrewarm();
+          fetchBrands(); // Fetch brands when dialog opens
+          fetchShopTypes(); // Fetch shop types when dialog opens
         } else {
           resetAddForm();
+          setIsOtherShopType(false);
+          setCustomShopType('');
         }
       }}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
@@ -2819,20 +3305,26 @@ export default function ClientsPage() {
             </div>
             <div className="space-y-2">
               <Label>Type Of Account</Label>
-              <Select
-                value={addForm.account_type}
-                onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                  setAddForm({ ...addForm, account_type: value })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                  <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                </SelectContent>
-              </Select>
+                  <Select
+                    value={addForm.account_type}
+                    onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                      setAddForm({ ...addForm, account_type: value })
+                    }
+                    disabled={!!companyAccountType}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                      <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {companyAccountType && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Account type is set by your company settings.
+                    </p>
+                  )}
             </div>
             <div className="space-y-2">
               <Label>Category</Label>
@@ -2853,29 +3345,92 @@ export default function ClientsPage() {
               </Select>
             </div>
 
-
-
-            {/* Has Forge Field */}
-            <div className="space-y-3">
-              <Label>Has Forge?</Label>
-              <RadioGroup
-                value={addForm.has_forge ? 'yes' : 'no'}
-                onValueChange={(value) => setAddForm({ ...addForm, has_forge: value === 'yes' })}
-                className="flex gap-4"
+            {/* Shop Type Selection */}
+            <div className="space-y-2">
+              <Label>Shop Type</Label>
+              <Select
+                value={isOtherShopType ? 'Other' : addForm.shop_type}
+                onValueChange={(value) => {
+                  if (value === 'Other') {
+                    setIsOtherShopType(true);
+                    setAddForm({ ...addForm, shop_type: 'Other' });
+                  } else {
+                    setIsOtherShopType(false);
+                    setCustomShopType('');
+                    setAddForm({ ...addForm, shop_type: value });
+                  }
+                }}
               >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="yes" id="has-forge-yes" />
-                  <Label htmlFor="has-forge-yes" className="font-normal cursor-pointer">
-                    Yes
-                  </Label>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select shop type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {shopTypes.map((type) => (
+                    <SelectItem key={type.id} value={type.type_name}>
+                      {type.type_name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+              {isOtherShopType && (
+                <div className="mt-2">
+                  <Input
+                    placeholder="Enter custom shop type"
+                    value={customShopType}
+                    onChange={(e) => setCustomShopType(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    This custom type will be available for all users in your company
+                  </p>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="no" id="has-forge-no" />
-                  <Label htmlFor="has-forge-no" className="font-normal cursor-pointer">
-                    No
-                  </Label>
+              )}
+            </div>
+
+            {/* Brands Selection */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
+              <p className="text-xs text-muted-foreground">Select all brands/products this client is currently holding</p>
+              {brands.length > 0 ? (
+                <>
+                  <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                    {brands.map((brand) => (
+                      <div key={brand.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`brand-${brand.id}`}
+                          checked={addForm.brand_ids.includes(brand.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setAddForm({
+                                ...addForm,
+                                brand_ids: [...addForm.brand_ids, brand.id]
+                              });
+                            } else {
+                              setAddForm({
+                                ...addForm,
+                                brand_ids: addForm.brand_ids.filter(id => id !== brand.id)
+                              });
+                            }
+                          }}
+                        />
+                        <Label htmlFor={`brand-${brand.id}`} className="text-sm font-normal cursor-pointer">
+                          {brand.name}
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                  {addForm.brand_ids.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {addForm.brand_ids.length} {addForm.brand_ids.length === 1 ? 'brand' : 'brands'} selected
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="border rounded-lg p-4 text-center text-sm text-muted-foreground">
+                  <p>No brands available for this company.</p>
+                  <p className="text-xs mt-1">Add brands in the inventory section to see them here.</p>
                 </div>
-              </RadioGroup>
+              )}
             </div>
 
             <Button className="w-full" onClick={handleAddClient} disabled={adding}>
@@ -2933,7 +3488,7 @@ export default function ClientsPage() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search clients by name, email, shop name, or agent..."
+                  placeholder="Search clients by trade name, email, shop name, or agent..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
@@ -3122,12 +3677,12 @@ export default function ClientsPage() {
           </div>
 
           {/* Desktop: table */}
-          <div className="hidden md:block">
-            <Table>
+          <div className="hidden md:block overflow-x-auto">
+            <Table className="min-w-[1200px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
-                  <TableHead className="text-center">Name</TableHead>
+                  <TableHead className="text-center">Trade Name</TableHead>
                   <TableHead className="text-center">Shop Name</TableHead>
                   <TableHead className="text-center">Email</TableHead>
                   <TableHead className="text-center">Phone</TableHead>
@@ -3135,7 +3690,6 @@ export default function ClientsPage() {
                   <TableHead className="text-center">City</TableHead>
                   <TableHead className="text-center">Account Type</TableHead>
                   <TableHead className="text-center">Category</TableHead>
-                  <TableHead className="text-center">Forge</TableHead>
                   <TableHead className="text-center">Orders</TableHead>
                   <TableHead>Total Spent</TableHead>
                   <TableHead>Visits</TableHead>
@@ -3214,17 +3768,7 @@ export default function ClientsPage() {
                         {client.category}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-center">
-                      {client.has_forge ? (
-                        <Badge variant="default" className="bg-green-600 hover:bg-green-700 text-xs">
-                          Yes
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-xs">
-                          No
-                        </Badge>
-                      )}
-                    </TableCell>
+                    
                     <TableCell className="text-center">{client.total_orders}</TableCell>
                     <TableCell className="font-medium text-green-600">
                       ₱{client.total_spent.toLocaleString()}
@@ -3241,9 +3785,20 @@ export default function ClientsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      <DropdownMenu>
+                      <div className="flex items-center justify-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-xs"
+                          onClick={() => handleOpenView(client)}
+                          title="View Details"
+                        >
+                          <Eye className="h-3.5 w-3.5 lg:mr-1" />
+                          <span className="hidden lg:inline">View Details</span>
+                        </Button>
+                        <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -3270,6 +3825,7 @@ export default function ClientsPage() {
                           )}
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -3279,8 +3835,8 @@ export default function ClientsPage() {
 
           {/* Pagination Controls */}
           {filteredClients.length > itemsPerPage && (
-            <div className="flex items-center justify-between mt-4 pt-4 border-t">
-              <div className="text-sm text-muted-foreground">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t">
+              <div className="text-xs sm:text-sm text-muted-foreground">
                 Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
               </div>
               <div className="flex items-center gap-2">
@@ -3289,9 +3845,10 @@ export default function ClientsPage() {
                   size="sm"
                   onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                   disabled={currentPage === 1}
+                  className="h-8 px-2 sm:px-4"
                 >
                   <ChevronLeft className="h-4 w-4" />
-                  Previous
+                  <span className="hidden sm:inline ml-1">Previous</span>
                 </Button>
                 <div className="flex items-center gap-1">
                   {Array.from({ length: totalPages }, (_, i) => i + 1)
@@ -3330,8 +3887,9 @@ export default function ClientsPage() {
                   size="sm"
                   onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                   disabled={currentPage === totalPages}
+                  className="h-8 px-2 sm:px-4"
                 >
-                  Next
+                  <span className="hidden sm:inline mr-1">Next</span>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -3342,26 +3900,26 @@ export default function ClientsPage() {
 
       {/* View Client Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="w-[92vw] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-3xl max-h-[85vh] overflow-y-auto md:max-h-none md:overflow-visible">
+        <DialogContent className="w-[95vw] sm:w-[90vw] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Client Details</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-lg sm:text-xl">Client Details</DialogTitle>
+            <DialogDescription className="text-xs sm:text-sm">
               View detailed information about this client including contact details, orders, and assignment status.
             </DialogDescription>
           </DialogHeader>
           {viewingClient && (
-            <div className="space-y-6 py-2">
-              <div className="flex items-center gap-4">
+            <div className="space-y-4 sm:space-y-6 py-2">
+              <div className="flex items-center gap-3 sm:gap-4">
                 {viewingClient.photo_url ? (
-                  <img src={viewingClient.photo_url} alt={viewingClient.name} className="w-16 h-16 rounded-full object-cover border" />
+                  <img src={viewingClient.photo_url} alt={viewingClient.name} className="w-12 h-12 sm:w-16 sm:h-16 rounded-full object-cover border flex-shrink-0" />
                 ) : (
-                  <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                    <Building className="w-7 h-7 text-muted-foreground" />
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                    <Building className="w-6 h-6 sm:w-7 sm:h-7 text-muted-foreground" />
                   </div>
                 )}
-                <div>
-                  <p className="text-xl font-semibold">{viewingClient.name}</p>
-                  <p className="text-sm text-muted-foreground">{viewingClient.company || '—'}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-base sm:text-xl font-semibold truncate">{viewingClient.name}</p>
+                  <p className="text-xs sm:text-sm text-muted-foreground truncate">{viewingClient.company || '—'}</p>
                 </div>
               </div>
 
@@ -3382,87 +3940,114 @@ export default function ClientsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-muted/40 rounded-lg border">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">Email</p>
-                  <p className="font-medium break-all">{viewingClient.email || '—'}</p>
+                  <p className="text-sm sm:text-base font-medium break-all">{viewingClient.email || '—'}</p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">Phone</p>
-                  <p className="font-medium">{viewingClient.phone || '—'}</p>
+                  <p className="text-sm sm:text-base font-medium">{viewingClient.phone || '—'}</p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border sm:col-span-2">
                   <p className="text-xs text-muted-foreground">Address</p>
-                  <p className="font-medium">{viewingClient.address || '—'}</p>
+                  <p className="text-sm sm:text-base font-medium">{viewingClient.address || '—'}</p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">City</p>
-                  <p className="font-medium">{viewingClient.city || '—'}</p>
+                  <p className="text-sm sm:text-base font-medium">{viewingClient.city || '—'}</p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
                   <p className="text-xs text-muted-foreground">Agent</p>
-                  <p className="font-medium">
+                  <p className="text-sm sm:text-base font-medium">
                     {isClientUnassigned(viewingClient) ? 'No Agent' : (viewingClient.agent_name || 'Unassigned')}
                   </p>
                 </div>
-                <div className="p-4 bg-muted/40 rounded-lg border">
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border sm:col-span-2">
                   <p className="text-xs text-muted-foreground">Status</p>
                   <Badge variant="outline">{viewingClient.status}</Badge>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 bg-background rounded-lg border">
-                  <p className="text-xs text-muted-foreground">Orders</p>
-                  <p className="text-2xl font-bold">{viewingClient.total_orders}</p>
-                </div>
-                <div className="p-4 bg-background rounded-lg border">
-                  <p className="text-xs text-muted-foreground">Total Spent</p>
-                  <p className="text-1xl font-bold">₱{viewingClient.total_spent.toLocaleString()}</p>
-                </div>
-                <div className="p-4 bg-background rounded-lg border">
-                  <p className="text-xs text-muted-foreground">Total Visits</p>
-                  <div className="flex items-center gap-1 text-purple-600">
-                    <MapPin className="h-5 w-5" />
-                    <p className="text-2xl font-bold">{viewingClient.visit_count}</p>
-                  </div>
-                </div>
-                <div className="p-4 bg-background rounded-lg border">
-                  <p className="text-xs text-muted-foreground">Last Order</p>
-                  <p className="text-sm font-medium">{viewingClient.last_order_date ? new Date(viewingClient.last_order_date).toLocaleDateString() : '—'}</p>
+              {/* Brands they have */}
+              <div className="space-y-2 sm:space-y-3">
+                <h4 className="font-semibold text-xs sm:text-sm flex items-center gap-2 text-gray-900">
+                  <Tag className="h-3 w-3 sm:h-4 sm:w-4" />
+                  Brands they have
+                </h4>
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border">
+                  {viewingClient.brand_ids && viewingClient.brand_ids.length > 0 && brands.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                      {viewingClient.brand_ids
+                        .map((id) => brands.find((b) => b.id === id))
+                        .filter((b): b is { id: string; name: string } => !!b)
+                        .map((b) => (
+                          <Badge key={b.id} variant="secondary" className="font-normal text-xs">
+                            {b.name}
+                          </Badge>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs sm:text-sm text-muted-foreground">No brands assigned</p>
+                  )}
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <div className="p-3 sm:p-4 bg-background rounded-lg border">
+                  <p className="text-xs text-muted-foreground">Orders</p>
+                  <p className="text-xl sm:text-2xl font-bold">{viewingClient.total_orders}</p>
+                </div>
+                <div className="p-3 sm:p-4 bg-background rounded-lg border">
+                  <p className="text-xs text-muted-foreground">Total Spent</p>
+                  <p className="text-lg sm:text-xl font-bold">₱{viewingClient.total_spent.toLocaleString()}</p>
+                </div>
+                <div className="p-3 sm:p-4 bg-background rounded-lg border">
+                  <p className="text-xs text-muted-foreground">Total Visits</p>
+                  <div className="flex items-center gap-1 text-purple-600">
+                    <MapPin className="h-4 w-4 sm:h-5 sm:w-5" />
+                    <p className="text-xl sm:text-2xl font-bold">{viewingClient.visit_count}</p>
+                  </div>
+                </div>
+                <div className="p-3 sm:p-4 bg-background rounded-lg border">
+                  <p className="text-xs text-muted-foreground">Last Order</p>
+                  <p className="text-xs sm:text-sm font-medium">{viewingClient.last_order_date ? new Date(viewingClient.last_order_date).toLocaleDateString() : '—'}</p>
+                </div>
+              </div>
+
+          
+
+
               {/* Compliance Checklist */}
-              <div className="space-y-3">
-                <h4 className="font-semibold text-sm text-gray-900">Compliance Status</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2 sm:space-y-3">
+                <h4 className="font-semibold text-xs sm:text-sm text-gray-900">Compliance Status</h4>
+                <div className="grid grid-cols-1 gap-3 sm:gap-4">
                   {/* COR Check */}
-                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.cor_url ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${viewingClient.cor_url ? 'bg-green-100' : 'bg-red-100'}`}>
-                        {viewingClient.cor_url ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                  <div className={`flex items-center justify-between p-3 sm:p-4 rounded-lg border ${viewingClient.cor_url ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                      <div className={`p-1.5 sm:p-2 rounded-full flex-shrink-0 ${viewingClient.cor_url ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {viewingClient.cor_url ? <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-600" /> : <X className="h-4 w-4 sm:h-5 sm:w-5 text-red-600" />}
                       </div>
-                      <div>
-                        <p className={`font-medium ${viewingClient.cor_url ? 'text-green-900' : 'text-red-900'}`}>COR (Certificate of Registration)</p>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xs sm:text-sm font-medium truncate ${viewingClient.cor_url ? 'text-green-900' : 'text-red-900'}`}>COR (Certificate of Registration)</p>
                         <p className="text-xs text-muted-foreground">{viewingClient.cor_url ? 'Uploaded & Verified' : 'Missing Document'}</p>
                       </div>
                     </div>
                     {viewingClient.cor_url && (
-                      <Button variant="ghost" size="sm" onClick={() => window.open(viewingClient.cor_url, '_blank')}>
-                        <Eye className="h-4 w-4" />
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 flex-shrink-0" onClick={() => window.open(viewingClient.cor_url, '_blank')}>
+                        <Eye className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                       </Button>
                     )}
                   </div>
 
                   {/* TIN Check */}
-                  <div className={`flex items-center justify-between p-4 rounded-lg border ${viewingClient.tin ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${viewingClient.tin ? 'bg-green-100' : 'bg-red-100'}`}>
-                        {viewingClient.tin ? <CheckCircle className="h-5 w-5 text-green-600" /> : <X className="h-5 w-5 text-red-600" />}
+                  <div className={`flex items-center justify-between p-3 sm:p-4 rounded-lg border ${viewingClient.tin ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                      <div className={`p-1.5 sm:p-2 rounded-full flex-shrink-0 ${viewingClient.tin ? 'bg-green-100' : 'bg-red-100'}`}>
+                        {viewingClient.tin ? <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-600" /> : <X className="h-4 w-4 sm:h-5 sm:w-5 text-red-600" />}
                       </div>
-                      <div>
-                        <p className={`font-medium ${viewingClient.tin ? 'text-green-900' : 'text-red-900'}`}>TIN (Tax ID Number)</p>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xs sm:text-sm font-medium truncate ${viewingClient.tin ? 'text-green-900' : 'text-red-900'}`}>TIN (Tax ID Number)</p>
                         <p className="text-xs text-muted-foreground">{viewingClient.tin ? viewingClient.tin : 'Missing TIN'}</p>
                       </div>
                     </div>
@@ -3480,6 +4065,14 @@ export default function ClientsPage() {
                   <span className="ml-2 font-medium text-foreground">{new Date(viewingClient.updated_at).toLocaleString()}</span>
                 </div>
               </div>
+                  {(isAdmin || isSuperAdmin) && (
+                <div className="flex justify-end pt-2">
+                  <Button variant="default" className="w-full sm:w-auto" onClick={() => navigate(`/analytics/client/${viewingClient.id}`)}>
+                    <BarChart3 className="h-4 w-4 mr-2" />
+                    In depth Analytics
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
@@ -3720,20 +4313,26 @@ export default function ClientsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Type Of Account</Label>
-                      <Select
-                        value={editForm.account_type}
-                        onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
-                          setEditForm({ ...editForm, account_type: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
-                          <SelectItem value="Key Accounts">Key Accounts</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        <Select
+                          value={editForm.account_type}
+                          onValueChange={(value: 'Key Accounts' | 'Standard Accounts') =>
+                            setEditForm({ ...editForm, account_type: value })
+                          }
+                          disabled={!!companyAccountType}
+                        >
+                          <SelectTrigger className="h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                            <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {companyAccountType && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Account type is set by your company settings.
+                          </p>
+                        )}
                     </div>
                     <div className="space-y-2">
                       <Label>Category</Label>
@@ -3754,28 +4353,89 @@ export default function ClientsPage() {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>Has Forge?</Label>
-                      <RadioGroup
-                        value={editForm.has_forge ? 'yes' : 'no'}
-                        onValueChange={(value) => setEditForm({ ...editForm, has_forge: value === 'yes' })}
-                        className="flex gap-6 pt-2"
+                      <Label>Shop Type</Label>
+                      <Select
+                        value={isEditOtherShopType ? 'Other' : editForm.shop_type}
+                        onValueChange={(value) => {
+                          if (value === 'Other') {
+                            setIsEditOtherShopType(true);
+                            setEditForm({ ...editForm, shop_type: 'Other' });
+                          } else {
+                            setIsEditOtherShopType(false);
+                            setEditCustomShopType('');
+                            setEditForm({ ...editForm, shop_type: value });
+                          }
+                        }}
                       >
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="yes" id="edit-has-forge-yes" />
-                          <Label htmlFor="edit-has-forge-yes" className="font-normal cursor-pointer">
-                            Yes
-                          </Label>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select shop type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {shopTypes.map((type) => (
+                            <SelectItem key={type.id} value={type.type_name}>
+                              {type.type_name}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="Other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {isEditOtherShopType && (
+                        <div className="mt-2">
+                          <Input
+                            placeholder="Enter custom shop type"
+                            value={editCustomShopType}
+                            onChange={(e) => setEditCustomShopType(e.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            This custom type will be available for all users in your company
+                          </p>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="no" id="edit-has-forge-no" />
-                          <Label htmlFor="edit-has-forge-no" className="font-normal cursor-pointer">
-                            No
-                          </Label>
-                        </div>
-                      </RadioGroup>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Has Forge?</Label>
                     </div>
                   </div>
                 </div>
+
+                {/* Brands Selection */}
+                {brands.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold">Products / Brands Client is Holding</Label>
+                    <p className="text-xs text-muted-foreground">Select all brands/products this client is currently holding</p>
+                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                      {brands.map((brand) => (
+                        <div key={brand.id} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`edit-brand-${brand.id}`}
+                            checked={editForm.brand_ids.includes(brand.id)}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setEditForm({
+                                  ...editForm,
+                                  brand_ids: [...editForm.brand_ids, brand.id]
+                                });
+                              } else {
+                                setEditForm({
+                                  ...editForm,
+                                  brand_ids: editForm.brand_ids.filter(id => id !== brand.id)
+                                });
+                              }
+                            }}
+                          />
+                          <Label htmlFor={`edit-brand-${brand.id}`} className="text-sm font-normal cursor-pointer">
+                            {brand.name}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                    {editForm.brand_ids.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {editForm.brand_ids.length} {editForm.brand_ids.length === 1 ? 'brand' : 'brands'} selected
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* COR Upload Section for Admin/Super Admin */}
                 {(isAdmin || isSuperAdmin) && (
@@ -4005,6 +4665,16 @@ export default function ClientsPage() {
 
               <div className="space-y-2">
                 <Label>Select New Agent</Label>
+                {/* Agent Search Bar */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search agents..."
+                    value={agentSearchQuery}
+                    onChange={(e) => setAgentSearchQuery(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
                 {loadingAgents ? (
                   <div className="flex items-center justify-center py-4">
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -4016,10 +4686,11 @@ export default function ClientsPage() {
                       .filter(agent => {
                         // For unassigned clients, show all agents
                         if (isClientUnassigned(transferringClient)) {
-                          return true;
+                          return agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase());
                         }
-                        // For regular clients, exclude current agent
-                        return agent.id !== transferringClient.agent_id;
+                        // For regular clients, exclude current agent and apply search filter
+                        return agent.id !== transferringClient.agent_id && 
+                               agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase());
                       })
                       .map((agent) => (
                         <div
@@ -4055,6 +4726,21 @@ export default function ClientsPage() {
                           </div>
                         </div>
                       ))}
+                    {/* Show "No agents found" when search returns no results */}
+                    {agents
+                      .filter(agent => {
+                        if (isClientUnassigned(transferringClient)) {
+                          return agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase());
+                        }
+                        return agent.id !== transferringClient.agent_id && 
+                               agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase());
+                      }).length === 0 && agentSearchQuery && (
+                        <div className="p-4 text-center border rounded-lg bg-muted/30">
+                          <p className="text-sm text-muted-foreground">
+                            No agents found matching "{agentSearchQuery}"
+                          </p>
+                        </div>
+                      )}
                     {!isClientUnassigned(transferringClient) && transferringClient.agent_id && agents.filter(agent => agent.id === transferringClient.agent_id).length > 0 && (
                       <div className="p-3 border rounded-lg bg-muted/30 border-muted">
                         <div className="flex items-center justify-between">
@@ -4141,6 +4827,20 @@ export default function ClientsPage() {
               Assign multiple clients to different agents at once. Clients are grouped by city for easier management.
             </DialogDescription>
           </DialogHeader>
+          
+          {/* Global Agent Search */}
+          <div className="px-6 pb-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search agents..."
+                value={agentSearchQuery}
+                onChange={(e) => setAgentSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+          </div>
+          
           <div className="space-y-4 py-4">
             {loadingAgents ? (
               <div className="flex items-center justify-center py-8">
@@ -4182,16 +4882,27 @@ export default function ClientsPage() {
                               <SelectValue placeholder="Select agent" />
                             </SelectTrigger>
                             <SelectContent>
-                              {agents.map((agent) => (
-                                <SelectItem key={agent.id} value={agent.id}>
-                                  <div className="flex items-center justify-between w-full">
-                                    <span>{agent.name}</span>
-                                    <span className="text-muted-foreground ml-2">
-                                      ({agent.clientCount} clients)
-                                    </span>
-                                  </div>
-                                </SelectItem>
-                              ))}
+                              {agents
+                                .filter((agent) =>
+                                  agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase())
+                                )
+                                .map((agent) => (
+                                  <SelectItem key={agent.id} value={agent.id}>
+                                    <div className="flex items-center justify-between w-full">
+                                      <span>{agent.name}</span>
+                                      <span className="text-muted-foreground ml-2">
+                                        ({agent.clientCount} clients)
+                                      </span>
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              {agents.filter((agent) =>
+                                agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase())
+                              ).length === 0 && (
+                                <div className="p-2 text-center text-sm text-muted-foreground">
+                                  No agents found
+                                </div>
+                              )}
                             </SelectContent>
                           </Select>
                         </div>
@@ -4273,28 +4984,62 @@ export default function ClientsPage() {
                 </div>
 
                 {/* Transfer To */}
-                <div className="space-y-2">
-                  <Label>Transfer to</Label>
-                  <Select
-                    value={selectedTransferAgent}
-                    onValueChange={setSelectedTransferAgent}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {getAvailableAgents(selectedCity).map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id}>
-                          <div className="flex items-center justify-between w-full">
-                            <span>{agent.name}</span>
-                            <span className="text-muted-foreground ml-2">
-                              ({agent.clientCount} clients)
-                            </span>
+                <div className="space-y-3">
+                  <Label className="text-base font-semibold">Transfer to Agent</Label>
+                  {/* Agent Search Bar */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search agents..."
+                      value={agentSearchQuery}
+                      onChange={(e) => setAgentSearchQuery(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                  
+                  {/* Agent Selection List */}
+                  <div className="border rounded-lg max-h-64 overflow-y-auto">
+                    <RadioGroup value={selectedTransferAgent} onValueChange={setSelectedTransferAgent}>
+                      {getAvailableAgents(selectedCity)
+                        .filter((agent) =>
+                          agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase())
+                        )
+                        .map((agent) => (
+                          <div
+                            key={agent.id}
+                            className={`flex items-center space-x-3 p-3 border-b last:border-b-0 cursor-pointer hover:bg-muted/50 transition-colors ${
+                              selectedTransferAgent === agent.id ? 'bg-primary/5 border-l-4 border-l-primary' : ''
+                            }`}
+                            onClick={() => setSelectedTransferAgent(agent.id)}
+                          >
+                            <RadioGroupItem value={agent.id} id={`agent-${agent.id}`} />
+                            <Label
+                              htmlFor={`agent-${agent.id}`}
+                              className="flex-1 cursor-pointer flex items-center justify-between"
+                            >
+                              <div>
+                                <p className="font-medium">{agent.name}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {agent.role === 'team_leader' ? 'Team Leader' : agent.role === 'mobile_sales' ? 'Mobile Sales' : 'Manager'}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <Badge variant="secondary" className="text-xs">
+                                  {agent.clientCount} clients
+                                </Badge>
+                              </div>
+                            </Label>
                           </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                        ))}
+                      {getAvailableAgents(selectedCity).filter((agent) =>
+                        agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase())
+                      ).length === 0 && (
+                        <div className="p-4 text-center text-sm text-muted-foreground">
+                          No agents found
+                        </div>
+                      )}
+                    </RadioGroup>
+                  </div>
                 </div>
 
                 {/* Clients List */}

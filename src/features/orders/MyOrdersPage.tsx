@@ -4,22 +4,25 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { useOrders, type OrderItem } from './OrderContext';
+import { useOrders, type OrderItem, type PaymentSplit } from './OrderContext';
 import { useAuth } from '@/features/auth';
 import { useAgentInventory } from '@/features/inventory/hooks';
 import { supabase } from '@/lib/supabase';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { sendOrderConfirmationEmail } from '@/lib/email.helpers';
+import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
+import type { BankAccount } from '@/types/database.types';
+import { PRICING_OPTIONS, type PricingColumn } from '@/types/database.types';
 
 interface SelectedItem {
   variantId: string;
@@ -32,6 +35,7 @@ interface SelectedItem {
   rspPrice?: number;
   availableStock: number;
   quantity: number;
+  customPrice?: number; // For special pricing
 }
 
 export default function MyOrdersPage() {
@@ -66,8 +70,26 @@ export default function MyOrdersPage() {
     }
   };
 
-  // Helper function to format payment method
-  const formatPaymentMethod = (method: string | undefined, bankType?: string) => {
+  // Helper function to format payment / split payment summary
+  const formatPaymentSummary = (order: any) => {
+    // Split payment: show indicator + methods/banks
+    if (order.paymentMode === 'SPLIT' && Array.isArray(order.paymentSplits) && order.paymentSplits.length > 0) {
+      const parts = order.paymentSplits.map((split: any) => {
+        if (split.method === 'BANK_TRANSFER') {
+          return split.bank ? split.bank : 'Bank Transfer';
+        }
+        if (split.method === 'GCASH') return 'GCash';
+        if (split.method === 'CASH') return 'Cash';
+        if (split.method === 'CHEQUE') return 'Cheque';
+        return split.method;
+      });
+      return `Split Payment: ${parts.join(' + ')}`;
+    }
+
+    // Full payment: fall back to legacy formatting
+    const method = order.paymentMethod as string | undefined;
+    const bankType = order.bankType as string | undefined;
+
     if (!method) return 'N/A';
     switch (method) {
       case 'GCASH':
@@ -110,18 +132,49 @@ export default function MyOrdersPage() {
   const [showPaymentMethodModal, setShowPaymentMethodModal] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null>(null);
   const [showBankSelectionModal, setShowBankSelectionModal] = useState(false);
-  const [selectedBank, setSelectedBank] = useState<{ name: string; accountNumber: string } | null>(null);
+  const [selectedBank, setSelectedBank] = useState<BankAccount | null>(null);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null);
   const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
 
-  // Bank accounts configuration
-  const bankAccounts = [
-    { name: 'Unionbank', accountNumber: '00-218-002553-7' },
-    { name: 'BPI', accountNumber: '1761-011118' },
-    { name: 'PBCOM', accountNumber: '238101006138' }
-  ];
+  // Split payment states
+  const [paymentMode, setPaymentMode] = useState<'FULL' | 'SPLIT'>('FULL');
+  const [showPaymentModeDialog, setShowPaymentModeDialog] = useState(false);
+  const [showSplitPaymentDialog, setShowSplitPaymentDialog] = useState(false);
+  const [paymentSplits, setPaymentSplits] = useState<PaymentSplit[]>([]); // Start with no selections
+  const [splitValidationError, setSplitValidationError] = useState<string>('');
+
+  // Payment settings from database
+  const { settings: paymentSettings, loading: loadingPaymentSettings } = usePaymentSettings();
+  
+  // Get enabled bank accounts from payment settings
+  const bankAccounts = paymentSettings?.bank_accounts?.filter(bank => bank.enabled) || [];
+
+  // Log when payment settings change (for debugging real-time updates)
+  useEffect(() => {
+    if (paymentSettings) {
+      console.log('🔄 [MyOrders] Payment settings updated:', {
+        bank_transfer: paymentSettings.bank_transfer_enabled,
+        gcash: paymentSettings.gcash_enabled,
+        cash: paymentSettings.cash_enabled,
+        cheque: paymentSettings.cheque_enabled,
+        banks_count: bankAccounts.length
+      });
+    }
+  }, [paymentSettings, bankAccounts.length]);
+
+  // Log when payment modal is open and settings are available (to verify real-time)
+  useEffect(() => {
+    if (showPaymentMethodModal && paymentSettings) {
+      console.log('💳 [Payment Modal] Rendering with settings:', {
+        bank_transfer: paymentSettings.bank_transfer_enabled,
+        gcash: paymentSettings.gcash_enabled,
+        cash: paymentSettings.cash_enabled,
+        cheque: paymentSettings.cheque_enabled
+      });
+    }
+  }, [showPaymentMethodModal, paymentSettings]);
 
   // Camera states
   const [showCamera, setShowCamera] = useState(false);
@@ -142,7 +195,8 @@ export default function MyOrdersPage() {
   const [clientName, setClientName] = useState('');
   const [clientCompany, setClientCompany] = useState('');
   const [selectedBrandName, setSelectedBrandName] = useState('');
-  const [pricingType, setPricingType] = useState<'rsp' | 'dsp' | 'special'>('rsp'); // Auto-determined from company config
+  const [pricingType, setPricingType] = useState<'rsp' | 'dsp' | 'special' | ''>(''); // No default - user must select
+  const [customPrices, setCustomPrices] = useState<Record<string, number>>({}); // For special pricing
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
   const [taxRate, setTaxRate] = useState(0);
   const [discount, setDiscount] = useState(0);
@@ -155,7 +209,7 @@ export default function MyOrdersPage() {
 
   const myOrders = user ? getOrdersByAgent(user.id) : [];
 
-  // Fetch company pricing configuration on mount
+  // Fetch company pricing configuration on mount and subscribe to real-time changes
   useEffect(() => {
     const fetchPricingConfig = async () => {
       if (!user?.company_id) {
@@ -192,35 +246,75 @@ export default function MyOrdersPage() {
 
         setAllowedPricingStrategies(allowedStrategies);
 
-        // Auto-determine pricing type based on priority: rsp_price > dsp_price > selling_price
-        if (allowedStrategies.includes('rsp_price')) {
-          setPricingType('rsp');
-        } else if (allowedStrategies.includes('dsp_price')) {
-          setPricingType('dsp');
-        } else if (allowedStrategies.includes('selling_price')) {
-          setPricingType('special');
+        // If only ONE strategy is enabled, auto-select it (backward compatibility)
+        // Otherwise, user must manually select
+        if (allowedStrategies.length === 1) {
+          const strategy = allowedStrategies[0];
+          if (strategy === 'rsp_price') {
+            setPricingType('rsp');
+          } else if (strategy === 'dsp_price') {
+            setPricingType('dsp');
+          } else if (strategy === 'selling_price') {
+            setPricingType('special');
+          }
         } else {
-          // Fallback to RSP
-          setPricingType('rsp');
+          // Multiple strategies - no default, user must select
+          setPricingType('');
         }
 
         console.log('✅ [Pricing Config] Loaded:', {
           role: user.role,
           allowedStrategies,
-          autoDeterminedType: allowedStrategies.includes('rsp_price') ? 'rsp' : allowedStrategies.includes('dsp_price') ? 'dsp' : 'special'
+          autoSelected: allowedStrategies.length === 1
         });
 
       } catch (error) {
         console.error('Error in pricing config fetch:', error);
         setAllowedPricingStrategies(['rsp_price']);
-        setPricingType('rsp');
+        setPricingType('rsp'); // Single option, auto-select
       } finally {
         setLoadingPricingConfig(false);
       }
     };
 
     fetchPricingConfig();
-  }, [user?.company_id, user?.role]);
+
+    // Set up real-time subscription for pricing configuration changes
+    if (user?.company_id) {
+      console.log('🔄 [Pricing Config] Setting up real-time subscription for company:', user.company_id);
+      
+      const pricingChannel = supabase
+        .channel(`pricing-config-${user.company_id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'companies',
+            filter: `id=eq.${user.company_id}`
+          },
+          (payload) => {
+            console.log('🔔 [Pricing Config] Real-time update received:', payload);
+            
+            // Re-fetch pricing config when company settings change
+            fetchPricingConfig();
+            
+            // Show toast notification
+            toast({
+              title: 'Pricing Settings Updated',
+              description: 'Your available pricing options have been updated by an administrator.',
+            });
+          }
+        )
+        .subscribe();
+
+      // Cleanup subscription on unmount
+      return () => {
+        console.log('🔌 [Pricing Config] Unsubscribing from real-time updates');
+        supabase.removeChannel(pricingChannel);
+      };
+    }
+  }, [user?.company_id, user?.role, toast]);
 
   // Apply all filters
   const filteredOrders = myOrders.filter(order => {
@@ -334,19 +428,20 @@ export default function MyOrdersPage() {
     const safeQuantity = Math.min(Math.max(0, quantity), availableStock);
     const existingItemIndex = selectedItems.findIndex(item => item.variantId === variantId);
 
-    // Determine the correct unit price based on privacy type strategy
+    // Determine the correct unit price based on pricing type strategy
     let finalUnitPrice = baseUnitPrice;
     const validDsp = dspPrice && dspPrice > 0 ? dspPrice : undefined;
     const validRsp = rspPrice && rspPrice > 0 ? rspPrice : undefined;
     const validSelling = sellingPrice && sellingPrice > 0 ? sellingPrice : undefined;
 
-    // For Special Price, if item exists, keep its edited price
-    // If it's new, we use the baseUnitPrice (which usually falls back to selling/rsp)
+    // For Special Pricing, use custom price from customPrices state
     if (pricingType === 'special') {
       if (existingItemIndex >= 0) {
-        finalUnitPrice = selectedItems[existingItemIndex].unitPrice;
+        // Keep existing custom price
+        finalUnitPrice = selectedItems[existingItemIndex].customPrice || customPrices[variantId] || 0;
       } else {
-        finalUnitPrice = 0;
+        // Use custom price from state, or 0 if not set
+        finalUnitPrice = customPrices[variantId] || 0;
       }
     } else if (pricingType === 'dsp') {
       finalUnitPrice = validDsp ?? validSelling ?? baseUnitPrice;
@@ -360,7 +455,7 @@ export default function MyOrdersPage() {
         // Update existing item
         setSelectedItems(selectedItems.map(item =>
           item.variantId === variantId
-            ? { ...item, quantity: safeQuantity, unitPrice: finalUnitPrice }
+            ? { ...item, quantity: safeQuantity, unitPrice: finalUnitPrice, customPrice: pricingType === 'special' ? finalUnitPrice : undefined }
             : item
         ));
       } else {
@@ -375,13 +470,20 @@ export default function MyOrdersPage() {
           dspPrice,
           rspPrice,
           availableStock,
-          quantity: safeQuantity
+          quantity: safeQuantity,
+          customPrice: pricingType === 'special' ? finalUnitPrice : undefined
         }]);
       }
     } else {
       // Remove item if quantity is 0
       if (existingItemIndex >= 0) {
         setSelectedItems(selectedItems.filter(item => item.variantId !== variantId));
+        // Also remove custom price
+        if (pricingType === 'special') {
+          const newPrices = { ...customPrices };
+          delete newPrices[variantId];
+          setCustomPrices(newPrices);
+        }
       }
     }
   };
@@ -392,9 +494,25 @@ export default function MyOrdersPage() {
 
     setSelectedItems(selectedItems.map(item =>
       item.variantId === variantId
-        ? { ...item, unitPrice: newPrice }
+        ? { ...item, unitPrice: newPrice, customPrice: newPrice }
         : item
     ));
+  };
+
+  // Handle custom price input change
+  const handleCustomPriceChange = (variantId: string, priceStr: string) => {
+    const price = parseFloat(priceStr) || 0;
+    setCustomPrices(prev => ({ ...prev, [variantId]: price }));
+    
+    // Update existing item if already selected
+    const existingItem = selectedItems.find(item => item.variantId === variantId);
+    if (existingItem) {
+      setSelectedItems(selectedItems.map(item =>
+        item.variantId === variantId
+          ? { ...item, unitPrice: price, customPrice: price }
+          : item
+      ));
+    }
   };
 
   // Update prices when pricing type changes (except for 'special', where we might reset or keep)
@@ -462,7 +580,24 @@ export default function MyOrdersPage() {
     setClientCompany('');
     setClientEmail('');
     setSelectedBrandName('');
-    setPricingType('rsp'); // Reset to RSP
+    
+    // Reset pricing type based on allowed strategies
+    if (allowedPricingStrategies.length === 1) {
+      // Auto-select if only one option
+      const strategy = allowedPricingStrategies[0];
+      if (strategy === 'rsp_price') {
+        setPricingType('rsp');
+      } else if (strategy === 'dsp_price') {
+        setPricingType('dsp');
+      } else if (strategy === 'selling_price') {
+        setPricingType('special');
+      }
+    } else {
+      // No default if multiple options
+      setPricingType('');
+    }
+    
+    setCustomPrices({}); // Reset custom prices
     setSelectedItems([]);
     setDiscount(0);
     setNotes('');
@@ -475,6 +610,10 @@ export default function MyOrdersPage() {
     setSelectedBank(null);
     setPaymentProofFile(null);
     setPaymentProofPreview(null);
+    // Reset split payment states
+    setPaymentMode('FULL');
+    setPaymentSplits([]); // Start with no selections
+    setSplitValidationError('');
     // Reset sales invoice request
     setRequestSalesInvoice(false);
   };
@@ -501,6 +640,33 @@ export default function MyOrdersPage() {
       return;
     }
 
+    // Validate pricing strategy selection
+    if (allowedPricingStrategies.length > 1 && !pricingType) {
+      toast({ 
+        title: 'Pricing Strategy Required', 
+        description: 'Please select a pricing strategy before creating the order', 
+        variant: 'destructive' 
+      });
+      return;
+    }
+
+    // Validate custom prices for special pricing
+    if (pricingType === 'special') {
+      const itemsWithoutPrice = selectedItems.filter(item => {
+        const customPrice = customPrices[item.variantId];
+        return !customPrice || customPrice <= 0;
+      });
+
+      if (itemsWithoutPrice.length > 0) {
+        toast({ 
+          title: 'Custom Prices Required', 
+          description: `Please enter valid prices for all selected items. ${itemsWithoutPrice.length} item(s) missing prices.`, 
+          variant: 'destructive' 
+        });
+        return;
+      }
+    }
+
     // Close the create dialog and open signature modal
     setCreateDialogOpen(false);
     setShowSignatureModal(true);
@@ -510,7 +676,7 @@ export default function MyOrdersPage() {
   const handleSignatureCaptured = (dataUrl: string) => {
     setSignatureDataUrl(dataUrl);
     setShowSignatureModal(false);
-    setShowPaymentMethodModal(true);
+    setShowPaymentModeDialog(true); // Changed to show payment mode selector first
   };
 
   // Handle payment method selection
@@ -527,8 +693,8 @@ export default function MyOrdersPage() {
     }
   };
 
-  // Handle bank selection
-  const handleBankSelected = (bank: { name: string; accountNumber: string }) => {
+  // Handle bank selection (use BankAccount shape from database.types)
+  const handleBankSelected = (bank: BankAccount) => {
     setSelectedBank(bank);
     setShowBankSelectionModal(false);
     setShowPaymentProofModal(true);
@@ -760,6 +926,137 @@ export default function MyOrdersPage() {
     }
   }, [showPaymentProofModal]);
 
+  // Split payment helper functions
+  // Removed unused helper functions: updateSplit, applyPreset, autoFillAmount
+  // The new design directly manipulates paymentSplits array
+
+  const getSplitTotal = () => {
+    return paymentSplits.reduce((sum, split) => sum + (split.amount || 0), 0);
+  };
+
+  const validateSplitPayment = () => {
+    const total = getSplitTotal();
+    const orderTotal = calculateTotal();
+    const allMethodsSelected = paymentSplits.every(s => s.method);
+    const allAmountsValid = paymentSplits.every(s => s.amount > 0);
+    const allProofsUploaded = paymentSplits.every(s => s.proofFile);
+    const totalMatches = Math.abs(total - orderTotal) < 0.01;
+
+    if (!allMethodsSelected) {
+      setSplitValidationError('Please select payment method for all splits');
+      return false;
+    }
+    if (!allAmountsValid) {
+      setSplitValidationError('Please enter amount for all splits');
+      return false;
+    }
+    if (!allProofsUploaded) {
+      setSplitValidationError('Please upload payment proof for all splits');
+      return false;
+    }
+    if (total > orderTotal) {
+      setSplitValidationError(`Split total exceeds order by ₱${(total - orderTotal).toLocaleString()}`);
+      return false;
+    }
+    if (total < orderTotal) {
+      setSplitValidationError(`Split total is ₱${(orderTotal - total).toLocaleString()} below order total`);
+      return false;
+    }
+    
+    setSplitValidationError('');
+    return totalMatches;
+  };
+
+  const handleContinueWithSplit = () => {
+    if (validateSplitPayment()) {
+      setShowSplitPaymentDialog(false);
+      setShowConfirmModal(true);
+    }
+  };
+
+  // Upload split payment proof to Supabase Storage
+  const uploadSplitProof = async (file: File, index: number, orderNumber: string): Promise<string> => {
+    if (!user || !selectedClientId || !clientName) {
+      throw new Error('User, client ID, or client name not available');
+    }
+
+    try {
+      const bucketName = 'payment-proofs';
+      const split = paymentSplits[index];
+      
+      // Determine folder based on payment method
+      let folderPath: string;
+      
+      if (split.method === 'BANK_TRANSFER' && split.bank) {
+        const sanitizedBankName = split.bank.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, '-');
+        folderPath = `bank-transfer/${sanitizedBankName}/${orderNumber}`;
+      } else {
+        // For GCASH, CASH, CHEQUE
+        const sanitizeForPath = (str: string) => {
+          return str
+            .trim()
+            .replace(/[<>:"/\\|?*]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        };
+        
+        const cleanClientName = sanitizeForPath(clientName);
+        const cleanCompanyName = sanitizeForPath(clientCompany || '');
+        const clientFolderName = cleanCompanyName
+          ? `${cleanClientName} _ ${cleanCompanyName}`
+          : cleanClientName;
+        
+        folderPath = `${split.method}/${clientFolderName}`;
+      }
+      
+      // Format date and time
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+      const ampm = hours >= 12 ? 'pm' : 'am';
+      const displayHours = hours % 12 || 12;
+      const timeStr = `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+      
+      // Generate filename with split indicator
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const fileName = `${folderPath}/${dateStr}_${timeStr}_split${index + 1}.${fileExt}`;
+      
+      // Convert file to blob and upload
+      const arrayBuffer = await file.arrayBuffer();
+      const blob = new Blob([arrayBuffer], { type: file.type });
+      
+      const { error: uploadError } = await supabase.storage
+        .from(bucketName)
+        .upload(fileName, blob, {
+          contentType: file.type,
+          upsert: false
+        });
+      
+      if (uploadError) {
+        throw uploadError;
+      }
+      
+      // Get signed URL
+      const { data: { signedUrl }, error: signedUrlError } = await supabase.storage
+        .from(bucketName)
+        .createSignedUrl(fileName, 31536000); // 1 year expiry
+      
+      if (signedUrlError || !signedUrl) {
+        throw signedUrlError || new Error('Failed to get signed URL');
+      }
+      
+      return signedUrl;
+    } catch (error) {
+      console.error('Error uploading split payment proof:', error);
+      throw error;
+    }
+  };
+
   // Upload signature to Supabase Storage
   const uploadSignatureToStorage = async (): Promise<string> => {
     if (!signatureDataUrl || !user) {
@@ -812,10 +1109,22 @@ export default function MyOrdersPage() {
 
   // Final order submission
   const handleConfirmAndSubmitOrder = async () => {
-    if (!user || !signatureDataUrl || !paymentMethod || !paymentProofFile) {
+    // Validate based on payment mode
+    if (!user || !signatureDataUrl) {
       toast({
         title: 'Error',
-        description: 'User not authenticated, signature missing, payment method not selected, or payment proof missing',
+        description: 'User not authenticated or signature missing',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // Validate FULL payment mode
+    if (paymentMode === 'FULL') {
+      if (!paymentMethod || !paymentProofFile) {
+        toast({
+          title: 'Error',
+          description: 'Payment method not selected or payment proof missing',
         variant: 'destructive'
       });
       return;
@@ -829,6 +1138,19 @@ export default function MyOrdersPage() {
         variant: 'destructive'
       });
       return;
+      }
+    }
+
+    // Validate SPLIT payment mode
+    if (paymentMode === 'SPLIT') {
+      if (!validateSplitPayment()) {
+        toast({
+          title: 'Error',
+          description: 'Invalid split payment configuration',
+          variant: 'destructive'
+        });
+        return;
+      }
     }
 
     setUploadingSignature(true);
@@ -849,9 +1171,6 @@ export default function MyOrdersPage() {
       // Upload signature to Supabase Storage
       const signatureUrl = await uploadSignatureToStorage();
 
-      // Upload payment proof to Supabase Storage (pass order number for bank transfer path)
-      const paymentProofUrl = await uploadPaymentProofToStorage(generatedOrderNumber);
-
       // Convert selectedItems to OrderItems with variant IDs
       const orderItems: OrderItem[] = selectedItems.map((item) => ({
         id: item.variantId,
@@ -863,8 +1182,35 @@ export default function MyOrdersPage() {
         sellingPrice: item.sellingPrice,
         dspPrice: item.dspPrice,
         rspPrice: item.rspPrice,
+        customPrice: pricingType === 'special' ? item.customPrice : undefined,
         total: item.quantity * item.unitPrice
       }));
+
+      // Handle payment uploads and order data based on mode
+      let paymentProofUrl: string | undefined = undefined;
+      let uploadedSplits: PaymentSplit[] | undefined = undefined;
+
+      if (paymentMode === 'FULL') {
+        // Upload payment proof for FULL payment
+        paymentProofUrl = await uploadPaymentProofToStorage(generatedOrderNumber);
+      } else {
+        // Upload split payment proofs
+        const uploadsPromises = paymentSplits.map((split, index) => {
+          if (split.proofFile) {
+            return uploadSplitProof(split.proofFile, index, generatedOrderNumber);
+          }
+          return Promise.resolve('');
+        });
+        
+        const uploadedUrls = await Promise.all(uploadsPromises);
+        
+        uploadedSplits = paymentSplits.map((split, index) => ({
+          method: split.method,
+          bank: split.bank,
+          amount: split.amount,
+          proofUrl: uploadedUrls[index]
+        }));
+      }
 
       const newOrder = {
         id: Date.now().toString(),
@@ -882,10 +1228,12 @@ export default function MyOrdersPage() {
         notes,
         status: 'pending' as const,
         signatureUrl, // Add signature URL to order
-        paymentMethod, // Add payment method
-        bankType: paymentMethod === 'BANK_TRANSFER' && selectedBank ? selectedBank.name as 'Unionbank' | 'BPI' | 'PBCOM' : undefined, // Add bank type if bank transfer
-        paymentProofUrl, // Add payment proof URL
-        pricingStrategy: pricingType // Add pricing strategy selection
+        paymentMode, // NEW: Add payment mode
+        paymentMethod: paymentMode === 'FULL' ? paymentMethod : undefined, // Only for FULL
+        bankType: paymentMode === 'FULL' && paymentMethod === 'BANK_TRANSFER' && selectedBank ? selectedBank.name as 'Unionbank' | 'BPI' | 'PBCOM' : undefined, // Only for FULL bank transfer
+        paymentProofUrl: paymentMode === 'FULL' ? paymentProofUrl : undefined, // Only for FULL
+        paymentSplits: paymentMode === 'SPLIT' ? uploadedSplits : undefined, // NEW: Only for SPLIT
+        pricingStrategy: pricingType || 'rsp' // Add pricing strategy selection, fallback to RSP (should never be empty due to validation)
       };
 
       console.log('🛒 Creating order with signature:', newOrder);
@@ -973,10 +1321,14 @@ export default function MyOrdersPage() {
           agentEmail: user.email,
           agentPhone: agentPhone,
           leaderName: leaderName,
-          paymentMethod: paymentMethod,
-          paymentProofUrl: paymentProofUrl,
+          paymentMethod: paymentMode === 'FULL' ? paymentMethod : undefined,
+          selectedBank: paymentMode === 'FULL' && selectedBank ? selectedBank.name : undefined,
+          paymentProofUrl: paymentMode === 'FULL' ? paymentProofUrl : undefined,
+          paymentMode: paymentMode,
+          paymentSplits: paymentMode === 'SPLIT' ? uploadedSplits : undefined,
           pricingStrategy: pricingType,
-          requestSalesInvoice: requestSalesInvoice
+          requestSalesInvoice: requestSalesInvoice,
+          companyId: user.company_id
         });
 
         setEmailSentSuccessfully(true);
@@ -1221,18 +1573,84 @@ export default function MyOrdersPage() {
                 </p>
               </div>
 
-              {/* Pricing Strategy Indicator (Auto-configured by Super Admin) */}
+              {/* Pricing Strategy Selection */}
               {!loadingPricingConfig && (
-                <div className="flex items-center justify-between pt-2 border-t mt-4 bg-muted/30 p-3 rounded-lg">
+                <div className="space-y-3 pt-2 border-t mt-4 bg-muted/30 p-4 rounded-lg">
                   <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Pricing Strategy</Label>
-                    <p className="text-xs text-muted-foreground mt-0.5">Auto-configured by your company</p>
+                    <Label className="text-sm font-medium">Pricing Strategy *</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {allowedPricingStrategies.length === 1 
+                        ? 'Auto-configured by your company' 
+                        : 'Select the pricing strategy for this order'}
+                    </p>
                   </div>
-                  <Badge variant="secondary" className="text-sm font-medium">
-                    {pricingType === 'rsp' && 'RSP Pricing'}
-                    {pricingType === 'dsp' && 'DSP Pricing'}
-                    {pricingType === 'special' && 'Special Pricing'}
-                  </Badge>
+                  
+                  {allowedPricingStrategies.length === 1 ? (
+                    // Single strategy - show as badge
+                    <Badge variant="secondary" className="text-sm font-medium">
+                      {pricingType === 'rsp' && 'RSP Pricing'}
+                      {pricingType === 'dsp' && 'DSP Pricing'}
+                      {pricingType === 'special' && 'Special Pricing'}
+                    </Badge>
+                  ) : (
+                    // Multiple strategies - show radio buttons
+                    <RadioGroup 
+                      value={pricingType} 
+                      onValueChange={(value) => {
+                        setPricingType(value as 'rsp' | 'dsp' | 'special');
+                        // Reset custom prices when changing strategy
+                        if (value !== 'special') {
+                          setCustomPrices({});
+                        }
+                      }}
+                      className="gap-3"
+                    >
+                      {allowedPricingStrategies.includes('rsp_price') && (
+                        <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                          <RadioGroupItem value="rsp" id="pricing-rsp" />
+                          <Label htmlFor="pricing-rsp" className="flex-1 cursor-pointer">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium">{PRICING_OPTIONS.rsp_price.label}</div>
+                                <div className="text-xs text-muted-foreground">{PRICING_OPTIONS.rsp_price.description}</div>
+                              </div>
+                              <Badge variant="outline">{PRICING_OPTIONS.rsp_price.badge}</Badge>
+                            </div>
+                          </Label>
+                        </div>
+                      )}
+                      
+                      {allowedPricingStrategies.includes('dsp_price') && (
+                        <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                          <RadioGroupItem value="dsp" id="pricing-dsp" />
+                          <Label htmlFor="pricing-dsp" className="flex-1 cursor-pointer">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium">{PRICING_OPTIONS.dsp_price.label}</div>
+                                <div className="text-xs text-muted-foreground">{PRICING_OPTIONS.dsp_price.description}</div>
+                              </div>
+                              <Badge variant="outline">{PRICING_OPTIONS.dsp_price.badge}</Badge>
+                            </div>
+                          </Label>
+                        </div>
+                      )}
+                      
+                      {allowedPricingStrategies.includes('selling_price') && (
+                        <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                          <RadioGroupItem value="special" id="pricing-special" />
+                          <Label htmlFor="pricing-special" className="flex-1 cursor-pointer">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium">{PRICING_OPTIONS.selling_price.label}</div>
+                                <div className="text-xs text-muted-foreground">{PRICING_OPTIONS.selling_price.description}</div>
+                              </div>
+                              <Badge variant="outline">{PRICING_OPTIONS.selling_price.badge}</Badge>
+                            </div>
+                          </Label>
+                        </div>
+                      )}
+                    </RadioGroup>
+                  )}
                 </div>
               )}
 
@@ -1296,56 +1714,18 @@ export default function MyOrdersPage() {
                                       <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                         {flavor.stock} in stock
                                       </Badge>
-                                      <span className="text-sm font-semibold text-blue-700">₱{displayPrice.toFixed(2)}</span>
+                                      {pricingType !== 'special' && (
+                                        <span className="text-sm font-semibold text-blue-700">₱{displayPrice.toFixed(2)}</span>
+                                      )}
                                     </div>
                                     {flavor.stock === 0 && (
                                       <p className="text-xs text-red-600 mt-1">No more stock available</p>
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 pt-2 border-t border-blue-200">
-                                  <Label className="text-xs font-medium">Qty:</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    max={flavor.stock}
-                                    value={currentQuantity === 0 ? '' : currentQuantity}
-                                    placeholder="0"
-                                    onChange={(e) => {
-                                      const value = e.target.value;
-                                      const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                      handleQuantityChange(
-                                        flavor.id,
-                                        quantity,
-                                        selectedBrand.name,
-                                        flavor.name,
-                                        'flavor',
-                                        displayPrice,
-                                        flavor.stock,
-                                        (flavor as any).sellingPrice,
-                                        (flavor as any).dspPrice,
-                                        (flavor as any).rspPrice
-                                      );
-                                    }}
-                                    className="w-24 h-9"
-                                    disabled={flavor.stock === 0}
-                                  />
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{flavor.name}</span>
-                                  <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {flavor.stock} in stock
-                                  </Badge>
-                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                </div>
-                                {flavor.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
+                                <div className="flex flex-col gap-2 pt-2 border-t border-blue-200">
                                   <div className="flex items-center gap-2">
-                                    <Label className="text-xs">Qty:</Label>
+                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
                                     <Input
                                       type="number"
                                       min="0"
@@ -1362,12 +1742,91 @@ export default function MyOrdersPage() {
                                           flavor.name,
                                           'flavor',
                                           displayPrice,
-                                          flavor.stock
+                                          flavor.stock,
+                                          (flavor as any).sellingPrice,
+                                          (flavor as any).dspPrice,
+                                          (flavor as any).rspPrice
                                         );
                                       }}
-                                      className="w-20 h-8"
+                                      className="w-24 h-9"
                                       disabled={flavor.stock === 0}
                                     />
+                                  </div>
+                                  {pricingType === 'special' && (
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={customPrices[flavor.id] || ''}
+                                        placeholder={(flavor as any).sellingPrice?.toFixed(2) || '0.00'}
+                                        onChange={(e) => handleCustomPriceChange(flavor.id, e.target.value)}
+                                        className="w-24 h-9"
+                                        disabled={flavor.stock === 0}
+                                      />
+                                      <span className="text-xs text-muted-foreground">₱</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Desktop: Row Layout */}
+                              <div className="hidden sm:flex items-center justify-between">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <span className="font-medium">{flavor.name}</span>
+                                  <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                    {flavor.stock} in stock
+                                  </Badge>
+                                  {pricingType !== 'special' && (
+                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
+                                  )}
+                                </div>
+                                {flavor.stock === 0 ? (
+                                  <span className="text-xs text-red-600">No more stock available</span>
+                                ) : (
+                                  <div className="flex items-center gap-3">
+                                    {pricingType === 'special' && (
+                                      <div className="flex items-center gap-2">
+                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                        <Input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={customPrices[flavor.id] || ''}
+                                          placeholder={(flavor as any).sellingPrice?.toFixed(2) || '0.00'}
+                                          onChange={(e) => handleCustomPriceChange(flavor.id, e.target.value)}
+                                          className="w-24 h-8"
+                                        />
+                                        <span className="text-xs text-muted-foreground">₱</span>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs">Qty:</Label>
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        max={flavor.stock}
+                                        value={currentQuantity === 0 ? '' : currentQuantity}
+                                        placeholder="0"
+                                        onChange={(e) => {
+                                          const value = e.target.value;
+                                          const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                          handleQuantityChange(
+                                            flavor.id,
+                                            quantity,
+                                            selectedBrand.name,
+                                            flavor.name,
+                                            'flavor',
+                                            displayPrice,
+                                            flavor.stock,
+                                            (flavor as any).sellingPrice,
+                                            (flavor as any).dspPrice,
+                                            (flavor as any).rspPrice
+                                          );
+                                        }}
+                                        className="w-20 h-8"
+                                      />
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -1409,56 +1868,18 @@ export default function MyOrdersPage() {
                                       <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                         {battery.stock} in stock
                                       </Badge>
-                                      <span className="text-sm font-semibold text-green-700">₱{displayPrice.toFixed(2)}</span>
+                                      {pricingType !== 'special' && (
+                                        <span className="text-sm font-semibold text-green-700">₱{displayPrice.toFixed(2)}</span>
+                                      )}
                                     </div>
                                     {battery.stock === 0 && (
                                       <p className="text-xs text-red-600 mt-1">No more stock available</p>
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 pt-2 border-t border-green-200">
-                                  <Label className="text-xs font-medium">Qty:</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    max={battery.stock}
-                                    value={currentQuantity === 0 ? '' : currentQuantity}
-                                    placeholder="0"
-                                    onChange={(e) => {
-                                      const value = e.target.value;
-                                      const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                      handleQuantityChange(
-                                        battery.id,
-                                        quantity,
-                                        selectedBrand.name,
-                                        battery.name,
-                                        'battery',
-                                        displayPrice,
-                                        battery.stock,
-                                        (battery as any).sellingPrice,
-                                        (battery as any).dspPrice,
-                                        (battery as any).rspPrice
-                                      );
-                                    }}
-                                    className="w-24 h-9"
-                                    disabled={battery.stock === 0}
-                                  />
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{battery.name}</span>
-                                  <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {battery.stock} in stock
-                                  </Badge>
-                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                </div>
-                                {battery.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
+                                <div className="flex flex-col gap-2 pt-2 border-t border-green-200">
                                   <div className="flex items-center gap-2">
-                                    <Label className="text-xs">Qty:</Label>
+                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
                                     <Input
                                       type="number"
                                       min="0"
@@ -1475,12 +1896,91 @@ export default function MyOrdersPage() {
                                           battery.name,
                                           'battery',
                                           displayPrice,
-                                          battery.stock
+                                          battery.stock,
+                                          (battery as any).sellingPrice,
+                                          (battery as any).dspPrice,
+                                          (battery as any).rspPrice
                                         );
                                       }}
-                                      className="w-20 h-8"
+                                      className="w-24 h-9"
                                       disabled={battery.stock === 0}
                                     />
+                                  </div>
+                                  {pricingType === 'special' && (
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={customPrices[battery.id] || ''}
+                                        placeholder={(battery as any).sellingPrice?.toFixed(2) || '0.00'}
+                                        onChange={(e) => handleCustomPriceChange(battery.id, e.target.value)}
+                                        className="w-24 h-9"
+                                        disabled={battery.stock === 0}
+                                      />
+                                      <span className="text-xs text-muted-foreground">₱</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Desktop: Row Layout */}
+                              <div className="hidden sm:flex items-center justify-between">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <span className="font-medium">{battery.name}</span>
+                                  <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                    {battery.stock} in stock
+                                  </Badge>
+                                  {pricingType !== 'special' && (
+                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
+                                  )}
+                                </div>
+                                {battery.stock === 0 ? (
+                                  <span className="text-xs text-red-600">No more stock available</span>
+                                ) : (
+                                  <div className="flex items-center gap-3">
+                                    {pricingType === 'special' && (
+                                      <div className="flex items-center gap-2">
+                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                        <Input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={customPrices[battery.id] || ''}
+                                          placeholder={(battery as any).sellingPrice?.toFixed(2) || '0.00'}
+                                          onChange={(e) => handleCustomPriceChange(battery.id, e.target.value)}
+                                          className="w-24 h-8"
+                                        />
+                                        <span className="text-xs text-muted-foreground">₱</span>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs">Qty:</Label>
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        max={battery.stock}
+                                        value={currentQuantity === 0 ? '' : currentQuantity}
+                                        placeholder="0"
+                                        onChange={(e) => {
+                                          const value = e.target.value;
+                                          const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                          handleQuantityChange(
+                                            battery.id,
+                                            quantity,
+                                            selectedBrand.name,
+                                            battery.name,
+                                            'battery',
+                                            displayPrice,
+                                            battery.stock,
+                                            (battery as any).sellingPrice,
+                                            (battery as any).dspPrice,
+                                            (battery as any).rspPrice
+                                          );
+                                        }}
+                                        className="w-20 h-8"
+                                      />
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -1522,56 +2022,18 @@ export default function MyOrdersPage() {
                                       <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
                                         {posm.stock} in stock
                                       </Badge>
-                                      <span className="text-sm font-semibold text-purple-700">₱{displayPrice.toFixed(2)}</span>
+                                      {pricingType !== 'special' && (
+                                        <span className="text-sm font-semibold text-purple-700">₱{displayPrice.toFixed(2)}</span>
+                                      )}
                                     </div>
                                     {posm.stock === 0 && (
                                       <p className="text-xs text-red-600 mt-1">No more stock available</p>
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-2 pt-2 border-t border-purple-200">
-                                  <Label className="text-xs font-medium">Qty:</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    max={posm.stock}
-                                    value={currentQuantity === 0 ? '' : currentQuantity}
-                                    placeholder="0"
-                                    onChange={(e) => {
-                                      const value = e.target.value;
-                                      const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                      handleQuantityChange(
-                                        posm.id,
-                                        quantity,
-                                        selectedBrand.name,
-                                        posm.name,
-                                        'posm',
-                                        displayPrice,
-                                        posm.stock,
-                                        (posm as any).sellingPrice,
-                                        (posm as any).dspPrice,
-                                        (posm as any).rspPrice
-                                      );
-                                    }}
-                                    className="w-24 h-9"
-                                    disabled={posm.stock === 0}
-                                  />
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{posm.name}</span>
-                                  <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {posm.stock} in stock
-                                  </Badge>
-                                  <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                </div>
-                                {posm.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
+                                <div className="flex flex-col gap-2 pt-2 border-t border-purple-200">
                                   <div className="flex items-center gap-2">
-                                    <Label className="text-xs">Qty:</Label>
+                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
                                     <Input
                                       type="number"
                                       min="0"
@@ -1588,12 +2050,91 @@ export default function MyOrdersPage() {
                                           posm.name,
                                           'posm',
                                           displayPrice,
-                                          posm.stock
+                                          posm.stock,
+                                          (posm as any).sellingPrice,
+                                          (posm as any).dspPrice,
+                                          (posm as any).rspPrice
                                         );
                                       }}
-                                      className="w-20 h-8"
+                                      className="w-24 h-9"
                                       disabled={posm.stock === 0}
                                     />
+                                  </div>
+                                  {pricingType === 'special' && (
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
+                                      <Input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={customPrices[posm.id] || ''}
+                                        placeholder={(posm as any).sellingPrice?.toFixed(2) || '0.00'}
+                                        onChange={(e) => handleCustomPriceChange(posm.id, e.target.value)}
+                                        className="w-24 h-9"
+                                        disabled={posm.stock === 0}
+                                      />
+                                      <span className="text-xs text-muted-foreground">₱</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Desktop: Row Layout */}
+                              <div className="hidden sm:flex items-center justify-between">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <span className="font-medium">{posm.name}</span>
+                                  <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                    {posm.stock} in stock
+                                  </Badge>
+                                  {pricingType !== 'special' && (
+                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
+                                  )}
+                                </div>
+                                {posm.stock === 0 ? (
+                                  <span className="text-xs text-red-600">No more stock available</span>
+                                ) : (
+                                  <div className="flex items-center gap-3">
+                                    {pricingType === 'special' && (
+                                      <div className="flex items-center gap-2">
+                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                        <Input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={customPrices[posm.id] || ''}
+                                          placeholder={(posm as any).sellingPrice?.toFixed(2) || '0.00'}
+                                          onChange={(e) => handleCustomPriceChange(posm.id, e.target.value)}
+                                          className="w-24 h-8"
+                                        />
+                                        <span className="text-xs text-muted-foreground">₱</span>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-xs">Qty:</Label>
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        max={posm.stock}
+                                        value={currentQuantity === 0 ? '' : currentQuantity}
+                                        placeholder="0"
+                                        onChange={(e) => {
+                                          const value = e.target.value;
+                                          const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                          handleQuantityChange(
+                                            posm.id,
+                                            quantity,
+                                            selectedBrand.name,
+                                            posm.name,
+                                            'posm',
+                                            displayPrice,
+                                            posm.stock,
+                                            (posm as any).sellingPrice,
+                                            (posm as any).dspPrice,
+                                            (posm as any).rspPrice
+                                          );
+                                        }}
+                                        className="w-20 h-8"
+                                      />
+                                    </div>
                                   </div>
                                 )}
                               </div>
@@ -1905,7 +2446,7 @@ export default function MyOrdersPage() {
                     <div className="space-y-1 text-xs pt-2 border-t">
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">Payment:</span>
-                        <span className="font-medium">{formatPaymentMethod(order.paymentMethod, order.bankType)}</span>
+                        <span className="font-medium">{formatPaymentSummary(order)}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
@@ -1954,7 +2495,7 @@ export default function MyOrdersPage() {
                       ₱{order.total.toLocaleString()}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap align-middle">
-                      {formatPaymentMethod(order.paymentMethod, order.bankType)}
+                      {formatPaymentSummary(order)}
                     </TableCell>
                     <TableCell className="align-middle">
                       <Badge variant={getDisplayStatus(order).variant} className="font-normal whitespace-nowrap">
@@ -1974,7 +2515,7 @@ export default function MyOrdersPage() {
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex justify-between items-center pt-4 border-t">
+            <div className="flex justify-center items-center pt-4 border-t gap-1">
               <Button
                 variant="outline"
                 size="sm"
@@ -1982,16 +2523,38 @@ export default function MyOrdersPage() {
                 disabled={currentPage === 1}
               >
                 <ChevronLeft className="h-4 w-4" />
+                Previous
               </Button>
-              <span className="text-sm text-muted-foreground">
-                {currentPage} / {totalPages}
-              </span>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum;
+                if (totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1;
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i;
+                } else {
+                  pageNum = currentPage - 2 + i;
+                }
+                return (
+                  <Button
+                    key={pageNum}
+                    variant={currentPage === pageNum ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setCurrentPage(pageNum)}
+                    className="min-w-[40px]"
+                  >
+                    {pageNum}
+                  </Button>
+                );
+              })}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                 disabled={currentPage === totalPages}
               >
+                Next
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
@@ -2035,6 +2598,510 @@ export default function MyOrdersPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Payment Mode Selection Dialog */}
+      <Dialog open={showPaymentModeDialog} onOpenChange={setShowPaymentModeDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Select Payment Mode</DialogTitle>
+            <DialogDescription>
+              Choose how you want to handle payment for this order
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="grid grid-cols-2 gap-4 py-4">
+            {/* Full Payment Option */}
+            <Card 
+              className={`cursor-pointer transition-all ${
+                paymentMode === 'FULL' 
+                  ? 'ring-2 ring-primary bg-primary/5' 
+                  : 'hover:bg-muted/50'
+              }`}
+              onClick={() => setPaymentMode('FULL')}
+            >
+              <CardContent className="flex flex-col items-center justify-center p-6 space-y-3">
+                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                  <CreditCard className="h-6 w-6 text-primary" />
+                </div>
+                <div className="text-center">
+                  <p className="font-semibold">Full Payment</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Single payment method
+                  </p>
+                </div>
+                {paymentMode === 'FULL' && (
+                  <CheckCircle className="h-5 w-5 text-primary" />
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Split Payment Option */}
+            <Card 
+              className={`cursor-pointer transition-all ${
+                paymentMode === 'SPLIT' 
+                  ? 'ring-2 ring-primary bg-primary/5' 
+                  : 'hover:bg-muted/50'
+              }`}
+              onClick={() => setPaymentMode('SPLIT')}
+            >
+              <CardContent className="flex flex-col items-center justify-center p-6 space-y-3">
+                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Split className="h-6 w-6 text-primary" />
+                </div>
+                <div className="text-center">
+                  <p className="font-semibold">Split Payment</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    2-3 payment methods
+                  </p>
+                </div>
+                {paymentMode === 'SPLIT' && (
+                  <CheckCircle className="h-5 w-5 text-primary" />
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => {
+              setShowPaymentModeDialog(false);
+              setShowSignatureModal(true);
+            }}>
+              Back
+            </Button>
+            <Button onClick={() => {
+              setShowPaymentModeDialog(false);
+              if (paymentMode === 'FULL') {
+                setShowPaymentMethodModal(true);
+              } else {
+                setShowSplitPaymentDialog(true);
+              }
+            }}>
+              Continue
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Split Payment Configuration Dialog - Redesigned */}
+      <Dialog open={showSplitPaymentDialog} onOpenChange={setShowSplitPaymentDialog}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Select Payment Methods (up to 3)</DialogTitle>
+            <DialogDescription>
+              Choose payment methods and enter amounts. Total must equal ₱{calculateTotal().toLocaleString()}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Bank Transfer Section */}
+            {paymentSettings?.bank_transfer_enabled && bankAccounts.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Bank Transfer</Label>
+                <div className="space-y-2 ml-4">
+                  {bankAccounts.map((bank) => {
+                    const existingIndex = paymentSplits.findIndex(
+                      s => s.method === 'BANK_TRANSFER' && s.bank === bank.name
+                    );
+                    const isSelected = existingIndex !== -1;
+                    
+                    return (
+                      <Card 
+                        key={bank.name} 
+                        className={`transition-all ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/50'}`}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-start gap-3">
+                            <Checkbox
+                              checked={isSelected}
+                              disabled={!isSelected && paymentSplits.length >= 3}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setPaymentSplits([...paymentSplits, { 
+                                    method: 'BANK_TRANSFER', 
+                                    bank: bank.name, 
+                                    amount: 0 
+                                  }]);
+                                } else {
+                                  setPaymentSplits(paymentSplits.filter((_, i) => i !== existingIndex));
+                                }
+                              }}
+                              className="mt-1"
+                            />
+                            <div className="flex-1 space-y-3">
+                              <div>
+                                <p className="font-medium">{bank.name}</p>
+                                <p className="text-sm text-muted-foreground">{bank.account_number}</p>
+                              </div>
+
+                              {isSelected && (
+                                <div className="space-y-3 pt-2 border-t">
+                                  {/* Amount Input */}
+                                  <div>
+                                    <Label className="text-sm">Amount *</Label>
+                                    <div className="relative">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm">₱</span>
+                                      <Input
+                                        type="number"
+                                        value={paymentSplits[existingIndex].amount || ''}
+                                        onChange={(e) => {
+                                          const newSplits = [...paymentSplits];
+                                          newSplits[existingIndex].amount = parseFloat(e.target.value) || 0;
+                                          setPaymentSplits(newSplits);
+                                        }}
+                                        className="pl-7"
+                                        placeholder="0.00"
+                                        step="0.01"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {/* Payment Proof */}
+                                  <div>
+                                    <Label className="text-sm">Payment Proof *</Label>
+                                    <Input
+                                      type="file"
+                                      accept="image/*"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) {
+                                          const newSplits = [...paymentSplits];
+                                          newSplits[existingIndex].proofFile = file;
+                                          setPaymentSplits(newSplits);
+                                        }
+                                      }}
+                                    />
+                                    {paymentSplits[existingIndex].proofFile && (
+                                      <p className="text-xs text-green-600 mt-1">
+                                        ✓ {paymentSplits[existingIndex].proofFile!.name}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* GCash Section */}
+            {paymentSettings?.gcash_enabled && (
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">GCash</Label>
+                {(() => {
+                  const existingIndex = paymentSplits.findIndex(s => s.method === 'GCASH');
+                  const isSelected = existingIndex !== -1;
+                  
+                  return (
+                    <Card className={`transition-all ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={isSelected}
+                            disabled={!isSelected && paymentSplits.length >= 3}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setPaymentSplits([...paymentSplits, { method: 'GCASH', amount: 0 }]);
+                              } else {
+                                setPaymentSplits(paymentSplits.filter((_, i) => i !== existingIndex));
+                              }
+                            }}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 space-y-3">
+                            <div>
+                              <p className="font-medium">GCash Payment</p>
+                              {paymentSettings.gcash_number && (
+                                <p className="text-sm text-muted-foreground">{paymentSettings.gcash_number}</p>
+                              )}
+                              {paymentSettings.gcash_name && (
+                                <p className="text-sm text-muted-foreground">{paymentSettings.gcash_name}</p>
+                              )}
+                              {paymentSettings.gcash_qr_url && (
+                                <img 
+                                  src={paymentSettings.gcash_qr_url} 
+                                  alt="GCash QR" 
+                                  className="w-32 h-32 mt-2 border rounded"
+                                />
+                              )}
+                            </div>
+
+                            {isSelected && (
+                              <div className="space-y-3 pt-2 border-t">
+                                {/* Amount Input */}
+                                <div>
+                                  <Label className="text-sm">Amount *</Label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm">₱</span>
+                                    <Input
+                                      type="number"
+                                      value={paymentSplits[existingIndex].amount || ''}
+                                      onChange={(e) => {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].amount = parseFloat(e.target.value) || 0;
+                                        setPaymentSplits(newSplits);
+                                      }}
+                                      className="pl-7"
+                                      placeholder="0.00"
+                                      step="0.01"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Payment Proof */}
+                                <div>
+                                  <Label className="text-sm">Payment Proof *</Label>
+                                  <Input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].proofFile = file;
+                                        setPaymentSplits(newSplits);
+                                      }
+                                    }}
+                                  />
+                                  {paymentSplits[existingIndex].proofFile && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Cash Section */}
+            {paymentSettings?.cash_enabled && (
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Cash</Label>
+                {(() => {
+                  const existingIndex = paymentSplits.findIndex(s => s.method === 'CASH');
+                  const isSelected = existingIndex !== -1;
+                  
+                  return (
+                    <Card className={`transition-all ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={isSelected}
+                            disabled={!isSelected && paymentSplits.length >= 3}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setPaymentSplits([...paymentSplits, { method: 'CASH', amount: 0 }]);
+                              } else {
+                                setPaymentSplits(paymentSplits.filter((_, i) => i !== existingIndex));
+                              }
+                            }}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 space-y-3">
+                            <p className="font-medium">Cash Payment</p>
+
+                            {isSelected && (
+                              <div className="space-y-3 pt-2 border-t">
+                                {/* Amount Input */}
+                                <div>
+                                  <Label className="text-sm">Amount *</Label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm">₱</span>
+                                    <Input
+                                      type="number"
+                                      value={paymentSplits[existingIndex].amount || ''}
+                                      onChange={(e) => {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].amount = parseFloat(e.target.value) || 0;
+                                        setPaymentSplits(newSplits);
+                                      }}
+                                      className="pl-7"
+                                      placeholder="0.00"
+                                      step="0.01"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Payment Proof */}
+                                <div>
+                                  <Label className="text-sm">Payment Proof *</Label>
+                                  <Input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].proofFile = file;
+                                        setPaymentSplits(newSplits);
+                                      }
+                                    }}
+                                  />
+                                  {paymentSplits[existingIndex].proofFile && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Cheque Section */}
+            {paymentSettings?.cheque_enabled && (
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Cheque</Label>
+                {(() => {
+                  const existingIndex = paymentSplits.findIndex(s => s.method === 'CHEQUE');
+                  const isSelected = existingIndex !== -1;
+                  
+                  return (
+                    <Card className={`transition-all ${isSelected ? 'ring-2 ring-primary bg-primary/5' : 'hover:bg-muted/50'}`}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={isSelected}
+                            disabled={!isSelected && paymentSplits.length >= 3}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setPaymentSplits([...paymentSplits, { method: 'CHEQUE', amount: 0 }]);
+                              } else {
+                                setPaymentSplits(paymentSplits.filter((_, i) => i !== existingIndex));
+                              }
+                            }}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 space-y-3">
+                            <p className="font-medium">Cheque Payment</p>
+
+                            {isSelected && (
+                              <div className="space-y-3 pt-2 border-t">
+                                {/* Amount Input */}
+                                <div>
+                                  <Label className="text-sm">Amount *</Label>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm">₱</span>
+                                    <Input
+                                      type="number"
+                                      value={paymentSplits[existingIndex].amount || ''}
+                                      onChange={(e) => {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].amount = parseFloat(e.target.value) || 0;
+                                        setPaymentSplits(newSplits);
+                                      }}
+                                      className="pl-7"
+                                      placeholder="0.00"
+                                      step="0.01"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Payment Proof */}
+                                <div>
+                                  <Label className="text-sm">Payment Proof *</Label>
+                                  <Input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const newSplits = [...paymentSplits];
+                                        newSplits[existingIndex].proofFile = file;
+                                        setPaymentSplits(newSplits);
+                                      }
+                                    }}
+                                  />
+                                  {paymentSplits[existingIndex].proofFile && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Validation Summary */}
+            {paymentSplits.length > 0 && (
+              <div className={`p-4 rounded-lg ${
+                Math.abs(getSplitTotal() - calculateTotal()) < 0.01
+                  ? 'bg-green-50 border border-green-200' 
+                  : 'bg-red-50 border border-red-200'
+              }`}>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-semibold">Split Total: ₱{getSplitTotal().toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">Order Total: ₱{calculateTotal().toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {paymentSplits.length} of 3 payment methods selected
+                    </p>
+                  </div>
+                  {Math.abs(getSplitTotal() - calculateTotal()) < 0.01 ? (
+                    <Badge className="bg-green-600">✓ Valid</Badge>
+                  ) : (
+                    <Badge variant="destructive">
+                      {getSplitTotal() > calculateTotal() ? 'Over' : 'Under'} by ₱{Math.abs(getSplitTotal() - calculateTotal()).toLocaleString()}
+                    </Badge>
+                  )}
+                </div>
+                {splitValidationError && (
+                  <p className="text-sm text-destructive mt-2">{splitValidationError}</p>
+                )}
+              </div>
+            )}
+
+            {paymentSplits.length === 0 && (
+              <div className="p-4 rounded-lg bg-muted text-center">
+                <p className="text-sm text-muted-foreground">Select at least one payment method to continue</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => {
+              setShowSplitPaymentDialog(false);
+              setShowPaymentModeDialog(true);
+            }}>
+              Back
+            </Button>
+            <Button 
+              onClick={handleContinueWithSplit}
+              disabled={
+                paymentSplits.length === 0 ||
+                paymentSplits.some(s => !s.method || !s.amount || !s.proofFile) ||
+                Math.abs(getSplitTotal() - calculateTotal()) > 0.01
+              }
+            >
+              Continue to Confirmation
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Payment Method Selection Modal */}
       <Dialog open={showPaymentMethodModal} onOpenChange={setShowPaymentMethodModal}>
         <DialogContent
@@ -2059,8 +3126,8 @@ export default function MyOrdersPage() {
             </Alert>
 
             <div className="grid grid-cols-1 gap-2 sm:gap-3">
-
-
+              {/* Bank Transfer - only show if enabled */}
+              {paymentSettings?.bank_transfer_enabled && bankAccounts.length > 0 && (
               <Button
                 variant={paymentMethod === 'BANK_TRANSFER' ? 'default' : 'outline'}
                 className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
@@ -2069,7 +3136,22 @@ export default function MyOrdersPage() {
                 <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
                 <span className="text-base sm:text-lg font-semibold">Bank Transfer</span>
               </Button>
+              )}
 
+              {/* GCash - only show if enabled */}
+              {paymentSettings?.gcash_enabled && (
+                <Button
+                  variant={paymentMethod === 'GCASH' ? 'default' : 'outline'}
+                  className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
+                  onClick={() => handlePaymentMethodSelected('GCASH')}
+                >
+                  <Smartphone className="h-5 w-5 sm:h-6 sm:w-6" />
+                  <span className="text-base sm:text-lg font-semibold">GCash</span>
+                </Button>
+              )}
+
+              {/* Cash - only show if enabled */}
+              {paymentSettings?.cash_enabled && (
               <Button
                 variant={paymentMethod === 'CASH' ? 'default' : 'outline'}
                 className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
@@ -2078,15 +3160,31 @@ export default function MyOrdersPage() {
                 <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
                 <span className="text-base sm:text-lg font-semibold">Cash</span>
               </Button>
+              )}
 
+              {/* Cheque - only show if enabled */}
+              {paymentSettings?.cheque_enabled && (
               <Button
                 variant={paymentMethod === 'CHEQUE' ? 'default' : 'outline'}
                 className="h-14 sm:h-16 flex items-center justify-center gap-2 sm:gap-3 min-h-[44px]"
                 onClick={() => handlePaymentMethodSelected('CHEQUE')}
               >
-                <CreditCard className="h-5 w-5 sm:h-6 sm:w-6" />
+                  <FileSignature className="h-5 w-5 sm:h-6 sm:w-6" />
                 <span className="text-base sm:text-lg font-semibold">Cheque</span>
               </Button>
+              )}
+
+              {/* Show message if no payment methods configured */}
+              {!paymentSettings?.bank_transfer_enabled && 
+               !paymentSettings?.gcash_enabled && 
+               !paymentSettings?.cash_enabled && 
+               !paymentSettings?.cheque_enabled && (
+                <Alert variant="destructive">
+                  <AlertDescription className="text-xs sm:text-sm">
+                    No payment methods are currently enabled. Please contact your administrator.
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
 
             <div className="flex flex-col sm:flex-row justify-end gap-2 pt-3 sm:pt-4 border-t">
@@ -2140,7 +3238,7 @@ export default function MyOrdersPage() {
                     <CreditCard className="h-5 w-5 flex-shrink-0" />
                     <span className="font-semibold text-base">{bank.name}</span>
                   </div>
-                  <span className="text-sm text-muted-foreground ml-7">{bank.accountNumber}</span>
+                  <span className="text-sm text-muted-foreground ml-7">{bank.account_number}</span>
                 </Button>
               ))}
             </div>
@@ -2186,11 +3284,27 @@ export default function MyOrdersPage() {
 
             {/* Bank Account Display (for Bank Transfer) */}
             {paymentMethod === 'BANK_TRANSFER' && selectedBank && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 space-y-2">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 space-y-3">
                 <div className="flex items-center gap-2 mb-2">
                   <CreditCard className="h-4 w-4 sm:h-5 sm:w-5 text-blue-700" />
                   <Label className="font-semibold text-blue-900 text-sm sm:text-base">Selected Bank Account</Label>
                 </div>
+                
+                {/* QR Code Display (if available) */}
+                {selectedBank.qr_code_url && (
+                  <div className="flex justify-center py-2">
+                    <div className="bg-white p-3 rounded-lg border-2 border-blue-300">
+                      <img 
+                        src={selectedBank.qr_code_url} 
+                        alt={`${selectedBank.name} QR Code`}
+                        className="w-48 h-48 object-contain"
+                      />
+                      <p className="text-xs text-center text-blue-700 mt-2">Scan to pay</p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Bank Details */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <span className="text-xs sm:text-sm text-blue-700 font-medium">Bank:</span>
@@ -2198,7 +3312,45 @@ export default function MyOrdersPage() {
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-xs sm:text-sm text-blue-700 font-medium">Account Number:</span>
-                    <span className="text-xs sm:text-sm font-mono font-semibold text-blue-900">{selectedBank.accountNumber}</span>
+                    <span className="text-xs sm:text-sm font-mono font-semibold text-blue-900">{selectedBank.account_number}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* GCash Account Display (for GCash) */}
+            {paymentMethod === 'GCASH' && paymentSettings && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 sm:p-4 space-y-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Smartphone className="h-4 w-4 sm:h-5 sm:w-5 text-green-700" />
+                  <Label className="font-semibold text-green-900 text-sm sm:text-base">GCash Payment</Label>
+                </div>
+                
+                {/* QR Code Display (if available) */}
+                {paymentSettings.gcash_qr_url && (
+                  <div className="flex justify-center py-2">
+                    <div className="bg-white p-3 rounded-lg border-2 border-green-300">
+                      <img 
+                        src={paymentSettings.gcash_qr_url} 
+                        alt="GCash QR Code"
+                        className="w-48 h-48 object-contain"
+                      />
+                      <p className="text-xs text-center text-green-700 mt-2">Scan to pay via GCash</p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* GCash Details */}
+                <div className="space-y-1">
+                  {paymentSettings.gcash_name && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs sm:text-sm text-green-700 font-medium">Account Name:</span>
+                      <span className="text-xs sm:text-sm font-semibold text-green-900">{paymentSettings.gcash_name}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs sm:text-sm text-green-700 font-medium">GCash Number:</span>
+                    <span className="text-xs sm:text-sm font-mono font-semibold text-green-900">{paymentSettings.gcash_number}</span>
                   </div>
                 </div>
               </div>
@@ -2432,7 +3584,7 @@ export default function MyOrdersPage() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Account Number:</span>
-                        <span className="font-mono font-semibold">{selectedBank.accountNumber}</span>
+                        <span className="font-mono font-semibold">{selectedBank.account_number}</span>
                       </div>
                     </div>
                   )}
@@ -2645,122 +3797,238 @@ export default function MyOrdersPage() {
               {/* Items - Responsive */}
               <div className="space-y-2">
                 <h4 className="font-semibold text-lg">Items</h4>
-                {/* Mobile: card list */}
-                <div className="md:hidden space-y-2">
-                  {orderToView.items && orderToView.items.length > 0 ? (
-                    orderToView.items.map((item: any) => (
-                      <div key={item.id} className="rounded-lg border bg-background p-3">
-                        <div className="flex items-center justify-between">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold truncate">{item.variantName}</div>
-                            <div className="text-xs text-muted-foreground truncate">{item.brandName}</div>
-                          </div>
-                          <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
-                            {item.variantType}
-                          </Badge>
-                        </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                          <div>
-                            <div className="text-xs text-muted-foreground">Qty</div>
-                            <div>{item.quantity}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-xs text-muted-foreground">Unit</div>
-                            <div>₱{item.unitPrice.toFixed(2)}</div>
-                          </div>
-                          <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
-                            <span>Total</span>
-                            <span>₱{item.total.toFixed(2)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="rounded-lg border bg-muted/30 p-4 text-center text-sm text-muted-foreground">
-                      No items found for this order
-                    </div>
-                  )}
-                </div>
+                {orderToView.items && orderToView.items.length > 0 ? (
+                  (() => {
+                    // Group items by brand
+                    const itemsByBrand = orderToView.items.reduce((acc: any, item: any) => {
+                      const brand = item.brandName || 'Unknown Brand';
+                      if (!acc[brand]) {
+                        acc[brand] = [];
+                      }
+                      acc[brand].push(item);
+                      return acc;
+                    }, {});
 
-                {/* Desktop/Tablet: table */}
-                <div className="hidden md:block border rounded-lg">
-                  {orderToView.items && orderToView.items.length > 0 ? (
-                    <div className="w-full overflow-x-auto">
-                      <Table className="min-w-[640px]">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Brand</TableHead>
-                            <TableHead>Item</TableHead>
-                            <TableHead>Type</TableHead>
-                            <TableHead className="text-right">Quantity</TableHead>
-                            <TableHead className="text-right">Unit Price</TableHead>
-                            <TableHead className="text-right">Total</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {orderToView.items.map((item: any) => (
-                            <TableRow key={item.id}>
-                              <TableCell className="font-medium">{item.brandName}</TableCell>
-                              <TableCell>{item.variantName}</TableCell>
-                              <TableCell>
-                                <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
-                                  {item.variantType}
+                    const brands = Object.keys(itemsByBrand).sort();
+
+                    return (
+                      <>
+                        {/* Mobile: card list grouped by brand */}
+                        <div className="md:hidden space-y-4">
+                          {brands.map((brand) => (
+                            <div key={brand} className="space-y-2">
+                              <div className="flex items-center gap-2 pb-2 border-b">
+                                <h5 className="font-semibold text-base text-primary">{brand}</h5>
+                                <Badge variant="outline" className="text-xs">
+                                  {itemsByBrand[brand].length} item{itemsByBrand[brand].length > 1 ? 's' : ''}
                                 </Badge>
-                              </TableCell>
-                              <TableCell className="text-right">{item.quantity}</TableCell>
-                              <TableCell className="text-right">₱{item.unitPrice.toFixed(2)}</TableCell>
-                              <TableCell className="text-right font-semibold">₱{item.total.toFixed(2)}</TableCell>
-                            </TableRow>
+                              </div>
+                              {itemsByBrand[brand].map((item: any) => (
+                                <div key={item.id} className="rounded-lg border bg-background p-3 ml-2">
+                                  <div className="flex items-center justify-between">
+                                    <div className="min-w-0">
+                                      <div className="text-sm font-semibold truncate">{item.variantName}</div>
+                                    </div>
+                                    <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
+                                      {item.variantType}
+                                    </Badge>
+                                  </div>
+                                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                                    <div>
+                                      <div className="text-xs text-muted-foreground">Qty</div>
+                                      <div>{item.quantity}</div>
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="text-xs text-muted-foreground">Unit</div>
+                                      <div>₱{item.unitPrice.toFixed(2)}</div>
+                                    </div>
+                                    <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
+                                      <span>Total</span>
+                                      <span>₱{item.total.toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                              {/* Brand subtotal */}
+                              <div className="ml-2 flex justify-end pr-3">
+                                <div className="text-sm font-semibold text-muted-foreground">
+                                  Brand Total: ₱{itemsByBrand[brand].reduce((sum: number, item: any) => sum + item.total, 0).toFixed(2)}
+                                </div>
+                              </div>
+                            </div>
                           ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ) : (
-                    <div className="p-4 text-center text-sm text-muted-foreground">
-                      No items found for this order
-                    </div>
-                  )}
-                </div>
+                        </div>
+
+                        {/* Desktop/Tablet: table grouped by brand */}
+                        <div className="hidden md:block space-y-4">
+                          {brands.map((brand) => (
+                            <div key={brand} className="border rounded-lg overflow-hidden">
+                              <div className="bg-muted/50 px-4 py-2 border-b">
+                                <div className="flex items-center justify-between">
+                                  <h5 className="font-semibold text-base text-primary">{brand}</h5>
+                                  <div className="flex items-center gap-4">
+                                    <span className="text-sm text-muted-foreground">
+                                      {itemsByBrand[brand].length} item{itemsByBrand[brand].length > 1 ? 's' : ''}
+                                    </span>
+                                    <span className="text-sm font-semibold">
+                                      Brand Total: ₱{itemsByBrand[brand].reduce((sum: number, item: any) => sum + item.total, 0).toFixed(2)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="w-full overflow-x-auto">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Item</TableHead>
+                                      <TableHead>Type</TableHead>
+                                      <TableHead className="text-right">Quantity</TableHead>
+                                      <TableHead className="text-right">Unit Price</TableHead>
+                                      <TableHead className="text-right">Total</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {itemsByBrand[brand].map((item: any) => (
+                                      <TableRow key={item.id}>
+                                        <TableCell className="font-medium">{item.variantName}</TableCell>
+                                        <TableCell>
+                                          <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
+                                            {item.variantType}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right">{item.quantity}</TableCell>
+                                        <TableCell className="text-right">₱{item.unitPrice.toFixed(2)}</TableCell>
+                                        <TableCell className="text-right font-semibold">₱{item.total.toFixed(2)}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    );
+                  })()
+                ) : (
+                  <div className="rounded-lg border bg-muted/30 p-4 text-center text-sm text-muted-foreground">
+                    No items found for this order
+                  </div>
+                )}
               </div>
 
               {/* Payment Information */}
-              {orderToView.paymentMethod && (
+              {(orderToView.paymentMethod || (orderToView.paymentMode === 'SPLIT' && orderToView.paymentSplits && orderToView.paymentSplits.length > 0)) && (
                 <div className="space-y-3 border-t pt-4">
-                  <h4 className="font-semibold text-lg">Payment Information</h4>
-                  <div className="space-y-2">
-                    <div>
-                      <Label className="text-muted-foreground">Payment Method</Label>
-                      <p className="font-medium">
-                        {orderToView.paymentMethod === 'GCASH' ? 'GCash' :
-                          orderToView.paymentMethod === 'BANK_TRANSFER' ? (
-                            <>
-                              Bank Transfer
-                              {orderToView.bankType && (
-                                <span className="ml-2 text-sm text-muted-foreground">({orderToView.bankType})</span>
-                              )}
-                            </>
-                          ) : orderToView.paymentMethod === 'CHEQUE' ? (
-                            'Cheque'
-                          ) :
-                            'Cash'}
-                      </p>
-                    </div>
-                    {orderToView.paymentProofUrl && (
-                      <div>
-                        <Label className="text-muted-foreground">Payment Proof</Label>
-                        <div className="mt-2 border rounded-lg overflow-hidden bg-white">
-                          <img
-                            src={orderToView.paymentProofUrl}
-                            alt="Payment Proof"
-                            className="w-full h-auto max-h-96 object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
-                            }}
-                          />
+                  <h4 className="font-semibold text-lg flex items-center gap-2">
+                    <CreditCard className="h-5 w-5" />
+                    Payment Information
+                  </h4>
+                  
+                  {/* Split Payment Breakdown */}
+                  {orderToView.paymentMode === 'SPLIT' && Array.isArray(orderToView.paymentSplits) && orderToView.paymentSplits.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-base px-3 py-1">
+                          <Split className="h-4 w-4 mr-1 inline" />
+                          Split Payment
+                        </Badge>
+                        <span className="text-sm text-muted-foreground">
+                          {orderToView.paymentSplits.length} payment method{orderToView.paymentSplits.length > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {orderToView.paymentSplits.map((split: any, index: number) => (
+                          <Card key={index} className="p-4 bg-muted/30">
+                            <div className="flex justify-between items-start mb-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="secondary">
+                                    {split.method === 'BANK_TRANSFER' ? 'Bank Transfer' :
+                                     split.method === 'GCASH' ? 'GCash' :
+                                     split.method === 'CASH' ? 'Cash' :
+                                     split.method === 'CHEQUE' ? 'Cheque' : split.method}
+                                  </Badge>
+                                  {split.bank && (
+                                    <span className="text-sm font-medium">{split.bank}</span>
+                                  )}
+                                </div>
+                                <p className="text-lg font-semibold text-primary">
+                                  ₱{split.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                                </p>
+                              </div>
+                            </div>
+                            {split.proofUrl && (
+                              <div className="mt-3 pt-3 border-t">
+                                <Label className="text-sm text-muted-foreground mb-2 block">Payment Proof</Label>
+                                <div className="border rounded-lg overflow-hidden bg-white">
+                                  <img
+                                    src={split.proofUrl}
+                                    alt={`Payment Proof - ${split.method}`}
+                                    className="w-full h-auto max-h-64 object-contain cursor-pointer"
+                                    onClick={() => window.open(split.proofUrl, '_blank')}
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                                    }}
+                                  />
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">Click image to view full size</p>
+                              </div>
+                            )}
+                          </Card>
+                        ))}
+                      </div>
+                      
+                      {/* Split Payment Total */}
+                      <div className="bg-primary/5 border-2 border-primary/20 rounded-lg p-4">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold text-lg">Total Payment:</span>
+                          <span className="font-bold text-xl text-primary">
+                            ₱{orderToView.paymentSplits.reduce((sum: number, split: any) => sum + (split.amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  ) : (
+                    /* Full Payment Display */
+                    <div className="space-y-2">
+                      <div>
+                        <Label className="text-muted-foreground">Payment Method</Label>
+                        <p className="font-medium">
+                          {orderToView.paymentMethod === 'GCASH' ? 'GCash' :
+                            orderToView.paymentMethod === 'BANK_TRANSFER' ? (
+                              <>
+                                Bank Transfer
+                                {orderToView.bankType && (
+                                  <span className="ml-2 text-sm text-muted-foreground">({orderToView.bankType})</span>
+                                )}
+                              </>
+                            ) : orderToView.paymentMethod === 'CHEQUE' ? (
+                              'Cheque'
+                            ) :
+                              'Cash'}
+                        </p>
+                      </div>
+                      {orderToView.paymentProofUrl && (
+                        <div>
+                          <Label className="text-muted-foreground">Payment Proof</Label>
+                          <div className="mt-2 border rounded-lg overflow-hidden bg-white">
+                            <img
+                              src={orderToView.paymentProofUrl}
+                              alt="Payment Proof"
+                              className="w-full h-auto max-h-96 object-contain cursor-pointer"
+                              onClick={() => window.open(orderToView.paymentProofUrl, '_blank')}
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IiM2YjcyODAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj5JbWFnZSBub3QgZm91bmQ8L3RleHQ+PC9zdmc+';
+                              }}
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">Click image to view full size</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -1,0 +1,55 @@
+/* War Room Map Styling */
+.map-container {
+  border-radius: 0.5rem;
+}
+
+.map-container .leaflet-container {
+  border-radius: 0.5rem;
+  font-family: inherit;
+}
+
+.map-container .leaflet-control-zoom {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
+.map-container .leaflet-control-zoom a {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border-bottom: 1px solid hsl(var(--border));
+  width: 32px;
+  height: 32px;
+  line-height: 32px;
+  font-size: 18px;
+  transition: background-color 0.2s;
+}
+
+.map-container .leaflet-control-zoom a:hover {
+  background-color: hsl(var(--muted));
+}
+
+.map-container .leaflet-control-zoom a:last-child {
+  border-bottom: none;
+}
+
+.map-container .leaflet-popup-content-wrapper {
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
+.map-container .leaflet-popup-tip {
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+}
+
+/* Custom marker styling */
+.custom-map-marker {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  transition: transform 0.2s;
+}
+
+.custom-map-marker:hover {
+  transform: scale(1.1);
+  z-index: 1000 !important;
+}

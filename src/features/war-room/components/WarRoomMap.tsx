@@ -1,9 +1,10 @@
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, GeoJSON } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { WarRoomClient } from '../hooks/useWarRoomClients';
 import { getMarkerColor } from '../utils/markerColors';
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import { useCityBoundaries } from '../hooks/useCityBoundaries';
 
 // Fix for default marker icon issue in React Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -15,7 +16,10 @@ L.Icon.Default.mergeOptions({
 
 interface WarRoomMapProps {
   clients: WarRoomClient[];
+  cityHolders?: Map<string, string>; // City Name -> Holder Name
   onClientClick: (client: WarRoomClient) => void;
+  // Callback when city status changes (selected/deselected)
+  onCityStatusChange?: (city: string, isSelected: boolean) => void;
 }
 
 // Create custom colored marker icon
@@ -39,6 +43,18 @@ const createCustomIcon = (color: string) => {
   });
 };
 
+// Generate a consistent color for a string (Agent Name)
+const stringToColor = (str: string) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  
+  // Use HSL for better colors (pastel-ish)
+  const h = Math.abs(hash) % 360;
+  return `hsl(${h}, 70%, 60%)`;
+};
+
 // Component to handle map bounds
 function MapBounds({ clients }: { clients: WarRoomClient[] }) {
   const map = useMap();
@@ -55,30 +71,137 @@ function MapBounds({ clients }: { clients: WarRoomClient[] }) {
   return null;
 }
 
-export function WarRoomMap({ clients, onClientClick }: WarRoomMapProps) {
+export function WarRoomMap({ clients, cityHolders, onClientClick, onCityStatusChange }: WarRoomMapProps) {
   // Default center: Philippines
   const defaultCenter: [number, number] = [12.8797, 121.7740];
   const defaultZoom = 6;
+  
+  const { data: cityBoundaries } = useCityBoundaries();
+
+  // Create a ref for the callback to ensure persistent event listeners use the latest version
+  const onCityStatusChangeRef = useRef(onCityStatusChange);
+  useEffect(() => {
+    onCityStatusChangeRef.current = onCityStatusChange;
+  }, [onCityStatusChange]);
+
+  // Normalize city name for matching
+  const normalizeCity = (name: string) => {
+    return name.toLowerCase()
+      .trim()
+      .replace(/^city of\s+/i, '') // Remove "City of" prefix
+      .replace(/\s+city$/i, '');   // Remove "City" suffix
+  };
+
+  // Filter and style GeoJSON
+  const filteredGeoJSON = useMemo(() => {
+    if (!cityBoundaries || !cityHolders || cityHolders.size === 0) return null;
+
+    // Create a normalized map for faster lookup
+    const normalizedHolders = new Map<string, string>();
+    const normalizedToDbName = new Map<string, string>();
+
+    cityHolders.forEach((holder, city) => {
+      const norm = normalizeCity(city);
+      normalizedHolders.set(norm, holder);
+      normalizedToDbName.set(norm, city);
+    });
+
+    const features = cityBoundaries.features.filter((feature: any) => {
+      // geoBoundaries uses 'shapeName' or 'shapeISO' or 'ADM3_EN'
+      const rawName = feature.properties.shapeName || feature.properties.ADM3_EN || feature.properties.name || '';
+      const normalizedName = normalizeCity(rawName);
+      
+      // Check for exact match or normalized match
+      // We store the matched holder in the feature properties for easier access later
+      if (normalizedHolders.has(normalizedName)) {
+        feature.properties._holder = normalizedHolders.get(normalizedName);
+        feature.properties._dbName = rawName; // Keep original name
+        feature.properties._originalDbCity = normalizedToDbName.get(normalizedName); // Store DB name for filtering
+        return true;
+      }
+      return false;
+    });
+
+    return {
+      type: 'FeatureCollection',
+      features
+    };
+  }, [cityBoundaries, cityHolders]);
+
+  const geoJSONStyle = (feature: any) => {
+    const rawName = feature.properties._dbName || feature.properties.shapeName || feature.properties.ADM3_EN || feature.properties.name || '';
+    // Use normalized city name for color generation to ensure matching with pins
+    const color = stringToColor(normalizeCity(rawName));
+
+    return {
+      fillColor: color,
+      weight: 2,
+      opacity: 1,
+      color: color, // Border color
+      dashArray: '3',
+      fillOpacity: 0.2
+    };
+  };
+
+  const onEachFeature = (feature: any, layer: L.Layer) => {
+    const cityName = feature.properties.shapeName || feature.properties.ADM3_EN || feature.properties.name || '';
+    const holder = feature.properties._holder || 'Unknown';
+    
+    layer.bindPopup(`
+      <div class="p-1">
+        <h4 class="font-bold text-sm">${cityName}</h4>
+        <p class="text-xs text-muted-foreground">Held by: ${holder}</p>
+        <p class="text-[10px] text-blue-500 mt-1 italic">Click to filter</p>
+      </div>
+    `);
+
+    // Use popup events to drive selection logic
+    layer.on({
+      popupopen: () => {
+        if (feature.properties._originalDbCity) {
+           onCityStatusChangeRef.current?.(feature.properties._originalDbCity, true);
+        }
+      },
+      popupclose: () => {
+        if (feature.properties._originalDbCity) {
+           onCityStatusChangeRef.current?.(feature.properties._originalDbCity, false);
+        }
+      }
+    });
+  };
+
+  // Create a stable key for the GeoJSON component
+  const geoJsonKey = cityHolders ? Array.from(cityHolders.entries()).map(([k,v]) => `${k}:${v}`).join(',') : 'empty';
 
   return (
-    <div className="relative h-full w-full rounded-lg overflow-hidden shadow-lg">
-      <MapContainer
-        center={defaultCenter}
-        zoom={defaultZoom}
-        style={{ height: '100%', width: '100%' }}
-        scrollWheelZoom={true}
-        className="z-0"
-      >
+    <MapContainer
+      center={defaultCenter}
+      zoom={defaultZoom}
+      style={{ height: '100%', width: '100%', zIndex: 0 }}
+      scrollWheelZoom={true}
+      className="map-container"
+    >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
         />
         
         <MapBounds clients={clients} />
 
+        {filteredGeoJSON && (
+          <GeoJSON 
+            key={geoJsonKey} // Force re-render when holders change
+            data={filteredGeoJSON as any}
+            style={geoJSONStyle}
+            onEachFeature={onEachFeature}
+          />
+        )}
+
         {clients.map((client) => {
-          const markerColor = getMarkerColor(client.account_type, client.has_forge);
-          const customIcon = createCustomIcon(markerColor);
+          // Use city color for the pin to match the polygon
+          // Normalize the city name to ensure it matches the GeoJSON color logic
+          const cityColor = client.city ? stringToColor(normalizeCity(client.city)) : '#6b7280'; // Gray default
+          const customIcon = createCustomIcon(cityColor);
 
           return (
             <Marker
@@ -95,7 +218,12 @@ export function WarRoomMap({ clients, onClientClick }: WarRoomMapProps) {
                   <p className="text-sm text-muted-foreground">{client.company}</p>
                   <div className="mt-2 text-sm">
                     <p><strong>Type:</strong> {client.account_type}</p>
-                    <p><strong>Forge:</strong> {client.has_forge ? 'Yes' : 'No'}</p>
+                    <p>
+                      <strong>Brands:</strong>{' '}
+                      {client.brand_names && client.brand_names.length > 0 
+                        ? client.brand_names.join(', ') 
+                        : 'None'}
+                    </p>
                     <p><strong>Location:</strong> {client.city}</p>
                   </div>
                   <p className="text-xs text-blue-600 mt-2 cursor-pointer hover:underline">
@@ -106,8 +234,7 @@ export function WarRoomMap({ clients, onClientClick }: WarRoomMapProps) {
             </Marker>
           );
         })}
-      </MapContainer>
-    </div>
+    </MapContainer>
   );
 }
 

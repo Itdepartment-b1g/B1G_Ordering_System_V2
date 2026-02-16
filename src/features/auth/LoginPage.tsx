@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase';
 import { ShoppingCart, XCircle, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
@@ -19,20 +20,14 @@ export default function LoginPage() {
 
   // Redirect based on role when user is authenticated
   useEffect(() => {
-    // Check if we just logged out - if so, clear the flag and don't redirect
-    const justLoggedOut = localStorage.getItem('just_logged_out');
-    if (justLoggedOut === 'true') {
-      localStorage.removeItem('just_logged_out');
-      // Don't redirect if we just logged out
-      return;
-    }
-    
     // Only redirect if user is actually authenticated (not just loading)
     if (isAuthenticated && user) {
       if (user.role === 'system_administrator') {
         navigate('/sys-admin-dashboard', { replace: true });
       } else if (user.role === 'super_admin') {
         navigate('/super-admin-dashboard', { replace: true });
+      } else if (user.role === 'executive') {
+        navigate('/executive-dashboard', { replace: true });
       } else {
         navigate('/dashboard', { replace: true });
       }
@@ -86,6 +81,7 @@ export default function LoginPage() {
     }
   };
 
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/10 p-4">
       <Card className="w-full max-w-md">
@@ -137,6 +133,7 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'Signing in...' : 'Sign in'}
             </Button>
+
           </form>
         </CardContent>
       </Card>
