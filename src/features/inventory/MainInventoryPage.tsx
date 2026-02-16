@@ -60,6 +60,18 @@ export default function MainInventoryPage() {
   const [bulkRspValue, setBulkRspValue] = useState<string>('');
   const [updatingBulkPrice, setUpdatingBulkPrice] = useState(false);
 
+  // Bulk stock edit states
+  const [bulkStockDialogOpen, setBulkStockDialogOpen] = useState(false);
+  const [bulkStockBrandId, setBulkStockBrandId] = useState<string | null>(null);
+  const [bulkStockVariants, setBulkStockVariants] = useState<Array<{
+    id: string;
+    name: string;
+    type: 'flavor' | 'battery' | 'posm';
+    stock: number;
+    allocatedStock: number;
+  }>>([]);
+  const [updatingBulkStock, setUpdatingBulkStock] = useState(false);
+
 
   const { toast } = useToast();
 
@@ -230,6 +242,22 @@ export default function MainInventoryPage() {
     setBulkPriceDialogOpen(true);
   };
 
+  const handleOpenBulkStockDialog = (brandId: string) => {
+    const brand = brands.find(b => b.id === brandId);
+    if (!brand) return;
+
+    // Collect all variants from this brand
+    const allVariants = [
+      ...brand.flavors.map(f => ({ id: f.id, name: f.name, type: 'flavor' as const, stock: f.stock, allocatedStock: f.allocatedStock })),
+      ...brand.batteries.map(b => ({ id: b.id, name: b.name, type: 'battery' as const, stock: b.stock, allocatedStock: b.allocatedStock })),
+      ...(brand.posms || []).map(p => ({ id: p.id, name: p.name, type: 'posm' as const, stock: p.stock, allocatedStock: p.allocatedStock }))
+    ];
+
+    setBulkStockBrandId(brandId);
+    setBulkStockVariants(allVariants);
+    setBulkStockDialogOpen(true);
+  };
+
   const handleConfirmBulkPriceUpdate = async () => {
     if (!bulkPriceBrandId || !bulkPriceType) return;
 
@@ -294,6 +322,67 @@ export default function MainInventoryPage() {
       });
     } finally {
       setUpdatingBulkPrice(false);
+    }
+  };
+
+  const handleBulkStockChange = (variantId: string, newStock: number) => {
+    setBulkStockVariants(prev =>
+      prev.map(v => v.id === variantId ? { ...v, stock: Math.max(0, newStock) } : v)
+    );
+  };
+
+  const handleConfirmBulkStockUpdate = async () => {
+    if (!bulkStockBrandId) return;
+
+    setUpdatingBulkStock(true);
+    try {
+      const brand = brands.find(b => b.id === bulkStockBrandId);
+      if (!brand) {
+        throw new Error('Brand not found');
+      }
+
+      // Update all variants in parallel
+      const updatePromises = bulkStockVariants.map(variant => {
+        // Find the original variant to get pricing info
+        const originalVariant = 
+          brand.flavors.find(f => f.id === variant.id) ||
+          brand.batteries.find(b => b.id === variant.id) ||
+          (brand.posms || []).find(p => p.id === variant.id);
+
+        if (!originalVariant) return Promise.resolve();
+
+        return updateVariant(
+          variant.id,
+          variant.name,
+          variant.stock, // Updated stock
+          (originalVariant as any).price || 0,
+          (originalVariant as any).sellingPrice,
+          (originalVariant as any).dspPrice,
+          (originalVariant as any).rspPrice,
+          true // skipRefresh
+        );
+      });
+
+      await Promise.all(updatePromises);
+      await refreshInventory();
+
+      toast({
+        title: "Success",
+        description: `Updated stock for ${bulkStockVariants.length} variant(s)`,
+      });
+
+      setBulkStockDialogOpen(false);
+      setBulkStockBrandId(null);
+      setBulkStockVariants([]);
+    } catch (error) {
+      console.error('Error updating bulk stock:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update stock levels",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingBulkStock(false);
     }
   };
 
@@ -464,6 +553,18 @@ export default function MainInventoryPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenBulkStockDialog(brand.id);
+                        }}
+                        className="mr-2"
+                      >
+                        <Edit className="h-3 w-3 mr-1" />
+                        Edit Stock
+                      </Button>
                       <Badge
                         variant={
                           getTotalStock(brand) === 0 ? 'destructive' :
@@ -887,10 +988,16 @@ export default function MainInventoryPage() {
                 <Input
                   id="stock"
                   type="number"
+                  min="0"
                   value={editingVariant.stock}
-                  readOnly
-                  className="bg-muted"
+                  onChange={(e) => {
+                    const value = Math.max(0, parseInt(e.target.value) || 0);
+                    setEditingVariant({ ...editingVariant, stock: value });
+                  }}
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Update the total stock count for this variant
+                </p>
               </div>
               <div>
                 <Label htmlFor="selling_price">Selling Price</Label>
@@ -1059,6 +1166,82 @@ export default function MainInventoryPage() {
                   disabled={updatingBulkPrice}
                 >
                   {updatingBulkPrice ? 'Updating...' : 'Update All Prices'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Stock Edit Dialog */}
+      <Dialog open={bulkStockDialogOpen} onOpenChange={setBulkStockDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Stock for All Variants</DialogTitle>
+          </DialogHeader>
+          {bulkStockBrandId && (
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                Update the total stock count for each variant. Changes will be applied to all variants in this brand.
+              </div>
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Variant Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead className="text-right">Allocated</TableHead>
+                      <TableHead className="text-right">Current Stock</TableHead>
+                      <TableHead className="text-right">New Stock</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {bulkStockVariants.map((variant) => (
+                      <TableRow key={variant.id}>
+                        <TableCell className="font-medium">{variant.name}</TableCell>
+                        <TableCell>
+                          <Badge variant={variant.type === 'flavor' ? 'default' : variant.type === 'battery' ? 'secondary' : 'outline'}>
+                            {variant.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className="text-muted-foreground">{variant.allocatedStock || 0}</span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className="text-muted-foreground">{variant.stock}</span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            type="number"
+                            min="0"
+                            value={bulkStockVariants.find(v => v.id === variant.id)?.stock || 0}
+                            onChange={(e) => handleBulkStockChange(variant.id, parseInt(e.target.value) || 0)}
+                            className="w-24 text-right"
+                            disabled={updatingBulkStock}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="flex justify-end space-x-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setBulkStockDialogOpen(false);
+                    setBulkStockBrandId(null);
+                    setBulkStockVariants([]);
+                  }}
+                  disabled={updatingBulkStock}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleConfirmBulkStockUpdate}
+                  disabled={updatingBulkStock}
+                >
+                  {updatingBulkStock ? 'Updating...' : `Update Stock for ${bulkStockVariants.length} Variants`}
                 </Button>
               </div>
             </div>
