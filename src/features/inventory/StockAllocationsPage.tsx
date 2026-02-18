@@ -56,6 +56,17 @@ export default function StockAllocationsPage() {
 
   const { toast } = useToast();
 
+  // Helper to get color scheme for variant type
+  const getVariantTypeColor = (variantType: string) => {
+    const normalized = variantType.toLowerCase();
+    if (normalized === 'flavor') return { dot: 'purple-500' };
+    if (normalized === 'battery') return { dot: 'green-500' };
+    if (normalized === 'posm') return { dot: 'purple-500' };
+    if (normalized === 'foc') return { dot: 'orange-500' };
+    if (normalized === 'ncv') return { dot: 'pink-500' };
+    return { dot: 'gray-500' };
+  };
+
   // Helper functions for available stock calculation
   const getVariantAvailableStock = (variant: any) => {
     // Use the allocatedStock from the variant object (fetched via InventoryContext)
@@ -478,94 +489,33 @@ export default function StockAllocationsPage() {
     const items: any[] = [];
     const warnings: string[] = [];
 
-    // Process flavors
-    selectedBrand.flavors.forEach(flavor => {
-      const quantity = variantQuantities[flavor.id] || 0;
+    // Process ALL variants (including custom types)
+    selectedBrand.allVariants.forEach(variant => {
+      const quantity = variantQuantities[variant.id] || 0;
       if (quantity > 0) {
-        const sellingPriceRaw = (flavor as any).sellingPrice;
+        const sellingPriceRaw = (variant as any).sellingPrice;
         const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-        // Allow selling price to be 0, only check for NaN or null/undefined
         if (sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0) {
-          warnings.push(`${selectedBrand.name} - ${flavor.name} has invalid selling price.`);
+          warnings.push(`${selectedBrand.name} - ${variant.name} has invalid selling price.`);
           return;
         }
-        const availableStock = getVariantAvailableStock(flavor);
+        const availableStock = getVariantAvailableStock(variant);
         const finalQuantity = Math.min(quantity, availableStock);
         if (finalQuantity > 0) {
           items.push({
-            variant_id: flavor.id,
-            variant_name: flavor.name,
-            variant_type: 'flavor',
+            variant_id: variant.id,
+            variant_name: variant.name,
+            variant_type: variant.variantType,
             brand_name: selectedBrand.name,
             quantity: finalQuantity,
             selling_price: sellingPrice,
-            dsp_price: (flavor as any).dspPrice || null,
-            rsp_price: (flavor as any).rspPrice || null,
+            dsp_price: (variant as any).dspPrice || null,
+            rsp_price: (variant as any).rspPrice || null,
             total_value: finalQuantity * sellingPrice
           });
         }
       }
     });
-
-    // Process batteries
-    selectedBrand.batteries.forEach(battery => {
-      const quantity = variantQuantities[battery.id] || 0;
-      if (quantity > 0) {
-        const sellingPriceRaw = (battery as any).sellingPrice;
-        const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-        // Allow selling price to be 0, only check for NaN or null/undefined
-        if (sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0) {
-          warnings.push(`${selectedBrand.name} - ${battery.name} has invalid selling price.`);
-          return;
-        }
-        const availableStock = getVariantAvailableStock(battery);
-        const finalQuantity = Math.min(quantity, availableStock);
-        if (finalQuantity > 0) {
-          items.push({
-            variant_id: battery.id,
-            variant_name: battery.name,
-            variant_type: 'battery',
-            brand_name: selectedBrand.name,
-            quantity: finalQuantity,
-            selling_price: sellingPrice,
-            dsp_price: (battery as any).dspPrice || null,
-            rsp_price: (battery as any).rspPrice || null,
-            total_value: finalQuantity * sellingPrice
-          });
-        }
-      }
-    });
-
-    // Process POSM
-    if ((selectedBrand as any).posms) {
-      (selectedBrand as any).posms.forEach((posm: any) => {
-        const quantity = variantQuantities[posm.id] || 0;
-        if (quantity > 0) {
-          const sellingPriceRaw = (posm as any).sellingPrice;
-          const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-          // Allow selling price to be 0, only check for NaN or null/undefined
-          if (sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0) {
-            warnings.push(`${selectedBrand.name} - ${posm.name} has invalid selling price.`);
-            return;
-          }
-          const availableStock = getVariantAvailableStock(posm);
-          const finalQuantity = Math.min(quantity, availableStock);
-          if (finalQuantity > 0) {
-            items.push({
-              variant_id: posm.id,
-              variant_name: posm.name,
-              variant_type: 'posm',
-              brand_name: selectedBrand.name,
-              quantity: finalQuantity,
-              selling_price: sellingPrice,
-              dsp_price: (posm as any).dspPrice || null,
-              rsp_price: (posm as any).rspPrice || null,
-              total_value: finalQuantity * sellingPrice
-            });
-          }
-        }
-      });
-    }
 
     return { items, warnings };
   };
@@ -1014,7 +964,19 @@ export default function StockAllocationsPage() {
                                 </div>
                               </TableCell>
                               <TableCell>
-                                <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'}>
+                                <Badge 
+                                  variant={
+                                    item.variantType === 'flavor' ? 'default' : 
+                                    item.variantType === 'battery' ? 'secondary' : 
+                                    item.variantType === 'POSM' || item.variantType === 'posm' ? 'outline' :
+                                    'outline'
+                                  }
+                                  className={
+                                    item.variantType === 'FOC' || item.variantType === 'foc' ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                                    item.variantType === 'NCV' || item.variantType === 'ncv' ? 'bg-pink-100 text-pink-800 border-pink-300' :
+                                    ''
+                                  }
+                                >
                                   {item.variantType}
                                 </Badge>
                               </TableCell>
@@ -1212,7 +1174,19 @@ export default function StockAllocationsPage() {
                                         <div className="font-semibold text-sm truncate">{item.brandName}</div>
                                         <div className="text-xs text-muted-foreground truncate">{item.variantName}</div>
                                       </div>
-                                      <Badge variant={item.variantType === 'flavor' ? 'default' : item.variantType === 'battery' ? 'secondary' : 'outline'} className="text-xs shrink-0">
+                                      <Badge 
+                                        variant={
+                                          item.variantType === 'flavor' ? 'default' : 
+                                          item.variantType === 'battery' ? 'secondary' : 
+                                          item.variantType === 'POSM' || item.variantType === 'posm' ? 'outline' :
+                                          'outline'
+                                        }
+                                        className={`text-xs shrink-0 ${
+                                          item.variantType === 'FOC' || item.variantType === 'foc' ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                                          item.variantType === 'NCV' || item.variantType === 'ncv' ? 'bg-pink-100 text-pink-800 border-pink-300' :
+                                          ''
+                                        }`}
+                                      >
                                         {item.variantType}
                                       </Badge>
                                     </div>
@@ -1331,7 +1305,7 @@ export default function StockAllocationsPage() {
 
               {allocation.brandId && brands.find(b => b.id === allocation.brandId) && (
                 <>
-                  {/* Add Variants Section with Enhanced Tabs */}
+                  {/* Add Variants Section with Dynamic Tabs */}
                   <Card className="border-2">
                     <CardHeader>
                       <CardTitle className="text-base flex items-center gap-2">
@@ -1340,220 +1314,103 @@ export default function StockAllocationsPage() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <Tabs defaultValue="flavor" className="w-full">
-                        <TabsList className="grid w-full grid-cols-3 h-12">
-                          <TabsTrigger value="flavor" className="gap-2">
-                            <div className="h-2 w-2 rounded-full bg-purple-500"></div>
-                            Flavors ({brands.find(b => b.id === allocation.brandId)?.flavors.filter(v => getVariantAvailableStock(v) > 0).length || 0})
-                          </TabsTrigger>
-                          <TabsTrigger value="battery" className="gap-2">
-                            <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                            Batteries ({brands.find(b => b.id === allocation.brandId)?.batteries.filter(v => getVariantAvailableStock(v) > 0).length || 0})
-                          </TabsTrigger>
-                          <TabsTrigger value="posm" className="gap-2">
-                            <div className="h-2 w-2 rounded-full bg-purple-500"></div>
-                            POSM ({((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).filter((v: any) => getVariantAvailableStock(v) > 0).length || 0})
-                          </TabsTrigger>
-                        </TabsList>
+                      {(() => {
+                        const selectedBrand = brands.find(b => b.id === allocation.brandId)!;
+                        const variantTypesList = Array.from(selectedBrand.variantsByType.entries())
+                          .sort(([typeA], [typeB]) => {
+                            const order = { 'flavor': 1, 'battery': 2, 'POSM': 3, 'posm': 3 };
+                            const aOrder = (order as any)[typeA] || 99;
+                            const bOrder = (order as any)[typeB] || 99;
+                            if (aOrder !== bOrder) return aOrder - bOrder;
+                            return typeA.localeCompare(typeB);
+                          });
+                        
+                        const firstType = variantTypesList[0]?.[0] || 'flavor';
+                        
+                        return (
+                          <Tabs defaultValue={firstType} className="w-full">
+                            <TabsList className={`grid w-full h-12`} style={{ gridTemplateColumns: `repeat(${variantTypesList.length}, minmax(0, 1fr))` }}>
+                              {variantTypesList.map(([variantType, variants]) => {
+                                const colors = getVariantTypeColor(variantType);
+                                const typeDisplay = variantType.charAt(0).toUpperCase() + variantType.slice(1);
+                                const availableCount = variants.filter(v => getVariantAvailableStock(v) > 0).length;
+                                
+                                return (
+                                  <TabsTrigger key={variantType} value={variantType} className="gap-2">
+                                    <div className={`h-2 w-2 rounded-full bg-${colors.dot}`}></div>
+                                    {typeDisplay}s ({availableCount})
+                                  </TabsTrigger>
+                                );
+                              })}
+                            </TabsList>
 
-                        {/* Flavor Tab */}
-                        <TabsContent value="flavor" className="space-y-3 mt-4">
-                          {brands.find(b => b.id === allocation.brandId)?.flavors.length === 0 ? (
-                            <p className="text-sm text-muted-foreground text-center py-4">
-                              No flavors available for this brand
-                            </p>
-                          ) : (
-                            <div className="space-y-2">
-                              {brands.find(b => b.id === allocation.brandId)?.flavors
-                                .filter(v => getVariantAvailableStock(v) > 0)
-                                .map(variant => {
-                                  const sellingPriceRaw = (variant as any).sellingPrice;
-                                  const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                                  // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                                  const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                                  const availableStock = getVariantAvailableStock(variant);
-                                  const quantity = variantQuantities[variant.id] || 0;
+                            {variantTypesList.map(([variantType, variants]) => (
+                              <TabsContent key={variantType} value={variantType} className="space-y-3 mt-4">
+                                {variants.filter(v => getVariantAvailableStock(v) > 0).length === 0 ? (
+                                  <p className="text-sm text-muted-foreground text-center py-4">
+                                    No {variantType}s available for this brand
+                                  </p>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {variants
+                                      .filter(v => getVariantAvailableStock(v) > 0)
+                                      .map(variant => {
+                                        const sellingPriceRaw = (variant as any).sellingPrice;
+                                        const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
+                                        const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
+                                        const availableStock = getVariantAvailableStock(variant);
+                                        const quantity = variantQuantities[variant.id] || 0;
 
-                                  return (
-                                    <div
-                                      key={variant.id}
-                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                        }`}
-                                    >
-                                      <div className="flex-1">
-                                        <div className="font-medium flex items-center gap-2">
-                                          {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                          <span>{variant.name}</span>
-                                        </div>
-                                        <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {hasInvalidPrice ? (
-                                            'Invalid Selling Price. Please Proceed To The Main Inventory Page To Set The Selling Price.'
-                                          ) : (
-                                            <>
-                                              Selling Price: ₱{sellingPrice.toFixed(2)}
-                                              {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
-                                              {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
-                                            </>
-                                          )} • Available: {availableStock} units
-                                        </div>
-                                      </div>
-                                      <div className="w-28">
-                                        <Input
-                                          type="number"
-                                          placeholder="0"
-                                          min="0"
-                                          max={availableStock}
-                                          value={quantity === 0 ? '' : quantity}
-                                          onChange={(e) => {
-                                            const inputValue = parseInt(e.target.value) || 0;
-                                            const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                            setVariantQuantities(prev => ({
-                                              ...prev,
-                                              [variant.id]: cappedValue
-                                            }));
-                                          }}
-                                          disabled={hasInvalidPrice}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          )}
-                        </TabsContent>
-
-                        {/* Battery Tab */}
-                        <TabsContent value="battery" className="space-y-3 mt-4">
-                          {brands.find(b => b.id === allocation.brandId)?.batteries.length === 0 ? (
-                            <p className="text-sm text-muted-foreground text-center py-4">
-                              No batteries available for this brand
-                            </p>
-                          ) : (
-                            <div className="space-y-2">
-                              {brands.find(b => b.id === allocation.brandId)?.batteries
-                                .filter(v => getVariantAvailableStock(v) > 0)
-                                .map(variant => {
-                                  const sellingPriceRaw = (variant as any).sellingPrice;
-                                  const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                                  // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                                  const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                                  const availableStock = getVariantAvailableStock(variant);
-                                  const quantity = variantQuantities[variant.id] || 0;
-
-                                  return (
-                                    <div
-                                      key={variant.id}
-                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                        }`}
-                                    >
-                                      <div className="flex-1">
-                                        <div className="font-medium flex items-center gap-2">
-                                          {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                          <span>{variant.name}</span>
-                                        </div>
-                                        <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {hasInvalidPrice ? (
-                                            'Invalid Selling Price'
-                                          ) : (
-                                            <>
-                                              Selling Price: ₱{sellingPrice.toFixed(2)}
-                                              {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
-                                              {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
-                                            </>
-                                          )} • Available: {availableStock} units
-                                        </div>
-                                      </div>
-                                      <div className="w-28">
-                                        <Input
-                                          type="number"
-                                          placeholder="0"
-                                          min="0"
-                                          max={availableStock}
-                                          value={quantity === 0 ? '' : quantity}
-                                          onChange={(e) => {
-                                            const inputValue = parseInt(e.target.value) || 0;
-                                            const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                            setVariantQuantities(prev => ({
-                                              ...prev,
-                                              [variant.id]: cappedValue
-                                            }));
-                                          }}
-                                          disabled={hasInvalidPrice}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          )}
-                        </TabsContent>
-
-                        {/* POSM Tab */}
-                        <TabsContent value="posm" className="space-y-3 mt-4">
-                          {((brands.find(b => b.id === allocation.brandId) as any)?.posms || []).length === 0 ? (
-                            <p className="text-sm text-muted-foreground text-center py-4">
-                              No POSM available for this brand
-                            </p>
-                          ) : (
-                            <div className="space-y-2">
-                              {((brands.find(b => b.id === allocation.brandId) as any)?.posms || [])
-                                .filter((v: any) => getVariantAvailableStock(v) > 0)
-                                .map((variant: any) => {
-                                  const sellingPriceRaw = variant.sellingPrice;
-                                  const sellingPrice = typeof sellingPriceRaw === 'number' ? sellingPriceRaw : Number(sellingPriceRaw);
-                                  // Only flag as invalid if null, undefined, NaN, or negative (allow 0)
-                                  const hasInvalidPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || Number.isNaN(sellingPrice) || sellingPrice < 0;
-                                  const availableStock = getVariantAvailableStock(variant);
-                                  const quantity = variantQuantities[variant.id] || 0;
-
-                                  return (
-                                    <div
-                                      key={variant.id}
-                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                        }`}
-                                    >
-                                      <div className="flex-1">
-                                        <div className="font-medium flex items-center gap-2">
-                                          {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                          <span>{variant.name}</span>
-                                        </div>
-                                        <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {hasInvalidPrice ? (
-                                            'Invalid Selling Price'
-                                          ) : (
-                                            <>
-                                              Selling Price: ₱{sellingPrice.toFixed(2)}
-                                              {variant.dspPrice && ` • DSP: ₱${variant.dspPrice.toFixed(2)}`}
-                                              {variant.rspPrice && ` • RSP: ₱${variant.rspPrice.toFixed(2)}`}
-                                            </>
-                                          )} • Available: {availableStock} units
-                                        </div>
-                                      </div>
-                                      <div className="w-28">
-                                        <Input
-                                          type="number"
-                                          placeholder="0"
-                                          min="0"
-                                          max={availableStock}
-                                          value={quantity === 0 ? '' : quantity}
-                                          onChange={(e) => {
-                                            const inputValue = parseInt(e.target.value) || 0;
-                                            const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
-                                            setVariantQuantities(prev => ({
-                                              ...prev,
-                                              [variant.id]: cappedValue
-                                            }));
-                                          }}
-                                          disabled={hasInvalidPrice}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          )}
-                        </TabsContent>
-                      </Tabs>
+                                        return (
+                                          <div
+                                            key={variant.id}
+                                            className={`flex items-center gap-3 p-3 rounded-lg border ${hasInvalidPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'}`}
+                                          >
+                                            <div className="flex-1">
+                                              <div className="font-medium flex items-center gap-2">
+                                                {hasInvalidPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                                <span>{variant.name}</span>
+                                              </div>
+                                              <div className={`text-sm ${hasInvalidPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                                {hasInvalidPrice ? (
+                                                  'Invalid Selling Price. Please Proceed To The Main Inventory Page To Set The Selling Price.'
+                                                ) : (
+                                                  <>
+                                                    Selling Price: ₱{sellingPrice.toFixed(2)}
+                                                    {(variant as any).dspPrice && ` • DSP: ₱${(variant as any).dspPrice.toFixed(2)}`}
+                                                    {(variant as any).rspPrice && ` • RSP: ₱${(variant as any).rspPrice.toFixed(2)}`}
+                                                  </>
+                                                )} • Available: {availableStock} units
+                                              </div>
+                                            </div>
+                                            <div className="w-28">
+                                              <Input
+                                                type="number"
+                                                placeholder="0"
+                                                min="0"
+                                                max={availableStock}
+                                                value={quantity === 0 ? '' : quantity}
+                                                onChange={(e) => {
+                                                  const inputValue = parseInt(e.target.value) || 0;
+                                                  const cappedValue = Math.max(0, Math.min(inputValue, availableStock));
+                                                  setVariantQuantities(prev => ({
+                                                    ...prev,
+                                                    [variant.id]: cappedValue
+                                                  }));
+                                                }}
+                                                disabled={hasInvalidPrice}
+                                              />
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                  </div>
+                                )}
+                              </TabsContent>
+                            ))}
+                          </Tabs>
+                        );
+                      })()}
                     </CardContent>
                   </Card>
 

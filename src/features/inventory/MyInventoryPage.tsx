@@ -24,6 +24,25 @@ import type { RemittanceOrder, BankOrderNote } from './types';
 const LOW_STOCK_THRESHOLD = 10;
 const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
 
+// Helper function to get variant type colors
+const getVariantTypeColor = (type: string) => {
+  const typeLower = type.toLowerCase();
+  switch (typeLower) {
+    case 'flavor':
+      return { bg: 'bg-blue-100', text: 'text-blue-700', header: 'text-blue-600', headerBg: 'bg-blue-50/50' };
+    case 'battery':
+      return { bg: 'bg-green-100', text: 'text-green-700', header: 'text-green-600', headerBg: 'bg-green-50/50' };
+    case 'posm':
+      return { bg: 'bg-purple-100', text: 'text-purple-700', header: 'text-purple-600', headerBg: 'bg-purple-50/50' };
+    case 'foc':
+      return { bg: 'bg-orange-100', text: 'text-orange-700', header: 'text-orange-600', headerBg: 'bg-orange-50/50' };
+    case 'ncv':
+      return { bg: 'bg-pink-100', text: 'text-pink-700', header: 'text-pink-600', headerBg: 'bg-pink-50/50' };
+    default:
+      return { bg: 'bg-gray-100', text: 'text-gray-700', header: 'text-gray-600', headerBg: 'bg-gray-50/50' };
+  }
+};
+
 export default function MyInventory() {
   const { agentBrands } = useAgentInventory();
   const { user } = useAuth();
@@ -61,34 +80,41 @@ export default function MyInventory() {
   };
 
   const getTotalStock = (brand: any) => {
-    const flavorStock = brand.flavors.reduce((sum: number, f: any) => sum + f.stock, 0);
-    const batteryStock = brand.batteries.reduce((sum: number, b: any) => sum + b.stock, 0);
-    const posmStock = (brand.posms || []).reduce((sum: number, p: any) => sum + p.stock, 0);
-    return flavorStock + batteryStock + posmStock;
+    return (brand.allVariants || []).reduce((sum: number, v: any) => sum + v.stock, 0);
   };
 
   // Create a deep copy of brands with filtering applied at the variant level
   // Only include brands that end up having at least one item with stock > 0
   const activeBrands = agentBrands
-    .map(brand => ({
-      ...brand,
-      flavors: brand.flavors.filter((f: any) => f.stock > 0),
-      batteries: brand.batteries.filter((b: any) => b.stock > 0),
-      posms: (brand.posms || []).filter((p: any) => p.stock > 0)
-    }))
-    .filter(brand => {
-      const flavorCount = brand.flavors.length;
-      const batteryCount = brand.batteries.length;
-      const posmCount = brand.posms.length;
-      return (flavorCount + batteryCount + posmCount) > 0;
-    });
+    .map(brand => {
+      const allVariantsWithStock = (brand.allVariants || []).filter((v: any) => v.stock > 0);
+      const variantsByTypeWithStock = new Map<string, any[]>();
+      
+      // Rebuild variantsByType with only items that have stock > 0
+      if (brand.variantsByType) {
+        brand.variantsByType.forEach((variants, type) => {
+          const filtered = variants.filter((v: any) => v.stock > 0);
+          if (filtered.length > 0) {
+            variantsByTypeWithStock.set(type, filtered);
+          }
+        });
+      }
+
+      return {
+        ...brand,
+        allVariants: allVariantsWithStock,
+        variantsByType: variantsByTypeWithStock,
+        flavors: brand.flavors.filter((f: any) => f.stock > 0),
+        batteries: brand.batteries.filter((b: any) => b.stock > 0),
+        posms: (brand.posms || []).filter((p: any) => p.stock > 0)
+      };
+    })
+    .filter(brand => brand.allVariants.length > 0);
 
   const filteredBrands = activeBrands.filter(brand => {
     const matchesSearch =
       brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      brand.flavors.some(f => f.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      brand.batteries.some(b => b.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      brand.posms.some(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+      (brand.allVariants || []).some(v => v.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
     return matchesSearch;
   });
@@ -96,7 +122,7 @@ export default function MyInventory() {
   const getTotalVariants = () => {
     let count = 0;
     activeBrands.forEach(brand => {
-      count += brand.flavors.length + brand.batteries.length + brand.posms.length;
+      count += (brand.allVariants || []).length;
     });
     return count;
   };
@@ -104,9 +130,7 @@ export default function MyInventory() {
   const getLowStockCount = () => {
     let count = 0;
     activeBrands.forEach(brand => {
-      count += brand.flavors.filter((f: any) => f.status === 'low' || isLowStock(f.stock)).length;
-      count += brand.batteries.filter((b: any) => b.status === 'low' || isLowStock(b.stock)).length;
-      count += brand.posms.filter((p: any) => p.status === 'low' || isLowStock(p.stock)).length;
+      count += (brand.allVariants || []).filter((v: any) => v.status === 'low' || isLowStock(v.stock)).length;
     });
     return count;
   };
@@ -117,7 +141,7 @@ export default function MyInventory() {
       variantId: string;
       variantName: string;
       brandName: string;
-      variantType: 'flavor' | 'battery' | 'posm';
+      variantType: string;
       quantity: number;
       price: number;
       dspPrice?: number;
@@ -125,51 +149,18 @@ export default function MyInventory() {
     }> = [];
 
     agentBrands.forEach(brand => {
-      brand.flavors.forEach(flavor => {
-        // Ensure stock is a number and greater than 0
-        const stock = typeof flavor.stock === 'number' ? flavor.stock : Number(flavor.stock) || 0;
+      (brand.allVariants || []).forEach(variant => {
+        const stock = typeof variant.stock === 'number' ? variant.stock : Number(variant.stock) || 0;
         if (stock > 0) {
           items.push({
-            variantId: flavor.id,
-            variantName: flavor.name,
+            variantId: variant.id,
+            variantName: variant.name,
             brandName: brand.name,
-            variantType: 'flavor',
+            variantType: variant.variantType || 'flavor',
             quantity: stock,
-            price: flavor.price,
-            dspPrice: flavor.dspPrice,
-            rspPrice: flavor.rspPrice
-          });
-        }
-      });
-      brand.batteries.forEach(battery => {
-        // Ensure stock is a number and greater than 0
-        const stock = typeof battery.stock === 'number' ? battery.stock : Number(battery.stock) || 0;
-        if (stock > 0) {
-          items.push({
-            variantId: battery.id,
-            variantName: battery.name,
-            brandName: brand.name,
-            variantType: 'battery',
-            quantity: stock,
-            price: battery.price,
-            dspPrice: battery.dspPrice,
-            rspPrice: battery.rspPrice
-          });
-        }
-      });
-      (brand.posms || []).forEach(posm => {
-        // Ensure stock is a number and greater than 0
-        const stock = typeof posm.stock === 'number' ? posm.stock : Number(posm.stock) || 0;
-        if (stock > 0) {
-          items.push({
-            variantId: posm.id,
-            variantName: posm.name,
-            brandName: brand.name,
-            variantType: 'posm',
-            quantity: stock,
-            price: posm.price,
-            dspPrice: posm.dspPrice,
-            rspPrice: posm.rspPrice
+            price: variant.price,
+            dspPrice: variant.dspPrice,
+            rspPrice: variant.rspPrice
           });
         }
       });
@@ -730,54 +721,24 @@ export default function MyInventory() {
                     {/* Details */}
                     {expandedBrands.includes(brand.id) && (
                       <div className="space-y-2 pt-2 border-t mt-2">
-                        {brand.flavors.length > 0 && (
-                          <div>
-                            <div className="text-xs font-semibold text-muted-foreground mb-1">Flavors</div>
+                        {brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants]) => (
+                          <div key={type}>
+                            <div className="text-xs font-semibold text-muted-foreground mb-1 capitalize">
+                              {type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : `${type}s`}
+                            </div>
                             <div className="space-y-1">
-                              {brand.flavors.map((f: any) => (
-                                <div key={f.id} className="flex items-center justify-between text-sm py-1">
-                                  <span className="truncate">{f.name}</span>
+                              {variants.map((v: any) => (
+                                <div key={v.id} className="flex items-center justify-between text-sm py-1">
+                                  <span className="truncate">{v.name}</span>
                                   <div className="text-right ml-2 flex-shrink-0">
-                                    <span className={`font-semibold ${isLowStock(f.stock) ? 'text-amber-600' : ''}`}>{f.stock}</span>
-                                    <span className="text-xs text-muted-foreground ml-1">₱{f.price.toFixed(2)}</span>
+                                    <span className={`font-semibold ${isLowStock(v.stock) ? 'text-amber-600' : ''}`}>{v.stock}</span>
+                                    <span className="text-xs text-muted-foreground ml-1">₱{v.price.toFixed(2)}</span>
                                   </div>
                                 </div>
                               ))}
                             </div>
                           </div>
-                        )}
-                        {brand.batteries.length > 0 && (
-                          <div>
-                            <div className="text-xs font-semibold text-muted-foreground mb-1">Batteries</div>
-                            <div className="space-y-1">
-                              {brand.batteries.map((b: any) => (
-                                <div key={b.id} className="flex items-center justify-between text-sm py-1">
-                                  <span className="truncate">{b.name}</span>
-                                  <div className="text-right ml-2 flex-shrink-0">
-                                    <span className={`font-semibold ${isLowStock(b.stock) ? 'text-amber-600' : ''}`}>{b.stock}</span>
-                                    <span className="text-xs text-muted-foreground ml-1">₱{b.price.toFixed(2)}</span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {(brand.posms || []).length > 0 && (
-                          <div>
-                            <div className="text-xs font-semibold text-muted-foreground mb-1">POSM</div>
-                            <div className="space-y-1">
-                              {(brand.posms || []).map((p: any) => (
-                                <div key={p.id} className="flex items-center justify-between text-sm py-1">
-                                  <span className="truncate">{p.name}</span>
-                                  <div className="text-right ml-2 flex-shrink-0">
-                                    <span className={`font-semibold ${isLowStock(p.stock) ? 'text-amber-600' : ''}`}>{p.stock}</span>
-                                    <span className="text-xs text-muted-foreground ml-1">₱{p.price.toFixed(2)}</span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        ))}
                       </div>
                     )}
 
@@ -834,15 +795,18 @@ export default function MyInventory() {
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
                         <span className="text-xs">
-                          {brand.flavors.length} {brand.flavors.length === 1 ? 'Flavor' : 'Flavors'}
-                          {brand.batteries.length > 0 && ` • ${brand.batteries.length} ${brand.batteries.length === 1 ? 'Battery' : 'Batteries'}`}
-                          {(brand.posms || []).length > 0 && ` • ${(brand.posms || []).length} POSM${(brand.posms || []).length === 1 ? '' : 's'}`}
+                          {brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants], idx) => {
+                            const prefix = idx > 0 ? ' • ' : '';
+                            const typeName = type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type.charAt(0).toUpperCase() + type.slice(1);
+                            const plural = variants.length !== 1 && type !== 'posm' && type !== 'foc' && type !== 'ncv' ? 's' : '';
+                            return `${prefix}${variants.length} ${typeName}${plural}`;
+                          }).join('')}
                         </span>
                       </TableCell>
                       <TableCell className="text-right cursor-pointer" onClick={() => toggleBrandExpand(brand.id)}>
                         <span className={(() => {
                           const total = getTotalStock(brand);
-                          const hasLow = brand.flavors.some((f: any) => isLowStock(f.stock)) || brand.batteries.some((b: any) => isLowStock(b.stock)) || (brand.posms || []).some((p: any) => isLowStock(p.stock));
+                          const hasLow = (brand.allVariants || []).some((v: any) => isLowStock(v.stock));
                           return hasLow && total > 0 ? 'font-semibold text-amber-600' : 'font-semibold';
                         })()}>
                           {getTotalStock(brand)}
@@ -854,7 +818,7 @@ export default function MyInventory() {
                       <TableCell className="text-right">
                         {(() => {
                           const total = getTotalStock(brand);
-                          const hasLow = brand.flavors.some((f: any) => f.status === 'low' || isLowStock(f.stock)) || brand.batteries.some((b: any) => b.status === 'low' || isLowStock(b.stock)) || (brand.posms || []).some((p: any) => p.status === 'low' || isLowStock(p.stock));
+                          const hasLow = (brand.allVariants || []).some((v: any) => v.status === 'low' || isLowStock(v.stock));
                           const pillClass = total === 0 ? 'bg-red-100 text-red-700' : hasLow ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
                           const label = total === 0 ? 'Out of Stock' : hasLow ? 'Low stock' : 'In Stock';
                           return <span className={`px-2 py-1 rounded-full text-xs font-medium ${pillClass}`}>{label}</span>;
@@ -862,137 +826,60 @@ export default function MyInventory() {
                       </TableCell>
                     </TableRow>
 
-                    {/* Flavors */}
-                    {expandedBrands.includes(brand.id) && brand.flavors.length > 0 && (
-                      <TableRow className="bg-blue-50/50">
-                        <TableCell></TableCell>
-                        <TableCell colSpan={8} className="pl-8 py-2">
-                          <span className="text-xs font-semibold text-blue-600">FLAVORS</span>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {expandedBrands.includes(brand.id) && brand.flavors.map((flavor) => (
-                      <TableRow key={flavor.id} className={`hover:bg-muted/20 ${isLowStock(flavor.stock) && flavor.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
-                        <TableCell></TableCell>
-                        <TableCell className="pl-12 text-sm font-medium">
-                          <span className="text-muted-foreground">↳</span> {flavor.name}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary" className="bg-blue-100 text-blue-700">Flavor</Badge>
-                        </TableCell>
-                        {/* Variants column (empty for child rows to keep alignment) */}
-                        <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
-                        <TableCell className={`text-right font-semibold ${isLowStock(flavor.stock) ? 'text-amber-600' : ''}`}>
-                          {flavor.stock}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">₱{flavor.price.toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-muted-foreground text-sm">
-                          {flavor.dspPrice ? `₱${flavor.dspPrice.toFixed(2)}` : '-'}
-                        </TableCell>
-                        <TableCell className="text-right text-muted-foreground text-sm">
-                          {flavor.rspPrice ? `₱${flavor.rspPrice.toFixed(2)}` : '-'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge
-                            variant={
-                              flavor.stock === 0 ? 'destructive' :
-                                isLowStock(flavor.stock) ? 'secondary' : 'default'
-                            }
-                            className={`text-xs ${isLowStock(flavor.stock) && flavor.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
-                          >
-                            {flavor.stock === 0 ? 'Out of stock' : isLowStock(flavor.stock) ? 'Low stock' : flavor.status === 'available' ? 'available' : flavor.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {/* Dynamic Variant Type Sections */}
+                    {expandedBrands.includes(brand.id) && brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants]) => {
+                      const colors = getVariantTypeColor(type);
+                      const typeDisplay = type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type.toUpperCase();
+                      
+                      return (
+                        <React.Fragment key={type}>
+                          {/* Type Header */}
+                          <TableRow className={colors.headerBg}>
+                            <TableCell></TableCell>
+                            <TableCell colSpan={8} className="pl-8 py-2">
+                              <span className={`text-xs font-semibold ${colors.header}`}>{typeDisplay}</span>
+                            </TableCell>
+                          </TableRow>
 
-                    {/* Batteries */}
-                    {expandedBrands.includes(brand.id) && brand.batteries.length > 0 && (
-                      <TableRow className="bg-green-50/50">
-                        <TableCell></TableCell>
-                        <TableCell colSpan={8} className="pl-8 py-2">
-                          <span className="text-xs font-semibold text-green-600">BATTERIES</span>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {expandedBrands.includes(brand.id) && brand.batteries.map((battery) => (
-                      <TableRow key={battery.id} className={`hover:bg-muted/20 ${isLowStock(battery.stock) && battery.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
-                        <TableCell></TableCell>
-                        <TableCell className="pl-12 text-sm font-medium">
-                          <span className="text-muted-foreground">↳</span> {battery.name}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary" className="bg-green-100 text-green-700">Battery</Badge>
-                        </TableCell>
-                        {/* Variants column (empty for child rows to keep alignment) */}
-                        <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
-                        <TableCell className={`text-right font-semibold ${isLowStock(battery.stock) ? 'text-amber-600' : ''}`}>
-                          {battery.stock}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">₱{battery.price.toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-muted-foreground text-sm">
-                          {battery.dspPrice ? `₱${battery.dspPrice.toFixed(2)}` : '-'}
-                        </TableCell>
-                        <TableCell className="text-right text-muted-foreground text-sm">
-                          {battery.rspPrice ? `₱${battery.rspPrice.toFixed(2)}` : '-'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge
-                            variant={
-                              battery.stock === 0 ? 'destructive' :
-                                isLowStock(battery.stock) ? 'secondary' : 'default'
-                            }
-                            className={`text-xs ${isLowStock(battery.stock) && battery.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
-                          >
-                            {battery.stock === 0 ? 'Out of stock' : isLowStock(battery.stock) ? 'Low stock' : battery.status === 'available' ? 'available' : battery.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-
-                    {/* POSMs */}
-                    {expandedBrands.includes(brand.id) && (brand.posms || []).length > 0 && (
-                      <TableRow className="bg-purple-50/50">
-                        <TableCell></TableCell>
-                        <TableCell colSpan={8} className="pl-8 py-2">
-                          <span className="text-xs font-semibold text-purple-600">POSM</span>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {expandedBrands.includes(brand.id) && (brand.posms || []).map((posm) => (
-                      <TableRow key={posm.id} className={`hover:bg-muted/20 ${isLowStock(posm.stock) && posm.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
-                        <TableCell></TableCell>
-                        <TableCell className="pl-12 text-sm font-medium">
-                          <span className="text-muted-foreground">↳</span> {posm.name}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary" className="bg-purple-100 text-purple-700">POSM</Badge>
-                        </TableCell>
-                        {/* Variants column (empty for child rows to keep alignment) */}
-                        <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
-                        <TableCell className={`text-right font-semibold ${isLowStock(posm.stock) ? 'text-amber-600' : ''}`}>
-                          {posm.stock}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">₱{posm.price.toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-muted-foreground text-sm">
-                          {posm.dspPrice ? `₱${posm.dspPrice.toFixed(2)}` : '-'}
-                        </TableCell>
-                        <TableCell className="text-right text-muted-foreground text-sm">
-                          {posm.rspPrice ? `₱${posm.rspPrice.toFixed(2)}` : '-'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge
-                            variant={
-                              posm.stock === 0 ? 'destructive' :
-                                isLowStock(posm.stock) ? 'secondary' : 'default'
-                            }
-                            className={`text-xs ${isLowStock(posm.stock) && posm.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
-                          >
-                            {posm.stock === 0 ? 'Out of stock' : isLowStock(posm.stock) ? 'Low stock' : posm.status === 'available' ? 'available' : posm.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                          {/* Variant Rows */}
+                          {variants.map((variant: any) => (
+                            <TableRow key={variant.id} className={`hover:bg-muted/20 ${isLowStock(variant.stock) && variant.stock > 0 ? 'bg-amber-50/80' : 'bg-muted/10'}`}>
+                              <TableCell></TableCell>
+                              <TableCell className="pl-12 text-sm font-medium">
+                                <span className="text-muted-foreground">↳</span> {variant.name}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="secondary" className={`${colors.bg} ${colors.text} capitalize`}>
+                                  {type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right text-muted-foreground text-xs">-</TableCell>
+                              <TableCell className={`text-right font-semibold ${isLowStock(variant.stock) ? 'text-amber-600' : ''}`}>
+                                {variant.stock}
+                              </TableCell>
+                              <TableCell className="text-right font-medium">₱{variant.price.toFixed(2)}</TableCell>
+                              <TableCell className="text-right text-muted-foreground text-sm">
+                                {variant.dspPrice ? `₱${variant.dspPrice.toFixed(2)}` : '-'}
+                              </TableCell>
+                              <TableCell className="text-right text-muted-foreground text-sm">
+                                {variant.rspPrice ? `₱${variant.rspPrice.toFixed(2)}` : '-'}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Badge
+                                  variant={
+                                    variant.stock === 0 ? 'destructive' :
+                                      isLowStock(variant.stock) ? 'secondary' : 'default'
+                                  }
+                                  className={`text-xs ${isLowStock(variant.stock) && variant.stock > 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : ''}`}
+                                >
+                                  {variant.stock === 0 ? 'Out of stock' : isLowStock(variant.stock) ? 'Low stock' : variant.status === 'available' ? 'available' : variant.status}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </React.Fragment>
+                      );
+                    })}
                   </React.Fragment>
                 ))}
               </TableBody>
