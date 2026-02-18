@@ -86,7 +86,9 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
           name: brand.name,
           flavors: [],
           batteries: [],
-          posms: []
+          posms: [],
+          allVariants: [],
+          variantsByType: new Map<string, AgentVariant[]>()
         });
       });
 
@@ -99,15 +101,12 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
         if (brand) {
           const mainPriceInfo = mainPrices.get(variant.id) || { unit_price: 0, selling_price: 0 };
 
-          // Determine effective price: selling_price (explicit) > allocated_price > unit_price
-          // For agents, we primarily care about allocated_price (what they owe) or selling_price (SRP)
-          // Let's use allocated_price as the primary "cost" to agent, and selling_price as SRP
-
           const agentVariant: AgentVariant = {
             id: variant.id,
             name: variant.name,
+            variantType: variant.variant_type || 'flavor',
             stock: item.stock,
-            price: item.allocated_price || mainPriceInfo.unit_price || 0, // Default to allocated price
+            price: item.allocated_price || mainPriceInfo.unit_price || 0,
             allocatedPrice: item.allocated_price,
             dspPrice: item.dsp_price,
             rspPrice: item.rsp_price,
@@ -116,11 +115,22 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
             status: item.status
           };
 
-          if (variant.variant_type === 'flavor' || variant.variant_type === 'Flavor') {
+          // Add to allVariants
+          brand.allVariants.push(agentVariant);
+
+          // Add to variantsByType map
+          const typeLower = variant.variant_type?.toLowerCase() || 'flavor';
+          if (!brand.variantsByType.has(typeLower)) {
+            brand.variantsByType.set(typeLower, []);
+          }
+          brand.variantsByType.get(typeLower)!.push(agentVariant);
+
+          // Maintain legacy arrays for backward compatibility
+          if (typeLower === 'flavor') {
             brand.flavors.push(agentVariant);
-          } else if (variant.variant_type === 'battery' || variant.variant_type === 'Battery') {
+          } else if (typeLower === 'battery') {
             brand.batteries.push(agentVariant);
-          } else if (variant.variant_type === 'POSM' || variant.variant_type === 'posm') {
+          } else if (typeLower === 'posm') {
             brand.posms.push(agentVariant);
           }
         }
@@ -128,7 +138,7 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
 
       // Convert map to array and sort
       const formattedBrands = Array.from(brandsMap.values()).filter(b =>
-        b.flavors.length > 0 || b.batteries.length > 0 || b.posms.length > 0
+        b.allVariants.length > 0
       );
 
       setAgentBrands(formattedBrands);
@@ -197,7 +207,7 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
   const reduceStock = (
     brandName: string,
     variantName: string,
-    variantType: 'flavor' | 'battery' | 'posm',
+    variantType: string,
     quantity: number
   ) => {
     // Optimistic update
@@ -215,11 +225,20 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
           return v;
         };
 
+        const typeLower = variantType.toLowerCase();
+
         return {
           ...brand,
-          flavors: variantType === 'flavor' ? brand.flavors.map(updateVariant) : brand.flavors,
-          batteries: variantType === 'battery' ? brand.batteries.map(updateVariant) : brand.batteries,
-          posms: variantType === 'posm' ? brand.posms.map(updateVariant) : brand.posms
+          allVariants: brand.allVariants.map(updateVariant),
+          flavors: typeLower === 'flavor' ? brand.flavors.map(updateVariant) : brand.flavors,
+          batteries: typeLower === 'battery' ? brand.batteries.map(updateVariant) : brand.batteries,
+          posms: typeLower === 'posm' ? brand.posms.map(updateVariant) : brand.posms,
+          variantsByType: new Map(
+            Array.from(brand.variantsByType.entries()).map(([type, variants]) => [
+              type,
+              type === typeLower ? variants.map(updateVariant) : variants
+            ])
+          )
         };
       });
     });

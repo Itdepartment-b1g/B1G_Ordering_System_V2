@@ -527,14 +527,9 @@ export default function MyOrdersPage() {
       // Find the latest variant data from source of truth (agentBrands)
       let foundVariant: any = null;
       for (const brand of agentBrands) {
-        const flavor = brand.flavors.find(f => f.id === item.variantId);
-        if (flavor) {
-          foundVariant = flavor;
-          break;
-        }
-        const battery = brand.batteries.find(b => b.id === item.variantId);
-        if (battery) {
-          foundVariant = battery;
+        const variant = (brand.allVariants || []).find(v => v.id === item.variantId);
+        if (variant) {
+          foundVariant = variant;
           break;
         }
       }

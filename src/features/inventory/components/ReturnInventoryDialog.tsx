@@ -60,39 +60,15 @@ export function ReturnInventoryDialog({
     if (returnMode === 'full') {
       const allItems: ReturnItem[] = [];
       agentBrands.forEach(brand => {
-        brand.flavors.forEach(flavor => {
-          if (flavor.stock > 0) {
+        (brand.allVariants || []).forEach(variant => {
+          if (variant.stock > 0) {
             allItems.push({
-              variant_id: flavor.id,
-              variantName: flavor.name,
+              variant_id: variant.id,
+              variantName: variant.name,
               brandName: brand.name,
-              variantType: 'flavor',
-              quantity: flavor.stock,
-              maxQuantity: flavor.stock
-            });
-          }
-        });
-        brand.batteries.forEach(battery => {
-          if (battery.stock > 0) {
-            allItems.push({
-              variant_id: battery.id,
-              variantName: battery.name,
-              brandName: brand.name,
-              variantType: 'battery',
-              quantity: battery.stock,
-              maxQuantity: battery.stock
-            });
-          }
-        });
-        brand.posms.forEach(posm => {
-          if (posm.stock > 0) {
-            allItems.push({
-              variant_id: posm.id,
-              variantName: posm.name,
-              brandName: brand.name,
-              variantType: 'posm',
-              quantity: posm.stock,
-              maxQuantity: posm.stock
+              variantType: variant.variantType || 'flavor',
+              quantity: variant.stock,
+              maxQuantity: variant.stock
             });
           }
         });
@@ -132,7 +108,7 @@ export function ReturnInventoryDialog({
     );
   };
 
-  const handleItemToggle = (variant: any, brandName: string, variantType: 'flavor' | 'battery' | 'posm') => {
+  const handleItemToggle = (variant: any, brandName: string, variantType: string) => {
     const variantId = variant.id;
     const existing = selectedItems.find(item => item.variant_id === variantId);
     
@@ -385,11 +361,10 @@ export function ReturnInventoryDialog({
                           
                           {isExpanded && (
                             <div className="p-3 pt-0 space-y-2">
-                              {[...brand.flavors, ...brand.batteries, ...brand.posms].map(variant => {
+                              {(brand.allVariants || []).map(variant => {
                                 if (variant.stock <= 0) return null;
                                 
-                                const variantType = brand.flavors.includes(variant) ? 'flavor' :
-                                                  brand.batteries.includes(variant) ? 'battery' : 'posm';
+                                const variantType = variant.variantType || 'flavor';
                                 const isSelected = selectedItems.some(item => item.variant_id === variant.id);
                                 const selectedItem = selectedItems.find(item => item.variant_id === variant.id);
 

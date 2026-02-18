@@ -924,6 +924,22 @@ export default function LeaderInventoryPage() {
       return acc;
     }, {} as Record<string, any[]>);
 
+  // Display label for variant type (scalable for custom types: FOC, NCV, etc.)
+  const getVariantTypeDisplay = (type: string) => {
+    const t = (type || '').toLowerCase();
+    if (t === 'posm') return 'POSM';
+    if (t === 'foc') return 'FOC';
+    if (t === 'ncv') return 'NCV';
+    return (type || 'variant').charAt(0).toUpperCase() + (type || 'variant').slice(1).toLowerCase();
+  };
+
+  // Tab label with plural (e.g. "Flavors", "FOC", "POSM")
+  const getVariantTypeTabLabel = (type: string) => {
+    const t = (type || '').toLowerCase();
+    if (t === 'posm' || t === 'foc' || t === 'ncv') return getVariantTypeDisplay(type);
+    return getVariantTypeDisplay(type) + 's';
+  };
+
   if (!user || !canLeadTeam(user.role)) {
     return (
       <div className="p-8 space-y-6">
@@ -1943,225 +1959,103 @@ export default function LeaderInventoryPage() {
 
                 {allocation.brandId && groupedInventory[allocation.brandId] && (
                   <>
-                    {/* Variant Selection - Show All Variants with Quantity Inputs */}
+                    {/* Variant Selection - Show All Variants with Quantity Inputs (dynamic types: Flavor, Battery, POSM, FOC, NCV, etc.) */}
                     <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
                       <Label className="text-base font-semibold">Select Variants to Allocate</Label>
                       <p className="text-xs text-muted-foreground">Enter quantities for the variants you want to allocate. Leave as 0 to skip.</p>
 
-                      <Tabs defaultValue="flavor" className="w-full">
-                        <TabsList className="grid w-full grid-cols-3">
-                          <TabsTrigger value="flavor">
-                            Flavors ({groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'flavor').length})
-                          </TabsTrigger>
-                          <TabsTrigger value="battery">
-                            Batteries ({groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'battery').length})
-                          </TabsTrigger>
-                          <TabsTrigger value="posm">
-                            POSM ({groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'posm').length})
-                          </TabsTrigger>
-                        </TabsList>
+                      {(() => {
+                        const brandItems = groupedInventory[allocation.brandId] || [];
+                        const typeStrings = brandItems.map((i: any) => String(i.variantType || 'flavor').toLowerCase());
+                        const variantTypes = ([...new Set(typeStrings)] as string[]).sort((a, b) => {
+                          const order: Record<string, number> = { flavor: 1, battery: 2, posm: 3 };
+                          const aOrder = order[a] ?? 99;
+                          const bOrder = order[b] ?? 99;
+                          if (aOrder !== bOrder) return aOrder - bOrder;
+                          return a.localeCompare(b);
+                        });
+                        const firstType: string = variantTypes[0] || 'flavor';
 
-                        {/* Flavor Tab */}
-                        <TabsContent value="flavor" className="space-y-3 mt-4">
-                          {groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'flavor').length === 0 ? (
-                            <p className="text-sm text-muted-foreground text-center py-4">
-                              No flavors available for this brand
-                            </p>
-                          ) : (
-                            <div className="space-y-2">
-                              {groupedInventory[allocation.brandId]
-                                .filter((item: any) => item.variantType === 'flavor')
-                                .map((item: any) => {
-                                  // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
-                                  const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
-                                  const currentQty = variantQuantities[item.variantId] || 0;
-                                  return (
-                                    <div
-                                      key={item.variantId}
-                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasNoPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                        }`}
-                                    >
-                                      <div className="flex-1">
-                                        <div className="font-medium flex items-center gap-2">
-                                          {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                          <span>{item.variantName}</span>
-                                        </div>
-                                        <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : (
-                                            <span className="inline-flex flex-wrap gap-x-2">
-                                              <span>Allocated: ₱{item.allocatedPrice.toFixed(2)}</span>
-                                              {item.dspPrice !== null && item.dspPrice !== undefined && <span>DSP: ₱{item.dspPrice.toFixed(2)}</span>}
-                                              {item.rspPrice !== null && item.rspPrice !== undefined && <span>RSP: ₱{item.rspPrice.toFixed(2)}</span>}
-                                            </span>
-                                          )} • Available: {item.stock} units
-                                        </div>
-                                        {currentQty > 0 && !hasNoPrice && (
-                                          <div className="text-xs font-semibold text-green-600 mt-1">
-                                            Total: Allocated ₱{(item.allocatedPrice * currentQty).toFixed(2)}
-                                            {item.dspPrice !== null && item.dspPrice !== undefined && ` | DSP ₱${(item.dspPrice * currentQty).toFixed(2)}`}
-                                            {item.rspPrice !== null && item.rspPrice !== undefined && ` | RSP ₱${(item.rspPrice * currentQty).toFixed(2)}`}
-                                          </div>
-                                        )}
-                                      </div>
-                                      <div className="w-28">
-                                        <Input
-                                          type="number"
-                                          placeholder="0"
-                                          min="0"
-                                          max={item.stock}
-                                          value={variantQuantities[item.variantId] || ''}
-                                          onChange={(e) => {
-                                            const inputValue = parseInt(e.target.value) || 0;
-                                            const cappedValue = Math.max(0, Math.min(inputValue, item.stock));
-                                            setVariantQuantities(prev => ({
-                                              ...prev,
-                                              [item.variantId]: cappedValue
-                                            }));
-                                          }}
-                                          disabled={hasNoPrice}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          )}
-                        </TabsContent>
+                        return (
+                          <Tabs defaultValue={firstType} className="w-full">
+                            <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${variantTypes.length}, minmax(0, 1fr))` }}>
+                              {variantTypes.map((variantType: string) => {
+                                const count = brandItems.filter((item: any) => String(item.variantType || 'flavor').toLowerCase() === variantType).length;
+                                return (
+                                  <TabsTrigger key={variantType} value={variantType} className="text-xs sm:text-sm">
+                                    {getVariantTypeTabLabel(variantType)} ({count})
+                                  </TabsTrigger>
+                                );
+                              })}
+                            </TabsList>
 
-                        {/* Battery Tab */}
-                        <TabsContent value="battery" className="space-y-3 mt-4">
-                          {groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'battery').length === 0 ? (
-                            <p className="text-sm text-muted-foreground text-center py-4">
-                              No batteries available for this brand
-                            </p>
-                          ) : (
-                            <div className="space-y-2">
-                              {groupedInventory[allocation.brandId]
-                                .filter((item: any) => item.variantType === 'battery')
-                                .map((item: any) => {
-                                  // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
-                                  const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
-                                  const currentQty = variantQuantities[item.variantId] || 0;
-                                  return (
-                                    <div
-                                      key={item.variantId}
-                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasNoPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                        }`}
-                                    >
-                                      <div className="flex-1">
-                                        <div className="font-medium flex items-center gap-2">
-                                          {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                          <span>{item.variantName}</span>
-                                        </div>
-                                        <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : (
-                                            <span className="inline-flex flex-wrap gap-x-2">
-                                              <span>Allocated: ₱{item.allocatedPrice.toFixed(2)}</span>
-                                              {item.dspPrice !== null && item.dspPrice !== undefined && <span>DSP: ₱{item.dspPrice.toFixed(2)}</span>}
-                                              {item.rspPrice !== null && item.rspPrice !== undefined && <span>RSP: ₱{item.rspPrice.toFixed(2)}</span>}
-                                            </span>
-                                          )} • Available: {item.stock} units
-                                        </div>
-                                        {currentQty > 0 && !hasNoPrice && (
-                                          <div className="text-xs font-semibold text-green-600 mt-1">
-                                            Total: Allocated ₱{(item.allocatedPrice * currentQty).toFixed(2)}
-                                            {item.dspPrice !== null && item.dspPrice !== undefined && ` | DSP ₱${(item.dspPrice * currentQty).toFixed(2)}`}
-                                            {item.rspPrice !== null && item.rspPrice !== undefined && ` | RSP ₱${(item.rspPrice * currentQty).toFixed(2)}`}
+                            {variantTypes.map((variantType: string) => {
+                              const itemsOfType = brandItems.filter((item: any) => String(item.variantType || 'flavor').toLowerCase() === variantType);
+                              const typeLabel = getVariantTypeDisplay(variantType);
+                              return (
+                                <TabsContent key={variantType} value={variantType} className="space-y-3 mt-4">
+                                  {itemsOfType.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground text-center py-4">
+                                      No {['posm', 'foc', 'ncv'].includes(variantType) ? typeLabel : typeLabel.toLowerCase() + 's'} available for this brand
+                                    </p>
+                                  ) : (
+                                    <div className="space-y-2">
+                                      {itemsOfType.map((item: any) => {
+                                        const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
+                                        const currentQty = variantQuantities[item.variantId] || 0;
+                                        return (
+                                          <div
+                                            key={item.variantId}
+                                            className={`flex items-center gap-3 p-3 rounded-lg border ${hasNoPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'}`}
+                                          >
+                                            <div className="flex-1">
+                                              <div className="font-medium flex items-center gap-2">
+                                                {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
+                                                <span>{item.variantName}</span>
+                                              </div>
+                                              <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                                {getVariantTypeDisplay(item.variantType)} • {hasNoPrice ? 'No Price Set' : (
+                                                  <span className="inline-flex flex-wrap gap-x-2">
+                                                    <span>Allocated: ₱{item.allocatedPrice.toFixed(2)}</span>
+                                                    {item.dspPrice != null && <span>DSP: ₱{item.dspPrice.toFixed(2)}</span>}
+                                                    {item.rspPrice != null && <span>RSP: ₱{item.rspPrice.toFixed(2)}</span>}
+                                                  </span>
+                                                )} • Available: {item.stock} units
+                                              </div>
+                                              {currentQty > 0 && !hasNoPrice && (
+                                                <div className="text-xs font-semibold text-green-600 mt-1">
+                                                  Total: Allocated ₱{(item.allocatedPrice * currentQty).toFixed(2)}
+                                                  {item.dspPrice != null && ` | DSP ₱${(item.dspPrice * currentQty).toFixed(2)}`}
+                                                  {item.rspPrice != null && ` | RSP ₱${(item.rspPrice * currentQty).toFixed(2)}`}
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div className="w-28">
+                                              <Input
+                                                type="number"
+                                                placeholder="0"
+                                                min="0"
+                                                max={item.stock}
+                                                value={variantQuantities[item.variantId] ?? ''}
+                                                onChange={(e) => {
+                                                  const inputValue = parseInt(e.target.value, 10) || 0;
+                                                  const cappedValue = Math.max(0, Math.min(inputValue, item.stock));
+                                                  setVariantQuantities(prev => ({ ...prev, [item.variantId]: cappedValue }));
+                                                }}
+                                                disabled={hasNoPrice}
+                                              />
+                                            </div>
                                           </div>
-                                        )}
-                                      </div>
-                                      <div className="w-28">
-                                        <Input
-                                          type="number"
-                                          placeholder="0"
-                                          min="0"
-                                          max={item.stock}
-                                          value={variantQuantities[item.variantId] || ''}
-                                          onChange={(e) => {
-                                            const inputValue = parseInt(e.target.value) || 0;
-                                            const cappedValue = Math.max(0, Math.min(inputValue, item.stock));
-                                            setVariantQuantities(prev => ({
-                                              ...prev,
-                                              [item.variantId]: cappedValue
-                                            }));
-                                          }}
-                                          disabled={hasNoPrice}
-                                        />
-                                      </div>
+                                        );
+                                      })}
                                     </div>
-                                  );
-                                })}
-                            </div>
-                          )}
-                        </TabsContent>
-
-                        {/* POSM Tab */}
-                        <TabsContent value="posm" className="space-y-3 mt-4">
-                          {groupedInventory[allocation.brandId].filter((item: any) => item.variantType === 'posm').length === 0 ? (
-                            <p className="text-sm text-muted-foreground text-center py-4">
-                              No POSM available for this brand
-                            </p>
-                          ) : (
-                            <div className="space-y-2">
-                              {groupedInventory[allocation.brandId]
-                                .filter((item: any) => item.variantType === 'posm')
-                                .map((item: any) => {
-                                  // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
-                                  const hasNoPrice = item.allocatedPrice === null || item.allocatedPrice === undefined || (typeof item.allocatedPrice === 'number' && Number.isNaN(item.allocatedPrice));
-                                  const currentQty = variantQuantities[item.variantId] || 0;
-                                  return (
-                                    <div
-                                      key={item.variantId}
-                                      className={`flex items-center gap-3 p-3 rounded-lg border ${hasNoPrice ? 'bg-yellow-50/50 border-yellow-300' : 'bg-background'
-                                        }`}
-                                    >
-                                      <div className="flex-1">
-                                        <div className="font-medium flex items-center gap-2">
-                                          {hasNoPrice && <AlertTriangle className="h-4 w-4 text-yellow-600" />}
-                                          <span>{item.variantName}</span>
-                                        </div>
-                                        <div className={`text-sm ${hasNoPrice ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                          {item.variantType} • {hasNoPrice ? 'No Price Set' : (
-                                            <span className="inline-flex flex-wrap gap-x-2">
-                                              <span>Allocated: ₱{item.allocatedPrice.toFixed(2)}</span>
-                                              {item.dspPrice !== null && item.dspPrice !== undefined && <span>DSP: ₱{item.dspPrice.toFixed(2)}</span>}
-                                              {item.rspPrice !== null && item.rspPrice !== undefined && <span>RSP: ₱{item.rspPrice.toFixed(2)}</span>}
-                                            </span>
-                                          )} • Available: {item.stock} units
-                                        </div>
-                                        {currentQty > 0 && !hasNoPrice && (
-                                          <div className="text-xs font-semibold text-green-600 mt-1">
-                                            Total: Allocated ₱{(item.allocatedPrice * currentQty).toFixed(2)}
-                                            {item.dspPrice !== null && item.dspPrice !== undefined && ` | DSP ₱${(item.dspPrice * currentQty).toFixed(2)}`}
-                                            {item.rspPrice !== null && item.rspPrice !== undefined && ` | RSP ₱${(item.rspPrice * currentQty).toFixed(2)}`}
-                                          </div>
-                                        )}
-                                      </div>
-                                      <div className="w-28">
-                                        <Input
-                                          type="number"
-                                          placeholder="0"
-                                          min="0"
-                                          max={item.stock}
-                                          value={variantQuantities[item.variantId] || ''}
-                                          onChange={(e) => {
-                                            const inputValue = parseInt(e.target.value) || 0;
-                                            const cappedValue = Math.max(0, Math.min(inputValue, item.stock));
-                                            setVariantQuantities(prev => ({
-                                              ...prev,
-                                              [item.variantId]: cappedValue
-                                            }));
-                                          }}
-                                          disabled={hasNoPrice}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          )}
-                        </TabsContent>
-                      </Tabs>
+                                  )}
+                                </TabsContent>
+                              );
+                            })}
+                          </Tabs>
+                        );
+                      })()}
                     </div>
 
                     {/* Allocation Items Summary */}
