@@ -247,16 +247,52 @@ export function useLeaderStats() {
                 recentRemittances
             };
         },
-        staleTime: 1000 * 60 * 5,
+        staleTime: 1000 * 30, // 30 seconds - more responsive for pending actions
+        refetchOnWindowFocus: true, // Refetch when user returns to tab
     });
 
     useEffect(() => {
         if (!user?.id || user.role !== 'team_leader') return;
 
-        const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] }));
-        const channel2 = subscribeToTable('stock_requests', () => queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] }));
-        const channel3 = subscribeToTable('leader_teams', () => queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] }));
-        const channel4 = subscribeToTable('remittances_log', () => queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] }));
+        // Handle client_orders changes
+        const channel1 = subscribeToTable('client_orders', (payload) => {
+            console.log('🔄 [Leader Stats] Client order changed:', payload.eventType);
+            queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] });
+        });
+
+        // Handle stock_requests changes - CRITICAL for pending actions updates
+        const channel2 = subscribeToTable('stock_requests', (payload) => {
+            console.log('🔄 [Leader Stats] Stock request changed:', payload.eventType, payload.new || payload.old);
+            
+            // Check if this is an UPDATE event (approval/rejection)
+            if (payload.eventType === 'UPDATE') {
+                const oldStatus = (payload.old as any)?.status;
+                const newStatus = (payload.new as any)?.status;
+                
+                // If status changed from pending to something else (approved/fulfilled/rejected)
+                if (oldStatus === 'pending' && newStatus !== 'pending') {
+                    console.log('✅ [Leader Stats] Stock request approved/rejected, refreshing dashboard...');
+                }
+            }
+            
+            // Always invalidate and refetch when stock_requests change
+            queryClient.invalidateQueries({ 
+                queryKey: ['leader_stats', user.id],
+                refetchType: 'active' // Force immediate refetch for active queries
+            });
+        });
+
+        // Handle leader_teams changes
+        const channel3 = subscribeToTable('leader_teams', (payload) => {
+            console.log('🔄 [Leader Stats] Leader team changed:', payload.eventType);
+            queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] });
+        });
+
+        // Handle remittances_log changes
+        const channel4 = subscribeToTable('remittances_log', (payload) => {
+            console.log('🔄 [Leader Stats] Remittance changed:', payload.eventType);
+            queryClient.invalidateQueries({ queryKey: ['leader_stats', user.id] });
+        });
 
         return () => {
             unsubscribe(channel1);
