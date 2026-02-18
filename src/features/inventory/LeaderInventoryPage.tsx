@@ -69,6 +69,11 @@ export default function LeaderInventoryPage() {
   // Track quantities for each variant
   const [variantQuantities, setVariantQuantities] = useState<Record<string, number>>({});
 
+  // Return to Admin (main inventory) - so main_inventory.allocated_stock decreases
+  const [returnToMainOpen, setReturnToMainOpen] = useState(false);
+  const [returnToMainQuantities, setReturnToMainQuantities] = useState<Record<string, number>>({});
+  const [returnToMainSubmitting, setReturnToMainSubmitting] = useState(false);
+
   const { toast } = useToast();
 
   // Mobile detection
@@ -913,6 +918,40 @@ export default function LeaderInventoryPage() {
     }
   };
 
+  // Return leader's stock to main inventory (decrements main_inventory.allocated_stock)
+  const handleReturnToMain = async () => {
+    const items = Object.entries(returnToMainQuantities)
+      .filter(([, qty]) => qty > 0)
+      .map(([variantId, quantity]) => ({ variant_id: variantId, quantity }));
+    if (items.length === 0) {
+      toast({ title: 'No quantities', description: 'Enter quantities to return', variant: 'destructive' });
+      return;
+    }
+    setReturnToMainSubmitting(true);
+    try {
+      const { data, error } = await supabase.rpc('return_inventory_to_main', {
+        p_leader_id: user!.id,
+        p_items: items,
+        p_performed_by: user!.id,
+        p_reason: 'Leader returned stock to admin'
+      });
+      if (error) throw error;
+      if (data && !data.success) throw new Error(data.message || 'Return failed');
+      toast({
+        title: 'Success',
+        description: `Returned ${(data as any).total_quantity} units to main inventory. Allocated stock will update on the Main Inventory page.`,
+        variant: 'default'
+      });
+      setReturnToMainOpen(false);
+      setReturnToMainQuantities({});
+      fetchLeaderInventory(false).catch(() => {});
+    } catch (e: any) {
+      toast({ title: 'Error', description: e?.message || 'Failed to return stock', variant: 'destructive' });
+    } finally {
+      setReturnToMainSubmitting(false);
+    }
+  };
+
   // Group leader inventory by brand for allocation (only items with available stock > 0)
   const groupedInventory = leaderInventory
     .filter(item => item.availableStock > 0) // Only show items with available stock
@@ -1047,17 +1086,32 @@ export default function LeaderInventoryPage() {
                 <Crown className="h-4 w-4 md:h-5 md:w-5 text-yellow-600 flex-shrink-0" />
                 <span className="truncate">Your Inventory</span>
               </CardTitle>
-              {user.role !== 'admin' && user.role !== 'manager' && (
+              <div className="flex gap-2">
+                {user.role !== 'admin' && user.role !== 'manager' && (
+                  <Button
+                    onClick={() => setAllocationOpen(true)}
+                    disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
+                    size="sm"
+                    className="w-full sm:w-auto h-9 text-xs"
+                  >
+                    <ArrowRight className="mr-2 h-3 w-3" />
+                    Allocate
+                  </Button>
+                )}
                 <Button
-                  onClick={() => setAllocationOpen(true)}
-                  disabled={leaderInventory.filter(item => item.availableStock > 0).length === 0}
+                  variant="outline"
+                  onClick={() => {
+                    setReturnToMainQuantities({});
+                    setReturnToMainOpen(true);
+                  }}
+                  disabled={leaderInventory.filter(item => item.stock > 0).length === 0}
                   size="sm"
                   className="w-full sm:w-auto h-9 text-xs"
                 >
-                  <ArrowRight className="mr-2 h-3 w-3" />
-                  Allocate
+                  <Package className="mr-2 h-3 w-3" />
+                  Return to Admin
                 </Button>
-              )}
+              </div>
             </div>
 
             {/* Filters and Controls */}
@@ -2190,6 +2244,74 @@ export default function LeaderInventoryPage() {
                     </div>
                   </>
                 )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Return to Admin Dialog - decrements main_inventory.allocated_stock */}
+      <Dialog open={returnToMainOpen} onOpenChange={setReturnToMainOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5" />
+              Return Stock to Admin
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Return stock from your inventory back to main. This will reduce the &quot;Allocated&quot; count on the Main Inventory page.
+            </p>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {leaderInventory.filter(i => i.stock > 0).length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">You have no stock to return.</p>
+            ) : (
+              <div className="space-y-3">
+                <Label>Enter quantity to return per variant</Label>
+                <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-2">
+                  {((): Array<[string, any[]]> => {
+                    const grouped = leaderInventory
+                      .filter(i => i.stock > 0)
+                      .reduce((acc, item) => {
+                        if (!acc[item.brandName]) acc[item.brandName] = [];
+                        acc[item.brandName].push(item);
+                        return acc;
+                      }, {} as Record<string, any[]>);
+                    return Object.entries(grouped);
+                  })().map(([brandName, items]) => (
+                    <div key={brandName} className="border rounded-lg p-3 space-y-2">
+                      <div className="font-medium text-sm text-muted-foreground">{brandName}</div>
+                      {items.map((item: any) => (
+                        <div key={item.variantId} className="flex items-center justify-between gap-2">
+                          <span className="text-sm truncate flex-1">{item.variantName}</span>
+                          <span className="text-xs text-muted-foreground shrink-0">max {item.stock}</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={item.stock}
+                            className="w-24"
+                            placeholder="0"
+                            value={returnToMainQuantities[item.variantId] ?? ''}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value, 10) || 0;
+                              setReturnToMainQuantities(prev => ({ ...prev, [item.variantId]: Math.min(item.stock, Math.max(0, v)) }));
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setReturnToMainOpen(false)}>Cancel</Button>
+                  <Button
+                    onClick={handleReturnToMain}
+                    disabled={returnToMainSubmitting || Object.values(returnToMainQuantities).every(q => !q || q === 0)}
+                  >
+                    {returnToMainSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    Return to Admin
+                  </Button>
+                </div>
               </div>
             )}
           </div>
