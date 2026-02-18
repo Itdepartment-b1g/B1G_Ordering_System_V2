@@ -89,7 +89,7 @@ export default function MyInventory() {
     .map(brand => {
       const allVariantsWithStock = (brand.allVariants || []).filter((v: any) => v.stock > 0);
       const variantsByTypeWithStock = new Map<string, any[]>();
-      
+
       // Rebuild variantsByType with only items that have stock > 0
       if (brand.variantsByType) {
         brand.variantsByType.forEach((variants, type) => {
@@ -743,7 +743,7 @@ export default function MyInventory() {
                     )}
 
                     {/* Toggle Button */}
-                    <button 
+                    <button
                       onClick={() => toggleBrandExpand(brand.id)}
                       className="w-full mt-2 pt-2 border-t text-xs text-muted-foreground hover:text-foreground transition-colors"
                     >
@@ -830,7 +830,7 @@ export default function MyInventory() {
                     {expandedBrands.includes(brand.id) && brand.variantsByType && Array.from(brand.variantsByType.entries()).map(([type, variants]) => {
                       const colors = getVariantTypeColor(type);
                       const typeDisplay = type === 'posm' ? 'POSM' : type === 'foc' ? 'FOC' : type === 'ncv' ? 'NCV' : type.toUpperCase();
-                      
+
                       return (
                         <React.Fragment key={type}>
                           {/* Type Header */}
@@ -1212,22 +1212,22 @@ export default function MyInventory() {
                                   <TableCell className="font-mono text-sm">{order.orderNumber}</TableCell>
                                   <TableCell>{order.clientName}</TableCell>
                                   <TableCell className="text-right">{order.items.length}</TableCell>
-                              <TableCell className="text-right font-semibold text-green-600 align-top">
-                                <div className="space-y-1">
-                                  <div>₱{order.totalAmount.toFixed(2)}</div>
-                                  {order.paymentMode === 'SPLIT' && (order.cashPortion || order.chequePortion) && (
-                                    <div className="text-xs text-muted-foreground">
-                                      {order.cashPortion ? `Cash ₱${order.cashPortion.toFixed(2)}` : ''}
-                                      {order.chequePortion ? `${order.cashPortion ? ' • ' : ''}Cheque ₱${order.chequePortion.toFixed(2)}` : ''}
+                                  <TableCell className="text-right font-semibold text-green-600 align-top">
+                                    <div className="space-y-1">
+                                      <div>₱{order.totalAmount.toFixed(2)}</div>
+                                      {order.paymentMode === 'SPLIT' && (order.cashPortion || order.chequePortion) && (
+                                        <div className="text-xs text-muted-foreground">
+                                          {order.cashPortion ? `Cash ₱${order.cashPortion.toFixed(2)}` : ''}
+                                          {order.chequePortion ? `${order.cashPortion ? ' • ' : ''}Cheque ₱${order.chequePortion.toFixed(2)}` : ''}
+                                        </div>
+                                      )}
+                                      {order.paymentMode === 'SPLIT' && order.fullOrderTotal && order.nonCashPortion && order.nonCashPortion > 0 && (
+                                        <div className="text-[10px] text-muted-foreground">
+                                          {order.nonCashLabel || 'Non-cash'} ₱{order.nonCashPortion.toFixed(2)} (handled by Finance)
+                                        </div>
+                                      )}
                                     </div>
-                                  )}
-                                  {order.paymentMode === 'SPLIT' && order.fullOrderTotal && order.nonCashPortion && order.nonCashPortion > 0 && (
-                                    <div className="text-[10px] text-muted-foreground">
-                                      {order.nonCashLabel || 'Non-cash'} ₱{order.nonCashPortion.toFixed(2)} (handled by Finance)
-                                    </div>
-                                  )}
-                                </div>
-                              </TableCell>
+                                  </TableCell>
                                   <TableCell className="text-center">
                                     <Button
                                       size="sm"

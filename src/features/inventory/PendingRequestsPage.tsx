@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { ScrollArea } from '@/components/ui/scroll-area';
+
 import { Package, CheckCircle2, XCircle, ArrowUp, AlertCircle, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
@@ -260,7 +260,7 @@ export default function PendingRequestsPage() {
               .eq('agent_id', user.id)
               .eq('variant_id', req.variant_id)
               .maybeSingle();
-            
+
             console.log(`[Stock Check] Variant ${req.variant_id}:`, {
               inventoryData,
               leaderStock: inventoryData?.stock || 0,
@@ -355,7 +355,7 @@ export default function PendingRequestsPage() {
             // Available = Total Stock - Other Pending Requests - Pending Orders
             // Note: We don't subtract already allocated stock because allocations already deducted from inventory
             const availableStock = Math.max(0, leaderStock - otherPendingQuantity - pendingOrdersQuantity);
-            
+
             console.log(`[Available Stock Calculation] Variant ${req.variant_id}:`, {
               leaderStock,
               otherPendingQuantity,
@@ -1312,333 +1312,335 @@ export default function PendingRequestsPage() {
           setLeaderAdditionalQuantities({});
         }
       }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-6 pb-2 border-b">
             <DialogTitle>Review Request</DialogTitle>
             <DialogDescription>
-              Choose how to handle this inventory request
+              Review and process inventory request from {selectedGroup?.agentName || selectedRequest?.requester?.full_name}
             </DialogDescription>
           </DialogHeader>
 
-          {(selectedRequest || selectedGroup) && (
-            <div className="space-y-4">
-              {/* Request Details */}
-              <div className="grid grid-cols-2 gap-4 p-4 bg-muted rounded-lg">
-                <div>
-                  <p className="text-sm text-muted-foreground">Agent</p>
-                  <p className="font-semibold">{selectedGroup?.agentName || selectedRequest?.requester?.full_name}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Products</p>
-                  <p className="font-semibold">{selectedGroup?.productCount || 1}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Quantity</p>
-                  <p className="font-semibold">{selectedGroup?.totalQuantity || selectedRequest?.requested_quantity} units</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Requested Date</p>
-                  <p className="font-semibold">{format(new Date(selectedGroup?.requested_at || selectedRequest?.requested_at || ''), 'MMM dd, yyyy HH:mm')}</p>
-                </div>
-              </div>
-
-              {/* Products List */}
-              {selectedGroup && selectedGroup.requests.length > 0 && (
-                <div>
-                  <p className="text-sm font-medium mb-2">Requested Products:</p>
-                  <div className="border rounded-lg overflow-hidden">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Product</TableHead>
-                          <TableHead className="text-right">Requested</TableHead>
-                          <TableHead className="text-right">Your Stock</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {selectedGroup.requests.map((req) => (
-                          <TableRow key={req.id}>
-                            <TableCell className="font-medium">{formatProductName(req)}</TableCell>
-                            <TableCell className="text-right">{req.requested_quantity} units</TableCell>
-                            <TableCell className="text-right">
-                              <span className={req.leader_stock && req.leader_stock >= req.requested_quantity ? 'text-green-600 font-semibold' : req.leader_stock && req.leader_stock > 0 ? 'text-yellow-600 font-semibold' : 'text-red-600 font-semibold'}>
-                                {req.leader_stock || 0} units
-                              </span>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+          <div className="flex-1 overflow-y-auto p-6">
+            {(selectedRequest || selectedGroup) && (
+              <div className="space-y-6">
+                {/* Request Stats Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 bg-muted/50 rounded-lg text-sm">
+                  <div>
+                    <p className="text-muted-foreground text-xs">Total Products</p>
+                    <p className="font-semibold text-lg">{selectedGroup?.productCount || 1}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs">Total Quantity</p>
+                    <p className="font-semibold text-lg text-primary">{selectedGroup?.totalQuantity || selectedRequest?.requested_quantity}</p>
+                  </div>
+                  <div className="col-span-2 sm:col-span-2">
+                    <p className="text-muted-foreground text-xs">Requested At</p>
+                    <p className="font-medium">{format(new Date(selectedGroup?.requested_at || selectedRequest?.requested_at || ''), 'MMM dd, yyyy HH:mm')}</p>
                   </div>
                 </div>
-              )}
 
-              {/* Agent Notes */}
-              {(selectedGroup?.requester_notes || selectedRequest?.requester_notes) && (
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Agent's Notes</p>
-                  <div className="border rounded-lg p-3 bg-muted/30">
-                    <p className="text-sm">{selectedGroup?.requester_notes || selectedRequest?.requester_notes}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Action Selection (only for pending requests) */}
-              {!reviewAction && (selectedGroup || selectedRequest?.status === 'pending') && (
-                <div className="grid grid-cols-3 gap-3">
-                  <Button
-                    variant="outline"
-                    className="h-auto flex-col gap-2 p-4"
-                    onClick={() => setReviewAction('approve')}
-                    disabled={selectedGroup ? selectedGroup.requests.some(req => !req.leader_stock || req.leader_stock === 0) : (!selectedRequest?.leader_stock || selectedRequest.leader_stock === 0)}
-                  >
-                    <CheckCircle2 className="h-6 w-6 text-green-600" />
-                    <span>Approve & Allocate</span>
-                    <span className="text-xs text-muted-foreground">
-                      {selectedGroup
-                        ? (selectedGroup.requests.every(req => req.leader_stock && req.leader_stock >= req.requested_quantity)
-                          ? 'All products in stock'
-                          : selectedGroup.requests.some(req => req.leader_stock && req.leader_stock > 0)
-                            ? 'Some products available'
-                            : 'No stock available')
-                        : (selectedRequest?.leader_stock && selectedRequest.leader_stock > 0 ? 'You have stock' : 'No stock available')
-                      }
-                    </span>
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    className="h-auto flex-col gap-2 p-4"
-                    onClick={() => setReviewAction('forward')}
-                  >
-                    <ArrowUp className="h-6 w-6 text-blue-600" />
-                    <span>Forward to Admin</span>
-                    <span className="text-xs text-muted-foreground">
-                      Request from main inventory
-                    </span>
-                  </Button>
-
-                  <Button
-                    variant="outline"
-                    className="h-auto flex-col gap-2 p-4"
-                    onClick={() => setReviewAction('deny')}
-                  >
-                    <XCircle className="h-6 w-6 text-red-600" />
-                    <span>Deny Request</span>
-                    <span className="text-xs text-muted-foreground">
-                      Cannot fulfill
-                    </span>
-                  </Button>
-                </div>
-              )}
-
-              {/* Approve Form */}
-              {reviewAction === 'approve' && (
-                <div className="space-y-4 border-t pt-4">
-                  {selectedGroup && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                      <p className="text-sm font-medium text-blue-900 mb-1">Approval Summary</p>
-                      <p className="text-xs text-blue-700">
-                        You are about to approve {selectedGroup.productCount} product(s) with a total quantity of {selectedGroup.totalQuantity} units.
-                        Each product will be approved for its full requested quantity.
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Notes (Optional)</label>
-                    <Textarea
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="e.g., Approved and allocated"
-                      rows={2}
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button onClick={handleConfirmAction} disabled={processing} className="flex-1">
-                      {processing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        `Confirm Approval${selectedGroup ? ` (${selectedGroup.productCount} products)` : ''}`
-                      )}
-                    </Button>
-                    <Button variant="outline" onClick={() => setReviewAction(null)}>
-                      Back
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Forward Form */}
-              {reviewAction === 'forward' && (
-                <div className="space-y-4 border-t pt-4">
-                  {selectedGroup && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                      <p className="text-sm font-medium text-blue-900 mb-1">Forward Summary</p>
-                      <p className="text-xs text-blue-700">
-                        Forward {selectedGroup.productCount} product request(s) to admin. You can add your own quantity for each product below.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Leader Additional Quantity Section */}
-                  <div className="space-y-3">
-                    <label className="text-sm font-medium">Add Your Own Stock Quantity (Optional)</label>
-                    <p className="text-xs text-muted-foreground">
-                      Request additional stock for yourself alongside the agent's request. This will be combined into a single request to admin.
+                {/* Agent Notes */}
+                {(selectedGroup?.requester_notes || selectedRequest?.requester_notes) && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm">
+                    <p className="font-semibold text-yellow-800 flex items-center gap-2 mb-1">
+                      <AlertCircle className="h-4 w-4" /> Agent's Notes
                     </p>
-                    <div className="border rounded-lg overflow-hidden">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Product</TableHead>
-                            <TableHead className="text-right w-24">Agent Qty</TableHead>
-                            <TableHead className="text-right w-32">Your Additional Qty</TableHead>
-                            <TableHead className="text-right w-24">Total</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {(selectedGroup?.requests || (selectedRequest ? [selectedRequest] : [])).map((req) => {
-                            const leaderQty = parseInt(leaderAdditionalQuantities[req.id] || '0') || 0;
-                            const totalQty = req.requested_quantity + leaderQty;
-                            return (
-                              <TableRow key={req.id}>
-                                <TableCell className="font-medium text-sm">{formatProductName(req)}</TableCell>
-                                <TableCell className="text-right">{req.requested_quantity}</TableCell>
-                                <TableCell className="text-right">
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    placeholder="0"
-                                    value={leaderAdditionalQuantities[req.id] || ''}
-                                    onChange={(e) => setLeaderAdditionalQuantities(prev => ({
-                                      ...prev,
-                                      [req.id]: e.target.value
-                                    }))}
-                                    className="w-24 text-right h-8"
-                                  />
-                                </TableCell>
-                                <TableCell className="text-right font-semibold text-primary">{totalQty}</TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </div>
-
-                    {/* Total Summary */}
-                    {(() => {
-                      const requests = selectedGroup?.requests || (selectedRequest ? [selectedRequest] : []);
-                      const totalAgentQty = requests.reduce((sum, r) => sum + r.requested_quantity, 0);
-                      const totalLeaderQty = requests.reduce((sum, r) => sum + (parseInt(leaderAdditionalQuantities[r.id] || '0') || 0), 0);
-                      const grandTotal = totalAgentQty + totalLeaderQty;
-
-                      return (
-                        <div className="bg-muted/50 rounded-lg p-3 grid grid-cols-3 gap-4 text-center">
-                          <div>
-                            <p className="text-xs text-muted-foreground">Agent's Request</p>
-                            <p className="text-lg font-semibold">{totalAgentQty}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Your Addition</p>
-                            <p className="text-lg font-semibold text-blue-600">+{totalLeaderQty}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Total to Admin</p>
-                            <p className="text-lg font-semibold text-primary">{grandTotal}</p>
-                          </div>
-                        </div>
-                      );
-                    })()}
+                    <p className="text-yellow-900 ml-6 italic">"{selectedGroup?.requester_notes || selectedRequest?.requester_notes}"</p>
                   </div>
+                )}
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Notes to Admin (Optional)</label>
-                    <Textarea
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="e.g., I don't have this product in stock"
-                      rows={3}
-                    />
-                  </div>
+                {/* Products Grouped by Brand */}
+                <div>
+                  <h3 className="font-semibold mb-3 flex items-center gap-2">
+                    <Package className="h-4 w-4" /> Requested Items
+                  </h3>
 
-                  <div className="flex gap-2">
-                    <Button onClick={handleConfirmAction} disabled={processing} className="flex-1">
-                      {processing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        `Confirm Forward${selectedGroup ? ` (${selectedGroup.productCount} products)` : ''}`
-                      )}
-                    </Button>
-                    <Button variant="outline" onClick={() => setReviewAction(null)}>
-                      Back
-                    </Button>
-                  </div>
+                  {(() => {
+                    const requests = selectedGroup?.requests || (selectedRequest ? [selectedRequest] : []);
+                    // Group by brand
+                    const byBrand: Record<string, typeof requests> = {};
+                    requests.forEach(req => {
+                      const brandName = req.variant?.brand?.name || 'Other';
+                      if (!byBrand[brandName]) byBrand[brandName] = [];
+                      byBrand[brandName].push(req);
+                    });
+
+                    return (
+                      <div className="space-y-4">
+                        {Object.entries(byBrand).map(([brandName, brandRequests]) => (
+                          <div key={brandName} className="border rounded-lg overflow-hidden">
+                            <div className="bg-muted/30 px-3 py-2 border-b font-medium text-sm flex justify-between items-center">
+                              <span>{brandName}</span>
+                              <Badge variant="secondary" className="text-[10px]">{brandRequests.length} items</Badge>
+                            </div>
+                            <div className="divide-y">
+                              {brandRequests.map(req => (
+                                <div key={req.id} className="p-3 text-sm flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                                  <div className="flex-1">
+                                    <div className="font-medium">{req.variant?.name || 'Unknown Variant'}</div>
+                                    <div className="text-xs text-muted-foreground">{req.variant?.variant_type}</div>
+                                  </div>
+                                  <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
+                                    <div className="text-right">
+                                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Requested</div>
+                                      <div className="font-bold">{req.requested_quantity}</div>
+                                    </div>
+                                    <div className="text-right min-w-[3rem]">
+                                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Stock</div>
+                                      <div className={`font-bold ${(req.leader_stock || 0) >= req.requested_quantity ? 'text-green-600' : 'text-red-500'}`}>
+                                        {req.leader_stock || 0}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
-              )}
 
-              {/* Deny Form */}
-              {reviewAction === 'deny' && (
-                <div className="space-y-4 border-t pt-4">
-                  {selectedGroup && (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                      <p className="text-sm font-medium text-red-900 mb-1">Denial Summary</p>
-                      <p className="text-xs text-red-700">
-                        You are about to deny {selectedGroup.productCount} product request(s). This action cannot be undone.
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Denial Reason *</label>
-                    <Textarea
-                      value={denialReason}
-                      onChange={(e) => setDenialReason(e.target.value)}
-                      placeholder="e.g., This product is discontinued"
-                      rows={3}
-                      required
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
+                {/* Action Buttons - Only Show if No Action Selected */}
+                {!reviewAction && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4 border-t">
                     <Button
-                      onClick={handleConfirmAction}
-                      disabled={processing || !denialReason.trim()}
-                      variant="destructive"
-                      className="flex-1"
+                      variant="outline"
+                      className="h-auto py-4 flex flex-col gap-2 hover:bg-green-50 hover:text-green-700 hover:border-green-200 transition-colors"
+                      onClick={() => setReviewAction('approve')}
+                      disabled={selectedGroup ? selectedGroup.requests.some(req => !req.leader_stock || req.leader_stock === 0) : (!selectedRequest?.leader_stock || selectedRequest.leader_stock === 0)}
                     >
-                      {processing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        `Confirm Denial${selectedGroup ? ` (${selectedGroup.productCount} products)` : ''}`
-                      )}
+                      <CheckCircle2 className="h-6 w-6 text-green-600" />
+                      <span className="font-semibold">Approve</span>
+                      <span className="text-[10px] text-muted-foreground text-center">
+                        Allocate from my stock
+                      </span>
                     </Button>
-                    <Button variant="outline" onClick={() => setReviewAction(null)}>
-                      Back
+
+                    <Button
+                      variant="outline"
+                      className="h-auto py-4 flex flex-col gap-2 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition-colors"
+                      onClick={() => setReviewAction('forward')}
+                    >
+                      <ArrowUp className="h-6 w-6 text-blue-600" />
+                      <span className="font-semibold">Forward</span>
+                      <span className="text-[10px] text-muted-foreground text-center">
+                        Request from Admin
+                      </span>
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className="h-auto py-4 flex flex-col gap-2 hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition-colors"
+                      onClick={() => setReviewAction('deny')}
+                    >
+                      <XCircle className="h-6 w-6 text-red-600" />
+                      <span className="font-semibold">Deny</span>
+                      <span className="text-[10px] text-muted-foreground text-center">
+                        Reject request
+                      </span>
                     </Button>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
 
-          {!reviewAction && (
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setReviewDialogOpen(false)}>
-                Cancel
-              </Button>
-            </DialogFooter>
-          )}
+                {/* Approve Form */}
+                {reviewAction === 'approve' && (
+                  <div className="space-y-4 pt-4 border-t animate-in slide-in-from-bottom-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-medium flex items-center gap-2 text-green-700">
+                        <CheckCircle2 className="h-4 w-4" /> Confirm Allocation
+                      </h4>
+                      <Button variant="ghost" size="sm" onClick={() => setReviewAction(null)} className="h-6 text-xs">Change Action</Button>
+                    </div>
+
+                    <div className="bg-green-50 p-3 rounded-lg text-sm text-green-800">
+                      You are about to allocate <span className="font-bold">{selectedGroup?.totalQuantity || selectedRequest?.requested_quantity} units</span> from your inventory to {selectedGroup?.agentName || selectedRequest?.requester?.full_name}.
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Notes (Optional)</label>
+                      <Textarea
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Add any notes for the agent..."
+                        className="min-h-[80px]"
+                      />
+                    </div>
+
+                    <Button onClick={handleConfirmAction} disabled={processing} className="w-full bg-green-600 hover:bg-green-700">
+                      {processing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Allocating...</> : 'Confirm & Allocate Stock'}
+                    </Button>
+                  </div>
+                )}
+
+                {/* Forward Form */}
+                {reviewAction === 'forward' && (
+                  <div className="space-y-4 border-t pt-4">
+                    {selectedGroup && (
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        <p className="text-sm font-medium text-blue-900 mb-1">Forward Summary</p>
+                        <p className="text-xs text-blue-700">
+                          Forward {selectedGroup.productCount} product request(s) to admin. You can add your own quantity for each product below.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Leader Additional Quantity Section */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium">Add Your Own Stock Quantity (Optional)</label>
+                      <p className="text-xs text-muted-foreground">
+                        Request additional stock for yourself alongside the agent's request. This will be combined into a single request to admin.
+                      </p>
+                      <div className="border rounded-lg overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Product</TableHead>
+                              <TableHead className="text-right w-24">Agent Qty</TableHead>
+                              <TableHead className="text-right w-32">Your Additional Qty</TableHead>
+                              <TableHead className="text-right w-24">Total</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {(selectedGroup?.requests || (selectedRequest ? [selectedRequest] : [])).map((req) => {
+                              const leaderQty = parseInt(leaderAdditionalQuantities[req.id] || '0') || 0;
+                              const totalQty = req.requested_quantity + leaderQty;
+                              return (
+                                <TableRow key={req.id}>
+                                  <TableCell className="font-medium text-sm">{formatProductName(req)}</TableCell>
+                                  <TableCell className="text-right">{req.requested_quantity}</TableCell>
+                                  <TableCell className="text-right">
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      placeholder="0"
+                                      value={leaderAdditionalQuantities[req.id] || ''}
+                                      onChange={(e) => setLeaderAdditionalQuantities(prev => ({
+                                        ...prev,
+                                        [req.id]: e.target.value
+                                      }))}
+                                      className="w-24 text-right h-8"
+                                    />
+                                  </TableCell>
+                                  <TableCell className="text-right font-semibold text-primary">{totalQty}</TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      {/* Total Summary */}
+                      {(() => {
+                        const requests = selectedGroup?.requests || (selectedRequest ? [selectedRequest] : []);
+                        const totalAgentQty = requests.reduce((sum, r) => sum + r.requested_quantity, 0);
+                        const totalLeaderQty = requests.reduce((sum, r) => sum + (parseInt(leaderAdditionalQuantities[r.id] || '0') || 0), 0);
+                        const grandTotal = totalAgentQty + totalLeaderQty;
+
+                        return (
+                          <div className="bg-muted/50 rounded-lg p-3 grid grid-cols-3 gap-4 text-center">
+                            <div>
+                              <p className="text-xs text-muted-foreground">Agent's Request</p>
+                              <p className="text-lg font-semibold">{totalAgentQty}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Your Addition</p>
+                              <p className="text-lg font-semibold text-blue-600">+{totalLeaderQty}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-muted-foreground">Total to Admin</p>
+                              <p className="text-lg font-semibold text-primary">{grandTotal}</p>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Notes to Admin (Optional)</label>
+                      <Textarea
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="e.g., I don't have this product in stock"
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button onClick={handleConfirmAction} disabled={processing} className="flex-1">
+                        {processing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          `Confirm Forward${selectedGroup ? ` (${selectedGroup.productCount} products)` : ''}`
+                        )}
+                      </Button>
+                      <Button variant="outline" onClick={() => setReviewAction(null)}>
+                        Back
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Deny Form */}
+                {reviewAction === 'deny' && (
+                  <div className="space-y-4 border-t pt-4">
+                    {selectedGroup && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                        <p className="text-sm font-medium text-red-900 mb-1">Denial Summary</p>
+                        <p className="text-xs text-red-700">
+                          You are about to deny {selectedGroup.productCount} product request(s). This action cannot be undone.
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Denial Reason *</label>
+                      <Textarea
+                        value={denialReason}
+                        onChange={(e) => setDenialReason(e.target.value)}
+                        placeholder="e.g., This product is discontinued"
+                        rows={3}
+                        required
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleConfirmAction}
+                        disabled={processing || !denialReason.trim()}
+                        variant="destructive"
+                        className="flex-1"
+                      >
+                        {processing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          `Confirm Denial${selectedGroup ? ` (${selectedGroup.productCount} products)` : ''}`
+                        )}
+                      </Button>
+                      <Button variant="outline" onClick={() => setReviewAction(null)}>
+                        Back
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!reviewAction && (
+              <div className="pt-4 border-t mt-4 pb-2">
+                <Button variant="outline" onClick={() => setReviewDialogOpen(false)} className="w-full">
+                  Cancel / Close Review
+                </Button>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
