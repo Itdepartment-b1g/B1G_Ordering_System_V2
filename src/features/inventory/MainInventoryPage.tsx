@@ -147,6 +147,14 @@ export default function MainInventoryPage() {
     return { bg: 'gray', color: 'gray-800', dot: 'gray-500', border: 'gray-200', hover: 'gray-100' };
   };
 
+  // Safe entries for variantsByType (Map or plain object after cache/serialization)
+  const getVariantsByTypeEntries = (brand: { variantsByType?: Map<string, Variant[]> | Record<string, Variant[]> }): [string, Variant[]][] => {
+    const v = brand.variantsByType;
+    if (!v) return [];
+    if (v instanceof Map) return Array.from(v.entries());
+    return Object.entries(v);
+  };
+
   const handleEditVariant = (brandId: string, variant: Variant, type: 'flavor' | 'battery' | 'posm') => {
     const currentUnitPrice = variant.price || 0;
     const currentSellingPrice = (variant as any).sellingPrice || 0;
@@ -547,7 +555,7 @@ export default function MainInventoryPage() {
                       <div>
                         <h3 className="font-semibold text-lg">{brand.name}</h3>
                         <div className="text-sm text-muted-foreground">
-                          {Array.from(brand.variantsByType.entries()).map(([type, variants], idx) => (
+                          {getVariantsByTypeEntries(brand).map(([type, variants], idx) => (
                             <span key={type}>
                               {idx > 0 && ' • '}
                               {variants.length} {type.charAt(0).toUpperCase() + type.slice(1)}
@@ -937,7 +945,7 @@ export default function MainInventoryPage() {
                     )}
 
                     {/* All Other Custom Variant Types */}
-                    {Array.from(brand.variantsByType.entries())
+                    {getVariantsByTypeEntries(brand)
                       .filter(([type]) => type !== 'flavor' && type !== 'battery' && type !== 'POSM' && type !== 'posm')
                       .sort(([a], [b]) => a.localeCompare(b))
                       .map(([variantType, variants]) => {
