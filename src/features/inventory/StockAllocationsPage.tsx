@@ -946,73 +946,211 @@ export default function StockAllocationsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedAgent.items.map((item: any, index: number) => {
-                          const unitPrice = item.allocatedPrice || 0;
-                          const dspPrice = item.dspPrice || 0;
-                          const rspPrice = item.rspPrice || 0;
-
-                          const unitTotal = unitPrice * item.stock;
-                          const dspTotal = dspPrice * item.stock;
-                          const rspTotal = rspPrice * item.stock;
-
-                          return (
-                            <TableRow key={item.id} className={index % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
-                              <TableCell>
-                                <div>
-                                  <div className="font-medium">{item.brandName}</div>
-                                  <div className="text-sm text-muted-foreground">{item.variantName}</div>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <Badge 
-                                  variant={
-                                    item.variantType === 'flavor' ? 'default' : 
-                                    item.variantType === 'battery' ? 'secondary' : 
-                                    item.variantType === 'POSM' || item.variantType === 'posm' ? 'outline' :
-                                    'outline'
-                                  }
-                                  className={
-                                    item.variantType === 'FOC' || item.variantType === 'foc' ? 'bg-orange-100 text-orange-800 border-orange-300' :
-                                    item.variantType === 'NCV' || item.variantType === 'ncv' ? 'bg-pink-100 text-pink-800 border-pink-300' :
-                                    ''
-                                  }
-                                >
-                                  {item.variantType}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <span className="font-semibold">{item.stock.toLocaleString()}</span>
-                                <span className="text-muted-foreground text-sm"> units</span>
-                              </TableCell>
-                              <TableCell className="text-right text-xs sm:text-sm">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <div>
-                                    Unit:{' '}
-                                    <span className="font-semibold">
-                                      ₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </span>
-                                  </div>
-                                  <div className="text-muted-foreground">
-                                    DSP: ₱{dspPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • RSP:{' '}
-                                    ₱{rspPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </div>
-                                </div>
-                              </TableCell>
-                              <TableCell className="text-right text-xs sm:text-sm">
-                                <div className="flex flex-col items-end gap-0.5">
-                                  <div className="font-bold text-primary">
-                                    Total:{' '}
-                                    ₱{unitTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </div>
-                                  <div className="text-muted-foreground">
-                                    DSP: ₱{dspTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • RSP:{' '}
-                                    ₱{rspTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </div>
-                                </div>
-                              </TableCell>
-                            </TableRow>
+                        {(() => {
+                          // Group items by product (brand)
+                          const grouped: Record<string, any[]> = selectedAgent.items.reduce(
+                            (acc: Record<string, any[]>, item: any) => {
+                              const key = item.brandName || 'Uncategorized';
+                              if (!acc[key]) acc[key] = [];
+                              acc[key].push(item);
+                              return acc;
+                            },
+                            {}
                           );
-                        })}
+
+                          return Object.entries(grouped).map(([brandName, items]) => {
+                            const totalStock = items.reduce(
+                              (sum, item: any) => sum + (item.stock || 0),
+                              0
+                            );
+                            const totalUnit = items.reduce(
+                              (sum, item: any) =>
+                                sum + (item.allocatedPrice || 0) * (item.stock || 0),
+                              0
+                            );
+                            const totalDSP = items.reduce(
+                              (sum, item: any) =>
+                                sum + (item.dspPrice || 0) * (item.stock || 0),
+                              0
+                            );
+                            const totalRSP = items.reduce(
+                              (sum, item: any) =>
+                                sum + (item.rspPrice || 0) * (item.stock || 0),
+                              0
+                            );
+
+                            return (
+                              <>
+                                {/* Product header row with totals */}
+                                <TableRow key={brandName} className="bg-muted/40">
+                                  <TableCell className="font-semibold text-sm">
+                                    {brandName}
+                                  </TableCell>
+                                  <TableCell className="text-xs text-muted-foreground">
+                                    {/* Variant column left blank for header */}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <div className="flex flex-col items-center text-xs sm:text-sm">
+                                      <span className="font-semibold">
+                                        {totalStock.toLocaleString()}
+                                      </span>
+                                      <span className="text-muted-foreground">Total units</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-right text-xs sm:text-sm">
+                                    <div className="flex flex-col items-end gap-0.5 text-muted-foreground">
+                                      <span>
+                                        Unit Total:{' '}
+                                        <span className="font-semibold text-foreground">
+                                          ₱{totalUnit.toLocaleString(undefined, {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          })}
+                                        </span>
+                                      </span>
+                                      <span>
+                                        DSP Total:{' '}
+                                        <span className="font-semibold text-foreground">
+                                          ₱{totalDSP.toLocaleString(undefined, {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          })}
+                                        </span>
+                                      </span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-right text-xs sm:text-sm">
+                                    <div className="flex flex-col items-end gap-0.5 text-muted-foreground">
+                                      <span>
+                                        RSP Total:{' '}
+                                        <span className="font-semibold text-foreground">
+                                          ₱{totalRSP.toLocaleString(undefined, {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          })}
+                                        </span>
+                                      </span>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+
+                                {/* Variant rows under each product */}
+                                {items.map((item: any) => {
+                                  const unitPrice = item.allocatedPrice || 0;
+                                  const dspPrice = item.dspPrice || 0;
+                                  const rspPrice = item.rspPrice || 0;
+
+                                  const unitTotal = unitPrice * item.stock;
+                                  const dspTotal = dspPrice * item.stock;
+                                  const rspTotal = rspPrice * item.stock;
+
+                                  return (
+                                    <TableRow key={item.id} className="bg-background">
+                                      <TableCell>
+                                        {/* Product cell left blank for child rows to visually nest under header */}
+                                      </TableCell>
+                                      <TableCell>
+                                        <div className="flex flex-col gap-0.5">
+                                          <span className="font-medium text-sm">
+                                            {item.variantName}
+                                          </span>
+                                          <div>
+                                            <Badge
+                                              variant={
+                                                item.variantType === 'flavor'
+                                                  ? 'default'
+                                                  : item.variantType === 'battery'
+                                                  ? 'secondary'
+                                                  : item.variantType === 'POSM' ||
+                                                    item.variantType === 'posm'
+                                                  ? 'outline'
+                                                  : 'outline'
+                                              }
+                                              className={`text-xs ${
+                                                item.variantType === 'FOC' ||
+                                                item.variantType === 'foc'
+                                                  ? 'bg-orange-100 text-orange-800 border-orange-300'
+                                                  : item.variantType === 'NCV' ||
+                                                    item.variantType === 'ncv'
+                                                  ? 'bg-pink-100 text-pink-800 border-pink-300'
+                                                  : ''
+                                              }`}
+                                            >
+                                              {item.variantType}
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                      </TableCell>
+                                      <TableCell className="text-center">
+                                        <span className="font-semibold">
+                                          {item.stock.toLocaleString()}
+                                        </span>
+                                        <span className="text-muted-foreground text-sm">
+                                          {' '}
+                                          units
+                                        </span>
+                                      </TableCell>
+                                      <TableCell className="text-right text-xs sm:text-sm">
+                                        <div className="flex flex-col items-end gap-0.5">
+                                          <div>
+                                            Unit:{' '}
+                                            <span className="font-semibold">
+                                              ₱
+                                              {unitPrice.toLocaleString(undefined, {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                              })}
+                                            </span>
+                                          </div>
+                                          <div className="text-muted-foreground">
+                                            DSP:{' '}
+                                            ₱
+                                            {dspPrice.toLocaleString(undefined, {
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2,
+                                            })}{' '}
+                                            • RSP:{' '}
+                                            ₱
+                                            {rspPrice.toLocaleString(undefined, {
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2,
+                                            })}
+                                          </div>
+                                        </div>
+                                      </TableCell>
+                                      <TableCell className="text-right text-xs sm:text-sm">
+                                        <div className="flex flex-col items-end gap-0.5">
+                                          <div className="font-bold text-primary">
+                                            Total:{' '}
+                                            ₱
+                                            {unitTotal.toLocaleString(undefined, {
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2,
+                                            })}
+                                          </div>
+                                          <div className="text-muted-foreground">
+                                            DSP:{' '}
+                                            ₱
+                                            {dspTotal.toLocaleString(undefined, {
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2,
+                                            })}{' '}
+                                            • RSP:{' '}
+                                            ₱
+                                            {rspTotal.toLocaleString(undefined, {
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2,
+                                            })}
+                                          </div>
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </>
+                            );
+                          });
+                        })()}
                       </TableBody>
                     </Table>
                   </div>
