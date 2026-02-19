@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Search, Edit, Eye, Loader2, Users, Filter, Building, Mail, Phone, MapPin, FileText, User, Tag } from 'lucide-react';
+import { Search, Edit, Eye, Loader2, Users, Filter, Building, Mail, Phone, MapPin, FileText, User, Tag, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
@@ -47,6 +47,9 @@ interface Client {
   tax_status?: 'Tax on Sales' | 'Tax Exempt';
   brand_ids?: string[];
   shop_type?: string;
+  last_order_date?: string | null;
+  visit_count?: number;
+  total_spent?: number;
 }
 
 interface TeamAgent {
@@ -63,7 +66,12 @@ export default function MyTeamsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<string>('all');
-  
+  const [cityFilter, setCityFilter] = useState<string>('all');
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
   // View Client Dialog
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewingClient, setViewingClient] = useState<Client | null>(null);
@@ -164,12 +172,13 @@ export default function MyTeamsPage() {
         return;
       }
 
-      // Fetch clients for these agents
+      // Fetch clients for these agents (same shape as MyClientsPage: last_order_date, visit_count)
       const { data, error } = await supabase
         .from('clients')
         .select(`
           *,
-          profiles:agent_id(full_name, email)
+          profiles:agent_id(full_name, email),
+          visit_logs(count)
         `)
         .in('agent_id', agentIds)
         .eq('status', 'active')
@@ -177,31 +186,55 @@ export default function MyTeamsPage() {
 
       if (error) throw error;
 
-      const formattedClients: Client[] = (data || []).map((client: any) => ({
-        id: client.id,
-        agent_id: client.agent_id,
-        agent_name: client.profiles?.full_name || 'Unknown',
-        name: client.name,
-        email: client.email,
-        phone: client.phone,
-        company: client.company,
-        address: client.address,
-        photo_url: client.photo_url,
-        city: client.city,
-        total_orders: client.total_orders || 0,
-        account_type: client.account_type || 'Standard Accounts',
-        category: client.category || 'Open',
-        status: client.status || 'active',
-        has_forge: client.has_forge || false,
-        cor_url: client.cor_url,
-        contact_person: client.contact_person,
-        tin: client.tin,
-        created_at: client.created_at,
-        approval_status: client.approval_status || 'approved',
-        tax_status: client.tax_status,
-        brand_ids: client.brand_ids || [],
-        shop_type: client.shop_type
-      }));
+      const clientIds = (data || []).map((c: any) => c.id);
+      let ordersByClient: Record<string, { count: number; total: number }> = {};
+      if (clientIds.length > 0) {
+        const { data: approvedOrders } = await supabase
+          .from('client_orders')
+          .select('client_id, total_amount')
+          .in('client_id', clientIds)
+          .in('agent_id', agentIds)
+          .or('stage.eq.admin_approved,status.eq.approved');
+        ordersByClient = (approvedOrders || []).reduce((acc: Record<string, { count: number; total: number }>, o: any) => {
+          const cid = o.client_id;
+          if (!acc[cid]) acc[cid] = { count: 0, total: 0 };
+          acc[cid].count += 1;
+          acc[cid].total += Number(o.total_amount) || 0;
+          return acc;
+        }, {});
+      }
+
+      const formattedClients: Client[] = (data || []).map((client: any) => {
+        const orderStats = ordersByClient[client.id];
+        return {
+          id: client.id,
+          agent_id: client.agent_id,
+          agent_name: client.profiles?.full_name || 'Unknown',
+          name: client.name,
+          email: client.email,
+          phone: client.phone,
+          company: client.company,
+          address: client.address,
+          photo_url: client.photo_url,
+          city: client.city,
+          total_orders: orderStats?.count ?? 0,
+          account_type: client.account_type || 'Standard Accounts',
+          category: client.category || 'Open',
+          status: client.status || 'active',
+          has_forge: client.has_forge || false,
+          cor_url: client.cor_url,
+          contact_person: client.contact_person,
+          tin: client.tin,
+          created_at: client.created_at,
+          approval_status: client.approval_status || 'approved',
+          tax_status: client.tax_status,
+          brand_ids: client.brand_ids || [],
+          shop_type: client.shop_type,
+          last_order_date: client.last_order_date ?? null,
+          visit_count: client.visit_logs?.[0]?.count ?? 0,
+          total_spent: orderStats?.total ?? 0
+        };
+      });
 
       setClients(formattedClients);
     } catch (error) {
@@ -213,6 +246,17 @@ export default function MyTeamsPage() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const getApprovalStatusBadge = (status: Client['approval_status']) => {
+    switch (status) {
+      case 'approved':
+        return { label: 'Approved', className: 'bg-green-50 text-green-700 border-green-200' };
+      case 'rejected':
+        return { label: 'Rejected', className: 'bg-red-50 text-red-700 border-red-200' };
+      default:
+        return { label: 'Pending Approval', className: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
     }
   };
 
@@ -383,16 +427,38 @@ export default function MyTeamsPage() {
 
   // Filter clients
   const filteredClients = clients.filter(client => {
-    const matchesSearch = 
+    const matchesSearch =
       client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       client.company?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       client.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       client.agent_name?.toLowerCase().includes(searchQuery.toLowerCase());
-    
+
     const matchesAgent = selectedAgent === 'all' || client.agent_id === selectedAgent;
-    
-    return matchesSearch && matchesAgent;
+    const matchesCity = cityFilter === 'all' || (client.city || '').toLowerCase() === cityFilter.toLowerCase();
+
+    return matchesSearch && matchesAgent && matchesCity;
   });
+
+  // Get unique cities for filter
+  const getUniqueCities = () => {
+    const cities = clients
+      .map(c => c.city)
+      .filter((city): city is string => Boolean(city && city.trim()))
+      .filter((city, index, self) => self.indexOf(city) === index)
+      .sort();
+    return cities;
+  };
+
+  // Pagination
+  const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedClients = filteredClients.slice(startIndex, endIndex);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedAgent, cityFilter]);
 
   if (!user || user.role !== 'team_leader') {
     return (
@@ -475,99 +541,144 @@ export default function MyTeamsPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Filters</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search clients..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-
-            {/* Agent Filter */}
-            <div className="relative">
-              <Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-10 pointer-events-none" />
-              <Select value={selectedAgent} onValueChange={setSelectedAgent}>
-                <SelectTrigger className="pl-10">
-                  <SelectValue placeholder="Filter by agent" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Agents</SelectItem>
-                  {teamAgents.map(agent => (
-                    <SelectItem key={agent.id} value={agent.id}>
-                      {agent.full_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Clients Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Clients ({filteredClients.length})</CardTitle>
+          <div className="space-y-4">
+            <CardTitle className="text-lg">Clients ({filteredClients.length})</CardTitle>
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search clients..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <Select value={cityFilter} onValueChange={setCityFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Filter by city" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Cities</SelectItem>
+                    {getUniqueCities().map(city => (
+                      <SelectItem key={city} value={city}>
+                        {city}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="All Agents" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Agents</SelectItem>
+                    {teamAgents.map(agent => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        {agent.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {(searchQuery || (cityFilter && cityFilter !== 'all') || (selectedAgent && selectedAgent !== 'all')) && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>Showing {filteredClients.length} of {clients.length} clients</span>
+                {cityFilter && cityFilter !== 'all' && (
+                  <Badge variant="secondary" className="text-xs">
+                    City: {cityFilter}
+                  </Badge>
+                )}
+                {selectedAgent && selectedAgent !== 'all' && (
+                  <Badge variant="secondary" className="text-xs">
+                    Agent: {teamAgents.find(a => a.id === selectedAgent)?.full_name || 'Unknown'}
+                  </Badge>
+                )}
+                {searchQuery && (
+                  <Badge variant="secondary" className="text-xs">
+                    Search: "{searchQuery}"
+                  </Badge>
+                )}
+              </div>
+            )}
+            {filteredClients.length > 0 && (
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>
+                  Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
+                </span>
+                <span>Page {currentPage} of {totalPages}</span>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-            <Table>
+            <Table className="min-w-[900px]">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Client Name</TableHead>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Shop Type</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Orders</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-center">Photo</TableHead>
+                  <TableHead className="text-center">Trade Name</TableHead>
+                  <TableHead className="text-center">Shop Name</TableHead>
+                  <TableHead className="text-center">Email</TableHead>
+                  <TableHead className="text-center">Phone</TableHead>
+                  <TableHead className="text-center">Agent</TableHead>
+                  <TableHead className="text-center">City</TableHead>
+                  <TableHead className="text-center">Account Type</TableHead>
+                  <TableHead className="text-center">Category</TableHead>
+                  <TableHead className="text-center">Orders</TableHead>
+                  <TableHead className="text-center">Total Spent</TableHead>
+                  <TableHead className="text-center">Visits</TableHead>
+                  <TableHead className="text-center">Approval</TableHead>
+                  <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredClients.length === 0 ? (
+                {paginatedClients.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">
                       No clients found
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredClients.map(client => (
+                  paginatedClients.map(client => (
                     <TableRow key={client.id}>
-                      <TableCell className="font-medium">{client.name}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
+                      <TableCell className="text-center">
+                        {client.photo_url ? (
+                          <div className="flex justify-center">
+                            <img
+                              src={client.photo_url}
+                              alt={client.name}
+                              className="w-10 h-10 rounded-full object-cover border-2 border-primary"
+                            />
+                          </div>
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center mx-auto">
+                            <Building className="w-5 h-5 text-muted-foreground" />
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="font-medium text-center">{client.name}</TableCell>
+                      <TableCell className="text-center">{client.company || '-'}</TableCell>
+                      <TableCell className="text-center">{client.email || '-'}</TableCell>
+                      <TableCell className="text-center">{client.phone || '-'}</TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-2">
                           <User className="h-3 w-3 text-muted-foreground" />
                           <span className="text-sm">{client.agent_name}</span>
                         </div>
                       </TableCell>
-                      <TableCell>{client.company || '-'}</TableCell>
-                      <TableCell>
-                        {client.shop_type ? (
-                          <Badge variant="outline" className="text-xs">
-                            {client.shop_type}
-                          </Badge>
-                        ) : (
-                          '-'
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={client.account_type === 'Key Accounts' ? 'default' : 'secondary'}>
+                      <TableCell className="text-center">{client.city || '-'}</TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant={client.account_type === 'Key Accounts' ? 'default' : 'secondary'} className="text-xs">
                           {client.account_type === 'Key Accounts' ? 'Key' : 'Standard'}
                         </Badge>
                       </TableCell>
-                      <TableCell>{client.total_orders}</TableCell>
-                      <TableCell>
+                      <TableCell className="text-center">
                         <Badge
                           variant={
                             client.category === 'Open'
@@ -576,25 +687,33 @@ export default function MyTeamsPage() {
                               ? 'secondary'
                               : 'destructive'
                           }
+                          className="text-xs"
                         >
                           {client.category}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleOpenViewClient(client)}
-                          >
-                            <Eye className="h-4 w-4" />
+                      <TableCell className="text-center">{client.total_orders}</TableCell>
+                      <TableCell className="text-center">
+                        ₱{typeof client.total_spent === 'number' ? client.total_spent.toFixed(2) : '0.00'}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1 font-medium text-purple-600">
+                          <MapPin className="h-3 w-3" />
+                          {client.visit_count ?? 0}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant="outline" className={`border text-xs ${getApprovalStatusBadge(client.approval_status).className}`}>
+                          {getApprovalStatusBadge(client.approval_status).label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center gap-1 md:gap-2">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenViewClient(client)} title="View Details">
+                            <Eye className="h-3.5 w-3.5 md:h-4 md:w-4" />
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleOpenEditClient(client)}
-                          >
-                            <Edit className="h-4 w-4" />
+                          <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={() => handleOpenEditClient(client)} title="Edit">
+                            <Edit className="h-3.5 w-3.5 md:h-4 md:w-4" />
                           </Button>
                         </div>
                       </TableCell>
@@ -604,6 +723,58 @@ export default function MyTeamsPage() {
               </TableBody>
             </Table>
           </div>
+
+          {/* Pagination Controls */}
+          {filteredClients.length > itemsPerPage && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 mt-4 border-t">
+              <div className="text-xs sm:text-sm text-muted-foreground">
+                Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="h-8 px-2 sm:px-4"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  <span className="hidden sm:inline ml-1">Previous</span>
+                </Button>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(page => page === 1 || page === totalPages || (page >= currentPage - 1 && page <= currentPage + 1))
+                    .map((page, index, array) => {
+                      const prevPage = array[index - 1];
+                      const showEllipsis = prevPage && page - prevPage > 1;
+                      return (
+                        <div key={page} className="flex items-center gap-1">
+                          {showEllipsis && <span className="px-2 text-muted-foreground">...</span>}
+                          <Button
+                            variant={currentPage === page ? 'default' : 'outline'}
+                            size="sm"
+                            className="w-10"
+                            onClick={() => setCurrentPage(page)}
+                          >
+                            {page}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="h-8 px-2 sm:px-4"
+                >
+                  <span className="hidden sm:inline mr-1">Next</span>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
