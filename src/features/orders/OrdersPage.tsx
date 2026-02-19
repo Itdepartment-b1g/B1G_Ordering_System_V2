@@ -54,6 +54,13 @@ export default function OrdersPage() {
   // Role flags
   const isAdmin = user?.role === 'admin' || user?.role === 'finance' || user?.role === 'super_admin';
   const isFinance = user?.role === 'finance';
+  const isLeader = user?.role === 'team_leader';
+  
+  // Team member IDs for leader filtering
+  const [teamMemberIds, setTeamMemberIds] = useState<string[]>([]);
+  const [loadingTeamMembers, setLoadingTeamMembers] = useState(false);
+  // Team agents with names for summary display
+  const [teamAgents, setTeamAgents] = useState<Array<{ id: string; name: string }>>([]);
 
   // Bulk approval states
   const [bulkApproveDialogOpen, setBulkApproveDialogOpen] = useState(false);
@@ -121,15 +128,71 @@ export default function OrdersPage() {
   // Import / export references
   const importOrdersInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load team logic removed as orders now go directly to finance
+  // Fetch team member IDs and names for leaders
+  useEffect(() => {
+    const fetchTeamMembers = async () => {
+      if (!isLeader || !user?.id) {
+        setTeamMemberIds([]);
+        setTeamAgents([]);
+        return;
+      }
+
+      try {
+        setLoadingTeamMembers(true);
+        const { data: teamData, error: teamError } = await supabase
+          .from('leader_teams')
+          .select(`
+            agent_id,
+            profiles!leader_teams_agent_id_fkey(
+              id,
+              full_name
+            )
+          `)
+          .eq('leader_id', user.id);
+
+        if (teamError) throw teamError;
+
+        const memberIds = (teamData || []).map(t => t.agent_id);
+        setTeamMemberIds(memberIds);
+
+        // Build team agents array with names
+        const agents = (teamData || []).map((teamMember: any) => ({
+          id: teamMember.agent_id,
+          name: teamMember.profiles?.full_name || 'Unknown'
+        }));
+        setTeamAgents(agents);
+      } catch (error) {
+        console.error('Error fetching team members:', error);
+        setTeamMemberIds([]);
+        setTeamAgents([]);
+      } finally {
+        setLoadingTeamMembers(false);
+      }
+    };
+
+    fetchTeamMembers();
+  }, [isLeader, user?.id]);
 
   // Restrict visible orders based on role
   const visibleOrders = useMemo(() => {
     if (isAdmin) return orders;
+    if (isLeader && teamMemberIds.length > 0) {
+      return orders.filter(o => teamMemberIds.includes(o.agentId));
+    }
     return [] as Order[];
-  }, [orders, isAdmin]);
+  }, [orders, isAdmin, isLeader, teamMemberIds]);
 
   // Team summary logic removed
+  // Build team agent list (leaders only) from visible orders
+  const teamAgentsSummary = useMemo(() => {
+    if (!isLeader) return [] as { agentId: string; agentName: string; orders: number }[];
+    const countByAgent: Record<string, number> = {};
+    for (const o of visibleOrders) {
+      countByAgent[o.agentId] = (countByAgent[o.agentId] || 0) + 1;
+    }
+    const list = teamAgents.map(a => ({ agentId: a.id, agentName: a.name, orders: countByAgent[a.id] || 0 }));
+    return list.sort((a, b) => a.agentName.localeCompare(b.agentName));
+  }, [visibleOrders, isLeader, teamAgents]);
 
   // Pending orders count (role-based) - matches the filterOrders logic
   const pendingOrdersCount = useMemo(() => {
@@ -1340,7 +1403,7 @@ export default function OrdersPage() {
       </>
     );
   };
-  if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'super_admin')) {
+  if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'super_admin' && user.role !== 'team_leader')) {
     return (
       <div className="p-8 text-center">
         <h1 className="text-2xl font-bold text-red-600">Access Denied</h1>
@@ -1354,7 +1417,11 @@ export default function OrdersPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-bold">Order Management</h1>
-          <p className="text-muted-foreground">Review and approve purchase orders from sales agents</p>
+          <p className="text-muted-foreground">
+            {isLeader 
+              ? 'View and monitor orders from your team members' 
+              : 'Review and approve purchase orders from sales agents'}
+          </p>
         </div>
         {(isAdmin || isFinance) && (
           <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
@@ -1425,6 +1492,26 @@ export default function OrdersPage() {
       </div>
 
       {/* Leader: Team Agents panel */}
+      {isLeader && teamAgentsSummary.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div>
+              <h2 className="text-xl font-semibold">My Team Agents</h2>
+              <p className="text-sm text-muted-foreground">Agents under you with order counts</p>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {teamAgentsSummary.map(a => (
+                <div key={a.agentId} className="p-3 border rounded-lg">
+                  <div className="font-medium">{a.agentName}</div>
+                  <div className="text-sm mt-1">Orders: <span className="font-semibold">{a.orders}</span></div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
       {/* Team Agents panel removed */}
 
       <Card>

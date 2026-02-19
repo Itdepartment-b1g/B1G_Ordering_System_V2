@@ -73,7 +73,8 @@ const leaderMenuItems: MenuItem[] = [
   ]},
   { title: 'My Clients', url: '/my-clients', description: 'View clients associated with you as a leader.' },
   { title: 'My Orders', url: '/my-orders', description: 'View orders you have created or are responsible for.' },
-  { title: 'Team Activity', url: '/system-history', description: 'Audit view of your team’s important actions.' },
+  { title: 'Order Management', url: '/leader-orders', description: 'View and monitor orders from all your team members.' },
+  { title: 'Team Activity', url: '/system-history', description: 'Audit view of your teams important actions.' },
   { title: 'Calendar', url: '/calendar', description: 'See team tasks and schedules in a shared calendar.' },
   { title: 'Profile', url: '/profile', description: 'Manage your leader profile and account settings.' },
 ];
