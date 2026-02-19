@@ -96,6 +96,7 @@ const App = () => (
                     <Route path="/clients/pending" element={<ProtectedRoute><PendingClientsPage /></ProtectedRoute>} />
                     <Route path="/voided-clients" element={<ProtectedRoute><VoidedClientsPage /></ProtectedRoute>} />
                     <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+                    <Route path="/leader-orders" element={<ProtectedRoute allowedRoles={['team_leader']}><OrdersPage /></ProtectedRoute>} />
                     <Route path="/finance" element={<ProtectedRoute><FinancePage /></ProtectedRoute>} />
                     <Route path="/finance/payment-settings" element={<ProtectedRoute allowedRoles={['super_admin', 'finance']}><PaymentSettingsPage /></ProtectedRoute>} />
                     <Route path="/my-inventory" element={<ProtectedRoute><MyInventoryPage /></ProtectedRoute>} />

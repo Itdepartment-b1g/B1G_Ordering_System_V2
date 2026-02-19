@@ -29,7 +29,8 @@ import {
   Activity,
   Settings,
   ShieldCheck,
-  CreditCard
+  CreditCard,
+  FileText
 } from 'lucide-react';
 import {
   Sidebar,
@@ -169,6 +170,7 @@ const leaderMenuItems: MenuItem[] = [
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: "My Team's Clients", url: '/my-teams', icon: Users },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
+  { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },

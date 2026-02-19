@@ -16,7 +16,9 @@ import {
     Users,
     LayoutList,
     Store,
-    Download
+    Download,
+    ChevronLeft,
+    ChevronRight
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
@@ -54,6 +56,11 @@ export default function ManagerClientsPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedAgentFilter, setSelectedAgentFilter] = useState<string>('all');
     const [accountTypeFilter, setAccountTypeFilter] = useState<string>('all');
+    const [cityFilter, setCityFilter] = useState<string>('all');
+
+    // Pagination
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 10;
 
     // Detect mobile
     useEffect(() => {
@@ -113,17 +120,34 @@ export default function ManagerClientsPage() {
 
             const { data: clientsData, error } = await supabase
                 .from('clients')
-                .select('*, client_orders(count)')
+                .select('*')
                 .eq('company_id', user.company_id)
                 .in('agent_id', allTeamIds)
                 .order('name');
 
             if (error) throw error;
 
+            const clientIds = (clientsData || []).map((c: any) => c.id);
+            let ordersByClient: Record<string, { count: number; total: number }> = {};
+            if (clientIds.length > 0) {
+                const { data: approvedOrders } = await supabase
+                    .from('client_orders')
+                    .select('client_id, total_amount')
+                    .in('client_id', clientIds)
+                    .in('agent_id', allTeamIds)
+                    .or('stage.eq.admin_approved,status.eq.approved');
+                ordersByClient = (approvedOrders || []).reduce((acc: Record<string, { count: number; total: number }>, o: any) => {
+                    const cid = o.client_id;
+                    if (!acc[cid]) acc[cid] = { count: 0, total: 0 };
+                    acc[cid].count += 1;
+                    acc[cid].total += Number(o.total_amount) || 0;
+                    return acc;
+                }, {});
+            }
+
             const mappedClients: Client[] = (clientsData || []).map((client: any) => {
                 const agentProfile = profiledMap.get(client.agent_id);
-                // Parse count safely
-                const ordersCount = client.client_orders?.[0]?.count || 0;
+                const orderStats = ordersByClient[client.id];
 
                 return {
                     id: client.id,
@@ -138,8 +162,8 @@ export default function ManagerClientsPage() {
                     agent_id: client.agent_id,
                     agentName: agentProfile?.full_name || 'Unknown',
                     agentRole: agentProfile?.role || 'sales_agent',
-                    total_orders: ordersCount,
-                    total_spent: client.total_spent || 0
+                    total_orders: orderStats?.count ?? 0,
+                    total_spent: orderStats?.total ?? 0
                 };
             });
 
@@ -161,13 +185,36 @@ export default function ManagerClientsPage() {
     const filteredClients = clients.filter(client => {
         const matchesSearch =
             client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (client.company || '').toLowerCase().includes(searchQuery.toLowerCase());
+            (client.company || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (client.email || '').toLowerCase().includes(searchQuery.toLowerCase());
 
         const matchesAgent = selectedAgentFilter === 'all' || client.agent_id === selectedAgentFilter;
         const matchesType = accountTypeFilter === 'all' || client.account_type === accountTypeFilter;
+        const matchesCity = cityFilter === 'all' || (client.city || '').toLowerCase() === cityFilter.toLowerCase();
 
-        return matchesSearch && matchesAgent && matchesType;
+        return matchesSearch && matchesAgent && matchesType && matchesCity;
     });
+
+    // Get unique cities for filter
+    const getUniqueCities = () => {
+        const cities = clients
+            .map(c => c.city)
+            .filter((city): city is string => Boolean(city && city.trim()))
+            .filter((city, index, self) => self.indexOf(city) === index)
+            .sort();
+        return cities;
+    };
+
+    // Pagination calculations
+    const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const paginatedClients = filteredClients.slice(startIndex, endIndex);
+
+    // Reset to page 1 when filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, selectedAgentFilter, accountTypeFilter, cityFilter]);
 
     const getInitials = (name: string) => name.substring(0, 2).toUpperCase();
 
@@ -190,62 +237,93 @@ export default function ManagerClientsPage() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
-                <Card className="md:col-span-3 border-none shadow-md bg-gradient-to-br from-white to-slate-50 dark:from-slate-950 dark:to-slate-900">
-                    <CardContent className="p-4 md:p-6">
-                        <div className="flex flex-col lg:flex-row justify-between gap-4 md:gap-6">
-                            <div className="flex-1 space-y-3 md:space-y-4">
-                                <div className="flex items-center gap-2 text-primary font-semibold">
-                                    <Users className="h-4 w-4 md:h-5 md:w-5" />
-                                    <span className="text-sm md:text-base">Filter Clients</span>
-                                </div>
-                                <div className="flex flex-col gap-3">
-                                    <div className="relative flex-1">
-                                        <Search className="absolute left-2.5 top-2.5 h-3 w-3 md:h-4 md:w-4 text-muted-foreground" />
-                                        <Input
-                                            placeholder="Search client..."
-                                            className="pl-8 bg-background h-9 md:h-10 text-xs md:text-sm"
-                                            value={searchQuery}
-                                            onChange={(e) => setSearchQuery(e.target.value)}
-                                        />
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <Select value={selectedAgentFilter} onValueChange={setSelectedAgentFilter}>
-                                            <SelectTrigger className="flex-1 bg-background h-9 md:h-10 text-xs md:text-sm">
-                                                <SelectValue placeholder="All Agents" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="all" className="text-xs md:text-sm">All Agents</SelectItem>
-                                                {teamMembers.map(m => (
-                                                    <SelectItem key={m.id} value={m.id} className="text-xs md:text-sm">{m.name}</SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                        <Select value={accountTypeFilter} onValueChange={setAccountTypeFilter}>
-                                            <SelectTrigger className="flex-1 bg-background h-9 md:h-10 text-xs md:text-sm">
-                                                <SelectValue placeholder="Type" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="all" className="text-xs md:text-sm">All Types</SelectItem>
-                                                <SelectItem value="Key Accounts" className="text-xs md:text-sm">Key Accounts</SelectItem>
-                                                <SelectItem value="Standard Accounts" className="text-xs md:text-sm">Standard</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </div>
+            <Card className="overflow-hidden border shadow-sm">
+                <CardHeader>
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-4">
+                            <div className="relative flex-1">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="Search clients..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="pl-10"
+                                />
                             </div>
-                            <div className="flex items-end justify-center lg:justify-end">
-                                <div className="px-4 md:px-6 py-2 md:py-3 bg-white dark:bg-slate-900 rounded-lg border shadow-sm flex flex-col items-center min-w-[120px] md:min-w-[140px]">
-                                    <span className="text-[10px] md:text-xs text-muted-foreground uppercase font-bold tracking-wider">Total</span>
-                                    <span className="text-xl md:text-2xl font-bold text-primary">{filteredClients.length}</span>
-                                </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <Filter className="h-4 w-4 text-muted-foreground" />
+                                <Select value={cityFilter} onValueChange={setCityFilter}>
+                                    <SelectTrigger className="w-[180px]">
+                                        <SelectValue placeholder="Filter by city" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Cities</SelectItem>
+                                        {getUniqueCities().map(city => (
+                                            <SelectItem key={city} value={city}>
+                                                {city}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <Select value={selectedAgentFilter} onValueChange={setSelectedAgentFilter}>
+                                    <SelectTrigger className="w-[180px]">
+                                        <SelectValue placeholder="All Agents" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Agents</SelectItem>
+                                        {teamMembers.map(m => (
+                                            <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <Select value={accountTypeFilter} onValueChange={setAccountTypeFilter}>
+                                    <SelectTrigger className="w-[180px]">
+                                        <SelectValue placeholder="All Types" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Types</SelectItem>
+                                        <SelectItem value="Key Accounts">Key Accounts</SelectItem>
+                                        <SelectItem value="Standard Accounts">Standard Accounts</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <Card className="overflow-hidden border shadow-sm">
+                        {(searchQuery || (cityFilter && cityFilter !== 'all') || (selectedAgentFilter && selectedAgentFilter !== 'all') || (accountTypeFilter && accountTypeFilter !== 'all')) && (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <span>Showing {filteredClients.length} of {clients.length} clients</span>
+                                {cityFilter && cityFilter !== 'all' && (
+                                    <Badge variant="secondary" className="text-xs">
+                                        City: {cityFilter}
+                                    </Badge>
+                                )}
+                                {selectedAgentFilter && selectedAgentFilter !== 'all' && (
+                                    <Badge variant="secondary" className="text-xs">
+                                        Agent: {teamMembers.find(m => m.id === selectedAgentFilter)?.name || 'Unknown'}
+                                    </Badge>
+                                )}
+                                {accountTypeFilter && accountTypeFilter !== 'all' && (
+                                    <Badge variant="secondary" className="text-xs">
+                                        Type: {accountTypeFilter}
+                                    </Badge>
+                                )}
+                                {searchQuery && (
+                                    <Badge variant="secondary" className="text-xs">
+                                        Search: "{searchQuery}"
+                                    </Badge>
+                                )}
+                            </div>
+                        )}
+                        {/* Pagination Info */}
+                        {filteredClients.length > 0 && (
+                            <div className="flex items-center justify-between text-sm text-muted-foreground">
+                                <span>
+                                    Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
+                                </span>
+                                <span>Page {currentPage} of {totalPages}</span>
+                            </div>
+                        )}
+                    </div>
+                </CardHeader>
                 <CardContent className="p-0">
                     {loading ? (
                         <div className="flex justify-center py-12">
@@ -261,7 +339,7 @@ export default function ManagerClientsPage() {
                         <>
                             {/* Mobile Card View */}
                             <div className="md:hidden space-y-3 p-3">
-                                {filteredClients.map((client) => (
+                                {paginatedClients.map((client) => (
                                     <div key={client.id} className="border rounded-lg p-3 space-y-2 bg-background hover:bg-muted/30 transition-colors">
                                         {/* Header */}
                                         <div className="flex justify-between items-start">
@@ -332,7 +410,7 @@ export default function ManagerClientsPage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {filteredClients.map((client) => (
+                                    {paginatedClients.map((client) => (
                                         <TableRow key={client.id} className="hover:bg-muted/30 transition-colors">
                                             <TableCell className="py-3">
                                                 <div className="flex flex-col">
@@ -391,9 +469,69 @@ export default function ManagerClientsPage() {
                         </>
                     )}
                 </CardContent>
-                <div className="p-3 md:p-4 border-t bg-muted/20 text-[10px] md:text-xs text-muted-foreground flex justify-between">
-                    <span>Showing {filteredClients.length} clients</span>
-                </div>
+
+                {/* Pagination Controls */}
+                {filteredClients.length > itemsPerPage && (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 pt-4 border-t">
+                        <div className="text-xs sm:text-sm text-muted-foreground">
+                            Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                disabled={currentPage === 1}
+                                className="h-8 px-2 sm:px-4"
+                            >
+                                <ChevronLeft className="h-4 w-4" />
+                                <span className="hidden sm:inline ml-1">Previous</span>
+                            </Button>
+                            <div className="flex items-center gap-1">
+                                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                    .filter(page => {
+                                        // Show first page, last page, current page, and pages around current
+                                        return (
+                                            page === 1 ||
+                                            page === totalPages ||
+                                            (page >= currentPage - 1 && page <= currentPage + 1)
+                                        );
+                                    })
+                                    .map((page, index, array) => {
+                                        // Add ellipsis if there's a gap
+                                        const prevPage = array[index - 1];
+                                        const showEllipsis = prevPage && page - prevPage > 1;
+
+                                        return (
+                                            <div key={page} className="flex items-center gap-1">
+                                                {showEllipsis && (
+                                                    <span className="px-2 text-muted-foreground">...</span>
+                                                )}
+                                                <Button
+                                                    variant={currentPage === page ? "default" : "outline"}
+                                                    size="sm"
+                                                    className="w-10"
+                                                    onClick={() => setCurrentPage(page)}
+                                                >
+                                                    {page}
+                                                </Button>
+                                            </div>
+                                        );
+                                    })}
+                            </div>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                                disabled={currentPage === totalPages}
+                                className="h-8 px-2 sm:px-4"
+                            >
+                                <span className="hidden sm:inline mr-1">Next</span>
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                        </div>
+                    </div>
+                )}
             </Card>
         </div>
     );
