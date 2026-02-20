@@ -146,6 +146,15 @@ export default function MyTeamsPage() {
         email: item.profiles.email
       })) || [];
 
+      // Add team leader's own entry to the agents list
+      if (user?.id && user?.full_name) {
+        agents.push({
+          id: user.id,
+          full_name: user.full_name,
+          email: user.email || ''
+        });
+      }
+
       setTeamAgents(agents);
     } catch (error) {
       console.error('Error fetching team agents:', error);
@@ -165,6 +174,11 @@ export default function MyTeamsPage() {
       if (teamError) throw teamError;
 
       const agentIds = teamData?.map(t => t.agent_id) || [];
+
+      // Include team leader's own ID in the agent list
+      if (user?.id) {
+        agentIds.push(user.id);
+      }
 
       if (agentIds.length === 0) {
         setClients([]);

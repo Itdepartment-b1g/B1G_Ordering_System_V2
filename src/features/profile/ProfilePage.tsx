@@ -133,6 +133,12 @@ export default function ProfilePage() {
         updateData.city = profile.city;
       }
 
+      // Only super_admin can update their email (profile only; sign-in still uses auth email)
+      const newEmail = profile.email?.trim();
+      if (user?.role === 'super_admin' && newEmail) {
+        updateData.email = newEmail;
+      }
+
       const { error } = await supabase
         .from('profiles')
         .update(updateData)
@@ -278,9 +284,14 @@ export default function ProfilePage() {
                   id="email"
                   type="email"
                   value={profile.email}
-                  disabled
-                  className="bg-muted"
+                  onChange={(e) => user?.role === 'super_admin' && setProfile({ ...profile, email: e.target.value.trim() })}
+                  disabled={user?.role !== 'super_admin'}
+                  className={user?.role === 'super_admin' ? '' : 'bg-muted'}
+                  placeholder={user?.role === 'super_admin' ? 'your@email.com' : undefined}
                 />
+                {user?.role === 'super_admin' && (
+                  <p className="text-xs text-muted-foreground">Only Super Admins can change their email here.</p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="phone">Phone</Label>

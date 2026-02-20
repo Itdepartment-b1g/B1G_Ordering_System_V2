@@ -76,7 +76,7 @@ export default function MyOrdersPage() {
     if (order.paymentMode === 'SPLIT' && Array.isArray(order.paymentSplits) && order.paymentSplits.length > 0) {
       const parts = order.paymentSplits.map((split: any) => {
         if (split.method === 'BANK_TRANSFER') {
-          return split.bank ? split.bank : 'Bank Transfer';
+          return split.bank ? `Bank Transfer (${split.bank})` : 'Bank Transfer';
         }
         if (split.method === 'GCASH') return 'GCash';
         if (split.method === 'CASH') return 'Cash';
@@ -1207,6 +1207,52 @@ export default function MyOrdersPage() {
         }));
       }
 
+      // Helper function to normalize bank name to match database constraint
+      // Constraint allows: 'Unionbank', 'BPI', 'PBCOM' (exact match required)
+      const normalizeBankType = (bankName: string): 'Unionbank' | 'BPI' | 'PBCOM' | null => {
+        if (!bankName) return null;
+        const normalized = bankName.toLowerCase().trim();
+        // Map common variations to the exact constraint values
+        // Unionbank variations
+        if (normalized.includes('unionbank') || normalized.includes('union bank') || normalized === 'unionbank') {
+          return 'Unionbank';
+        }
+        // BPI variations (but not PBCOM)
+        if ((normalized.includes('bpi') || normalized === 'bpi') && !normalized.includes('pbcom')) {
+          return 'BPI';
+        }
+        // PBCOM variations
+        if (normalized.includes('pbcom') || normalized === 'pbcom' || normalized.includes('pb com')) {
+          return 'PBCOM';
+        }
+        // If no match, return null (CHECK constraint allows NULL)
+        console.warn('⚠️ Bank name does not match constraint, setting to null:', bankName);
+        return null;
+      };
+
+      // Determine stage based on payment method
+      // BANK_TRANSFER/GCASH -> finance_pending (goes directly to finance for approval)
+      // CASH/CHEQUE -> agent_pending (goes to team leader first for cash deposit handling)
+      // This applies to both mobile sales agents and team leaders
+      let orderStage: 'agent_pending' | 'finance_pending' = 'agent_pending';
+      
+      if (paymentMode === 'FULL') {
+        // For full payment, check the payment method
+        if (paymentMethod === 'BANK_TRANSFER' || paymentMethod === 'GCASH') {
+          orderStage = 'finance_pending';
+        }
+        // CASH/CHEQUE remain agent_pending (default)
+      } else if (paymentMode === 'SPLIT' && uploadedSplits) {
+        // For split payment, check if any split is BANK_TRANSFER or GCASH
+        const hasBankTransferOrGcash = uploadedSplits.some(
+          split => split.method === 'BANK_TRANSFER' || split.method === 'GCASH'
+        );
+        if (hasBankTransferOrGcash) {
+          orderStage = 'finance_pending';
+        }
+        // If only CASH/CHEQUE in splits, remain agent_pending (default)
+      }
+
       const newOrder = {
         id: Date.now().toString(),
         orderNumber: generatedOrderNumber, // Use pre-generated order number
@@ -1222,10 +1268,13 @@ export default function MyOrdersPage() {
         total: calculateTotal(),
         notes,
         status: 'pending' as const,
+        stage: orderStage, // Set stage based on role and payment method
         signatureUrl, // Add signature URL to order
         paymentMode, // NEW: Add payment mode
         paymentMethod: paymentMode === 'FULL' ? paymentMethod : undefined, // Only for FULL
-        bankType: paymentMode === 'FULL' && paymentMethod === 'BANK_TRANSFER' && selectedBank ? selectedBank.name as 'Unionbank' | 'BPI' | 'PBCOM' : undefined, // Only for FULL bank transfer
+        bankType: paymentMode === 'FULL' && paymentMethod === 'BANK_TRANSFER' && selectedBank 
+          ? normalizeBankType(selectedBank.name) || null 
+          : undefined, // Normalize bank name to match constraint
         paymentProofUrl: paymentMode === 'FULL' ? paymentProofUrl : undefined, // Only for FULL
         paymentSplits: paymentMode === 'SPLIT' ? uploadedSplits : undefined, // NEW: Only for SPLIT
         pricingStrategy: pricingType || 'rsp' // Add pricing strategy selection, fallback to RSP (should never be empty due to validation)
@@ -3417,7 +3466,7 @@ export default function MyOrdersPage() {
             {!showCamera && (
               <div className="space-y-2">
                 <Label>Payment Proof</Label>
-                <div className="flex justify-center">
+                <div className="flex flex-col sm:flex-row gap-2 justify-center">
                   <Button
                     type="button"
                     variant="outline"
@@ -3427,15 +3476,40 @@ export default function MyOrdersPage() {
                     <Camera className="h-4 w-4 mr-2" />
                     Take Photo
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      const input = document.createElement('input');
+                      input.type = 'file';
+                      input.accept = 'image/*';
+                      input.onchange = (e) => {
+                        const file = (e.target as HTMLInputElement).files?.[0];
+                        if (file) {
+                          setPaymentProofFile(file);
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            setPaymentProofPreview(event.target?.result as string);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      };
+                      input.click();
+                    }}
+                    className="w-full sm:w-auto min-h-[44px]"
+                  >
+                    <FileSignature className="h-4 w-4 mr-2" />
+                    Upload File
+                  </Button>
                 </div>
                 {paymentProofFile && (
                   <p className="text-sm text-muted-foreground text-center">
-                    Photo captured: {paymentProofFile.name} ({(paymentProofFile.size / 1024).toFixed(2)} KB)
+                    {paymentProofFile.name} ({(paymentProofFile.size / 1024).toFixed(2)} KB)
                   </p>
                 )}
                 {!paymentProofFile && !showCamera && (
                   <p className="text-sm text-muted-foreground text-center">
-                    Please take a photo using your camera showing the payment receipt/proof
+                    Take a photo or upload a file showing the payment receipt/proof
                   </p>
                 )}
               </div>
@@ -3940,14 +4014,12 @@ export default function MyOrdersPage() {
                               <div className="space-y-1">
                                 <div className="flex items-center gap-2">
                                   <Badge variant="secondary">
-                                    {split.method === 'BANK_TRANSFER' ? 'Bank Transfer' :
-                                     split.method === 'GCASH' ? 'GCash' :
+                                    {split.method === 'BANK_TRANSFER' ? (
+                                      split.bank ? `Bank Transfer (${split.bank})` : 'Bank Transfer'
+                                    ) : split.method === 'GCASH' ? 'GCash' :
                                      split.method === 'CASH' ? 'Cash' :
                                      split.method === 'CHEQUE' ? 'Cheque' : split.method}
                                   </Badge>
-                                  {split.bank && (
-                                    <span className="text-sm font-medium">{split.bank}</span>
-                                  )}
                                 </div>
                                 <p className="text-lg font-semibold text-primary">
                                   ₱{split.amount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
@@ -3993,12 +4065,7 @@ export default function MyOrdersPage() {
                         <p className="font-medium">
                           {orderToView.paymentMethod === 'GCASH' ? 'GCash' :
                             orderToView.paymentMethod === 'BANK_TRANSFER' ? (
-                              <>
-                                Bank Transfer
-                                {orderToView.bankType && (
-                                  <span className="ml-2 text-sm text-muted-foreground">({orderToView.bankType})</span>
-                                )}
-                              </>
+                              orderToView.bankType ? `Bank Transfer (${orderToView.bankType})` : 'Bank Transfer'
                             ) : orderToView.paymentMethod === 'CHEQUE' ? (
                               'Cheque'
                             ) :

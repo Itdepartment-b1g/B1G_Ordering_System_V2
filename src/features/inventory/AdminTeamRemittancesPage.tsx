@@ -15,6 +15,9 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
+// Orders with order_date before this are v1 imports; exclude from team remittance detail.
+const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
+
 interface RemittanceLog {
     id: string;
     agent_id: string;
@@ -175,6 +178,7 @@ export default function AdminTeamRemittancesPage() {
                 .select(`
                   id,
                   order_number,
+                  order_date,
                   total_amount,
                   payment_method,
                   payment_mode,
@@ -190,7 +194,10 @@ export default function AdminTeamRemittancesPage() {
 
             if (error) throw error;
 
-            const formattedOrders = (data || []).flatMap((order: any) => {
+            const nonImported = (data || []).filter(
+                (o: any) => !o.order_date || o.order_date >= V1_IMPORT_ORDER_DATE_CUTOFF
+            );
+            const formattedOrders = nonImported.flatMap((order: any) => {
                 const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
                 const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
                 const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];

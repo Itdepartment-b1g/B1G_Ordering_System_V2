@@ -440,7 +440,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
               }))
             : null,
           status: 'pending',
-          stage: 'agent_pending', // Set stage explicitly for two-stage approval
+          stage: (order as any).stage || 'agent_pending', // Use stage from order (finance_pending for team leader bank transfers)
           pricing_strategy: (order as any).pricingStrategy || 'rsp'
         } as any)
         .select('id, order_number')
@@ -539,7 +539,124 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
       console.log('✅ Order items created:', orderItemsWithPrices.length);
 
-      // 4. Deduct stock from agent inventory (for pending orders)
+      // 4. Auto-create cash deposit for team leaders with CASH/CHEQUE payments
+      const isTeamLeader = user?.role === 'team_leader';
+      if (isTeamLeader && newOrder.id) {
+        const paymentMode = (order as any).paymentMode || 'FULL';
+        const paymentMethod = (order as any).paymentMethod;
+        const paymentSplits = (order as any).paymentSplits || [];
+
+        let cashAmount = 0;
+        let chequeAmount = 0;
+        let hasCash = false;
+        let hasCheque = false;
+
+        if (paymentMode === 'FULL') {
+          // Full payment: check payment method
+          if (paymentMethod === 'CASH') {
+            cashAmount = order.total;
+            hasCash = true;
+          } else if (paymentMethod === 'CHEQUE') {
+            chequeAmount = order.total;
+            hasCheque = true;
+          }
+        } else if (paymentMode === 'SPLIT' && paymentSplits.length > 0) {
+          // Split payment: calculate cash and cheque portions
+          paymentSplits.forEach((split: any) => {
+            if (split.method === 'CASH') {
+              cashAmount += split.amount || 0;
+              hasCash = true;
+            } else if (split.method === 'CHEQUE') {
+              chequeAmount += split.amount || 0;
+              hasCheque = true;
+            }
+          });
+        }
+
+        // Create cash deposit if there's a cash portion
+        if (hasCash && cashAmount > 0) {
+          try {
+            const cashRefNumber = `ORDER-CASH-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${newOrder.order_number.substring(newOrder.order_number.length - 6)}`;
+            
+            const { data: cashDeposit, error: cashDepositError } = await supabase
+              .from('cash_deposits')
+              .insert({
+                company_id: companyId,
+                agent_id: order.agentId, // Team leader's own ID
+                performed_by: order.agentId,
+                amount: cashAmount,
+                bank_account: 'Cash Remittance', // Placeholder - leader will update later
+                reference_number: cashRefNumber,
+                deposit_date: new Date().toISOString().split('T')[0],
+                status: 'pending_verification',
+                deposit_type: 'CASH'
+              })
+              .select('id')
+              .single();
+
+            if (cashDepositError) {
+              console.error('Error creating cash deposit:', cashDepositError);
+              // Don't throw - non-blocking, order is already created
+            } else if (cashDeposit?.id) {
+              // Link order to cash deposit
+              await supabase
+                .from('client_orders')
+                .update({ deposit_id: cashDeposit.id })
+                .eq('id', newOrder.id);
+
+              console.log('✅ Cash deposit created for team leader order:', cashDeposit.id);
+            }
+          } catch (e) {
+            console.warn('Failed to create cash deposit (non-blocking):', e);
+          }
+        }
+
+        // Create cheque deposit if there's a cheque portion
+        if (hasCheque && chequeAmount > 0) {
+          try {
+            const chequeRefNumber = `ORDER-CHEQUE-${new Date().toISOString().split('T')[0].replace(/-/g, '')}-${newOrder.order_number.substring(newOrder.order_number.length - 6)}`;
+            
+            const { data: chequeDeposit, error: chequeDepositError } = await supabase
+              .from('cash_deposits')
+              .insert({
+                company_id: companyId,
+                agent_id: order.agentId, // Team leader's own ID
+                performed_by: order.agentId,
+                amount: chequeAmount,
+                bank_account: 'Cheque Remittance', // Placeholder - leader will update later
+                reference_number: chequeRefNumber,
+                deposit_date: new Date().toISOString().split('T')[0],
+                status: 'pending_verification',
+                deposit_type: 'CHEQUE'
+              })
+              .select('id')
+              .single();
+
+            if (chequeDepositError) {
+              console.error('Error creating cheque deposit:', chequeDepositError);
+              // Don't throw - non-blocking, order is already created
+            } else if (chequeDeposit?.id) {
+              // For split payments with both cash and cheque, we can only link to one deposit_id
+              // If cash deposit was already created, we'll link to cash (cheque will be separate)
+              // If only cheque, link to cheque deposit
+              if (!hasCash || cashAmount === 0) {
+                await supabase
+                  .from('client_orders')
+                  .update({ deposit_id: chequeDeposit.id })
+                  .eq('id', newOrder.id);
+              }
+              // Note: If both cash and cheque exist, the order is linked to cash deposit
+              // The cheque deposit exists separately and can be tracked
+
+              console.log('✅ Cheque deposit created for team leader order:', chequeDeposit.id);
+            }
+          } catch (e) {
+            console.warn('Failed to create cheque deposit (non-blocking):', e);
+          }
+        }
+      }
+
+      // 5. Deduct stock from agent inventory (for pending orders)
       console.log('📉 Deducting from agent inventory...');
       for (const item of order.items) {
         // Get current agent inventory stock

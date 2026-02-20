@@ -448,7 +448,7 @@ export default function ClientsPage() {
     try {
       setLoading(true);
       const isManager = user?.role === 'manager';
-      // Agents see own clients; Managers see team clients; Admins see company clients
+      // Agents see own clients; Managers see team clients; Admins see ALL company clients (including team leader clients)
       const isAgent = !isAdmin && !isManager && !!user?.id;
 
       let teamAgentIds: string[] = [];
@@ -481,9 +481,16 @@ export default function ClientsPage() {
         .neq('status', 'inactive')
         .order('created_at', { ascending: false });
 
-      if (isAgent && user?.id) {
+      // IMPORTANT: Admins (including super_admin) see ALL clients in the company
+      // No agent_id filter is applied when isAdmin = true, ensuring team leader clients are visible
+      if (isAdmin) {
+        // Super admin/admin: Show all clients in company (no agent_id filter)
+        // This includes clients created by team leaders, mobile sales, and other agents
+      } else if (isAgent && user?.id) {
+        // Regular agents (including team_leader): Show only their own clients
         clientsQuery = clientsQuery.eq('agent_id', user.id);
       } else if (isManager && teamAgentIds.length > 0) {
+        // Manager: Show clients of team members
         clientsQuery = clientsQuery.in('agent_id', teamAgentIds);
       } else if (isManager && teamAgentIds.length === 0) {
         // Manager with no team => see nothing (or just self if allowed)

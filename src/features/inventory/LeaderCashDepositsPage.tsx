@@ -335,6 +335,12 @@ export default function LeaderCashDepositsPage() {
           allTeamIds = Array.from(new Set([...directReports, ...secondLevelReports]));
         }
 
+        // Include team leader's own deposits (when they create orders themselves)
+        // For team_leader role, add their own ID to the list
+        if (user?.role === 'team_leader' && user?.id) {
+          allTeamIds = Array.from(new Set([...allTeamIds, user.id]));
+        }
+
         // If no team members, return empty or handle gracefully
         if (allTeamIds.length > 0) {
           query = query.in('agent_id', allTeamIds);
@@ -373,14 +379,18 @@ export default function LeaderCashDepositsPage() {
       setPendingDeposits(pending);
       setDepositHistory(deposits.filter(d => d.status === 'verified'));
 
-      // Build daily groups for pending deposits (cash/cheque portions only)
+      // Build daily groups for pending deposits (cash/cheque portions only).
+      // Use only the sum of orders currently linked to each deposit (summary).
+      // Do not fall back to deposit.amount when summary is missing: after e.g.
+      // unlinking imported orders (deposit_id = NULL), that deposit may have no
+      // orders left and deposit.amount would be stale, causing a header/expand mismatch.
       const dailyMap: Record<string, DailyDepositGroup> = {};
       pending.forEach((deposit) => {
         const date = new Date(deposit.depositDate);
         const dateKey = format(date, 'yyyy-MM-dd');
         const dateLabel = format(date, 'M/d/yyyy');
         const summary = summaries[deposit.id];
-        const amount = summary ? summary.cashPortion + summary.chequePortion : deposit.amount || 0;
+        const amount = summary ? summary.cashPortion + summary.chequePortion : 0;
 
         if (!dailyMap[dateKey]) {
           dailyMap[dateKey] = {
@@ -732,7 +742,8 @@ export default function LeaderCashDepositsPage() {
       const amount = summary.cashPortion + summary.chequePortion;
       if (amount > 0) return amount;
     }
-    return deposit.amount || 0;
+    // Use 0 when no orders are linked (e.g. after unlinking imports); avoid stale deposit.amount
+    return 0;
   };
 
   const getDepositTypeBadgeClass = (displayType: string): string => {
