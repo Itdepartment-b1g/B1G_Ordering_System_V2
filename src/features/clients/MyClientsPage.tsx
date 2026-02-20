@@ -39,7 +39,7 @@ function normalizeEmail(value: string): string {
 export default function MyClientsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const { data: clients = [], isLoading: loading } = useMyClients();
+  const { data: clients = [], isLoading: loading, refetch: refetchClients } = useMyClients();
   // Derive assigned cities directly from the latest profile data.
   // AuthContext already keeps `user.city` in sync via its own realtime subscription.
   const agentCities = (user?.city || '')
@@ -1672,10 +1672,12 @@ export default function MyClientsPage() {
       }
 
       const nowIso = new Date().toISOString();
-      const approvalStatus = cityMatches ? 'approved' : 'pending';
-      const approvalRequestedAt = cityMatches ? null : nowIso;
-      const approvalNotes = cityMatches ? null : `City "${clientCityValue || 'N/A'}" outside assigned cities: ${agentCities.join(', ')}`;
-      const approvedAt = cityMatches ? nowIso : null;
+      // Team leaders' clients are always auto-approved
+      const isTeamLeader = user?.role === 'team_leader';
+      const approvalStatus = isTeamLeader ? 'approved' : (cityMatches ? 'approved' : 'pending');
+      const approvalRequestedAt = (isTeamLeader || cityMatches) ? null : nowIso;
+      const approvalNotes = (isTeamLeader || cityMatches) ? null : `City "${clientCityValue || 'N/A'}" outside assigned cities: ${agentCities.join(', ')}`;
+      const approvedAt = (isTeamLeader || cityMatches) ? nowIso : null;
 
       // Validate company_id
       if (!user.company_id) {
@@ -1801,7 +1803,17 @@ export default function MyClientsPage() {
       resetForm();
       setIsDialogOpen(false);
 
-      queryClient.invalidateQueries({ queryKey: ['my_clients', user?.id] });
+      // Force immediate refetch of clients list to show the newly added client
+      // Small delay to ensure database transaction is committed
+      setTimeout(async () => {
+        // Use both invalidate and direct refetch to ensure the UI updates immediately
+        queryClient.invalidateQueries({ 
+          queryKey: ['my_clients', user?.id],
+          refetchType: 'active' // Force immediate refetch even if data is fresh
+        });
+        // Also trigger direct refetch to ensure immediate update
+        await refetchClients();
+      }, 100); // 100ms delay to ensure transaction is committed
     } catch (error: any) {
       console.error('Error adding client:', error);
       const errorMessage = error?.message || error?.error_description || 'Failed to add client';
