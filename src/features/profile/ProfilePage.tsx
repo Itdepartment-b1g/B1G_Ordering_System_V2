@@ -133,10 +133,32 @@ export default function ProfilePage() {
         updateData.city = profile.city;
       }
 
-      // Only super_admin can update their email (profile only; sign-in still uses auth email)
+      // Only super_admin can update their email
       const newEmail = profile.email?.trim();
-      if (user?.role === 'super_admin' && newEmail) {
+      const emailChanged = user?.role === 'super_admin' && newEmail && newEmail !== user.email;
+
+      if (emailChanged) {
         updateData.email = newEmail;
+      }
+
+      // Update auth.users email first (if changed) using edge function for immediate update
+      if (emailChanged && user?.id) {
+        const { data: authData, error: authError } = await supabase.functions.invoke('update-agent-auth', {
+          body: {
+            user_id: user.id,
+            email: newEmail
+          }
+        });
+
+        if (authError || (authData as any)?.error) {
+          const errorMsg = authError?.message || (authData as any)?.error || 'Failed to update auth email';
+          console.error('Error updating auth email:', errorMsg);
+          toast({
+            title: 'Warning',
+            description: `Profile email updated, but auth email update failed: ${errorMsg}`,
+            variant: 'destructive'
+          });
+        }
       }
 
       const { error } = await supabase
@@ -148,7 +170,7 @@ export default function ProfilePage() {
 
       toast({
         title: 'Success',
-        description: 'Profile updated successfully'
+        description: emailChanged ? 'Profile and auth email updated successfully' : 'Profile updated successfully'
       });
     } catch (error) {
       console.error('Error updating profile:', error);
