@@ -291,6 +291,7 @@ export default function MyInventory() {
     setLoadingOrders(true);
     try {
       // Fetch ALL unremitted orders regardless of creation date
+      // Exclude orders with verified cash deposits (approved deposits)
       const { data, error } = await supabase
         .from('client_orders')
         .select(`
@@ -304,6 +305,7 @@ export default function MyInventory() {
           payment_splits,
           agent_remittance_notes,
           created_at,
+          deposit_id,
           clients(name),
           items:client_order_items(
               quantity,
@@ -312,6 +314,10 @@ export default function MyInventory() {
                 name,
                 brand:brands(name)
             )
+          ),
+          cash_deposit:cash_deposits!client_orders_deposit_id_fkey(
+            id,
+            status
           )
         `)
         .eq('agent_id', user.id)
@@ -320,11 +326,22 @@ export default function MyInventory() {
 
       if (error) throw error;
 
+      // Filter out orders with verified cash deposits (approved deposits should not appear in remittance)
+      const unremittedOrders = (data || []).filter((order: any) => {
+        // Exclude orders that have a verified cash deposit
+        // Only show orders with no deposit_id OR with pending_verification deposit status
+        if (order.deposit_id && order.cash_deposit) {
+          return order.cash_deposit.status !== 'verified';
+        }
+        // Orders without deposit_id are fine to include
+        return true;
+      });
+
       // Format and split orders by payment type
       const cashOrders: RemittanceOrder[] = [];
       const bankOrders: RemittanceOrder[] = [];
 
-      (data || []).forEach((order: any) => {
+      unremittedOrders.forEach((order: any) => {
         const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
         const paymentMethod = order.payment_method as 'CASH' | 'GCASH' | 'BANK_TRANSFER' | 'CHEQUE' | null;
         const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];

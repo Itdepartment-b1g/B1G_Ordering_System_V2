@@ -335,6 +335,12 @@ export default function LeaderCashDepositsPage() {
           allTeamIds = Array.from(new Set([...directReports, ...secondLevelReports]));
         }
 
+        // Include team leader's own deposits (when they create orders themselves)
+        // For team_leader role, add their own ID to the list
+        if (user?.role === 'team_leader' && user?.id) {
+          allTeamIds = Array.from(new Set([...allTeamIds, user.id]));
+        }
+
         // If no team members, return empty or handle gracefully
         if (allTeamIds.length > 0) {
           query = query.in('agent_id', allTeamIds);

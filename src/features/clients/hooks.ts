@@ -135,14 +135,33 @@ export function useMyClients() {
         queryFn: async () => {
             if (!user?.id) return [];
 
+            console.log('🔍 [useMyClients] Fetching clients for user:', user.id, 'role:', user.role, 'company_id:', user.company_id);
+            
+            // First, let's check what clients exist for this agent_id (without status filter) for debugging
+            const { data: allClientsDebug } = await supabase
+                .from('clients')
+                .select('id, name, agent_id, status, company_id, approval_status')
+                .eq('agent_id', user.id)
+                .eq('company_id', user.company_id);
+            console.log('🔍 [useMyClients] All clients for agent_id (debug):', allClientsDebug);
+            
             const { data, error } = await supabase
                 .from('clients')
                 .select('id, name, email, phone, company, city, account_type, category, address, total_orders, last_order_date, photo_url, photo_timestamp, created_at, location_latitude, location_longitude, location_accuracy, location_captured_at, inside_store_photo_url, approval_status, approval_requested_at, approved_at, approval_notes, approved_by, status, cor_url, tin, contact_person, tax_status, brand_ids, shop_type, visit_logs(count)')
                 .eq('agent_id', user.id)
                 .eq('status', 'active')
+                .eq('company_id', user.company_id) // Ensure company_id matches for RLS policies
                 .order('created_at', { ascending: false });
 
-            if (error) throw error;
+            if (error) {
+                console.error('❌ [useMyClients] Error fetching clients:', error);
+                throw error;
+            }
+            
+            console.log('✅ [useMyClients] Found clients:', data?.length || 0, 'clients for agent_id:', user.id);
+            if (data && data.length > 0) {
+                console.log('📋 [useMyClients] Client details:', data.map(c => ({ id: c.id, name: c.name, agent_id: c.agent_id, status: c.status })));
+            }
 
             let ordersByClient: Record<string, { totalOrders: number; totalSpent: number; lastOrder?: string }> = {};
 
@@ -216,7 +235,8 @@ export function useMyClients() {
 
             return formattedClients as Client[];
         },
-        staleTime: 1000 * 60 * 5, // 5 minutes fresh
+        staleTime: 1000 * 30, // 30 seconds - more responsive for newly added clients
+        refetchOnWindowFocus: true, // Refetch when user returns to tab
     });
 
     useEffect(() => {
