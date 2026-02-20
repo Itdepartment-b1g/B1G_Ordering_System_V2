@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -137,6 +137,7 @@ export default function MyOrdersPage() {
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null);
   const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
+  const paymentProofInputRef = useRef<HTMLInputElement>(null);
 
   // Split payment states
   const [paymentMode, setPaymentMode] = useState<'FULL' | 'SPLIT'>('FULL');
@@ -896,6 +897,18 @@ export default function MyOrdersPage() {
     } finally {
       setUploadingPaymentProof(false);
     }
+  };
+
+  // Handle payment proof file selected (upload from device)
+  const handlePaymentProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      setPaymentProofFile(file);
+      const reader = new FileReader();
+      reader.onload = () => setPaymentProofPreview(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
   };
 
   // Handle payment proof capture complete
@@ -3116,7 +3129,7 @@ export default function MyOrdersPage() {
           <div className="space-y-2 sm:space-y-4 py-1 sm:py-4">
             <Alert className="py-2 sm:py-3">
               <AlertDescription className="text-xs sm:text-sm">
-                Please select the payment method the client used for this order.
+                Select the payment method (Bank Transfer, Cash, Cheque, or GCash). For Bank Transfer you will then choose which bank. After that, take or upload a photo of the payment proof—it will be saved under this method (and bank, if applicable).
               </AlertDescription>
             </Alert>
 
@@ -3217,7 +3230,7 @@ export default function MyOrdersPage() {
           <div className="space-y-2 sm:space-y-4 py-1 sm:py-4">
             <Alert className="py-2 sm:py-3">
               <AlertDescription className="text-xs sm:text-sm">
-                Please select the bank account where the payment was transferred.
+                Select which bank received the transfer. Your payment proof photo will be saved under Bank Transfer → this bank.
               </AlertDescription>
             </Alert>
 
@@ -3417,25 +3430,41 @@ export default function MyOrdersPage() {
             {!showCamera && (
               <div className="space-y-2">
                 <Label>Payment Proof</Label>
-                <div className="flex justify-center">
+                <input
+                  ref={paymentProofInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePaymentProofFileSelect}
+                />
+                <div className="flex flex-wrap justify-center gap-2">
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => startCamera()}
-                    className="w-full sm:w-auto min-h-[44px]"
+                    className="min-h-[44px]"
                   >
                     <Camera className="h-4 w-4 mr-2" />
                     Take Photo
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => paymentProofInputRef.current?.click()}
+                    className="min-h-[44px]"
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Upload Photo
+                  </Button>
                 </div>
                 {paymentProofFile && (
                   <p className="text-sm text-muted-foreground text-center">
-                    Photo captured: {paymentProofFile.name} ({(paymentProofFile.size / 1024).toFixed(2)} KB)
+                    {paymentProofFile.name} ({(paymentProofFile.size / 1024).toFixed(2)} KB)
                   </p>
                 )}
                 {!paymentProofFile && !showCamera && (
                   <p className="text-sm text-muted-foreground text-center">
-                    Please take a photo using your camera showing the payment receipt/proof
+                    Take a photo or upload an image showing the payment receipt/proof. It will be saved under this payment method (e.g. Bank Transfer → selected bank).
                   </p>
                 )}
               </div>
