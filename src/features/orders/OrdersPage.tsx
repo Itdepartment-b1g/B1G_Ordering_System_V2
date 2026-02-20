@@ -155,11 +155,20 @@ export default function OrdersPage() {
         const memberIds = (teamData || []).map(t => t.agent_id);
         setTeamMemberIds(memberIds);
 
-        // Build team agents array with names
+        // Build team agents array with names (include team leader's own name)
         const agents = (teamData || []).map((teamMember: any) => ({
           id: teamMember.agent_id,
           name: teamMember.profiles?.full_name || 'Unknown'
         }));
+        
+        // Add team leader's own entry to the agents list
+        if (user?.id && user?.full_name) {
+          agents.push({
+            id: user.id,
+            name: user.full_name
+          });
+        }
+        
         setTeamAgents(agents);
       } catch (error) {
         console.error('Error fetching team members:', error);
@@ -176,11 +185,15 @@ export default function OrdersPage() {
   // Restrict visible orders based on role
   const visibleOrders = useMemo(() => {
     if (isAdmin) return orders;
-    if (isLeader && teamMemberIds.length > 0) {
-      return orders.filter(o => teamMemberIds.includes(o.agentId));
+    if (isLeader) {
+      // Include team leader's own orders + team member orders
+      const allAgentIds = user?.id ? [...teamMemberIds, user.id] : teamMemberIds;
+      if (allAgentIds.length > 0) {
+        return orders.filter(o => allAgentIds.includes(o.agentId));
+      }
     }
     return [] as Order[];
-  }, [orders, isAdmin, isLeader, teamMemberIds]);
+  }, [orders, isAdmin, isLeader, teamMemberIds, user?.id]);
 
   // Team summary logic removed
   // Build team agent list (leaders only) from visible orders
