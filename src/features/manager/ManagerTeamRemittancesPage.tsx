@@ -32,6 +32,9 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
+// Orders with order_date before this are v1 imports; exclude from team remittance detail.
+const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
+
 interface RemittanceLog {
     id: string;
     agent_id: string;
@@ -249,6 +252,7 @@ export default function ManagerTeamRemittancesPage() {
                 .select(`
           id,
           order_number,
+          order_date,
           total_amount,
           created_at,
           clients(name),
@@ -261,7 +265,10 @@ export default function ManagerTeamRemittancesPage() {
 
             if (error) throw error;
 
-            const formattedOrders = (data || []).flatMap((order: any) =>
+            const nonImported = (data || []).filter(
+                (o: any) => !o.order_date || o.order_date >= V1_IMPORT_ORDER_DATE_CUTOFF
+            );
+            const formattedOrders = nonImported.flatMap((order: any) =>
                 (order.items || []).map((item: any) => ({
                     orderId: order.id,
                     orderNumber: order.order_number,

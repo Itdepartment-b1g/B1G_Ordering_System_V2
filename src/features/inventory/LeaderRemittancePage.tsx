@@ -17,6 +17,9 @@ import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { canLeadTeam } from '@/lib/roleUtils';
 
+// Orders with order_date before this are v1 imports; exclude from team remittance list/detail.
+const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
+
 interface RemittanceLog {
   id: string;
   agent_id: string;
@@ -212,15 +215,21 @@ export default function LeaderRemittancePage() {
       // Map of order_id -> cash/cheque remittance amount (for that order)
       const cashRevenueByOrder: Record<string, number> = {};
 
+      const importedOrderIds = new Set<string>();
+
       if (allOrderIds.length > 0) {
         const { data: ordersData, error: ordersError } = await supabase
           .from('client_orders')
-          .select('id, total_amount, payment_method, payment_mode, payment_splits')
+          .select('id, order_date, total_amount, payment_method, payment_mode, payment_splits')
           .in('id', allOrderIds);
 
         if (ordersError) throw ordersError;
 
         (ordersData || []).forEach((order: any) => {
+          if (order.order_date && order.order_date < V1_IMPORT_ORDER_DATE_CUTOFF) {
+            importedOrderIds.add(order.id);
+            return;
+          }
           const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
           const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
           const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
@@ -252,7 +261,9 @@ export default function LeaderRemittancePage() {
 
       const formattedData: RemittanceLog[] = remittanceRows.map((item: any) => {
         const orderIds: string[] = item.order_ids || [];
-        const calculatedRevenue = orderIds.reduce((sum: number, orderId: string) => {
+        const nonImportedIds = orderIds.filter((id) => !importedOrderIds.has(id));
+        const ordersCount = nonImportedIds.length;
+        const calculatedRevenue = nonImportedIds.reduce((sum: number, orderId: string) => {
           return sum + (cashRevenueByOrder[orderId] || 0);
         }, 0);
 
@@ -264,9 +275,8 @@ export default function LeaderRemittancePage() {
           remitted_at: item.remitted_at,
           items_remitted: item.items_remitted,
           total_units: item.total_units,
-          orders_count: item.orders_count,
-          // Use calculated cash/cheque revenue when available, otherwise fall back to stored total_revenue
-          total_revenue: calculatedRevenue > 0 ? calculatedRevenue : item.total_revenue,
+          orders_count: ordersCount,
+          total_revenue: ordersCount === 0 ? 0 : calculatedRevenue,
           order_ids: orderIds,
           signature_url: item.signature_url,
           signature_path: item.signature_path,
@@ -304,6 +314,7 @@ export default function LeaderRemittancePage() {
         .select(`
           id,
           order_number,
+          order_date,
           total_amount,
           payment_method,
           payment_mode,
@@ -319,7 +330,10 @@ export default function LeaderRemittancePage() {
 
       if (error) throw error;
 
-      const formattedOrders = (data || []).flatMap((order: any) => {
+      const nonImported = (data || []).filter(
+        (o: any) => !o.order_date || o.order_date >= V1_IMPORT_ORDER_DATE_CUTOFF
+      );
+      const formattedOrders = nonImported.flatMap((order: any) => {
         const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
         const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
         const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
