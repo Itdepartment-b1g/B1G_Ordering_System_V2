@@ -1241,11 +1241,11 @@ export default function OrdersPage() {
                           </Badge>
                         ) : order.depositId ? (
                           <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
-                            Details Pending
+                            Awaiting Desposit slip
                           </Badge>
                         ) : (
                           <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
-                            Awaiting Deposit
+                            Awaiting Remittance
                           </Badge>
                         )
                       )}
@@ -1320,12 +1320,12 @@ export default function OrdersPage() {
                               </Badge>
                             ) : order.depositId ? (
                               <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
-                                Details Pending
+                                Awaiting Deposit Slip 
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
-                                Awaiting Deposit
-                              </Badge>
+                            Awaiting Remittance
+                            </Badge>
                             )
                           )}
                         </div>
