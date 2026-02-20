@@ -234,7 +234,7 @@ export default function MyInventory() {
       orderDebounceTimer = setTimeout(() => {
         console.log('🔄 Real-time: Refreshing orders...');
         if (remitDialogOpen && user?.id) {
-          fetchTodayOrders();
+          fetchUnremittedOrders();
         }
       }, 300);
     };
@@ -258,10 +258,10 @@ export default function MyInventory() {
     };
   }, [user?.id, remitDialogOpen]);
 
-  // Fetch today's orders on mount to check if button should be enabled
+  // Fetch unremitted orders on mount to check if button should be enabled
   useEffect(() => {
     if (user?.id) {
-      fetchTodayOrders();
+      fetchUnremittedOrders();
     }
   }, [user?.id]);
 
@@ -282,18 +282,15 @@ export default function MyInventory() {
     }
   }, [todayCashOrders.length, todayBankOrders.length]);
 
-  // Fetch today's orders (CASH + BANK_TRANSFER/GCASH)
+  // Fetch all unremitted orders (CASH + BANK_TRANSFER/GCASH)
   // CASH orders require physical cash remittance
   // Bank transfer orders just need acknowledgment with notes
-  const fetchTodayOrders = async () => {
+  const fetchUnremittedOrders = async () => {
     if (!user?.id) return;
 
     setLoadingOrders(true);
     try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      // Fetch ALL today's orders that haven't been remitted
+      // Fetch ALL unremitted orders regardless of creation date
       const { data, error } = await supabase
         .from('client_orders')
         .select(`
@@ -319,7 +316,6 @@ export default function MyInventory() {
         `)
         .eq('agent_id', user.id)
         .eq('remitted', false)  // Only non-remitted orders
-        .gte('created_at', today.toISOString())
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -408,10 +404,10 @@ export default function MyInventory() {
       setTodayCashOrders(cashOrders);
       setTodayBankOrders(bankOrders);
     } catch (error: any) {
-      console.error('Error fetching today orders:', error);
+      console.error('Error fetching unremitted orders:', error);
       toast({
         title: 'Error',
-        description: 'Failed to load today\'s orders',
+        description: 'Failed to load unremitted orders',
         variant: 'destructive'
       });
     } finally {
@@ -908,7 +904,7 @@ export default function MyInventory() {
             {leaderId && todayCashOrders.length === 0 && todayBankOrders.length === 0 && (
               <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm text-blue-800">
-                  ℹ️ No orders today. Click confirm to complete end-of-day process.
+                  ℹ️ No unremitted orders. Click confirm to complete end-of-day process.
                 </p>
               </div>
             )}
@@ -1375,7 +1371,7 @@ export default function MyInventory() {
                     htmlFor="sold-confirm"
                     className="text-xs md:text-sm font-medium leading-snug peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                   >
-                    I have reviewed today's orders ({todayCashOrders.length + todayBankOrders.length} orders total) - <span className="text-muted-foreground">Optional</span>
+                    I have reviewed the unremitted orders ({todayCashOrders.length + todayBankOrders.length} orders total) - <span className="text-muted-foreground">Optional</span>
                   </label>
                 </div>
               )}
@@ -1693,7 +1689,7 @@ export default function MyInventory() {
             <DialogTitle className="text-base md:text-lg">Order Details</DialogTitle>
             {selectedOrder && (
               <DialogDescription className="text-xs md:text-sm">
-                {selectedOrder.orderNumber} • {selectedOrder.clientName}
+                {selectedOrder.orderNumber} • {selectedOrder.clientName} • {format(new Date(selectedOrder.createdAt), 'MMM dd, yyyy • hh:mm a')}
               </DialogDescription>
             )}
           </DialogHeader>
@@ -1711,6 +1707,12 @@ export default function MyInventory() {
                     <div>
                       <div className="text-xs text-muted-foreground mb-1">Client</div>
                       <div className="text-sm font-medium">{selectedOrder.clientName}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Date & Time</div>
+                      <div className="text-sm font-medium">
+                        {format(new Date(selectedOrder.createdAt), 'MMM dd, yyyy • hh:mm a')}
+                      </div>
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground mb-1">Payment</div>
