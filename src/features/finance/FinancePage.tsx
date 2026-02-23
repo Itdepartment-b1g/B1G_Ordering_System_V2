@@ -57,7 +57,7 @@ export default function FinancePage() {
 
     const { data, error } = await supabase
       .from('client_orders')
-      .select('id, deposit_id, total_amount, payment_method, payment_mode, payment_splits')
+      .select('id, deposit_id, order_date, total_amount, payment_method, payment_mode, payment_splits')
       .in('deposit_id', depositIds);
 
     if (error) {
@@ -67,7 +67,14 @@ export default function FinancePage() {
 
     const summaries: Record<string, { cashPortion: number; chequePortion: number; nonCashPortion: number }> = {};
 
+    const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
+
     (data || []).forEach((order: any) => {
+      // Skip v1-imported orders: order_date < cutoff OR order_date is null (v1 imports may not have order_date set)
+      if (!order.order_date || order.order_date < V1_IMPORT_ORDER_DATE_CUTOFF) {
+        // Skip v1-imported orders when computing deposit summaries
+        return;
+      }
       const depositId = order.deposit_id as string | null;
       if (!depositId) return;
 
@@ -321,23 +328,32 @@ export default function FinancePage() {
       } else {
         const summaries = await loadDepositSummaries(depositsData || []);
 
-        const mapped = (depositsData || []).map((d: any) => {
-          const summary = summaries[d.id];
-          const effectiveAmount =
-            summary && (summary.cashPortion > 0 || summary.chequePortion > 0)
-              ? summary.cashPortion + summary.chequePortion
-              : d.amount || 0;
+        const mapped = (depositsData || [])
+          .map((d: any) => {
+            const summary = summaries[d.id];
+            // If there are no orders currently linked to this deposit, treat it
+            // as having no cash/cheque amount (e.g. legacy/v1 imports we unlinked).
+            if (!summary) {
+              return null;
+            }
 
-          return {
-            id: d.id,
-            agentName: d.agent?.full_name || 'Unknown',
-            depositDate: d.deposit_date,
-            status: d.status,
-            amount: effectiveAmount,
-            rawAmount: d.amount || 0,
-            depositSlipUrl: d.deposit_slip_url as string | null,
-          };
-        });
+            const effectiveAmount = summary.cashPortion + summary.chequePortion;
+            if (effectiveAmount <= 0) {
+              // Skip deposits that have no cash/cheque portion
+              return null;
+            }
+
+            return {
+              id: d.id,
+              agentName: d.agent?.full_name || 'Unknown',
+              depositDate: d.deposit_date,
+              status: d.status,
+              amount: effectiveAmount,
+              rawAmount: d.amount || 0,
+              depositSlipUrl: d.deposit_slip_url as string | null,
+            };
+          })
+          .filter((d: any) => d !== null);
 
         setRecentDeposits(mapped);
       }

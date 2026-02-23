@@ -78,7 +78,7 @@ BEGIN
   -- Also check for cash orders and create cash deposits
   IF p_order_ids IS NOT NULL AND array_length(p_order_ids, 1) > 0 THEN
     
-    -- Calculate totals for ALL orders
+    -- Calculate totals for ALL orders (only this agent's orders)
     SELECT 
       COUNT(*), 
       COALESCE(SUM(total_amount), 0)
@@ -87,10 +87,10 @@ BEGIN
       v_total_revenue
     FROM client_orders
     WHERE id = ANY(p_order_ids)
-    AND company_id = v_company_id;
+    AND company_id = v_company_id
+    AND agent_id = p_agent_id;
 
-    -- Get CASH orders for cash deposit creation
-    -- Get cash orders that don't already have a deposit_id
+    -- Get CASH orders for cash deposit creation (only this agent's orders)
     SELECT 
       ARRAY_AGG(id),
       COALESCE(SUM(total_amount), 0)
@@ -100,6 +100,7 @@ BEGIN
     FROM client_orders
     WHERE id = ANY(p_order_ids)
     AND company_id = v_company_id
+    AND agent_id = p_agent_id
     AND payment_method = 'CASH'
     AND deposit_id IS NULL;
 
@@ -132,13 +133,14 @@ BEGIN
         'pending_verification' -- MUST be pending - leader receives cash but hasn't deposited yet
       ) RETURNING id INTO v_deposit_id;
 
-      -- Link cash orders to the deposit
+      -- Link cash orders to the deposit (safeguard: only this agent's orders)
       UPDATE client_orders
       SET 
         deposit_id = v_deposit_id,
         updated_at = NOW()
       WHERE id = ANY(v_cash_orders)
-      AND company_id = v_company_id;
+      AND company_id = v_company_id
+      AND agent_id = p_agent_id;
 
       -- Create financial transaction for the cash deposit
       INSERT INTO financial_transactions (
@@ -168,7 +170,7 @@ BEGIN
       );
     END IF;
 
-    -- Get bank transfer order statistics (for reporting)
+    -- Get bank transfer order statistics (for reporting; only this agent's orders)
     SELECT 
       COUNT(*),
       COALESCE(SUM(total_amount), 0)
@@ -178,32 +180,33 @@ BEGIN
     FROM client_orders
     WHERE id = ANY(p_order_ids)
     AND company_id = v_company_id
+    AND agent_id = p_agent_id
     AND payment_method IN ('BANK_TRANSFER', 'GCASH');
 
-    -- Process bank order notes
-    -- Update agent_remittance_notes for bank transfer orders
+    -- Process bank order notes (only this agent's orders)
     IF p_bank_order_notes IS NOT NULL AND jsonb_array_length(p_bank_order_notes) > 0 THEN
       FOR v_note_item IN SELECT * FROM jsonb_array_elements(p_bank_order_notes)
       LOOP
         v_note_order_id := (v_note_item->>'order_id')::UUID;
         v_note_text := v_note_item->>'notes';
         
-        -- Update order with agent notes
         UPDATE client_orders
         SET 
           agent_remittance_notes = v_note_text,
           updated_at = NOW()
         WHERE id = v_note_order_id
         AND company_id = v_company_id
+        AND agent_id = p_agent_id
         AND id = ANY(p_order_ids);
       END LOOP;
     END IF;
 
-    -- Mark all orders as remitted (both cash and bank transfer)
+    -- Mark all orders as remitted (both cash and bank transfer; only this agent's orders)
     UPDATE client_orders
     SET remitted = TRUE, updated_at = NOW()
     WHERE id = ANY(p_order_ids)
-    AND company_id = v_company_id;
+    AND company_id = v_company_id
+    AND agent_id = p_agent_id;
     
   END IF;
 
