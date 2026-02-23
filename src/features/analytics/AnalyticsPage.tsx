@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -27,7 +28,8 @@ import {
   ArrowDownRight,
   Eye,
   CalendarIcon,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -50,7 +52,7 @@ import {
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { format, subMonths, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
+import { format, subMonths, startOfMonth, endOfMonth, startOfDay, endOfDay, isSameMonth } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/features/auth';
 import AgentAnalyticsTab from './AgentAnalyticsTab';
@@ -271,9 +273,145 @@ export default function AnalyticsPage() {
     fetchCityClients(city.city);
   };
   
-  // Date Range Filter State
+  // Date Range Filter State (for other analytics)
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+  
+  // Active Tab State - to persist tab selection
+  const [activeTab, setActiveTab] = useState<string>('agents'); // Default to agents tab
+  
+  // Agent KPI Date Filter State
+  const [agentKpiDateFrom, setAgentKpiDateFrom] = useState<Date | undefined>(undefined);
+  const [agentKpiDateTo, setAgentKpiDateTo] = useState<Date | undefined>(undefined);
+  const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
+  const [showOverallView, setShowOverallView] = useState(false);
+  
+  // Function to fetch oldest order date and set overall view
+  const handleOverallView = async () => {
+    if (!showOverallView) {
+      // Fetch oldest order date from database
+      try {
+        const { data: oldestOrder, error } = await supabase
+          .from('client_orders')
+          .select('created_at')
+          .order('created_at', { ascending: true })
+          .limit(1);
+        
+        if (error) {
+          console.error('Error fetching oldest order:', error);
+          // Fallback to 1 year ago if error
+          const oneYearAgo = new Date();
+          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+          setAgentKpiDateFrom(startOfDay(oneYearAgo));
+          setAgentKpiDateTo(endOfDay(new Date()));
+        } else if (oldestOrder && oldestOrder.length > 0) {
+          // Set date range from oldest order to current date
+          const oldestDate = new Date(oldestOrder[0].created_at);
+          setAgentKpiDateFrom(startOfDay(oldestDate));
+          setAgentKpiDateTo(endOfDay(new Date()));
+        } else {
+          // No orders found, use 1 year ago as fallback
+          const oneYearAgo = new Date();
+          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+          setAgentKpiDateFrom(startOfDay(oneYearAgo));
+          setAgentKpiDateTo(endOfDay(new Date()));
+        }
+      } catch (error) {
+        console.error('Error in handleOverallView:', error);
+        // Fallback to 1 year ago
+        const oneYearAgo = new Date();
+        oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+        setAgentKpiDateFrom(startOfDay(oneYearAgo));
+        setAgentKpiDateTo(endOfDay(new Date()));
+      }
+    } else {
+      // Reset to current month when toggling off
+      const now = new Date();
+      const currentMonthStart = startOfMonth(now);
+      const currentMonthEnd = endOfMonth(now);
+      setAgentKpiDateFrom(currentMonthStart);
+      setAgentKpiDateTo(currentMonthEnd);
+    }
+    setShowOverallView(!showOverallView);
+    setShowCustomDatePicker(false);
+  };
+  
+  // Helper function to set date range from preset
+  const setAgentKpiDatePreset = (preset: 'current_month' | 'last_month' | 'last_3_months' | 'custom') => {
+    const now = new Date();
+    
+    // Turn off overall view when preset is selected
+    if (showOverallView) {
+      setShowOverallView(false);
+    }
+    
+    switch (preset) {
+      case 'current_month': {
+        const currentMonthStart = startOfMonth(new Date(now));
+        const currentMonthEnd = endOfMonth(new Date(now));
+        // Ensure we create new Date objects to trigger React state update
+        setAgentKpiDateFrom(new Date(currentMonthStart));
+        setAgentKpiDateTo(new Date(currentMonthEnd));
+        setShowCustomDatePicker(false);
+        break;
+      }
+      case 'last_month': {
+        const lastMonth = subMonths(now, 1);
+        const lastMonthStart = startOfMonth(new Date(lastMonth));
+        const lastMonthEnd = endOfMonth(new Date(lastMonth));
+        // Ensure we create new Date objects to trigger React state update
+        setAgentKpiDateFrom(new Date(lastMonthStart));
+        setAgentKpiDateTo(new Date(lastMonthEnd));
+        setShowCustomDatePicker(false);
+        break;
+      }
+      case 'last_3_months': {
+        const threeMonthsAgo = subMonths(now, 3);
+        const threeMonthsAgoStart = startOfMonth(new Date(threeMonthsAgo));
+        const currentEnd = endOfMonth(new Date(now));
+        // Ensure we create new Date objects to trigger React state update
+        setAgentKpiDateFrom(new Date(threeMonthsAgoStart));
+        setAgentKpiDateTo(new Date(currentEnd));
+        setShowCustomDatePicker(false);
+        break;
+      }
+      case 'custom':
+        setShowCustomDatePicker(true);
+        break;
+    }
+  };
+  
+  // Get current preset based on dates
+  const getCurrentPreset = (): 'current_month' | 'last_month' | 'last_3_months' | 'custom' | null => {
+    if (!agentKpiDateFrom || !agentKpiDateTo) return 'current_month';
+    
+    const now = new Date();
+    const currentMonthStart = startOfMonth(now);
+    const currentMonthEnd = endOfMonth(now);
+    
+    if (isSameMonth(agentKpiDateFrom, now) && 
+        agentKpiDateFrom.getTime() === currentMonthStart.getTime() &&
+        agentKpiDateTo.getTime() === currentMonthEnd.getTime()) {
+      return 'current_month';
+    }
+    
+    const lastMonthStart = startOfMonth(subMonths(now, 1));
+    const lastMonthEnd = endOfMonth(subMonths(now, 1));
+    
+    if (isSameMonth(agentKpiDateFrom, subMonths(now, 1)) &&
+        agentKpiDateFrom.getTime() === lastMonthStart.getTime() &&
+        agentKpiDateTo.getTime() === lastMonthEnd.getTime()) {
+      return 'last_month';
+    }
+    
+    const threeMonthsAgo = subMonths(now, 3);
+    if (agentKpiDateFrom.getTime() === startOfMonth(threeMonthsAgo).getTime() &&
+        agentKpiDateTo.getTime() === endOfMonth(now).getTime()) {
+      return 'last_3_months';
+    }
+    
+    return 'custom';
+  };
   
   // Target Management State
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
@@ -283,6 +421,9 @@ export default function AnalyticsPage() {
     targetQty?: number | null;
   }>>({});
   const [savingTargets, setSavingTargets] = useState<Set<string>>(new Set());
+  const [removingTargets, setRemovingTargets] = useState<Set<string>>(new Set());
+  const [removeTargetDialogOpen, setRemoveTargetDialogOpen] = useState(false);
+  const [agentToRemove, setAgentToRemove] = useState<{ id: string; name: string } | null>(null);
   
   useEffect(() => {
     if (user) {
@@ -306,9 +447,10 @@ export default function AnalyticsPage() {
     
     if (shouldFetch) {
       fetchAnalyticsData();
+      fetchAgentKPIs();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.role, teamAgentIds]);
+  }, [user?.id, user?.role, teamAgentIds, agentKpiDateFrom, agentKpiDateTo]);
 
   // Fetch team agents for Leaders and Managers
   const fetchTeamAgents = async () => {
@@ -836,6 +978,20 @@ export default function AnalyticsPage() {
 
 
 
+  // Helper function to check if date range is current month
+  const isCurrentMonth = (dateFrom?: Date, dateTo?: Date): boolean => {
+    if (!dateFrom || !dateTo) return false;
+    const now = new Date();
+    const currentMonthStart = startOfMonth(now);
+    const currentMonthEnd = endOfMonth(now);
+    
+    // Check if both dates are in the current month and span the full month
+    return isSameMonth(dateFrom, now) && 
+           isSameMonth(dateTo, now) &&
+           dateFrom.getTime() === currentMonthStart.getTime() &&
+           dateTo.getTime() === currentMonthEnd.getTime();
+  };
+
   const fetchAgentKPIs = async () => {
     try {
       let agentsQuery = supabase
@@ -865,124 +1021,131 @@ export default function AnalyticsPage() {
         return;
       }
 
-      // Get current month range for target calculation
+      // Determine date range for filtering
       const currentMonthStart = startOfMonth(new Date());
       const currentMonthEnd = endOfMonth(new Date());
       const currentMonthFirstDay = currentMonthStart.toISOString().split('T')[0]; // Format: YYYY-MM-DD
-
-      // Fetch all targets for current month
-      const agentIds = agents.map(a => a.id);
       
-      const { data: targets, error: targetsError } = await supabase
-        .from('agent_monthly_targets')
-        .select('agent_id, target_clients, target_revenue, target_qty, target_orders')
-        .eq('target_month', currentMonthFirstDay)
-        .in('agent_id', agentIds);
+      // Use date filter if provided, otherwise use current month
+      const filterStart = agentKpiDateFrom ? startOfDay(agentKpiDateFrom) : currentMonthStart;
+      const filterEnd = agentKpiDateTo ? endOfDay(agentKpiDateTo) : currentMonthEnd;
+      const isFilterCurrentMonth = isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo);
 
-      if (targetsError) {
-        console.error('Error fetching targets (continuing without targets):', targetsError);
-        // Continue without targets if there's an error
-      }
-
-      // Create maps for targets
-      const targetsMap = new Map<string, {
+      // Only fetch targets if filtering by current month
+      let targetsMap = new Map<string, {
         targetClients?: number | null;
         targetRevenue?: number | null;
         targetQty?: number | null;
         targetOrders?: number | null;
       }>();
-      (targets || []).forEach((t: any) => {
-        targetsMap.set(t.agent_id, {
-          targetClients: t.target_clients ?? null,
-          targetRevenue: t.target_revenue ? parseFloat(t.target_revenue) : null,
-          targetQty: t.target_qty ?? null,
-          targetOrders: t.target_orders ?? null
-        });
-      });
+
+      if (isFilterCurrentMonth) {
+        // Fetch all targets for current month
+        const agentIds = agents.map(a => a.id);
+        
+        const { data: targets, error: targetsError } = await supabase
+          .from('agent_monthly_targets')
+          .select('agent_id, target_clients, target_revenue, target_qty, target_orders')
+          .eq('target_month', currentMonthFirstDay)
+          .in('agent_id', agentIds);
+
+        if (targetsError) {
+          console.error('Error fetching targets (continuing without targets):', targetsError);
+          // Continue without targets if there's an error
+        } else {
+          (targets || []).forEach((t: any) => {
+            targetsMap.set(t.agent_id, {
+              targetClients: t.target_clients ?? null,
+              targetRevenue: t.target_revenue ? parseFloat(t.target_revenue) : null,
+              targetQty: t.target_qty ?? null,
+              targetOrders: t.target_orders ?? null
+            });
+          });
+        }
+      }
 
       // Get orders for each agent
       const agentKPIsData: AgentKPI[] = await Promise.all(
         (agents || []).map(async (agent) => {
-          // Get all approved orders (admin_approved stage) for total stats
-          const { data: allOrders } = await supabase
+          // Get filtered orders based on date range (or all time if no filter)
+          const { data: filteredOrders } = await supabase
             .from('client_orders')
             .select('id, total_amount, client_id, created_at')
             .eq('agent_id', agent.id)
-            .eq('stage', 'admin_approved');
-
-          // Get current month orders for target achievement calculation
-          const { data: currentMonthOrders } = await supabase
-            .from('client_orders')
-            .select('id, total_amount, client_id')
-            .eq('agent_id', agent.id)
             .eq('stage', 'admin_approved')
-            .gte('created_at', currentMonthStart.toISOString())
-            .lte('created_at', currentMonthEnd.toISOString());
+            .gte('created_at', filterStart.toISOString())
+            .lte('created_at', filterEnd.toISOString());
 
-          // Get current month clients (clients created this month)
-          const { data: currentMonthClients } = await supabase
+          // Get filtered clients (clients created in date range)
+          const { data: filteredClients } = await supabase
             .from('clients')
             .select('id')
             .eq('agent_id', agent.id)
-            .gte('created_at', currentMonthStart.toISOString())
-            .lte('created_at', currentMonthEnd.toISOString());
+            .gte('created_at', filterStart.toISOString())
+            .lte('created_at', filterEnd.toISOString());
 
-          // Get current month order items to calculate total quantity
-          const { data: currentMonthOrderItems } = await supabase
+          // Get filtered order items to calculate total quantity
+          const { data: filteredOrderItems } = await supabase
             .from('client_order_items')
             .select('quantity, client_orders!inner(agent_id, stage, created_at)')
             .eq('client_orders.agent_id', agent.id)
             .eq('client_orders.stage', 'admin_approved')
-            .gte('client_orders.created_at', currentMonthStart.toISOString())
-            .lte('client_orders.created_at', currentMonthEnd.toISOString());
+            .gte('client_orders.created_at', filterStart.toISOString())
+            .lte('client_orders.created_at', filterEnd.toISOString());
 
-          // Calculate actual values for current month
-          const actualClients = currentMonthClients?.length || 0;
-          const actualRevenue = currentMonthOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
-          const actualQty = currentMonthOrderItems?.reduce((sum, item: any) => sum + (item.quantity || 0), 0) || 0;
+          // Calculate actual values for filtered period
+          const actualClients = filteredClients?.length || 0;
+          const actualRevenue = filteredOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+          const actualQty = filteredOrderItems?.reduce((sum, item: any) => sum + (item.quantity || 0), 0) || 0;
 
-          // Get unique clients (all time)
-          const uniqueClients = new Set(allOrders?.map(o => o.client_id) || []);
+          // Get unique clients from filtered orders
+          const uniqueClients = new Set(filteredOrders?.map(o => o.client_id) || []);
 
-          // Get total clients assigned to this agent (all time)
+          // Get total clients assigned to this agent (all time) for conversion rate
           const { data: totalClients } = await supabase
             .from('clients')
             .select('id')
             .eq('agent_id', agent.id);
 
-          const totalOrders = allOrders?.length || 0;
-          const totalRevenue = allOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+          const totalOrders = filteredOrders?.length || 0;
+          const totalRevenue = filteredOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
           const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
           const conversionRate = totalClients && totalClients.length > 0 
             ? (uniqueClients.size / totalClients.length) * 100 
             : 0;
 
-          // Get targets
-          const agentTargets = targetsMap.get(agent.id) || {
-            targetClients: null,
-            targetRevenue: null,
-            targetQty: null,
-            targetOrders: null
-          };
+          // Get targets (only if filtering by current month)
+          const agentTargets = isFilterCurrentMonth 
+            ? (targetsMap.get(agent.id) || {
+                targetClients: null,
+                targetRevenue: null,
+                targetQty: null,
+                targetOrders: null
+              })
+            : {
+                targetClients: null,
+                targetRevenue: null,
+                targetQty: null,
+                targetOrders: null
+              };
 
-          // Calculate achievement percentages
-          const achievementClients = agentTargets.targetClients && agentTargets.targetClients > 0
+          // Calculate achievement percentages (only if filtering by current month and targets exist)
+          const achievementClients = isFilterCurrentMonth && agentTargets.targetClients && agentTargets.targetClients > 0
             ? (actualClients / agentTargets.targetClients) * 100
             : undefined;
 
-          const achievementRevenue = agentTargets.targetRevenue && agentTargets.targetRevenue > 0
+          const achievementRevenue = isFilterCurrentMonth && agentTargets.targetRevenue && agentTargets.targetRevenue > 0
             ? (actualRevenue / agentTargets.targetRevenue) * 100
             : undefined;
 
-          const achievementQty = agentTargets.targetQty && agentTargets.targetQty > 0
+          const achievementQty = isFilterCurrentMonth && agentTargets.targetQty && agentTargets.targetQty > 0
             ? (actualQty / agentTargets.targetQty) * 100
             : undefined;
 
           // Legacy achievement calculation (for backward compatibility)
           const targetOrders = agentTargets.targetOrders;
-          const currentMonthOrderCount = currentMonthOrders?.length || 0;
-          const targetAchievement = targetOrders && targetOrders > 0
-            ? (currentMonthOrderCount / targetOrders) * 100
+          const targetAchievement = isFilterCurrentMonth && targetOrders && targetOrders > 0
+            ? (totalOrders / targetOrders) * 100
             : undefined;
 
           // Determine performance
@@ -1000,10 +1163,10 @@ export default function AnalyticsPage() {
             avgOrderValue,
             conversionRate,
             performance,
-            // Target values
-            targetClients: agentTargets.targetClients,
-            targetRevenue: agentTargets.targetRevenue,
-            targetQty: agentTargets.targetQty,
+            // Target values (only set if filtering by current month)
+            targetClients: isFilterCurrentMonth ? agentTargets.targetClients : null,
+            targetRevenue: isFilterCurrentMonth ? agentTargets.targetRevenue : null,
+            targetQty: isFilterCurrentMonth ? agentTargets.targetQty : null,
             // Actual values
             actualClients,
             actualRevenue,
@@ -1382,6 +1545,68 @@ export default function AnalyticsPage() {
     }
   };
 
+  const handleRemoveTarget = async (agentId: string) => {
+    const agent = agentKPIs.find(a => a.id === agentId);
+    if (!agent) return;
+
+    setAgentToRemove({ id: agentId, name: agent.name });
+    setRemoveTargetDialogOpen(true);
+  };
+
+  const confirmRemoveTarget = async () => {
+    if (!agentToRemove) return;
+
+    setRemovingTargets(prev => new Set(prev).add(agentToRemove.id));
+    try {
+      const currentMonthFirstDay = startOfMonth(new Date()).toISOString().split('T')[0];
+      
+      // Delete the target record
+      const { error } = await supabase
+        .from('agent_monthly_targets')
+        .delete()
+        .eq('agent_id', agentToRemove.id)
+        .eq('target_month', currentMonthFirstDay);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Target Removed',
+        description: `Targets removed for ${agentToRemove.name}`,
+      });
+
+      // Clear the input for this agent
+      setTargetInputs(prev => {
+        const next = { ...prev };
+        next[agentToRemove.id] = {
+          targetClients: null,
+          targetRevenue: null,
+          targetQty: null
+        };
+        return next;
+      });
+
+      // Refetch to update the UI
+      await fetchAgentKPIs();
+      
+      // Close dialog
+      setRemoveTargetDialogOpen(false);
+      setAgentToRemove(null);
+    } catch (error: any) {
+      console.error('Error removing target:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to remove target',
+        variant: 'destructive'
+      });
+    } finally {
+      setRemovingTargets(prev => {
+        const next = new Set(prev);
+        next.delete(agentToRemove.id);
+        return next;
+      });
+    }
+  };
+
   const handleSaveAllTargets = async () => {
     const targetsToSave = Object.entries(targetInputs).filter(([_, targets]) => 
       targets && (targets.targetClients || targets.targetRevenue || targets.targetQty)
@@ -1575,7 +1800,7 @@ export default function AnalyticsPage() {
       {(isAdmin || isLeader || isManager) && (
         <>
           {/* Main Analytics Tabs */}
-          <Tabs defaultValue="cities" className="space-y-4">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="cities">
                 <MapPin className="h-4 w-4 mr-2" />
@@ -1825,22 +2050,145 @@ export default function AnalyticsPage() {
                   {/* Agent Key Performance Indicators Table */}
                   <Card className="col-span-1 lg:col-span-2">
                     <CardHeader>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <CardTitle>Agent Key Performance Indicators</CardTitle>
-                          <CardDescription>Comprehensive agent metrics and ratings</CardDescription>
+                      <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <CardTitle>Agent Key Performance Indicators</CardTitle>
+                            <CardDescription>Comprehensive agent metrics and ratings</CardDescription>
+                          </div>
+                          {/* Only Admin and Leader can set targets, Manager is view-only */}
+                          {(isAdmin || isLeader) && (
+                            <Button
+                              variant="outline"
+                              onClick={handleOpenTargetDialog}
+                              className="gap-2"
+                            >
+                              <Target className="h-4 w-4" />
+                              Set Targets
+                            </Button>
+                          )}
                         </div>
-                        {/* Only Admin and Leader can set targets, Manager is view-only */}
-                        {(isAdmin || isLeader) && (
-                          <Button
-                            variant="outline"
-                            onClick={handleOpenTargetDialog}
-                            className="gap-2"
-                          >
-                            <Target className="h-4 w-4" />
-                            Set Targets
-                          </Button>
-                        )}
+                        {/* Date Filter and Overall View Toggle for Agent KPIs */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              variant={getCurrentPreset() === 'current_month' ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => setAgentKpiDatePreset('current_month')}
+                              className="h-8 text-xs"
+                            >
+                              Current Month
+                            </Button>
+                            <Button
+                              variant={getCurrentPreset() === 'last_month' ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => setAgentKpiDatePreset('last_month')}
+                              className="h-8 text-xs"
+                            >
+                              Last Month
+                            </Button>
+                            <Button
+                              variant={getCurrentPreset() === 'last_3_months' ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => setAgentKpiDatePreset('last_3_months')}
+                              className="h-8 text-xs"
+                            >
+                              Last 3 Months
+                            </Button>
+                            <Popover open={showCustomDatePicker} onOpenChange={setShowCustomDatePicker}>
+                              <PopoverTrigger asChild>
+                                <Button 
+                                  variant={getCurrentPreset() === 'custom' ? 'default' : 'outline'}
+                                  size="sm"
+                                  onClick={() => setAgentKpiDatePreset('custom')}
+                                  className="h-8 text-xs"
+                                >
+                                  <CalendarIcon className="h-3.5 w-3.5 mr-1" />
+                                  Custom
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-3" align="start">
+                                <div className="space-y-3">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1.5">
+                                      <label className="text-xs font-medium text-muted-foreground">From</label>
+                                      <Input
+                                        type="date"
+                                        value={agentKpiDateFrom ? agentKpiDateFrom.toISOString().split('T')[0] : ''}
+                                        onChange={(e) => {
+                                          const date = e.target.value ? new Date(e.target.value) : undefined;
+                                          if (date) {
+                                            date.setHours(0, 0, 0, 0);
+                                            setAgentKpiDateFrom(date);
+                                            // Turn off overall view when custom date is selected
+                                            if (showOverallView) {
+                                              setShowOverallView(false);
+                                            }
+                                          }
+                                        }}
+                                        className="h-8 text-xs"
+                                      />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <label className="text-xs font-medium text-muted-foreground">To</label>
+                                      <Input
+                                        type="date"
+                                        value={agentKpiDateTo ? agentKpiDateTo.toISOString().split('T')[0] : ''}
+                                        onChange={(e) => {
+                                          const date = e.target.value ? new Date(e.target.value) : undefined;
+                                          if (date) {
+                                            date.setHours(23, 59, 59, 999);
+                                            setAgentKpiDateTo(date);
+                                            // Turn off overall view when custom date is selected
+                                            if (showOverallView) {
+                                              setShowOverallView(false);
+                                            }
+                                          }
+                                        }}
+                                        className="h-8 text-xs"
+                                      />
+                                    </div>
+                                  </div>
+                                  {agentKpiDateFrom && agentKpiDateTo && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="w-full h-8 text-xs"
+                                      onClick={() => {
+                                        setAgentKpiDateFrom(undefined);
+                                        setAgentKpiDateTo(undefined);
+                                        setShowCustomDatePicker(false);
+                                        setAgentKpiDatePreset('current_month');
+                                      }}
+                                    >
+                                      Reset to Current Month
+                                    </Button>
+                                  )}
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                          </div>
+                          <div className="flex items-center gap-1.5 border-l pl-2">
+                            <Button
+                              variant={showOverallView ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={handleOverallView}
+                              className="h-8 text-xs"
+                            >
+                              <Users className="h-3.5 w-3.5 mr-1" />
+                              Overall
+                            </Button>
+                          </div>
+                          {isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo) ? (
+                            <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                              Targets Enabled
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs text-muted-foreground">
+                              Targets Hidden
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>
@@ -1850,90 +2198,126 @@ export default function AnalyticsPage() {
                             <TableHeader>
                               <TableRow>
                                 <TableHead rowSpan={2} className="text-center align-middle">Agent</TableHead>
-                                <TableHead colSpan={3} className="text-center bg-blue-50">Target</TableHead>
+                                {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
+                                  <>
+                                    <TableHead colSpan={3} className="text-center bg-blue-50">Target</TableHead>
+                                  </>
+                                )}
                                 <TableHead colSpan={3} className="text-center bg-green-50">Actual</TableHead>
-                                <TableHead colSpan={3} className="text-center bg-yellow-50">Achievement</TableHead>
+                                {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
+                                  <>
+                                    <TableHead colSpan={3} className="text-center bg-yellow-50">Achievement</TableHead>
+                                  </>
+                                )}
                                 <TableHead rowSpan={2} className="text-center align-middle">Actions</TableHead>
                               </TableRow>
                               <TableRow>
-                                {/* Target columns */}
-                                <TableHead className="text-center bg-blue-50">Clients</TableHead>
-                                <TableHead className="text-center bg-blue-50">Revenue</TableHead>
-                                <TableHead className="text-center bg-blue-50">Qty</TableHead>
-                                {/* Actual columns */}
+                                {/* Target columns - only show if current month */}
+                                {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
+                                  <>
+                                    <TableHead className="text-center bg-blue-50">Clients</TableHead>
+                                    <TableHead className="text-center bg-blue-50">Revenue</TableHead>
+                                    <TableHead className="text-center bg-blue-50">Qty</TableHead>
+                                  </>
+                                )}
+                                {/* Actual columns - always show */}
                                 <TableHead className="text-center bg-green-50">Clients</TableHead>
                                 <TableHead className="text-center bg-green-50">Revenue</TableHead>
                                 <TableHead className="text-center bg-green-50">Qty</TableHead>
-                                {/* Achievement columns */}
-                                <TableHead className="text-center bg-yellow-50">Clients %</TableHead>
-                                <TableHead className="text-center bg-yellow-50">Revenue %</TableHead>
-                                <TableHead className="text-center bg-yellow-50">Qty %</TableHead>
+                                {/* Achievement columns - only show if current month */}
+                                {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
+                                  <>
+                                    <TableHead className="text-center bg-yellow-50">Clients %</TableHead>
+                                    <TableHead className="text-center bg-yellow-50">Revenue %</TableHead>
+                                    <TableHead className="text-center bg-yellow-50">Qty %</TableHead>
+                                  </>
+                                )}
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {agentKPIs.map((agent, index) => (
-                                <TableRow key={agent.id}>
-                                  <TableCell className="font-medium text-center">
-                                    <div className="flex items-center justify-center gap-2">
-                                      {index < 3 && <Award className="h-4 w-4 text-yellow-500" />}
-                                      {agent.name}
-                                    </div>
-                                  </TableCell>
-                                  {/* Target values */}
-                                  <TableCell className="text-center bg-blue-50/30">
-                                    <span className="text-sm font-medium">
-                                      {agent.targetClients ?? '-'}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell className="text-center bg-blue-50/30">
-                                    <span className="text-sm font-medium">
-                                      {agent.targetRevenue ? `₱${Math.floor(agent.targetRevenue).toLocaleString()}` : '-'}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell className="text-center bg-blue-50/30">
-                                    <span className="text-sm font-medium">
-                                      {agent.targetQty ?? '-'}
-                                    </span>
-                                  </TableCell>
-                                  {/* Actual values */}
-                                  <TableCell className="text-center bg-green-50/30">
-                                    <span className="text-sm">{agent.actualClients ?? 0}</span>
-                                  </TableCell>
-                                  <TableCell className="text-center bg-green-50/30">
-                                    <span className="text-sm font-semibold">
-                                      ₱{agent.actualRevenue ? Math.floor(agent.actualRevenue).toLocaleString() : '0'}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell className="text-center bg-green-50/30">
-                                    <span className="text-sm">{agent.actualQty ?? 0}</span>
-                                  </TableCell>
-                                  {/* Achievement percentages */}
-                                  <TableCell className="text-center bg-yellow-50/30">
-                                    {renderAchievementPercentage(agent.achievementClients)}
-                                  </TableCell>
-                                  <TableCell className="text-center bg-yellow-50/30">
-                                    {renderAchievementPercentage(agent.achievementRevenue)}
-                                  </TableCell>
-                                  <TableCell className="text-center bg-yellow-50/30">
-                                    {renderAchievementPercentage(agent.achievementQty)}
-                                  </TableCell>
-                                  {/* Actions */}
-                                  <TableCell className="text-center">
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => handleViewAgentDetails(agent)}
-                                      className="gap-2"
-                                    >
-                                      <Eye className="h-4 w-4" />
-                                      View
-                                    </Button>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
+                              {/* Always show individual agents - Overall button just indicates viewing all agents */}
+                              {agentKPIs.map((agent, index) => {
+                                const showTargets = isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo);
+                                
+                                return (
+                                  <TableRow key={agent.id}>
+                                    <TableCell className="font-medium text-center">
+                                      <div className="flex items-center justify-center gap-2">
+                                        {index < 3 && <Award className="h-4 w-4 text-yellow-500" />}
+                                        {agent.name}
+                                      </div>
+                                    </TableCell>
+                                    {/* Target values - only show if current month */}
+                                    {showTargets && (
+                                      <>
+                                        <TableCell className="text-center bg-blue-50/30">
+                                          <span className="text-sm font-medium">
+                                            {agent.targetClients ?? '-'}
+                                          </span>
+                                        </TableCell>
+                                        <TableCell className="text-center bg-blue-50/30">
+                                          <span className="text-sm font-medium">
+                                            {agent.targetRevenue ? `₱${Math.floor(agent.targetRevenue).toLocaleString()}` : '-'}
+                                          </span>
+                                        </TableCell>
+                                        <TableCell className="text-center bg-blue-50/30">
+                                          <span className="text-sm font-medium">
+                                            {agent.targetQty ?? '-'}
+                                          </span>
+                                        </TableCell>
+                                      </>
+                                    )}
+                                    {/* Actual values - always show */}
+                                    <TableCell className="text-center bg-green-50/30">
+                                      <span className="text-sm">{agent.actualClients ?? 0}</span>
+                                    </TableCell>
+                                    <TableCell className="text-center bg-green-50/30">
+                                      <span className="text-sm font-semibold">
+                                        ₱{agent.actualRevenue ? Math.floor(agent.actualRevenue).toLocaleString() : '0'}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-center bg-green-50/30">
+                                      <span className="text-sm">{agent.actualQty ?? 0}</span>
+                                    </TableCell>
+                                    {/* Achievement percentages - only show if current month */}
+                                    {showTargets && (
+                                      <>
+                                        <TableCell className="text-center bg-yellow-50/30">
+                                          {renderAchievementPercentage(agent.achievementClients)}
+                                        </TableCell>
+                                        <TableCell className="text-center bg-yellow-50/30">
+                                          {renderAchievementPercentage(agent.achievementRevenue)}
+                                        </TableCell>
+                                        <TableCell className="text-center bg-yellow-50/30">
+                                          {renderAchievementPercentage(agent.achievementQty)}
+                                        </TableCell>
+                                      </>
+                                    )}
+                                    {/* Actions */}
+                                    <TableCell className="text-center">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleViewAgentDetails(agent)}
+                                        className="gap-2"
+                                      >
+                                        <Eye className="h-4 w-4" />
+                                        View
+                                      </Button>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
                               {agentKPIs.length === 0 && (
                                 <TableRow>
-                                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                                  <TableCell 
+                                    colSpan={
+                                      (isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) 
+                                        ? 10  // Agent + 3 Target + 3 Achievement + 3 Actual + Actions
+                                        : 5   // Agent + 3 Actual + Actions
+                                    } 
+                                    className="text-center py-8 text-muted-foreground"
+                                  >
                                     No agent data available
                                   </TableCell>
                                 </TableRow>
@@ -2568,23 +2952,48 @@ export default function AnalyticsPage() {
                             />
                           </TableCell>
                           <TableCell className="text-center">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleSaveTarget(agent.id)}
-                              disabled={isSaving || (!targets.targetClients && !targets.targetRevenue && !targets.targetQty)}
-                              className="gap-1 text-xs sm:text-sm h-7 sm:h-8 px-2 sm:px-3"
-                            >
-                              {isSaving ? (
-                                <>
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                  <span className="hidden sm:inline">Saving...</span>
-                                  <span className="sm:hidden">...</span>
-                                </>
-                              ) : (
-                                'Save'
+                            <div className="flex items-center gap-1 justify-center">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleSaveTarget(agent.id)}
+                                disabled={isSaving || removingTargets.has(agent.id) || (!targets.targetClients && !targets.targetRevenue && !targets.targetQty)}
+                                className="gap-1 text-xs sm:text-sm h-7 sm:h-8 px-2 sm:px-3"
+                              >
+                                {isSaving ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <span className="hidden sm:inline">Saving...</span>
+                                    <span className="sm:hidden">...</span>
+                                  </>
+                                ) : (
+                                  'Save'
+                                )}
+                              </Button>
+                              {(agent.targetClients || agent.targetRevenue || agent.targetQty) && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleRemoveTarget(agent.id)}
+                                  disabled={isSaving || removingTargets.has(agent.id)}
+                                  className="gap-1 text-xs sm:text-sm h-7 sm:h-8 px-2 sm:px-3 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                >
+                                  {removingTargets.has(agent.id) ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                      <span className="hidden sm:inline">Removing...</span>
+                                      <span className="sm:hidden">...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Trash2 className="h-3 w-3" />
+                                      <span className="hidden sm:inline">Remove</span>
+                                      <span className="sm:hidden">×</span>
+                                    </>
+                                  )}
+                                </Button>
                               )}
-                            </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -2637,6 +3046,38 @@ export default function AnalyticsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Remove Target Confirmation Dialog */}
+      <AlertDialog open={removeTargetDialogOpen} onOpenChange={setRemoveTargetDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Target?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove all targets for <strong>{agentToRemove?.name}</strong> for {format(startOfMonth(new Date()), 'MMMM yyyy')}? 
+              This action cannot be undone. The agent will have no targets set for this month.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={agentToRemove ? removingTargets.has(agentToRemove.id) : false}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmRemoveTarget}
+              disabled={agentToRemove ? removingTargets.has(agentToRemove.id) : false}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {agentToRemove && removingTargets.has(agentToRemove.id) ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Removing...
+                </>
+              ) : (
+                'Remove Target'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
