@@ -5,7 +5,18 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Profile } from '@/types/database.types';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend
+} from 'recharts';
 
 export default function SuperAdminDashboardPage() {
   const { user } = useAuth();
@@ -20,10 +31,14 @@ export default function SuperAdminDashboardPage() {
   });
   const [recentUsers, setRecentUsers] = useState<Profile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [revenueData, setRevenueData] = useState<{ month: string; revenue: number }[]>([]);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
 
   useEffect(() => {
     const companyId = (user as any)?.company_id;
     if (companyId) {
+      fetchAvailableYears();
       fetchDashboardData();
     } else if (user) {
       // User exists but no company_id - stop loading to prevent infinite loading state
@@ -32,9 +47,59 @@ export default function SuperAdminDashboardPage() {
     }
   }, [user]);
 
+  useEffect(() => {
+    const companyId = (user as any)?.company_id;
+    if (companyId && selectedYear) {
+      fetchDashboardData();
+    }
+  }, [selectedYear, user]);
+
+  const fetchAvailableYears = async () => {
+    const companyId = (user as any)?.company_id;
+    if (!companyId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('client_orders')
+        .select('order_date')
+        .eq('company_id', companyId)
+        .eq('stage', 'admin_approved')
+        .not('order_date', 'is', null);
+
+      if (error) throw error;
+
+      // Extract unique years from order dates
+      const years = new Set<number>();
+      if (data) {
+        data.forEach((order: any) => {
+          if (order.order_date) {
+            const year = new Date(order.order_date).getFullYear();
+            years.add(year);
+          }
+        });
+      }
+
+      // Add current year if no orders exist
+      const currentYear = new Date().getFullYear();
+      if (years.size === 0) {
+        years.add(currentYear);
+      }
+
+      const sortedYears = Array.from(years).sort((a, b) => b - a); // Descending order
+      setAvailableYears(sortedYears);
+
+      // Set default year to current year or most recent year with data
+      if (!selectedYear || !years.has(selectedYear)) {
+        setSelectedYear(sortedYears[0] || currentYear);
+      }
+    } catch (error) {
+      console.error('Error fetching available years:', error);
+    }
+  };
+
   const fetchDashboardData = async () => {
     const companyId = (user as any)?.company_id;
-    if (!companyId) {
+    if (!companyId || !selectedYear) {
       setIsLoading(false);
       return;
     }
@@ -42,11 +107,18 @@ export default function SuperAdminDashboardPage() {
     try {
       setIsLoading(true);
 
+      // Calculate start and end dates for the selected year
+      const yearStart = new Date(selectedYear, 0, 1); // January 1st
+      const yearEnd = new Date(selectedYear, 11, 31); // December 31st
+      const yearStartIso = yearStart.toISOString().split('T')[0];
+      const yearEndIso = yearEnd.toISOString().split('T')[0];
+
       // Fetch users, main inventory, and approved orders in parallel
       const [
         { data: profiles, error: profilesError },
         { data: mainInventoryRows, error: inventoryError },
         { data: approvedOrders, error: ordersError },
+        { data: monthlyOrders, error: monthlyError },
       ] = await Promise.all([
         supabase
           .from('profiles')
@@ -62,6 +134,14 @@ export default function SuperAdminDashboardPage() {
           .select('total_amount')
           .eq('company_id', companyId)
           .eq('stage', 'admin_approved'),
+        // Monthly revenue for bar chart (selected year)
+        supabase
+          .from('client_orders')
+          .select('total_amount, order_date')
+          .eq('company_id', companyId)
+          .eq('stage', 'admin_approved')
+          .gte('order_date', yearStartIso)
+          .lte('order_date', yearEndIso),
       ]);
 
       if (profilesError) throw profilesError;
@@ -82,6 +162,50 @@ export default function SuperAdminDashboardPage() {
       let totalRevenue = 0;
       if (!ordersError && approvedOrders?.length) {
         totalRevenue = approvedOrders.reduce((sum, o) => sum + (Number(o.total_amount) ?? 0), 0);
+      }
+
+      // Build monthly revenue data for chart (last 12 months, sorted chronologically)
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      
+      if (!monthlyError) {
+        // Initialize all 12 months with 0 revenue
+        const revenueByMonth: Record<string, number> = {};
+        monthNames.forEach(month => {
+          revenueByMonth[month] = 0;
+        });
+
+        // Add actual revenue data from orders (filter by selected year)
+        if (monthlyOrders?.length) {
+          monthlyOrders.forEach((o: any) => {
+            const orderDate = new Date(o.order_date);
+            const orderYear = orderDate.getFullYear();
+            
+            // Only include orders from the selected year
+            if (orderYear === selectedYear) {
+              const month = orderDate.toLocaleString('default', { month: 'short' });
+              if (revenueByMonth.hasOwnProperty(month)) {
+                revenueByMonth[month] += Number(o.total_amount) || 0;
+              }
+            }
+          });
+        }
+
+        // Create chart data in chronological order (Jan to Dec)
+        const chartData = monthNames.map(month => ({
+          month,
+          revenue: revenueByMonth[month] || 0,
+        }));
+
+        console.log('📊 Revenue chart data:', chartData);
+        setRevenueData(chartData);
+      } else {
+        console.log('⚠️ No monthly revenue data:', { monthlyError, monthlyOrders });
+        // Still show all months with 0 revenue
+        const chartData = monthNames.map(month => ({
+          month,
+          revenue: 0,
+        }));
+        setRevenueData(chartData);
       }
 
       setStats({
@@ -195,6 +319,48 @@ export default function SuperAdminDashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Revenue Chart */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle>Revenue Overview</CardTitle>
+          <Select
+            value={selectedYear.toString()}
+            onValueChange={(value) => setSelectedYear(parseInt(value))}
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Select year" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableYears.map((year) => (
+                <SelectItem key={year} value={year.toString()}>
+                  {year}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CardHeader>
+        <CardContent className="px-2 md:px-6">
+          {revenueData.length === 0 ? (
+            <div className="w-full h-[250px] md:h-[300px] flex items-center justify-center text-muted-foreground">
+              <p>No revenue data available for {selectedYear}</p>
+            </div>
+          ) : (
+            <div className="w-full h-[250px] md:h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={revenueData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                  <Bar dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Recent Users */}
       <Card>

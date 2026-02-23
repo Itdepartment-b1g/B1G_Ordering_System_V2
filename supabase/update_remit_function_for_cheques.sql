@@ -117,6 +117,7 @@ BEGIN
       FROM client_orders
       WHERE id = ANY(p_order_ids)
       AND company_id = v_company_id
+      AND agent_id = p_agent_id
       AND deposit_id IS NULL
     )
     SELECT 
@@ -155,13 +156,14 @@ BEGIN
         'CASH'
       ) RETURNING id INTO v_cash_deposit_id;
 
-      -- Link cash orders to the deposit
+      -- Link cash orders to the deposit (safeguard: only this agent's orders)
       UPDATE client_orders
       SET 
         deposit_id = v_cash_deposit_id,
         updated_at = NOW()
       WHERE id = ANY(v_cash_orders)
-      AND company_id = v_company_id;
+      AND company_id = v_company_id
+      AND agent_id = p_agent_id;
 
       -- Financial Transaction for Cash
       INSERT INTO financial_transactions (
@@ -195,6 +197,7 @@ BEGIN
       FROM client_orders
       WHERE id = ANY(p_order_ids)
       AND company_id = v_company_id
+      AND agent_id = p_agent_id
       AND deposit_id IS NULL
     )
     SELECT 
@@ -239,7 +242,8 @@ BEGIN
         deposit_id = v_cheque_deposit_id,
         updated_at = NOW()
       WHERE id = ANY(v_cheque_orders)
-      AND company_id = v_company_id;
+      AND company_id = v_company_id
+      AND agent_id = p_agent_id;
 
       -- Financial Transaction for Cheque
       INSERT INTO financial_transactions (
@@ -252,11 +256,12 @@ BEGIN
     END IF;
 
 
-    -- Mark all orders as remitted
+    -- Mark all orders as remitted (only this agent's orders)
     UPDATE client_orders
     SET remitted = TRUE, updated_at = NOW()
     WHERE id = ANY(p_order_ids)
-    AND company_id = v_company_id;
+    AND company_id = v_company_id
+    AND agent_id = p_agent_id;
     
   END IF;
 

@@ -578,19 +578,27 @@ export function useFinanceStats() {
             const recentDepositsRaw = depositsData || [];
 
             // Apply split-payment logic: compute cash + cheque portions from client_orders.payment_splits
-            let recentDeposits = recentDepositsRaw;
+            // Always filter deposits based on linked orders - never fall back to raw deposit.amount
+            let recentDeposits: any[] = [];
             if (recentDepositsRaw.length > 0) {
                 const depositIds = recentDepositsRaw.map(d => d.id);
 
                 const { data: orderData, error: orderError } = await supabase
                     .from('client_orders')
-                    .select('id, deposit_id, total_amount, payment_method, payment_mode, payment_splits')
+                    .select('id, deposit_id, order_date, total_amount, payment_method, payment_mode, payment_splits')
                     .in('deposit_id', depositIds);
 
-                if (!orderError && orderData) {
-                    const summaries: Record<string, { cashPortion: number; chequePortion: number; nonCashPortion: number }> = {};
+                const summaries: Record<string, { cashPortion: number; chequePortion: number; nonCashPortion: number }> = {};
+
+                if (!orderError && orderData && orderData.length > 0) {
+                    const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
 
                     orderData.forEach((order: any) => {
+                        // Skip v1-imported orders: order_date < cutoff OR order_date is null (v1 imports may not have order_date set)
+                        if (!order.order_date || order.order_date < V1_IMPORT_ORDER_DATE_CUTOFF) {
+                            // Skip v1-imported orders when computing deposit summaries
+                            return;
+                        }
                         const depositId = order.deposit_id as string | null;
                         if (!depositId) return;
 
@@ -630,24 +638,35 @@ export function useFinanceStats() {
                         summaries[depositId].chequePortion += chequePortion;
                         summaries[depositId].nonCashPortion += nonCashPortion;
                     });
+                }
 
-                    recentDeposits = recentDepositsRaw.map(deposit => {
+                // Always filter deposits: only include those with valid summaries and positive cash/cheque amounts
+                // If there's an error or no order data, summaries will be empty, so all deposits are filtered out
+                recentDeposits = recentDepositsRaw
+                    .map(deposit => {
                         const summary = summaries[deposit.id];
-                        const effectiveAmount =
-                            summary && (summary.cashPortion > 0 || summary.chequePortion > 0)
-                                ? summary.cashPortion + summary.chequePortion
-                                : deposit.amount || 0;
+                        // If no orders are currently linked to this deposit, treat it
+                        // as having no cash/cheque amount (e.g. legacy/v1 imports we unlinked).
+                        if (!summary) {
+                            return null;
+                        }
+
+                        const effectiveAmount = summary.cashPortion + summary.chequePortion;
+                        if (effectiveAmount <= 0) {
+                            // Skip deposits without any cash/cheque portion
+                            return null;
+                        }
 
                         return {
                             ...deposit,
                             amount: effectiveAmount,
                             _rawAmount: deposit.amount || 0,
-                            _cashPortion: summary?.cashPortion ?? null,
-                            _chequePortion: summary?.chequePortion ?? null,
-                            _nonCashPortion: summary?.nonCashPortion ?? null,
+                            _cashPortion: summary.cashPortion,
+                            _chequePortion: summary.chequePortion,
+                            _nonCashPortion: summary.nonCashPortion,
                         };
-                    });
-                }
+                    })
+                    .filter((d: any) => d !== null);
             }
 
             // Simple stats

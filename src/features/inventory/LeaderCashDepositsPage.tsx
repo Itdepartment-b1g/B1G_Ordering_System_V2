@@ -103,6 +103,9 @@ interface DailyDepositGroup {
 const formatBankLabel = (name: string, accountNumber: string | null | undefined) =>
   accountNumber ? `${name} - ${accountNumber}` : name;
 
+// Orders with order_date before this are v1 imports; exclude from cash deposit views and totals.
+const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-18';
+
 export default function LeaderCashDepositsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -241,7 +244,7 @@ export default function LeaderCashDepositsPage() {
 
       const { data, error } = await supabase
         .from('client_orders')
-        .select('id, deposit_id, total_amount, payment_method, payment_mode, payment_splits')
+        .select('id, deposit_id, order_date, total_amount, payment_method, payment_mode, payment_splits')
         .in('deposit_id', depositIds);
 
       if (error) throw error;
@@ -249,6 +252,7 @@ export default function LeaderCashDepositsPage() {
       const summaries: Record<string, { cashPortion: number; chequePortion: number; nonCashPortion: number }> = {};
 
       (data || []).forEach((order: any) => {
+        if (!order.order_date || order.order_date < V1_IMPORT_ORDER_DATE_CUTOFF) return;
         const depositId = order.deposit_id as string | null;
         if (!depositId) return;
 
@@ -428,6 +432,7 @@ export default function LeaderCashDepositsPage() {
             .select(`
               id,
               deposit_id,
+              order_date,
               order_number,
               total_amount,
               payment_method,
@@ -443,6 +448,10 @@ export default function LeaderCashDepositsPage() {
 
           if (ordersError) throw ordersError;
 
+          const nonV1Orders = (ordersData || []).filter(
+            (o: any) => o.order_date && o.order_date >= V1_IMPORT_ORDER_DATE_CUTOFF
+          );
+
           // Map each deposit to its date key
           const depositIdToDateKey: Record<string, string> = {};
           groups.forEach((group) => {
@@ -453,7 +462,7 @@ export default function LeaderCashDepositsPage() {
 
           const dayAgentMaps: Record<string, Record<string, DailyAgentGroup>> = {};
 
-          (ordersData || []).forEach((order: any) => {
+          nonV1Orders.forEach((order: any) => {
             const depositId = order.deposit_id as string | null;
             if (!depositId) return;
 
@@ -965,6 +974,7 @@ export default function LeaderCashDepositsPage() {
           .select(`
             id,
             deposit_id,
+            order_date,
             order_number,
             total_amount,
             payment_method,
@@ -980,9 +990,13 @@ export default function LeaderCashDepositsPage() {
 
         if (error) throw error;
 
+        const nonV1Orders = (data || []).filter(
+          (o: any) => o.order_date && o.order_date >= V1_IMPORT_ORDER_DATE_CUTOFF
+        );
+
         const agentMap: Record<string, DailyAgentGroup> = {};
 
-        (data || []).forEach((order: any) => {
+        nonV1Orders.forEach((order: any) => {
           const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
           const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
           const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
