@@ -1151,9 +1151,21 @@ export default function MyOrdersPage() {
     setUploadingSignature(true);
 
     try {
+      // Fetch client's company_id for order number generation
+      const { data: clientData, error: clientError } = await supabase
+        .from('clients')
+        .select('company_id')
+        .eq('id', selectedClientId)
+        .single();
+
+      if (clientError || !clientData?.company_id) {
+        console.error('Error fetching client company_id:', clientError);
+        throw new Error('Could not determine company_id for the order');
+      }
+
       // Generate order number first (needed for bank transfer path)
       const { data: orderNumberData, error: numberError } = await supabase
-        .rpc('generate_order_number');
+        .rpc('generate_order_number', { p_company_id: clientData.company_id });
 
       if (numberError) {
         console.error('Error generating order number:', numberError);

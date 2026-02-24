@@ -803,7 +803,7 @@ export interface Database {
         Returns: string;
       };
       generate_order_number: {
-        Args: Record<string, never>;
+        Args: { p_company_id: string };
         Returns: string;
       };
       approve_purchase_order: {

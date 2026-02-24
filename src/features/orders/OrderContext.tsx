@@ -399,7 +399,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         console.log('🔢 Using pre-generated order number:', generatedOrderNumber);
       } else {
         const { data: orderNumberData, error: numberError } = await supabase
-          .rpc('generate_order_number');
+          .rpc('generate_order_number', { p_company_id: companyId });
 
         if (numberError) {
           console.error('Error generating order number:', numberError);

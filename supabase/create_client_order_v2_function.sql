@@ -48,7 +48,7 @@ BEGIN
   END IF;
 
   -- 2. Generate Order Number
-  SELECT generate_order_number() INTO v_order_number;
+  SELECT generate_order_number(v_company_id) INTO v_order_number;
 
   -- 3. Calculate totals from JSON items
   FOR v_item IN SELECT * FROM jsonb_to_recordset(p_items) AS x(total_price DECIMAL) LOOP
