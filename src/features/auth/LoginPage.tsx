@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase';
 import { ShoppingCart, XCircle, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
@@ -19,11 +20,14 @@ export default function LoginPage() {
 
   // Redirect based on role when user is authenticated
   useEffect(() => {
+    // Only redirect if user is actually authenticated (not just loading)
     if (isAuthenticated && user) {
       if (user.role === 'system_administrator') {
         navigate('/sys-admin-dashboard', { replace: true });
       } else if (user.role === 'super_admin') {
         navigate('/super-admin-dashboard', { replace: true });
+      } else if (user.role === 'executive') {
+        navigate('/executive-dashboard', { replace: true });
       } else {
         navigate('/dashboard', { replace: true });
       }
@@ -32,11 +36,11 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
+    
     setIsLoading(true);
 
     const result = await login(email, password);
-
+    
     if (result.success) {
       toast({
         title: "Login successful",
@@ -76,6 +80,7 @@ export default function LoginPage() {
       setIsLoading(false);
     }
   };
+
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/10 p-4">
@@ -128,6 +133,7 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'Signing in...' : 'Sign in'}
             </Button>
+
           </form>
         </CardContent>
       </Card>

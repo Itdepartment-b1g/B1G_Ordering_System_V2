@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Search, Check, XCircle } from 'lucide-react';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 
 interface PendingClient {
   id: string;
@@ -135,6 +136,24 @@ const PendingClientsPage = () => {
       if (error) throw error;
 
       toast({ title: 'Client Approved', description: `${client.name} is now approved.` });
+
+      // Notify agent (non-blocking)
+      if (user?.company_id && client.agent_id) {
+        try {
+          await sendNotification({
+            userId: client.agent_id,
+            companyId: user.company_id,
+            type: 'system_message',
+            title: 'Client Approved',
+            message: `Your client "${client.name}" has been approved.`,
+            referenceType: 'client',
+            referenceId: client.id,
+          });
+        } catch (e) {
+          console.warn('Client approval notification failed (non-blocking):', e);
+        }
+      }
+
       await fetchClients();
       setProcessingId(null);
     } catch (error) {
@@ -172,6 +191,24 @@ const PendingClientsPage = () => {
       if (error) throw error;
 
       toast({ title: 'Client Rejected', description: `${clientToReject.name} has been rejected.` });
+
+      // Notify agent (non-blocking)
+      if (user?.company_id && clientToReject.agent_id) {
+        try {
+          await sendNotification({
+            userId: clientToReject.agent_id,
+            companyId: user.company_id,
+            type: 'system_message',
+            title: 'Client Rejected',
+            message: `Your client "${clientToReject.name}" has been rejected${rejectReason ? `: ${rejectReason}` : '.'}`,
+            referenceType: 'client',
+            referenceId: clientToReject.id,
+          });
+        } catch (e) {
+          console.warn('Client rejection notification failed (non-blocking):', e);
+        }
+      }
+
       setRejectDialogOpen(false);
       setClientToReject(null);
       await fetchClients();
@@ -225,7 +262,7 @@ const PendingClientsPage = () => {
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search clients by name, company, email, or city"
+              placeholder="Search clients by name, shop name, email, or city"
               className="pl-10"
             />
           </div>
@@ -241,7 +278,7 @@ const PendingClientsPage = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Client</TableHead>
-                    <TableHead>Company</TableHead>
+                    <TableHead>Shop Name</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>City</TableHead>

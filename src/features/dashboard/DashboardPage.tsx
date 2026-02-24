@@ -1,10 +1,8 @@
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { TrendingUp, Users, Package, DollarSign, CheckCircle, XCircle, Bell, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
-import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { TrendingUp, Users, Package, DollarSign, CheckCircle, XCircle, Bell, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, Calendar, ArrowRight, ShoppingCart, Loader2, Receipt } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -18,401 +16,91 @@ import {
   ResponsiveContainer,
   Legend
 } from 'recharts';
+import {
+  useAdminStats,
+  useLeaderStats,
+  useAgentStats,
+  useTopPerformers,
+  useRecentActivity
+} from './dashboardHooks';
+import { FinanceDashboard } from './FinanceDashboard';
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
+  const isLeader = user?.role === 'team_leader';
+  const isAgent = user?.role === 'sales_agent' || user?.role === 'mobile_sales';
+  const isFinance = user?.role === 'finance';
 
-  // Redirect system administrators and super admins to their respective dashboards
+  // Redirect logic
   useEffect(() => {
     if (user?.role === 'system_administrator') {
       navigate('/sys-admin-dashboard', { replace: true });
     } else if (user?.role === 'super_admin') {
       navigate('/super-admin-dashboard', { replace: true });
+    } else if (user?.role === 'manager') {
+      navigate('/manager-dashboard', { replace: true });
     }
   }, [user?.role, navigate]);
 
-  // Admin stats
-  const [totalRevenue, setTotalRevenue] = useState(0);
-  const [pendingOrders, setPendingOrders] = useState(0);
-  const [totalOrders, setTotalOrders] = useState(0);
-  const [totalAgents, setTotalAgents] = useState(0);
-  const [activeAgents, setActiveAgents] = useState(0);
-  const [totalProducts, setTotalProducts] = useState(0);
-  const [lowStockProducts, setLowStockProducts] = useState(0);
-
-  // Agent stats
-  const [myOrders, setMyOrders] = useState(0);
-  const [myCommission, setMyCommission] = useState(0);
-  const [myClients, setMyClients] = useState(0);
-
-  // Charts
-  const [revenueData, setRevenueData] = useState<any[]>([]);
-  const [topProducts, setTopProducts] = useState<any[]>([]);
-  const [topAgents, setTopAgents] = useState<any[]>([]);
-  
-  // Top Performers
-  const [topPerformingAgents, setTopPerformingAgents] = useState<any[]>([]);
-  const [topFlavors, setTopFlavors] = useState<any[]>([]);
+  const itemsPerPage = 5;
+  const [currentPage, setCurrentPage] = useState(1);
   const [agentsExpanded, setAgentsExpanded] = useState(false);
   const [flavorsExpanded, setFlavorsExpanded] = useState(false);
 
-  // Agent notifications
-  const [recentActivity, setRecentActivity] = useState<any[]>([]);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const itemsPerPage = 5;
+  // Use Hooks
+  const { data: adminStats, isLoading: adminLoading } = useAdminStats();
+  const { data: leaderStats, isLoading: leaderLoading } = useLeaderStats();
+  const { data: agentStats, isLoading: agentLoading } = useAgentStats();
+  const { data: performersData, isLoading: performersLoading } = useTopPerformers();
+  const { data: activityData, isLoading: activityLoading } = useRecentActivity(currentPage, itemsPerPage);
 
-  const [loading, setLoading] = useState(true);
+  const loading = (isAdmin && (adminLoading || performersLoading)) ||
+    (isLeader && (leaderLoading || activityLoading)) ||
+    (isAgent && (agentLoading || activityLoading));
 
-  useEffect(() => {
-    if (isAdmin) {
-      fetchAdminStats();
-      fetchTopPerformers();
-    } else {
-      fetchAgentStats();
-      fetchRecentActivity();
-      
-      // Real-time subscription for notifications
-      const channel = subscribeToTable('notifications', () => {
-        fetchRecentActivity();
-      });
-      
-      return () => unsubscribe(channel);
-    }
-  }, [user?.id, isAdmin]);
+  // Destructure with defaults
+  const {
+    totalRevenue = 0,
+    totalOrders = 0,
+    pendingOrders = 0,
+    totalAgents = 0,
+    activeAgents = 0,
+    totalProducts = 0,
+    lowStockProducts = 0,
+    revenueData = []
+  } = adminStats || {};
 
-  const fetchAdminStats = async () => {
-    try {
-      setLoading(true);
+  const {
+    teamOrders = 0,
+    teamClients = 0,
+    teamMembers = 0,
+    pendingRequests = 0,
+    teamRevenue = 0,
+    pendingStockRequests = [],
+    recentRemittances = []
+  } = leaderStats || {};
 
-      // Get total revenue from admin-approved client orders (aligns with Top Performing Agents)
-      const { data: approvedOrdersForRevenue } = await supabase
-        .from('client_orders')
-        .select('total_amount')
-        .eq('stage', 'admin_approved');
+  const {
+    myOrders = 0,
+    myClients = 0,
+    overallSales = 0,
+    approvedSales = 0,
+    pendingSales = 0,
+    myCommission = 0
+  } = agentStats || {};
 
-      const revenue = (approvedOrdersForRevenue || []).reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
-      setTotalRevenue(revenue);
+  const {
+    topAgents: topPerformingAgents = [],
+    topFlavors = []
+  } = performersData || {};
 
-      // Get orders stats
-      const { data: orders } = await supabase
-        .from('client_orders')
-        .select('id, status');
-      
-      setTotalOrders(orders?.length || 0);
-      setPendingOrders(orders?.filter(o => o.status === 'pending').length || 0);
+  const {
+    notifications: recentActivity = [],
+    totalPages = 1
+  } = activityData || {};
 
-      // Get agents stats
-      const { data: agents } = await supabase
-        .from('profiles')
-        .select('id, status')
-        .eq('role', 'sales_agent');
-      
-      setTotalAgents(agents?.length || 0);
-      setActiveAgents(agents?.filter(a => a.status === 'active').length || 0);
-
-      // Get products stats
-      const { data: variants } = await supabase
-        .from('variants')
-        .select(`
-          id,
-          main_inventory (
-            stock,
-            reorder_level
-          )
-        `);
-      
-      setTotalProducts(variants?.length || 0);
-      const lowStock = variants?.filter(v => {
-        const stock = v.main_inventory?.[0]?.stock || 0;
-        const reorderLevel = v.main_inventory?.[0]?.reorder_level || 50;
-        return stock < reorderLevel;
-      }).length || 0;
-      setLowStockProducts(lowStock);
-
-      // Get monthly revenue for chart from admin-approved client orders over last 6 months
-      const sixMonthsAgoIso = new Date(new Date().setMonth(new Date().getMonth() - 6)).toISOString();
-      const { data: monthlyApproved } = await supabase
-        .from('client_orders')
-        .select('total_amount, order_date')
-        .eq('stage', 'admin_approved')
-        .gte('order_date', sixMonthsAgoIso);
-
-      const revenueByMonth = (monthlyApproved || []).reduce((acc: any, o: any) => {
-        const month = new Date(o.order_date).toLocaleString('default', { month: 'short' });
-        acc[month] = (acc[month] || 0) + (o.total_amount || 0);
-        return acc;
-      }, {} as Record<string, number>);
-
-      setRevenueData(Object.entries(revenueByMonth).map(([month, revenue]) => ({ month, revenue })));
-
-      // Keep top agents card calculation aligned with admin-approved orders
-      const { data: agentOrders } = await supabase
-        .from('client_orders')
-        .select(`agent_id, total_amount, profiles ( full_name )`)
-        .eq('stage', 'admin_approved');
-
-      const agentStats = (agentOrders || []).reduce((acc: any, order: any) => {
-        const agentId = order.agent_id;
-        if (!acc[agentId]) {
-          acc[agentId] = { name: order.profiles?.full_name || 'Unknown', orders: 0, revenue: 0 };
-        }
-        acc[agentId].orders += 1;
-        acc[agentId].revenue += order.total_amount || 0;
-        return acc;
-      }, {} as Record<string, { name: string; orders: number; revenue: number }>);
-
-      setTopAgents(Object.values(agentStats).sort((a: any, b: any) => b.revenue - a.revenue).slice(0, 3));
-
-    } catch (error) {
-      console.error('Error fetching admin stats:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchAgentStats = async () => {
-    if (!user?.id) return;
-
-    try {
-      setLoading(true);
-
-      // Get agent's orders
-      const { data: orders } = await supabase
-        .from('client_orders')
-        .select('id, total_amount, status')
-        .eq('agent_id', user.id);
-      
-      setMyOrders(orders?.length || 0);
-
-      // Hide agent commission on dashboard (no calculation)
-      setMyCommission(0);
-
-      // Get agent's clients
-      const { data: clients } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('agent_id', user.id);
-      
-      setMyClients(clients?.length || 0);
-
-    } catch (error) {
-      console.error('Error fetching agent stats:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchTopPerformers = async () => {
-    try {
-      // Get all approved orders
-      // For admin dashboard, approved orders are those with stage = 'admin_approved'
-      const { data: approvedOrders, error: ordersError } = await supabase
-        .from('client_orders')
-        .select('id, agent_id, total_amount')
-        .eq('stage', 'admin_approved');
-
-      console.log('🔍 Fetching top performers...');
-      console.log('📋 Approved orders query result:', { approvedOrders, ordersError });
-
-      if (ordersError) {
-        console.error('❌ Error fetching approved orders:', ordersError);
-        setTopPerformingAgents([]);
-        setTopFlavors([]);
-        return;
-      }
-
-      if (!approvedOrders || approvedOrders.length === 0) {
-        console.log('⚠️ No approved orders found');
-        setTopPerformingAgents([]);
-        setTopFlavors([]);
-        return;
-      }
-
-      console.log(`✅ Found ${approvedOrders.length} approved orders`);
-
-      // Get approved order IDs for fetching order items
-      const approvedOrderIds = approvedOrders.map(order => order.id);
-
-      // ===== TOP PERFORMING AGENTS =====
-      // Get unique agent IDs from approved orders
-      const agentIds = [...new Set(approvedOrders.map(order => order.agent_id).filter(Boolean))];
-
-      if (agentIds.length > 0) {
-        // Fetch agent profiles
-        const { data: agentProfiles, error: profilesError } = await supabase
-          .from('profiles')
-          .select('id, full_name')
-          .in('id', agentIds);
-
-        if (!profilesError && agentProfiles) {
-          // Create a map of agent ID to name
-          const agentNameMap = agentProfiles.reduce((acc: any, profile: any) => {
-            acc[profile.id] = profile.full_name || 'Unknown';
-            return acc;
-          }, {});
-
-          // Calculate stats for each agent (total sales from approved orders)
-          const agentStats = approvedOrders.reduce((acc: any, order: any) => {
-            const agentId = order.agent_id;
-            if (!agentId) return acc;
-            
-            if (!acc[agentId]) {
-              acc[agentId] = {
-                name: agentNameMap[agentId] || 'Unknown',
-                orders: 0,
-                revenue: 0
-              };
-            }
-            acc[agentId].orders += 1;
-            acc[agentId].revenue += order.total_amount || 0;
-            return acc;
-          }, {});
-
-          console.log('📈 Agent stats calculated:', agentStats);
-
-          // Sort by revenue (total sales) and get top 10
-          const topAgentsData = Object.values(agentStats)
-            .sort((a: any, b: any) => b.revenue - a.revenue)
-            .slice(0, 10);
-
-          console.log('🏆 Top agents data:', topAgentsData);
-          setTopPerformingAgents(topAgentsData);
-        }
-      } else {
-        setTopPerformingAgents([]);
-      }
-
-      // ===== TOP FLAVORS =====
-      // Get order items from approved orders only
-      console.log('📦 Fetching order items for approved orders:', approvedOrderIds);
-      const { data: orderItems, error: itemsError } = await supabase
-        .from('client_order_items')
-        .select('quantity, variant_id')
-        .in('client_order_id', approvedOrderIds);
-
-      console.log('📦 Order items query result:', { orderItems, itemsError });
-
-      if (itemsError) {
-        console.error('❌ Error fetching order items:', itemsError);
-        setTopFlavors([]);
-        return;
-      }
-
-      if (!orderItems || orderItems.length === 0) {
-        console.log('⚠️ No order items found for approved orders');
-        setTopFlavors([]);
-        return;
-      }
-
-      console.log(`✅ Found ${orderItems.length} order items`);
-
-      // Get unique variant IDs
-      const variantIds = [...new Set(orderItems.map(item => item.variant_id).filter(Boolean))];
-
-      if (variantIds.length > 0) {
-        // Fetch variant details with brand names
-        const { data: variants, error: variantsError } = await supabase
-          .from('variants')
-          .select(`
-            id,
-            name,
-            brand_id,
-            brands (
-              name
-            )
-          `)
-          .in('id', variantIds);
-
-        console.log('🍦 Variants fetched:', variants);
-
-        if (!variantsError && variants) {
-          // Create a map of variant ID to name
-          // Handle brands as array (PostgreSQL returns arrays for relationships)
-          const variantNameMap = variants.reduce((acc: any, variant: any) => {
-            // brands can be an array or object depending on Supabase query
-            const brand = Array.isArray(variant.brands) ? variant.brands[0] : variant.brands;
-            const brandName = brand?.name || '';
-            acc[variant.id] = `${brandName} ${variant.name}`.trim();
-            return acc;
-          }, {});
-
-          console.log('🗺️ Variant name map:', variantNameMap);
-
-          // Calculate flavor stats (total quantity ordered from approved orders)
-          const flavorStats = orderItems.reduce((acc: any, item: any) => {
-            const variantId = item.variant_id;
-            if (!variantId) return acc;
-            
-            const flavorName = variantNameMap[variantId] || 'Unknown';
-            if (!acc[flavorName]) {
-              acc[flavorName] = {
-                name: flavorName,
-                quantity: 0,
-                orders: 0
-              };
-            }
-            acc[flavorName].quantity += item.quantity || 0;
-            acc[flavorName].orders += 1;
-            return acc;
-          }, {});
-
-          console.log('📊 Flavor stats calculated:', flavorStats);
-
-          // Sort by quantity (most ordered) and get top 10
-          const topFlavorsData = Object.values(flavorStats)
-            .sort((a: any, b: any) => b.quantity - a.quantity)
-            .slice(0, 10);
-
-          console.log('🏆 Top flavors data:', topFlavorsData);
-          setTopFlavors(topFlavorsData);
-        }
-      } else {
-        setTopFlavors([]);
-      }
-
-    } catch (error) {
-      console.error('Error fetching top performers:', error);
-      setTopPerformingAgents([]);
-      setTopFlavors([]);
-    }
-  };
-
-  const fetchRecentActivity = async (page = 1) => {
-    if (!user?.id) return;
-
-    try {
-      // Calculate offset for pagination
-      const offset = (page - 1) * itemsPerPage;
-
-      // Fetch recent notifications for the agent with pagination
-      const { data: notifications, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + itemsPerPage - 1);
-
-      if (error) throw error;
-
-      // Get total count for pagination
-      const { count, error: countError } = await supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id);
-
-      if (countError) throw countError;
-
-      console.log('📬 Recent activity for agent:', notifications);
-      setRecentActivity(notifications || []);
-      setTotalPages(Math.ceil((count || 0) / itemsPerPage));
-      setCurrentPage(page);
-    } catch (error) {
-      console.error('Error fetching recent activity:', error);
-    }
-  };
 
   const getNotificationIcon = (type: string) => {
     switch (type) {
@@ -469,13 +157,14 @@ export default function DashboardPage() {
 
   const handlePageChange = (newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
-      fetchRecentActivity(newPage);
+      setCurrentPage(newPage);
     }
   };
 
-  if (loading) {
+  if (loading && totalOrders === 0 && teamOrders === 0 && myOrders === 0) {
     return (
-      <div className="p-4 md:p-8 flex items-center justify-center min-h-[400px]">
+      <div className="p-4 md:p-8 flex flex-col items-center justify-center min-h-[400px] gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <div className="text-muted-foreground">Loading dashboard...</div>
       </div>
     );
@@ -484,9 +173,9 @@ export default function DashboardPage() {
   return (
     <div className="p-4 md:p-6 lg:p-8 space-y-4 md:space-y-6 lg:space-y-8">
       <div>
-        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">Welcome back, {user?.name}!</h1>
+        <h1 className="text-xl md:text-2xl lg:text-3xl font-bold">Welcome back, {user?.full_name || user?.email || 'User'}!</h1>
         <p className="text-sm md:text-base text-muted-foreground mt-1">
-          {isAdmin ? 'Overview of your sales operations' : 'Your sales performance overview'}
+          {isAdmin ? 'Overview of your sales operations' : isLeader ? 'Your team performance overview' : isFinance ? 'Financial overview and pending approvals' : 'Your sales performance overview'}
         </p>
       </div>
 
@@ -582,44 +271,44 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {(agentsExpanded ? topPerformingAgents : topPerformingAgents.slice(0, 5)).map((agent: any, index: number) => (
-                    <div key={index} className="flex items-center justify-between p-2 md:p-3 rounded-lg bg-gray-50">
-                      <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
-                        <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs md:text-sm font-semibold flex-shrink-0">
-                          {index + 1}
+                    {(agentsExpanded ? topPerformingAgents : topPerformingAgents.slice(0, 5)).map((agent: { name: string; orders: number; revenue: number }, index: number) => (
+                      <div key={index} className="flex items-center justify-between p-2 md:p-3 rounded-lg bg-gray-50">
+                        <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+                          <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs md:text-sm font-semibold flex-shrink-0">
+                            {index + 1}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-xs md:text-sm truncate">{agent.name}</p>
+                            <p className="text-xs text-muted-foreground">{agent.orders} approved orders</p>
+                          </div>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-xs md:text-sm truncate">{agent.name}</p>
-                          <p className="text-xs text-muted-foreground">{agent.orders} approved orders</p>
+                        <div className="text-right flex-shrink-0 ml-2">
+                          <p className="font-bold text-xs md:text-sm">₱{agent.revenue.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">Revenue</p>
                         </div>
                       </div>
-                      <div className="text-right flex-shrink-0 ml-2">
-                        <p className="font-bold text-xs md:text-sm">₱{agent.revenue.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground">Revenue</p>
-                      </div>
-                    </div>
                     ))}
-                  
-                  {topPerformingAgents.length > 5 && (
-                    <Button 
-                      variant="ghost" 
-                      className="w-full mt-2"
-                      onClick={() => setAgentsExpanded(!agentsExpanded)}
-                    >
-                      {agentsExpanded ? (
-                        <>
-                          <ChevronUp className="h-4 w-4 mr-2" />
-                          Show Less
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="h-4 w-4 mr-2" />
-                          Show All {topPerformingAgents.length} Agents
-                        </>
-                      )}
-                    </Button>
-                  )}
-                </div>
+
+                    {topPerformingAgents.length > 5 && (
+                      <Button
+                        variant="ghost"
+                        className="w-full mt-2"
+                        onClick={() => setAgentsExpanded(!agentsExpanded)}
+                      >
+                        {agentsExpanded ? (
+                          <>
+                            <ChevronUp className="h-4 w-4 mr-2" />
+                            Show Less
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-4 w-4 mr-2" />
+                            Show All {topPerformingAgents.length} Agents
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -645,64 +334,258 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {(flavorsExpanded ? topFlavors : topFlavors.slice(0, 5)).map((flavor: any, index: number) => (
-                    <div key={index} className="flex items-center justify-between p-2 md:p-3 rounded-lg bg-gray-50">
-                      <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
-                        <div className="flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-600 text-xs md:text-sm font-semibold flex-shrink-0">
-                          {index + 1}
+                    {(flavorsExpanded ? topFlavors : topFlavors.slice(0, 5)).map((flavor: { name: string; orders: number; quantity: number }, index: number) => (
+                      <div key={index} className="flex items-center justify-between p-2 md:p-3 rounded-lg bg-gray-50">
+                        <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+                          <div className="flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-600 text-xs md:text-sm font-semibold flex-shrink-0">
+                            {index + 1}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-xs md:text-sm truncate">{flavor.name}</p>
+                            <p className="text-xs text-muted-foreground">{flavor.orders} orders</p>
+                          </div>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-xs md:text-sm truncate">{flavor.name}</p>
-                          <p className="text-xs text-muted-foreground">{flavor.orders} orders</p>
+                        <div className="text-right flex-shrink-0 ml-2">
+                          <p className="font-bold text-xs md:text-sm">{flavor.quantity}</p>
+                          <p className="text-xs text-muted-foreground">Units sold</p>
                         </div>
                       </div>
-                      <div className="text-right flex-shrink-0 ml-2">
-                        <p className="font-bold text-xs md:text-sm">{flavor.quantity}</p>
-                        <p className="text-xs text-muted-foreground">Units sold</p>
-                      </div>
-                    </div>
                     ))}
-                  
-                  {topFlavors.length > 5 && (
-                    <Button 
-                      variant="ghost" 
-                      className="w-full mt-2"
-                      onClick={() => setFlavorsExpanded(!flavorsExpanded)}
-                    >
-                      {flavorsExpanded ? (
-                        <>
-                          <ChevronUp className="h-4 w-4 mr-2" />
-                          Show Less
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="h-4 w-4 mr-2" />
-                          Show All {topFlavors.length} Flavors
-                        </>
-                      )}
-                    </Button>
-                  )}
-                </div>
+
+                    {topFlavors.length > 5 && (
+                      <Button
+                        variant="ghost"
+                        className="w-full mt-2"
+                        onClick={() => setFlavorsExpanded(!flavorsExpanded)}
+                      >
+                        {flavorsExpanded ? (
+                          <>
+                            <ChevronUp className="h-4 w-4 mr-2" />
+                            Show Less
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-4 w-4 mr-2" />
+                            Show All {topFlavors.length} Flavors
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 )}
               </CardContent>
             </Card>
           </div>
         </>
+      ) : isLeader ? (
+        <>
+          {/* Leader Stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Team Orders</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">{teamOrders}</div>
+                <p className="text-xs text-muted-foreground mt-1">Total team orders</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Team Clients</CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">{teamClients}</div>
+                <p className="text-xs text-muted-foreground mt-1">Total team clients</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Team Members</CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">{teamMembers}</div>
+                <p className="text-xs text-muted-foreground mt-1">Active team members</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Pending Requests</CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">{pendingRequests}</div>
+                <p className="text-xs text-muted-foreground mt-1">Stock requests to review</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Team Revenue Card */}
+          {teamRevenue > 0 && (
+            <Card className="border-l-4 border-l-primary">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Team Revenue</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">₱{teamRevenue.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground mt-1">Total revenue from team orders</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Pending Actions */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-orange-600" />
+                Pending Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Pending Stock Requests */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <Package className="h-4 w-4" />
+                      Stock Requests ({pendingStockRequests.length})
+                    </h3>
+                    {pendingStockRequests.length > 0 && (
+                      <Link to="/inventory/pending-requests">
+                        <Button variant="ghost" size="sm" className="text-xs">
+                          View All <ArrowRight className="h-3 w-3 ml-1" />
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
+                  {pendingStockRequests.length === 0 ? (
+                    <div className="text-center py-4 text-muted-foreground text-sm">
+                      <Package className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                      <p>No pending stock requests</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {pendingStockRequests.slice(0, 3).map((request: {
+                        id: string;
+                        profiles?: { full_name: string } | { full_name: string }[];
+                        variants?: { name: string; brands?: { name: string } | { name: string }[] } | { name: string; brands?: { name: string } | { name: string }[] }[];
+                        requested_quantity: number;
+                        requested_at: string
+                      }) => {
+                        const agentName = Array.isArray(request.profiles) ? request.profiles[0]?.full_name : (request.profiles as { full_name: string })?.full_name || 'Unknown Agent';
+                        const variant = Array.isArray(request.variants) ? request.variants[0] : request.variants;
+                        const brandObj = variant?.brands;
+                        const brandName = (Array.isArray(brandObj) ? brandObj[0]?.name : (brandObj as { name: string })?.name) || 'Unknown';
+                        const variantName = variant?.name || 'Unknown';
+                        return (
+                          <div key={request.id} className="flex items-center justify-between p-3 rounded-lg border bg-yellow-50/30 border-yellow-200">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{agentName}</p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {brandName} {variantName} • Qty: {request.requested_quantity}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {formatTimeAgo(request.requested_at)}
+                              </p>
+                            </div>
+                            <Link to="/inventory/pending-requests">
+                              <Button variant="outline" size="sm" className="ml-2">
+                                Review
+                              </Button>
+                            </Link>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent Remittances */}
+                <div className="border-t pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold flex items-center gap-2">
+                      <Receipt className="h-4 w-4" />
+                      Recent Remittances ({recentRemittances.length})
+                    </h3>
+                    {recentRemittances.length > 0 && (
+                      <Link to="/inventory/remittances">
+                        <Button variant="ghost" size="sm" className="text-xs">
+                          View All <ArrowRight className="h-3 w-3 ml-1" />
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
+                  {recentRemittances.length === 0 ? (
+                    <div className="text-center py-4 text-muted-foreground text-sm">
+                      <Receipt className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                      <p>No remittances from sub-team yet</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {recentRemittances.slice(0, 3).map((remittance: {
+                        id: string;
+                        remittance_id: string;
+                        profiles?: { full_name: string } | { full_name: string }[];
+                        total_revenue: number;
+                        total_orders: number;
+                        remittance_date: string;
+                        status: string;
+                      }) => {
+                        const agentName = Array.isArray(remittance.profiles) ? remittance.profiles[0]?.full_name : (remittance.profiles as { full_name: string })?.full_name || 'Unknown Agent';
+                        return (
+                          <div key={remittance.id} className="flex items-center justify-between p-3 rounded-lg border bg-green-50/30 border-green-200">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{agentName}</p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {remittance.total_orders} orders • ₱{remittance.total_revenue?.toLocaleString() || '0'}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {formatTimeAgo(remittance.remittance_date)}
+                              </p>
+                            </div>
+                            <div className="flex flex-col items-end gap-1 ml-2">
+                              <Badge 
+                                variant={remittance.status === 'verified' ? 'default' : remittance.status === 'pending' ? 'secondary' : 'outline'}
+                                className="text-[10px] capitalize"
+                              >
+                                {remittance.status}
+                              </Badge>
+                              <Link to="/inventory/remittances">
+                                <Button variant="outline" size="sm">
+                                  View
+                                </Button>
+                              </Link>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      ) : isFinance ? (
+        <FinanceDashboard />
       ) : (
         <>
           {/* Agent Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 md:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">My Orders</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                <ShoppingCart className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <div className="text-xl md:text-2xl font-bold">{myOrders}</div>
                 <p className="text-xs text-muted-foreground mt-1">Total orders placed</p>
               </CardContent>
             </Card>
-            {/* Commission card hidden for agents */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">My Clients</CardTitle>
@@ -713,7 +596,39 @@ export default function DashboardPage() {
                 <p className="text-xs text-muted-foreground mt-1">Total clients</p>
               </CardContent>
             </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Overall Sales</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold">₱{overallSales.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground mt-1">All orders (pending & approved)</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Approved Sales</CardTitle>
+                <CheckCircle className="h-4 w-4 text-green-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl md:text-2xl font-bold text-green-600">₱{approvedSales.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground mt-1">Approved orders only</p>
+              </CardContent>
+            </Card>
           </div>
+
+          {/* Sales Breakdown Card */}
+          <Card className="border-l-4 border-l-yellow-500">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
+              <Clock className="h-4 w-4 text-yellow-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl md:text-2xl font-bold text-yellow-600">₱{pendingSales.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
+            </CardContent>
+          </Card>
 
           {/* Recent Activity Table */}
           <Card>
@@ -731,9 +646,8 @@ export default function DashboardPage() {
                     {recentActivity.map((notification) => (
                       <div
                         key={notification.id}
-                        className={`p-3 rounded-lg border transition-all duration-300 ${
-                          notification.is_read ? 'opacity-60 bg-gray-50' : 'bg-blue-50/30 border-blue-200'
-                        }`}
+                        className={`p-3 rounded-lg border transition-all duration-300 ${notification.is_read ? 'opacity-60 bg-gray-50' : 'bg-blue-50/30 border-blue-200'
+                          }`}
                       >
                         <div className="flex items-start gap-3">
                           <div className="flex-shrink-0 mt-0.5">
@@ -770,7 +684,7 @@ export default function DashboardPage() {
                       </TableHeader>
                       <TableBody>
                         {recentActivity.map((notification) => (
-                          <TableRow 
+                          <TableRow
                             key={notification.id}
                             className={`transition-all duration-300 ${notification.is_read ? 'opacity-60' : 'bg-blue-50/30'}`}
                           >
@@ -794,7 +708,7 @@ export default function DashboardPage() {
                       </TableBody>
                     </Table>
                   </div>
-                  
+
                   {/* Pagination Controls */}
                   {totalPages > 1 && (
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t">
@@ -837,6 +751,7 @@ export default function DashboardPage() {
           </Card>
         </>
       )}
+
     </div>
   );
 }

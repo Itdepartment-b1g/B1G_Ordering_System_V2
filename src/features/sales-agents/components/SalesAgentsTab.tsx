@@ -5,8 +5,11 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, UserPlus, Loader2, Package, Eye, Rewind, MoreHorizontal } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, UserPlus, Loader2, Package, Eye, Rewind, MoreHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -15,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { formatPhoneNumber } from '@/lib/utils';
+import { logEvent } from '@/lib/database.helpers';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +32,7 @@ import {
 
 import { UserRole } from '@/types/database.types';
 import { useAuth } from '@/features/auth';
+import { UserImportExport } from './UserImportExport';
 
 interface SalesAgent {
   id: string;
@@ -56,8 +61,18 @@ export function SalesAgentsTab() {
   const [agents, setAgents] = useState<SalesAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [addConfirmDialogOpen, setAddConfirmDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -75,25 +90,25 @@ export function SalesAgentsTab() {
   const [selectedAgentForAllocation, setSelectedAgentForAllocation] = useState<SalesAgent | null>(null);
   const [agentInventory, setAgentInventory] = useState<Variant[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
-const roleRequiresTerritory = (role?: UserRole | '') =>
+  const roleRequiresTerritory = (role?: UserRole | '') =>
     role === 'team_leader' || role === 'mobile_sales' || role === 'manager';
 
-const getRoleLabel = (role?: UserRole | '') => {
-  switch (role) {
-    case 'admin':
-      return 'Admin';
-    case 'finance':
-      return 'Finance';
-    case 'manager':
-      return 'Manager';
-    case 'team_leader':
-      return 'Team Leader';
-    case 'mobile_sales':
-      return 'Mobile Sales';
-    default:
-      return '—';
-  }
-};
+  const getRoleLabel = (role?: UserRole | '') => {
+    switch (role) {
+      case 'admin':
+        return 'Admin';
+      case 'finance':
+        return 'Finance';
+      case 'manager':
+        return 'Manager';
+      case 'team_leader':
+        return 'Team Leader';
+      case 'mobile_sales':
+        return 'Mobile Sales';
+      default:
+        return '—';
+    }
+  };
 
   const [newAgent, setNewAgent] = useState({
     name: '',
@@ -109,16 +124,16 @@ const getRoleLabel = (role?: UserRole | '') => {
     phone: '',
     region: '',
     cities: [] as string[],
-    status: 'active' as 'active' | 'inactive'
+    status: 'active' as 'active' | 'inactive',
+    role: '' as UserRole | ''
   });
-
-
 
   // City input state for adding cities
   const [currentCityInput, setCurrentCityInput] = useState('');
   const [editCityInput, setEditCityInput] = useState('');
   const isRoleSelected = Boolean(newAgent.role);
   const addDialogRequiresTerritory = roleRequiresTerritory(newAgent.role);
+  const editDialogRequiresTerritory = roleRequiresTerritory(editForm.role || (editingAgent?.role));
 
   const { toast } = useToast();
 
@@ -133,62 +148,82 @@ const getRoleLabel = (role?: UserRole | '') => {
       agent.cities.some(city => city.toLowerCase().includes(searchQuery.toLowerCase()));
   });
 
+  // Pagination: 10 agents per page
+  const AGENTS_PER_PAGE = 10;
+  const [agentPage, setAgentPage] = useState(1);
+  const totalAgentPages = Math.max(1, Math.ceil(filteredAgents.length / AGENTS_PER_PAGE));
+  const paginatedAgents = filteredAgents.slice(
+    (agentPage - 1) * AGENTS_PER_PAGE,
+    agentPage * AGENTS_PER_PAGE
+  );
+
   const fetchAgents = async () => {
+    // Wait for user to be loaded
+    if (!user?.id) return;
+
     try {
       setLoading(true);
 
       // Fetch all users in the company except the logged-in user (RLS will handle company isolation)
-      const { data: agentsData, error: agentsError } = await supabase
-        .from('profiles')
-        .select(`
-          id,
-          full_name,
-          email,
-          phone,
-          region,
-          city,
-          status,
-          role
-        `)
-        .neq('id', user?.id || '')
-        .order('created_at', { ascending: false });
+      // AND fetch all approved orders in a SINGLE query (not N+1)
+      const [agentsResult, ordersResult] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select(`
+            id,
+            full_name,
+            email,
+            phone,
+            region,
+            city,
+            status,
+            role
+          `)
+          .neq('id', user.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('client_orders')
+          .select('agent_id, total_amount')
+          .eq('status', 'approved')
+      ]);
 
-      if (agentsError) throw agentsError;
+      if (agentsResult.error) throw agentsResult.error;
+      if (ordersResult.error) {
+        console.error('Error fetching orders:', ordersResult.error);
+      }
 
-      // Fetch sales data for each user
-      const agentsWithSales = await Promise.all(
-        (agentsData || []).map(async (agent: any) => {
-          // Get total sales and orders count
-          const { data: salesData, error: salesError } = await supabase
-            .from('client_orders')
-            .select('total_amount, status')
-            .eq('agent_id', agent.id)
-            .eq('status', 'approved');
+      const agentsData = agentsResult.data || [];
+      const ordersData = ordersResult.data || [];
 
-          if (salesError) {
-            console.error('Error fetching sales data for user', agent.id, salesError);
-          }
+      // Pre-aggregate orders by agent_id (O(n) instead of O(n*m))
+      const salesByAgent: Record<string, { totalSales: number; ordersCount: number }> = {};
+      for (const order of ordersData) {
+        if (!order.agent_id) continue;
+        if (!salesByAgent[order.agent_id]) {
+          salesByAgent[order.agent_id] = { totalSales: 0, ordersCount: 0 };
+        }
+        const amount = typeof order.total_amount === 'number'
+          ? order.total_amount
+          : parseFloat(String(order.total_amount)) || 0;
+        salesByAgent[order.agent_id].totalSales += amount;
+        salesByAgent[order.agent_id].ordersCount += 1;
+      }
 
-          const totalSales = (salesData || []).reduce((sum: number, order: any) => {
-            const amount = typeof order.total_amount === 'number' ? order.total_amount : parseFloat(String(order.total_amount)) || 0;
-            return sum + amount;
-          }, 0);
-          const ordersCount = salesData?.length || 0;
-
-          return {
-            id: agent.id,
-            name: agent.full_name,
-            email: agent.email,
-            phone: agent.phone || '',
-            region: agent.region || '',
-            cities: agent.city ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map(c => c.trim()).filter(c => c)) : [],
-            status: agent.status || 'active',
-            role: agent.role || 'mobile_sales',
-            totalSales,
-            ordersCount
-          };
-        })
-      );
+      // Map agents with pre-aggregated sales data
+      const agentsWithSales = agentsData.map((agent: any) => ({
+        id: agent.id,
+        name: agent.full_name,
+        email: agent.email,
+        phone: agent.phone || '',
+        region: agent.region || '',
+        cities: agent.city
+          ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map((c: string) => c.trim()).filter((c: string) => c))
+          : [],
+        status: agent.status || 'active',
+        role: agent.role || 'mobile_sales',
+        totalSales: salesByAgent[agent.id]?.totalSales || 0,
+        ordersCount: salesByAgent[agent.id]?.ordersCount || 0
+      }));
 
       setAgents(agentsWithSales);
     } catch (error) {
@@ -204,8 +239,10 @@ const getRoleLabel = (role?: UserRole | '') => {
   };
 
   useEffect(() => {
-    fetchAgents();
-  }, []);
+    if (user?.id) {
+      fetchAgents();
+    }
+  }, [user?.id]);
 
   const handleStatusToggle = (agent: SalesAgent, newStatus: boolean) => {
     setAgentToChangeStatus(agent);
@@ -254,7 +291,8 @@ const getRoleLabel = (role?: UserRole | '') => {
       phone: agent.phone || '',
       region: agent.region || '',
       cities: agent.cities || [],
-      status: agent.status || 'active'
+      status: agent.status || 'active',
+      role: agent.role || 'mobile_sales'
     });
     setEditDialogOpen(true);
   };
@@ -317,31 +355,19 @@ const getRoleLabel = (role?: UserRole | '') => {
         // The auth context will handle the logout if needed
       }
 
-      // Log password reset event using cached values
-      const { error: logError } = await supabase
-        .from('events')
-        .insert({
-          actor_id: userId,
-          actor_role: 'admin',
-          performed_by: adminName,
-          action: 'reset_password',
-          target_type: 'profile',
-          target_id: agentToReset.id,
-          details: {
-            actor: adminName,
-            action_performed: 'reset_password',
-            target_name: agentToReset.name,
-            message: `Password reset for ${agentToReset.name} to tempPassword123!`,
-            reset_target: agentToReset.name,
-            reset_target_email: agentToReset.email
-          },
-          target_label: agentToReset.name,
-          actor_label: adminName
-        });
-
-      if (logError) {
-        console.error('Error logging password reset:', logError);
-      }
+      // Log password reset event using the new helper
+      await logEvent({
+        actor_id: userId,
+        action: 'reset_password',
+        target_type: 'profile',
+        target_id: agentToReset.id,
+        target_label: agentToReset.name,
+        details: {
+          message: `Password reset for ${agentToReset.name} to tempPassword123!`,
+          reset_target: agentToReset.name,
+          reset_target_email: agentToReset.email
+        }
+      });
 
       toast({
         title: 'Success',
@@ -413,10 +439,10 @@ const getRoleLabel = (role?: UserRole | '') => {
 
       // Validate that the super admin has a company_id
       let companyId = user?.company_id;
-      
+
       if (!companyId) {
         console.error('User object missing company_id:', user);
-        
+
         // Try to fetch company_id directly from the database
         console.log('🔄 Fetching company_id from database...');
         const { data: profileData, error: profileError } = await supabase
@@ -424,7 +450,7 @@ const getRoleLabel = (role?: UserRole | '') => {
           .select('company_id')
           .eq('id', user?.id)
           .single();
-        
+
         if (profileError) {
           console.error('Error fetching profile:', profileError);
           toast({
@@ -434,7 +460,7 @@ const getRoleLabel = (role?: UserRole | '') => {
           });
           return;
         }
-        
+
         if (profileData?.company_id) {
           companyId = profileData.company_id;
           // Refresh the profile to update the user object
@@ -560,30 +586,26 @@ const getRoleLabel = (role?: UserRole | '') => {
         return;
       }
 
-      const authUpdates: Record<string, any> = { user_id: editingAgent.id };
-      let needsAuthUpdate = false;
+      console.log('🔍 [SalesAgentsTab] Update initiated for:', {
+        editingAgentId: editingAgent.id,
+        currentUserId: user?.id,
+        isSelf: user?.id === editingAgent.id
+      });
 
-      if (trimmedName !== editingAgent.name) {
-        authUpdates.full_name = trimmedName;
-        needsAuthUpdate = true;
-      }
-      if (trimmedEmail !== editingAgent.email) {
-        authUpdates.email = trimmedEmail;
-        needsAuthUpdate = true;
-      }
-      if (needsAuthUpdate) {
-        authUpdates.role = editingAgent.role || 'sales_agent';
-        const { data: authData, error: authError } = await supabase.functions.invoke('update-agent-auth', {
-          body: authUpdates
+      // Prevent editing self
+      if (user?.id === editingAgent.id) {
+        console.warn('🚫 [SalesAgentsTab] Self-edit blocked');
+        toast({
+          title: "Action Denied",
+          description: "You cannot edit your own account from this view.",
+          variant: "destructive"
         });
-
-        if (authError) {
-          throw new Error(authError.message || 'Failed to update authentication record');
-        }
-        if ((authData as any)?.error) {
-          throw new Error((authData as any).error);
-        }
+        return;
       }
+
+      // NOTE: We are now updating the role directly in the profiles table below.
+      // The auth metadata will be synced on next login/refresh via AuthContext.
+
 
       // Prepare city value - use null if empty array, otherwise join with comma
       const cityValue = editForm.cities.length > 0
@@ -598,13 +620,49 @@ const getRoleLabel = (role?: UserRole | '') => {
           phone: editForm.phone || null,
           region: editForm.region || null,
           city: cityValue,
-          status: editForm.status
+          status: editForm.status,
+          role: editForm.role
         })
         .eq('id', editingAgent.id);
 
       if (error) {
         console.error('Update error details:', error);
         throw error;
+      }
+
+      // Log the profile update event
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser) {
+        // Build change details
+        const changes = [];
+        if (trimmedName !== editingAgent.name) changes.push(`name: "${editingAgent.name}" → "${trimmedName}"`);
+        if (trimmedEmail !== editingAgent.email) changes.push(`email: "${editingAgent.email}" → "${trimmedEmail}"`);
+        if (editForm.phone !== editingAgent.phone) changes.push(`phone: "${editingAgent.phone || 'none'}" → "${editForm.phone || 'none'}"`);
+        if (editForm.region !== editingAgent.region) changes.push(`region: "${editingAgent.region || 'none'}" → "${editForm.region || 'none'}"`);
+        if (editForm.status !== editingAgent.status) changes.push(`status: "${editingAgent.status}" → "${editForm.status}"`);
+
+        const citiesChanged = JSON.stringify(editForm.cities.sort()) !== JSON.stringify(editingAgent.cities.sort());
+        if (citiesChanged) changes.push(`cities: [${editingAgent.cities.join(', ')}] → [${editForm.cities.join(', ')}]`);
+
+        await logEvent({
+          actor_id: currentUser.id,
+          action: 'update',
+          target_type: 'profile',
+          target_id: editingAgent.id,
+          target_label: trimmedName,
+          details: {
+            message: `Updated profile for ${trimmedName}${changes.length > 0 ? ': ' + changes.join(', ') : ''}`,
+            changes: changes,
+            updated_fields: {
+              full_name: trimmedName,
+              email: trimmedEmail,
+              phone: editForm.phone || null,
+              region: editForm.region || null,
+              cities: editForm.cities,
+              status: editForm.status
+            }
+          }
+        });
       }
 
       toast({
@@ -668,8 +726,50 @@ const getRoleLabel = (role?: UserRole | '') => {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <div className="flex items-center gap-4">
+        <CardHeader className="p-4 md:p-6">
+          {/* Mobile Layout */}
+          <div className="md:hidden space-y-3">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+              <Input
+                placeholder="Search users..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 h-9 text-sm"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as 'all' | 'active' | 'inactive')}>
+                <SelectTrigger className="flex-1 h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Users</SelectItem>
+                  <SelectItem value="active">Active Only</SelectItem>
+                  <SelectItem value="inactive">Inactive Only</SelectItem>
+                </SelectContent>
+              </Select>
+              <UserImportExport
+                users={agents.map(agent => ({
+                  id: agent.id,
+                  name: agent.name,
+                  email: agent.email,
+                  phone: agent.phone,
+                  region: agent.region,
+                  cities: agent.cities,
+                  role: agent.role || 'mobile_sales',
+                  status: agent.status
+                }))}
+                onRefresh={fetchAgents}
+              />
+              <Button onClick={() => setAddDialogOpen(true)} className="h-9" size="sm">
+                <UserPlus className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Desktop Layout */}
+          <div className="hidden md:flex items-center gap-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -689,89 +789,109 @@ const getRoleLabel = (role?: UserRole | '') => {
                 <SelectItem value="inactive">Inactive Only</SelectItem>
               </SelectContent>
             </Select>
+            <UserImportExport
+              users={agents.map(agent => ({
+                id: agent.id,
+                name: agent.name,
+                email: agent.email,
+                phone: agent.phone,
+                region: agent.region,
+                cities: agent.cities,
+                role: agent.role || 'mobile_sales',
+                status: agent.status
+              }))}
+              onRefresh={fetchAgents}
+            />
             <Button onClick={() => setAddDialogOpen(true)}>
               <UserPlus className="mr-2 h-4 w-4" />
               Add User
             </Button>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 md:p-6">
           {/* Mobile: card list */}
-          <div className="md:hidden space-y-3">
+          <div className="md:hidden space-y-2">
             {filteredAgents.length === 0 ? (
               <div className="text-center text-muted-foreground py-6">No users found</div>
             ) : (
-              filteredAgents.map((agent) => (
-                <div key={agent.id} className="rounded-lg border bg-background p-4 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate">{agent.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">{agent.email}</div>
+              paginatedAgents.map((agent) => (
+                <div key={agent.id} className="rounded-lg border bg-background p-3 shadow-sm">
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm truncate">{agent.name}</div>
+                      <div className="text-[10px] text-muted-foreground truncate mt-0.5">{agent.email}</div>
                     </div>
-                    <Badge variant={agent.status === 'active' ? 'default' : 'secondary'}>
+                    <Badge variant={agent.status === 'active' ? 'default' : 'secondary'} className="text-[10px] flex-shrink-0">
                       {agent.status}
                     </Badge>
                   </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Phone</div>
-                      <div>{agent.phone || '—'}</div>
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Phone</div>
+                        <div className="text-xs font-medium truncate">{agent.phone || '—'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Region</div>
+                        <div className="text-xs font-medium truncate">{agent.region || '—'}</div>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Region</div>
-                      <div>{agent.region || '—'}</div>
-                    </div>
                     <div>
-                      <div className="text-xs text-muted-foreground">Cities</div>
-                      <div className="flex flex-wrap gap-1 mt-1">
+                      <div className="text-[10px] text-muted-foreground mb-1">Cities</div>
+                      <div className="flex flex-wrap gap-1">
                         {agent.cities.length > 0 ? (
                           agent.cities.map((city, index) => (
-                            <Badge key={index} variant="outline" className="text-xs">
+                            <Badge key={index} variant="outline" className="text-[10px] h-5">
                               {city}
                             </Badge>
                           ))
                         ) : (
-                          <span className="text-muted-foreground text-xs">No cities</span>
+                          <span className="text-muted-foreground text-[10px]">No cities</span>
                         )}
                       </div>
                     </div>
-                      <div className="col-span-2">
-                        <div className="text-xs text-muted-foreground">Role</div>
-                        <Badge variant="outline">{getRoleLabel(agent.role)}</Badge>
-                      </div>
-                    <div className="col-span-2">
-                      <div className="text-xs text-muted-foreground">Total Sales</div>
-                      <div className="font-semibold">₱{agent.totalSales.toLocaleString()}</div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground mb-1">Role</div>
+                      <Badge variant="outline" className="text-[10px] h-5">{getRoleLabel(agent.role)}</Badge>
                     </div>
-                    <div className="col-span-2">
-                      <div className="text-xs text-muted-foreground">Orders</div>
-                      <div>{agent.ordersCount}</div>
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t">
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Total Sales</div>
+                        <div className="text-xs font-semibold">₱{agent.totalSales.toLocaleString()}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Orders</div>
+                        <div className="text-xs font-semibold">{agent.ordersCount}</div>
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm text-muted-foreground">
-                      <span className="mr-2">Active:</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={agent.status === 'active' ? 'text-green-700' : 'text-gray-600'}
-                        onClick={() => handleStatusToggle(agent, agent.status !== 'active')}
-                      >
-                        {agent.status === 'active' ? 'Yes' : 'No'}
+                  <div className="mt-3 border-t pt-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs text-muted-foreground flex items-center gap-2">
+                        <span>Status:</span>
+                        <Switch
+                          checked={agent.status === 'active'}
+                          onCheckedChange={(checked) => handleStatusToggle(agent, checked)}
+                        />
+                        <span className={agent.status === 'active' ? 'text-green-600 font-medium' : 'text-gray-600'}>
+                          {agent.status === 'active' ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenView(agent)}>
+                        <Eye className="h-3 w-3 mr-1" /> View
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleOpenEdit(agent)}>
+                        <Edit className="h-3 w-3 mr-1" /> Edit
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handleResetPassword(agent)}>
+                        <Rewind className="h-3 w-3 mr-1" /> Reset
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-xs h-8 text-red-600 hover:text-red-700" onClick={() => handleOpenDelete(agent)}>
+                        <Trash2 className="h-3 w-3 mr-1" /> Delete
                       </Button>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenView(agent)}>
-                      <Eye className="h-4 w-4 mr-1" /> View
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(agent)}>
-                      Edit
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleResetPassword(agent)}>
-                      Reset
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleOpenDelete(agent)}>
-                      Delete
-                    </Button>
                   </div>
                 </div>
               ))
@@ -805,7 +925,7 @@ const getRoleLabel = (role?: UserRole | '') => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredAgents.map((agent) => (
+                {paginatedAgents.map((agent) => (
                   <TableRow key={agent.id}>
                     <TableCell className="font-medium text-center">{agent.name}</TableCell>
                     <TableCell className="text-center">{agent.email}</TableCell>
@@ -886,188 +1006,514 @@ const getRoleLabel = (role?: UserRole | '') => {
                 ))}
               </TableBody>
             </Table>
+
+            {/* Pagination controls */}
+            {filteredAgents.length > AGENTS_PER_PAGE && (
+              <div className="flex items-center justify-between mt-4">
+                <div className="text-xs text-muted-foreground">
+                  Showing{' '}
+                  <span className="font-medium">
+                    {(agentPage - 1) * AGENTS_PER_PAGE + 1}-
+                    {Math.min(agentPage * AGENTS_PER_PAGE, filteredAgents.length)}
+                  </span>{' '}
+                  of <span className="font-medium">{filteredAgents.length}</span> agents
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAgentPage((p) => Math.max(1, p - 1))}
+                    disabled={agentPage === 1}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    Prev
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Page {agentPage} of {totalAgentPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAgentPage((p) => Math.min(totalAgentPages, p + 1))}
+                    disabled={agentPage === totalAgentPages}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
 
       {/* Edit Dialog */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Edit User</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="phone">Phone</Label>
-                <Input
-                  id="phone"
-                  value={editForm.phone}
-                  onChange={(e) => {
-                    const formatted = formatPhoneNumber(e.target.value);
-                    setEditForm({ ...editForm, phone: formatted });
-                  }}
-                  placeholder="+63 917 555 0101"
-                  maxLength={17}
-                />
-              </div>
-              <div>
-                <Label htmlFor="region">Region</Label>
-                <Input
-                  id="region"
-                  value={editForm.region}
-                  onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="city">Cities</Label>
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <Input
-                    id="city"
-                    placeholder="Enter city name"
-                    value={editCityInput}
-                    onChange={(e) => setEditCityInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addCityToEditForm()}
-                  />
-                  <Button type="button" onClick={addCityToEditForm} variant="outline">
-                    Add
-                  </Button>
-                </div>
-                {editForm.cities.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {editForm.cities.map((city, index) => (
-                      <Badge key={index} variant="outline" className="text-xs">
-                        {city}
-                        <button
-                          type="button"
-                          onClick={() => removeCityFromEditForm(city)}
-                          className="ml-1 hover:text-red-500"
-                        >
-                          ×
-                        </button>
-                      </Badge>
-                    ))}
+      {/* Edit Dialog - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <SheetContent side="bottom" className="h-[90vh]">
+            <SheetHeader className="pb-4">
+              <SheetTitle>Edit User</SheetTitle>
+              <SheetDescription>Update user information and settings</SheetDescription>
+            </SheetHeader>
+            <ScrollArea className="h-[calc(90vh-160px)] pr-4">
+              <Accordion type="multiple" defaultValue={["basic", "role", "territory", "status"]} className="space-y-2">
+                <AccordionItem value="basic" className="border rounded-lg px-4">
+                  <AccordionTrigger className="text-sm font-medium">Basic Information</AccordionTrigger>
+                  <AccordionContent className="space-y-3 pt-2">
+                    <div>
+                      <Label htmlFor="name" className="text-xs">Name</Label>
+                      <Input
+                        id="name"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        className="h-10 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="email" className="text-xs">Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={editForm.email}
+                        onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                        className="h-10 mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="phone" className="text-xs">Phone</Label>
+                      <Input
+                        id="phone"
+                        value={editForm.phone}
+                        onChange={(e) => {
+                          const formatted = formatPhoneNumber(e.target.value);
+                          setEditForm({ ...editForm, phone: formatted });
+                        }}
+                        placeholder="+63 917 555 0101"
+                        maxLength={17}
+                        className="h-10 mt-1"
+                      />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="role" className="border rounded-lg px-4">
+                  <AccordionTrigger className="text-sm font-medium">Role</AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <Label htmlFor="role" className="text-xs">User Role</Label>
+                    <Select
+                      value={editForm.role}
+                      onValueChange={(value) => setEditForm({ ...editForm, role: value as UserRole })}
+                    >
+                      <SelectTrigger className="h-10 mt-1">
+                        <SelectValue placeholder="Select role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="finance">Finance</SelectItem>
+                        <SelectItem value="manager">Manager</SelectItem>
+                        <SelectItem value="team_leader">Team Leader</SelectItem>
+                        <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </AccordionContent>
+                </AccordionItem>
+
+                {editDialogRequiresTerritory ? (
+                  <AccordionItem value="territory" className="border rounded-lg px-4">
+                    <AccordionTrigger className="text-sm font-medium">Territory & Cities</AccordionTrigger>
+                    <AccordionContent className="space-y-3 pt-2">
+                      <div>
+                        <Label htmlFor="region" className="text-xs">Region</Label>
+                        <Input
+                          id="region"
+                          value={editForm.region}
+                          onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
+                          className="h-10 mt-1"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="city" className="text-xs">Cities</Label>
+                        <div className="flex gap-2 mt-1">
+                          <Input
+                            id="city"
+                            placeholder="Enter city name"
+                            value={editCityInput}
+                            onChange={(e) => setEditCityInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                addCityToEditForm();
+                              }
+                            }}
+                            className="h-10"
+                          />
+                          <Button type="button" onClick={addCityToEditForm} variant="outline" className="h-10">
+                            Add
+                          </Button>
+                        </div>
+                        {editForm.cities.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {editForm.cities.map((city, index) => (
+                              <Badge key={index} variant="outline" className="text-xs">
+                                {city}
+                                <button
+                                  type="button"
+                                  onClick={() => removeCityFromEditForm(city)}
+                                  className="ml-1 hover:text-red-500"
+                                >
+                                  ×
+                                </button>
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                ) : (
+                  <div className="rounded-md border border-dashed bg-muted/40 p-3 text-xs text-muted-foreground">
+                    Region and cities are not required for {getRoleLabel(editingAgent?.role)} users.
                   </div>
                 )}
-              </div>
-            </div>
 
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="status"
-                checked={editForm.status === 'active'}
-                onCheckedChange={(checked) => setEditForm({ ...editForm, status: checked ? 'active' : 'inactive' })}
-              />
-              <Label htmlFor="status">Active</Label>
-            </div>
-            <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+                <AccordionItem value="status" className="border rounded-lg px-4">
+                  <AccordionTrigger className="text-sm font-medium">Status</AccordionTrigger>
+                  <AccordionContent className="pt-2">
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        id="status"
+                        checked={editForm.status === 'active'}
+                        onCheckedChange={(checked) => setEditForm({ ...editForm, status: checked ? 'active' : 'inactive' })}
+                      />
+                      <Label htmlFor="status" className="text-sm">Active</Label>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </ScrollArea>
+            <div className="pt-4 border-t flex gap-2">
+              <Button variant="outline" onClick={() => setEditDialogOpen(false)} className="flex-1 h-11">
                 Cancel
               </Button>
-              <Button onClick={handleConfirmEdit}>
+              <Button onClick={handleConfirmEdit} className="flex-1 h-11">
                 Save Changes
               </Button>
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* View Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Agent Information</DialogTitle>
-            <DialogDescription className="text-sm text-muted-foreground">
-              View agent profile details
-            </DialogDescription>
-          </DialogHeader>
-          {viewingAgent && (
-            <div className="space-y-6 py-4">
-              {/* Basic Info */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase">Contact Information</h3>
-                <div className="space-y-2">
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Name:</span>
-                    <span className="text-sm font-medium">{viewingAgent.name}</span>
-                  </div>
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Email:</span>
-                    <span className="text-sm">{viewingAgent.email}</span>
-                  </div>
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Phone:</span>
-                    <span className="text-sm">{viewingAgent.phone || '—'}</span>
-                  </div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Edit User</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="name">Name</Label>
+                  <Input
+                    id="name"
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  />
                 </div>
               </div>
 
-              {/* Location Info */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase">Location</h3>
-                <div className="space-y-2">
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Region:</span>
-                    <span className="text-sm">{viewingAgent.region || '—'}</span>
+              <div>
+                <Label htmlFor="role">Role</Label>
+                <Select
+                  value={editForm.role}
+                  onValueChange={(value) => setEditForm({ ...editForm, role: value as UserRole })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="finance">Finance</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="team_leader">Team Leader</SelectItem>
+                    <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className={`grid gap-4 ${editDialogRequiresTerritory ? 'md:grid-cols-2' : 'grid-cols-1 md:grid-cols-1'}`}>
+                <div>
+                  <Label htmlFor="phone">Phone</Label>
+                  <Input
+                    id="phone"
+                    value={editForm.phone}
+                    onChange={(e) => {
+                      const formatted = formatPhoneNumber(e.target.value);
+                      setEditForm({ ...editForm, phone: formatted });
+                    }}
+                    placeholder="+63 917 555 0101"
+                    maxLength={17}
+                  />
+                </div>
+                {editDialogRequiresTerritory && (
+                  <div>
+                    <Label htmlFor="region">Region</Label>
+                    <Input
+                      id="region"
+                      value={editForm.region}
+                      onChange={(e) => setEditForm({ ...editForm, region: e.target.value })}
+                    />
                   </div>
-                  <div className="flex items-start gap-3 py-2 border-b">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Cities:</span>
-                    <div className="flex flex-wrap gap-1">
-                      {viewingAgent.cities.length > 0 ? (
-                        viewingAgent.cities.map((city, index) => (
+                )}
+              </div>
+              {editDialogRequiresTerritory ? (
+                <div>
+                  <Label htmlFor="city">Cities</Label>
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <Input
+                        id="city"
+                        placeholder="Enter city name"
+                        value={editCityInput}
+                        onChange={(e) => setEditCityInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addCityToEditForm();
+                          }
+                        }}
+                      />
+                      <Button type="button" onClick={addCityToEditForm} variant="outline">
+                        Add
+                      </Button>
+                    </div>
+                    {editForm.cities.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {editForm.cities.map((city, index) => (
                           <Badge key={index} variant="outline" className="text-xs">
                             {city}
+                            <button
+                              type="button"
+                              onClick={() => removeCityFromEditForm(city)}
+                              className="ml-1 hover:text-red-500"
+                            >
+                              ×
+                            </button>
                           </Badge>
-                        ))
-                      ) : (
-                        <span className="text-sm text-muted-foreground">—</span>
-                      )}
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed bg-muted/40 p-3 text-xs text-muted-foreground">
+                  Region and cities are not required for {getRoleLabel(editingAgent?.role)} users.
+                </div>
+              )}
+
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="status"
+                  checked={editForm.status === 'active'}
+                  onCheckedChange={(checked) => setEditForm({ ...editForm, status: checked ? 'active' : 'inactive' })}
+                />
+                <Label htmlFor="status">Active</Label>
+              </div>
+              <div className="flex justify-end space-x-2">
+                <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleConfirmEdit}>
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* View Dialog - Mobile: Sheet, Desktop: Dialog */}
+      {isMobile ? (
+        <Sheet open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <SheetContent side="bottom" className="h-[85vh]">
+            <SheetHeader className="pb-4">
+              <SheetTitle>User Information</SheetTitle>
+              <SheetDescription>View user profile details</SheetDescription>
+            </SheetHeader>
+            {viewingAgent && (
+              <ScrollArea className="h-[calc(85vh-120px)] pr-4">
+                <div className="space-y-3">
+                  {/* Contact Information */}
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">Contact Information</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <span className="text-xs text-muted-foreground">Name</span>
+                        <span className="text-sm font-medium text-right">{viewingAgent.name}</span>
+                      </div>
+                      <div className="flex justify-between items-start border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Email</span>
+                        <span className="text-xs text-right break-all ml-2">{viewingAgent.email}</span>
+                      </div>
+                      <div className="flex justify-between items-start border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Phone</span>
+                        <span className="text-sm text-right">{viewingAgent.phone || '—'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Location */}
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">Location</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <span className="text-xs text-muted-foreground">Region</span>
+                        <span className="text-sm text-right">{viewingAgent.region || '—'}</span>
+                      </div>
+                      <div className="border-t pt-2">
+                        <span className="text-xs text-muted-foreground block mb-2">Cities</span>
+                        <div className="flex flex-wrap gap-1">
+                          {viewingAgent.cities.length > 0 ? (
+                            viewingAgent.cities.map((city, index) => (
+                              <Badge key={index} variant="outline" className="text-[10px] h-5">
+                                {city}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Role & Status */}
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">Role & Status</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-muted-foreground">Role</span>
+                        <Badge variant="outline" className="text-xs">{getRoleLabel(viewingAgent.role)}</Badge>
+                      </div>
+                      <div className="flex justify-between items-center border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Status</span>
+                        <Badge
+                          variant={viewingAgent.status === 'active' ? 'default' : 'secondary'}
+                          className={viewingAgent.status === 'active' ? 'bg-green-100 text-green-700 text-xs' : 'bg-gray-100 text-gray-600 text-xs'}
+                        >
+                          {viewingAgent.status}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Performance */}
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">Performance</h3>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-muted-foreground">Total Sales</span>
+                        <span className="text-sm font-semibold">₱{viewingAgent.totalSales.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center border-t pt-2">
+                        <span className="text-xs text-muted-foreground">Total Orders</span>
+                        <span className="text-sm font-semibold">{viewingAgent.ordersCount}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </ScrollArea>
+            )}
+            <div className="pt-4 border-t">
+              <Button onClick={() => setViewDialogOpen(false)} className="w-full h-11">
+                Close
+              </Button>
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-semibold">Agent Information</DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                View agent profile details
+              </DialogDescription>
+            </DialogHeader>
+            {viewingAgent && (
+              <div className="space-y-6 py-4">
+                {/* Basic Info */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase">Contact Information</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Name:</span>
+                      <span className="text-sm font-medium">{viewingAgent.name}</span>
+                    </div>
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Email:</span>
+                      <span className="text-sm">{viewingAgent.email}</span>
+                    </div>
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Phone:</span>
+                      <span className="text-sm">{viewingAgent.phone || '—'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Location Info */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase">Location</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Region:</span>
+                      <span className="text-sm">{viewingAgent.region || '—'}</span>
+                    </div>
+                    <div className="flex items-start gap-3 py-2 border-b">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Cities:</span>
+                      <div className="flex flex-wrap gap-1">
+                        {viewingAgent.cities.length > 0 ? (
+                          viewingAgent.cities.map((city, index) => (
+                            <Badge key={index} variant="outline" className="text-xs">
+                              {city}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Role & Status */}
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase">Role & Status</h3>
+                  <div className="space-y-2">
+
+                    <div className="flex items-start gap-3 py-2">
+                      <span className="text-sm font-medium text-muted-foreground w-20">Status:</span>
+                      <Badge
+                        variant={viewingAgent.status === 'active' ? 'default' : 'secondary'}
+                        className={viewingAgent.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}
+                      >
+                        {viewingAgent.status}
+                      </Badge>
                     </div>
                   </div>
                 </div>
               </div>
-
-              {/* Role & Status */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase">Role & Status</h3>
-                <div className="space-y-2">
-
-                  <div className="flex items-start gap-3 py-2">
-                    <span className="text-sm font-medium text-muted-foreground w-20">Status:</span>
-                    <Badge
-                      variant={viewingAgent.status === 'active' ? 'default' : 'secondary'}
-                      className={viewingAgent.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}
-                    >
-                      {viewingAgent.status}
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -1104,11 +1550,11 @@ const getRoleLabel = (role?: UserRole | '') => {
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
-                  <SelectItem value="team_leader">Team Leader</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="finance">Finance</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="finance">Finance</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                  <SelectItem value="team_leader">Team Leader</SelectItem>
+                  <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
                 </SelectContent>
               </Select>
               <p className="mt-2 text-xs text-muted-foreground">
@@ -1221,13 +1667,81 @@ const getRoleLabel = (role?: UserRole | '') => {
               <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleAddAgent} disabled={!isRoleSelected}>
+              <Button onClick={() => setAddConfirmDialogOpen(true)} disabled={!isRoleSelected}>
                 Add User
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Add User Confirmation Dialog */}
+      <AlertDialog open={addConfirmDialogOpen} onOpenChange={setAddConfirmDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm New User</AlertDialogTitle>
+            <AlertDialogDescription>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Please confirm the details below. This will create the user and they’ll be able to log in once set up.
+                </p>
+
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Name</p>
+                      <p className="text-sm font-semibold leading-tight">{newAgent.name || '—'}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Role</p>
+                      <p className="text-sm font-semibold leading-tight">{newAgent.role || '—'}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Email</p>
+                      <p className="text-sm leading-tight break-all">{newAgent.email || '—'}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Phone</p>
+                      <p className="text-sm leading-tight">{newAgent.phone || '—'}</p>
+                    </div>
+
+                    {addDialogRequiresTerritory && (
+                      <>
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">Region</p>
+                          <p className="text-sm leading-tight">{newAgent.region || '—'}</p>
+                        </div>
+                        <div className="space-y-1 sm:col-span-2">
+                          <p className="text-xs font-medium text-muted-foreground">Cities</p>
+                          <p className="text-sm leading-tight">
+                            {newAgent.cities.length > 0 ? newAgent.cities.join(', ') : '—'}
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Double-check the email and role. You can edit user details later if needed.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                setAddConfirmDialogOpen(false);
+                await handleAddAgent();
+              }}
+              className="bg-primary hover:bg-primary/90"
+            >
+              Confirm &amp; Add
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Status Change Confirmation Dialog */}
       <AlertDialog open={statusConfirmDialogOpen} onOpenChange={setStatusConfirmDialogOpen}>
@@ -1302,6 +1816,6 @@ const getRoleLabel = (role?: UserRole | '') => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </div >
   );
 }

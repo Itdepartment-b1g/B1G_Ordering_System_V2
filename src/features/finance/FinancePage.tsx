@@ -2,8 +2,27 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DollarSign, TrendingUp, TrendingDown, Calendar } from 'lucide-react';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import {
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  Calendar,
+  BanknoteIcon,
+  AlertCircle,
+  CheckCircle2,
+} from 'lucide-react';
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -18,6 +37,7 @@ export default function FinancePage() {
   const [allActivities, setAllActivities] = useState<any[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 5;
+  const [recentDeposits, setRecentDeposits] = useState<any[]>([]);
 
   useEffect(() => {
     fetchFinancialData();
@@ -30,6 +50,74 @@ export default function FinancePage() {
     return () => unsubscribe(channel);
   }, []);
 
+  const loadDepositSummaries = async (deposits: any[]) => {
+    if (!deposits || deposits.length === 0) return {};
+
+    const depositIds = deposits.map(d => d.id);
+
+    const { data, error } = await supabase
+      .from('client_orders')
+      .select('id, deposit_id, order_date, total_amount, payment_method, payment_mode, payment_splits')
+      .in('deposit_id', depositIds);
+
+    if (error) {
+      console.error('Error loading deposit summaries for finance view', error);
+      return {};
+    }
+
+    const summaries: Record<string, { cashPortion: number; chequePortion: number; nonCashPortion: number }> = {};
+
+    const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
+
+    (data || []).forEach((order: any) => {
+      // Skip v1-imported orders: order_date < cutoff OR order_date is null (v1 imports may not have order_date set)
+      if (!order.order_date || order.order_date < V1_IMPORT_ORDER_DATE_CUTOFF) {
+        // Skip v1-imported orders when computing deposit summaries
+        return;
+      }
+      const depositId = order.deposit_id as string | null;
+      if (!depositId) return;
+
+      const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+      const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+      const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+      let cashPortion = 0;
+      let chequePortion = 0;
+      let nonCashPortion = 0;
+
+      if (paymentMode === 'SPLIT') {
+        splits.forEach((s: any) => {
+          const amount = s.amount || 0;
+          if (s.method === 'CASH') {
+            cashPortion += amount;
+          } else if (s.method === 'CHEQUE') {
+            chequePortion += amount;
+          } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+            nonCashPortion += amount;
+          }
+        });
+      } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+        const amt = order.total_amount || 0;
+        if (paymentMethod === 'CASH') {
+          cashPortion = amt;
+        } else {
+          chequePortion = amt;
+        }
+      }
+
+      if (!summaries[depositId]) {
+        summaries[depositId] = { cashPortion: 0, chequePortion: 0, nonCashPortion: 0 };
+      }
+
+      summaries[depositId].cashPortion += cashPortion;
+      summaries[depositId].chequePortion += chequePortion;
+      summaries[depositId].nonCashPortion += nonCashPortion;
+    });
+
+    return summaries;
+  };
+
   const fetchFinancialData = async () => {
     try {
       setLoading(true);
@@ -37,7 +125,7 @@ export default function FinancePage() {
       // Get all financial transactions (for expenses only, revenue now comes from client_orders)
       const { data: transactions } = await supabase
         .from('financial_transactions')
-        .select('*')
+        .select('id, transaction_date, transaction_type, status, amount')
         .order('transaction_date', { ascending: false });
 
       // Calculate total revenue from admin-approved client orders (same as Dashboard)
@@ -52,7 +140,7 @@ export default function FinancePage() {
       // but we keep existing expense/commission stream for other costs.
       const { data: approvedPOs } = await supabase
         .from('purchase_orders')
-        .select('total_amount, status')
+        .select('total_amount, status, order_date, approved_at, created_at')
         .eq('status', 'approved');
 
       const poExpenses = (approvedPOs || [])
@@ -100,16 +188,20 @@ export default function FinancePage() {
         .forEach((t: any) => {
           const key = monthKey(t.transaction_date);
           if (t.transaction_type === 'expense' && t.status === 'completed') {
-            monthlyStats[key].expenses += t.amount || 0;
+            if (monthlyStats[key]) {
+              monthlyStats[key].expenses += t.amount || 0;
+            }
           }
         });
 
       // Expenses from approved purchase orders
       (approvedPOs || []).forEach((po: any) => {
-        const date = po.approved_at || po.updated_at || po.created_at || new Date();
-        if (new Date(date) >= last6Months) {
+        const date = po.order_date || po.approved_at || po.created_at;
+        if (date && new Date(date) >= last6Months) {
           const key = monthKey(date);
-          monthlyStats[key].expenses += Number(po.total_amount) || 0;
+          if (monthlyStats[key]) {
+            monthlyStats[key].expenses += Number(po.total_amount) || 0;
+          }
         }
       });
 
@@ -146,7 +238,7 @@ export default function FinancePage() {
         .eq('stage', 'admin_approved')
         .order('order_date', { ascending: false })
         .limit(3);
-      
+
       if (clientOrdersError) {
         console.error('❌ Error fetching client orders:', clientOrdersError);
       } else {
@@ -216,6 +308,56 @@ export default function FinancePage() {
       setCurrentPage(1);
       setRecentTransactions(sortedActivities.slice(0, pageSize));
 
+      // Recent cash deposits, using split-payment logic (cash + cheque portions only)
+      const { data: depositsData, error: depositsError } = await supabase
+        .from('cash_deposits')
+        .select(`
+          id,
+          deposit_date,
+          amount,
+          status,
+          deposit_slip_url,
+          deposit_type,
+          agent:profiles!cash_deposits_agent_id_fkey(full_name)
+        `)
+        .order('deposit_date', { ascending: false })
+        .limit(7);
+
+      if (depositsError) {
+        console.error('Error fetching recent cash deposits for finance view', depositsError);
+      } else {
+        const summaries = await loadDepositSummaries(depositsData || []);
+
+        const mapped = (depositsData || [])
+          .map((d: any) => {
+            const summary = summaries[d.id];
+            // If there are no orders currently linked to this deposit, treat it
+            // as having no cash/cheque amount (e.g. legacy/v1 imports we unlinked).
+            if (!summary) {
+              return null;
+            }
+
+            const effectiveAmount = summary.cashPortion + summary.chequePortion;
+            if (effectiveAmount <= 0) {
+              // Skip deposits that have no cash/cheque portion
+              return null;
+            }
+
+            return {
+              id: d.id,
+              agentName: d.agent?.full_name || 'Unknown',
+              depositDate: d.deposit_date,
+              status: d.status,
+              amount: effectiveAmount,
+              rawAmount: d.amount || 0,
+              depositSlipUrl: d.deposit_slip_url as string | null,
+            };
+          })
+          .filter((d: any) => d !== null);
+
+        setRecentDeposits(mapped);
+      }
+
     } catch (error) {
       console.error('Error fetching financial data:', error);
     } finally {
@@ -263,13 +405,13 @@ export default function FinancePage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Expenses</CardTitle>
+            <CardTitle className="text-sm font-medium">Cost</CardTitle>
             <TrendingDown className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">₱{totalExpenses.toLocaleString()}</div>
             <div className="flex items-center text-xs text-muted-foreground mt-1">
-              <span>Operating costs</span>
+              <span>TBD</span>
             </div>
           </CardContent>
         </Card>
@@ -292,6 +434,86 @@ export default function FinancePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Recent Cash Deposits (cash/cheque portions only, using split-payment logic) */}
+      <Card>
+        <CardHeader className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <BanknoteIcon className="h-4 w-4 text-green-600" />
+              Cash Deposits
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">Recent cash/cheque deposit records</p>
+          </div>
+          {/* Placeholder View All – hook to full deposits page if available */}
+          <Button variant="link" className="text-xs px-0 h-auto">
+            View All
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {recentDeposits.length === 0 ? (
+            <div className="py-4 text-sm text-muted-foreground">No cash deposits recorded yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {recentDeposits.map(deposit => (
+                <div
+                  key={deposit.id}
+                  className="flex items-center justify-between rounded-md border px-3 py-2 hover:bg-muted/50 transition-colors"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{deposit.agentName}</span>
+                      <Badge
+                        variant="outline"
+                        className={
+                          deposit.status === 'verified'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]'
+                            : 'bg-amber-50 text-amber-700 border-amber-200 text-[10px]'
+                        }
+                      >
+                        {deposit.status === 'verified' ? (
+                          <>
+                            <CheckCircle2 className="h-3 w-3 mr-1" />
+                            Verified
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Pending
+                          </>
+                        )}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Calendar className="h-3 w-3" />
+                      {new Date(deposit.depositDate).toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: '2-digit',
+                        year: 'numeric',
+                      })}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <div className="text-sm font-bold text-green-600">
+                      + ₱{deposit.amount.toLocaleString()}
+                    </div>
+                    {deposit.depositSlipUrl && (
+                      <a
+                        href={deposit.depositSlipUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] text-blue-600 hover:underline"
+                      >
+                        View Slip
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {monthlyData.length > 0 && (
         <div className="grid gap-6 lg:grid-cols-2">
@@ -335,12 +557,12 @@ export default function FinancePage() {
       )}
 
       <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Financial Activities</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="w-full overflow-x-auto">
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Financial Activities</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="w-full overflow-x-auto">
               <Table className="min-w-[720px]">
                 <TableHeader>
                   <TableRow>
@@ -377,10 +599,10 @@ export default function FinancePage() {
                         </TableCell>
                         <TableCell>{t.date}</TableCell>
                         <TableCell>
-                          <Badge 
+                          <Badge
                             variant={
-                              t.status === 'paid' || t.status === 'approved' 
-                                ? 'default' 
+                              t.status === 'paid' || t.status === 'approved'
+                                ? 'default'
                                 : 'secondary'
                             }
                           >
@@ -392,21 +614,21 @@ export default function FinancePage() {
                   )}
                 </TableBody>
               </Table>
-              </div>
-              {allActivities.length > pageSize && (
-                <div className="mt-4 flex items-center justify-between">
-                  <Button variant="secondary" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>Previous</Button>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <span>Page</span>
-                    <span className="font-medium text-black">{currentPage}</span>
-                    <span>of</span>
-                    <span className="font-medium text-black">{totalPages}</span>
-                  </div>
-                  <Button variant="secondary" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>Next</Button>
+            </div>
+            {allActivities.length > pageSize && (
+              <div className="mt-4 flex items-center justify-between">
+                <Button variant="secondary" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>Previous</Button>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span>Page</span>
+                  <span className="font-medium text-black">{currentPage}</span>
+                  <span>of</span>
+                  <span className="font-medium text-black">{totalPages}</span>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+                <Button variant="secondary" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>Next</Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

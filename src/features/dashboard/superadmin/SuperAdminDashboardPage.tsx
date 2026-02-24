@@ -5,7 +5,18 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Profile } from '@/types/database.types';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend
+} from 'recharts';
 
 export default function SuperAdminDashboardPage() {
   const { user } = useAuth();
@@ -13,40 +24,198 @@ export default function SuperAdminDashboardPage() {
     totalUsers: 0,
     activeUsers: 0,
     totalInventory: 0,
+    totalStock: 0,
+    totalAllocated: 0,
+    totalAvailable: 0,
     totalRevenue: 0,
   });
   const [recentUsers, setRecentUsers] = useState<Profile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [revenueData, setRevenueData] = useState<{ month: string; revenue: number }[]>([]);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
 
   useEffect(() => {
-    if (user?.company_id) {
+    const companyId = (user as any)?.company_id;
+    if (companyId) {
+      fetchAvailableYears();
       fetchDashboardData();
+    } else if (user) {
+      // User exists but no company_id - stop loading to prevent infinite loading state
+      console.warn('⚠️ [SuperAdminDashboard] User has no company_id, skipping data fetch');
+      setIsLoading(false);
     }
   }, [user]);
 
+  useEffect(() => {
+    const companyId = (user as any)?.company_id;
+    if (companyId && selectedYear) {
+      fetchDashboardData();
+    }
+  }, [selectedYear, user]);
+
+  const fetchAvailableYears = async () => {
+    const companyId = (user as any)?.company_id;
+    if (!companyId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('client_orders')
+        .select('order_date')
+        .eq('company_id', companyId)
+        .eq('stage', 'admin_approved')
+        .not('order_date', 'is', null);
+
+      if (error) throw error;
+
+      // Extract unique years from order dates
+      const years = new Set<number>();
+      if (data) {
+        data.forEach((order: any) => {
+          if (order.order_date) {
+            const year = new Date(order.order_date).getFullYear();
+            years.add(year);
+          }
+        });
+      }
+
+      // Add current year if no orders exist
+      const currentYear = new Date().getFullYear();
+      if (years.size === 0) {
+        years.add(currentYear);
+      }
+
+      const sortedYears = Array.from(years).sort((a, b) => b - a); // Descending order
+      setAvailableYears(sortedYears);
+
+      // Set default year to current year or most recent year with data
+      if (!selectedYear || !years.has(selectedYear)) {
+        setSelectedYear(sortedYears[0] || currentYear);
+      }
+    } catch (error) {
+      console.error('Error fetching available years:', error);
+    }
+  };
+
   const fetchDashboardData = async () => {
-    if (!user?.company_id) return;
+    const companyId = (user as any)?.company_id;
+    if (!companyId || !selectedYear) {
+      setIsLoading(false);
+      return;
+    }
 
     try {
       setIsLoading(true);
 
-      // Fetch users in the company
-      const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('company_id', user.company_id)
-        .order('created_at', { ascending: false });
+      // Calculate start and end dates for the selected year
+      const yearStart = new Date(selectedYear, 0, 1); // January 1st
+      const yearEnd = new Date(selectedYear, 11, 31); // December 31st
+      const yearStartIso = yearStart.toISOString().split('T')[0];
+      const yearEndIso = yearEnd.toISOString().split('T')[0];
+
+      // Fetch users, main inventory, and approved orders in parallel
+      const [
+        { data: profiles, error: profilesError },
+        { data: mainInventoryRows, error: inventoryError },
+        { data: approvedOrders, error: ordersError },
+        { data: monthlyOrders, error: monthlyError },
+      ] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id, company_id, full_name, email, role, status, created_at, updated_at')
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('main_inventory')
+          .select('stock, allocated_stock')
+          .eq('company_id', companyId),
+        supabase
+          .from('client_orders')
+          .select('total_amount')
+          .eq('company_id', companyId)
+          .eq('stage', 'admin_approved'),
+        // Monthly revenue for bar chart (selected year)
+        supabase
+          .from('client_orders')
+          .select('total_amount, order_date')
+          .eq('company_id', companyId)
+          .eq('stage', 'admin_approved')
+          .gte('order_date', yearStartIso)
+          .lte('order_date', yearEndIso),
+      ]);
 
       if (profilesError) throw profilesError;
 
       const activeProfiles = profiles?.filter(p => p.status === 'active') || [];
       const recentProfiles = profiles?.slice(0, 5) || [];
 
+      // Inventory: total stock, allocated, available (from main_inventory)
+      let totalStock = 0;
+      let totalAllocated = 0;
+      if (!inventoryError && mainInventoryRows?.length) {
+        totalStock = mainInventoryRows.reduce((sum, row) => sum + (row.stock ?? 0), 0);
+        totalAllocated = mainInventoryRows.reduce((sum, row) => sum + (row.allocated_stock ?? 0), 0);
+      }
+      const totalAvailable = Math.max(0, totalStock - totalAllocated);
+
+      // Revenue: sum of total_amount from all approved (admin_approved) orders
+      let totalRevenue = 0;
+      if (!ordersError && approvedOrders?.length) {
+        totalRevenue = approvedOrders.reduce((sum, o) => sum + (Number(o.total_amount) ?? 0), 0);
+      }
+
+      // Build monthly revenue data for chart (last 12 months, sorted chronologically)
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      
+      if (!monthlyError) {
+        // Initialize all 12 months with 0 revenue
+        const revenueByMonth: Record<string, number> = {};
+        monthNames.forEach(month => {
+          revenueByMonth[month] = 0;
+        });
+
+        // Add actual revenue data from orders (filter by selected year)
+        if (monthlyOrders?.length) {
+          monthlyOrders.forEach((o: any) => {
+            const orderDate = new Date(o.order_date);
+            const orderYear = orderDate.getFullYear();
+            
+            // Only include orders from the selected year
+            if (orderYear === selectedYear) {
+              const month = orderDate.toLocaleString('default', { month: 'short' });
+              if (revenueByMonth.hasOwnProperty(month)) {
+                revenueByMonth[month] += Number(o.total_amount) || 0;
+              }
+            }
+          });
+        }
+
+        // Create chart data in chronological order (Jan to Dec)
+        const chartData = monthNames.map(month => ({
+          month,
+          revenue: revenueByMonth[month] || 0,
+        }));
+
+        console.log('📊 Revenue chart data:', chartData);
+        setRevenueData(chartData);
+      } else {
+        console.log('⚠️ No monthly revenue data:', { monthlyError, monthlyOrders });
+        // Still show all months with 0 revenue
+        const chartData = monthNames.map(month => ({
+          month,
+          revenue: 0,
+        }));
+        setRevenueData(chartData);
+      }
+
       setStats({
         totalUsers: profiles?.length || 0,
         activeUsers: activeProfiles.length,
-        totalInventory: 0, // TODO: Calculate from inventory
-        totalRevenue: 0, // TODO: Calculate from orders
+        totalInventory: totalStock,
+        totalStock,
+        totalAllocated,
+        totalAvailable,
+        totalRevenue,
       });
 
       setRecentUsers(recentProfiles);
@@ -117,7 +286,7 @@ export default function SuperAdminDashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{stats.activeUsers}</div>
             <p className="text-xs text-muted-foreground">
-              {stats.totalUsers > 0 
+              {stats.totalUsers > 0
                 ? `${Math.round((stats.activeUsers / stats.totalUsers) * 100)}% of total`
                 : 'No users yet'}
             </p>
@@ -130,9 +299,9 @@ export default function SuperAdminDashboardPage() {
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalInventory}</div>
+            <div className="text-2xl font-bold">{stats.totalStock.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
-              Items in stock
+              Total stock · {stats.totalAllocated.toLocaleString()} allocated · {stats.totalAvailable.toLocaleString()} available
             </p>
           </CardContent>
         </Card>
@@ -145,11 +314,53 @@ export default function SuperAdminDashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
-              All-time revenue
+              From approved orders
             </p>
           </CardContent>
         </Card>
       </div>
+
+      {/* Revenue Chart */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle>Revenue Overview</CardTitle>
+          <Select
+            value={selectedYear.toString()}
+            onValueChange={(value) => setSelectedYear(parseInt(value))}
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Select year" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableYears.map((year) => (
+                <SelectItem key={year} value={year.toString()}>
+                  {year}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CardHeader>
+        <CardContent className="px-2 md:px-6">
+          {revenueData.length === 0 ? (
+            <div className="w-full h-[250px] md:h-[300px] flex items-center justify-center text-muted-foreground">
+              <p>No revenue data available for {selectedYear}</p>
+            </div>
+          ) : (
+            <div className="w-full h-[250px] md:h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={revenueData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                  <Bar dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Recent Users */}
       <Card>

@@ -44,6 +44,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import type { Company } from '@/types/database.types';
 
+// System Administration company ID - should be hidden from the companies list
+const SYSTEM_ADMIN_COMPANY_ID = '6a3da573-af53-4def-a665-0f1782c70097';
+
 export default function SysAdDashboardPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -64,6 +67,7 @@ export default function SysAdDashboardPage() {
     super_admin_name: '',
     super_admin_email: '',
     super_admin_password: 'tempPassword123!',
+    company_account_type: 'Standard Accounts' as 'Key Accounts' | 'Standard Accounts',
   });
 
   useEffect(() => {
@@ -74,9 +78,11 @@ export default function SysAdDashboardPage() {
     try {
       setIsLoading(true);
       // SQL Database removed - this will throw an error until database is set up
+      // Exclude the System Administration company from the list
       const { data, error } = await supabase
         .from('companies')
-        .select('*')
+        .select('id, company_name, company_email, super_admin_name, super_admin_email, role, status, company_account_type, created_at, updated_at')
+        .neq('id', SYSTEM_ADMIN_COMPANY_ID) // Exclude System Administration company
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -165,6 +171,7 @@ export default function SysAdDashboardPage() {
           super_admin_name: newCompany.super_admin_name,
           super_admin_email: newCompany.super_admin_email,
           super_admin_password: newCompany.super_admin_password || 'tempPassword123!',
+          company_account_type: newCompany.company_account_type,
         }),
       });
 
@@ -199,6 +206,7 @@ export default function SysAdDashboardPage() {
         super_admin_name: '',
         super_admin_email: '',
         super_admin_password: 'tempPassword123!',
+        company_account_type: 'Standard Accounts',
       });
 
       // Refresh companies list
@@ -274,10 +282,12 @@ export default function SysAdDashboardPage() {
 
     try {
       setIsDeleting(true);
-      const { error } = await supabase
-        .from('companies')
-        .delete()
-        .eq('id', selectedCompany.id);
+      
+      // Use the database function to safely delete the company and all related records
+      // This function handles cascading deletes properly, including executive_company_assignments
+      const { error } = await supabase.rpc('delete_company_cascade', {
+        p_company_id: selectedCompany.id,
+      });
 
       if (error) throw error;
 
@@ -356,6 +366,35 @@ export default function SysAdDashboardPage() {
                   }
                   placeholder="info@acmecorp.com"
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="company_account_type">Account Type</Label>
+                <div className="flex gap-4 pt-2">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="standard"
+                      name="account_type"
+                      value="Standard Accounts"
+                      checked={newCompany.company_account_type === 'Standard Accounts'}
+                      onChange={(e) => setNewCompany({ ...newCompany, company_account_type: e.target.value as any })}
+                      className="h-4 w-4 border-gray-300 text-primary focus:ring-primary"
+                    />
+                    <Label htmlFor="standard" className="font-normal cursor-pointer">Standard Accounts</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="key"
+                      name="account_type"
+                      value="Key Accounts"
+                      checked={newCompany.company_account_type === 'Key Accounts'}
+                      onChange={(e) => setNewCompany({ ...newCompany, company_account_type: e.target.value as any })}
+                      className="h-4 w-4 border-gray-300 text-primary focus:ring-primary"
+                    />
+                    <Label htmlFor="key" className="font-normal cursor-pointer">Key Accounts</Label>
+                  </div>
+                </div>
               </div>
               <div className="border-t pt-6">
                 <h3 className="text-sm font-semibold mb-5">Super Administrator Details</h3>
@@ -467,6 +506,7 @@ export default function SysAdDashboardPage() {
                     <TableHead className="h-12">Company Email</TableHead>
                     <TableHead className="h-12">Super Admin</TableHead>
                     <TableHead className="h-12">Super Admin Email</TableHead>
+                    <TableHead className="h-12">Account Type</TableHead>
                     <TableHead className="h-12">Status</TableHead>
                     <TableHead className="h-12">Created At</TableHead>
                     <TableHead className="h-12 text-right">Actions</TableHead>
@@ -489,6 +529,9 @@ export default function SysAdDashboardPage() {
                         </div>
                       </TableCell>
                       <TableCell className="py-4">{company.super_admin_email}</TableCell>
+                      <TableCell className="py-4">
+                        <Badge variant="outline">{company.company_account_type || 'Standard Accounts'}</Badge>
+                      </TableCell>
                       <TableCell className="py-4">{getStatusBadge(company.status)}</TableCell>
                       <TableCell className="py-4">
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -599,6 +642,10 @@ export default function SysAdDashboardPage() {
                   <p className="text-sm mt-1">{selectedCompany.super_admin_email}</p>
                 </div>
                 <div>
+                  <Label className="text-sm font-semibold">Account Type</Label>
+                  <p className="text-sm mt-1">{selectedCompany.company_account_type || 'Standard Accounts'}</p>
+                </div>
+                <div>
                   <Label className="text-sm font-semibold">Status</Label>
                   <div className="mt-1">{getStatusBadge(selectedCompany.status)}</div>
                 </div>
@@ -611,7 +658,7 @@ export default function SysAdDashboardPage() {
                 <div>
                   <Label className="text-sm font-semibold">Updated At</Label>
                   <p className="text-sm mt-1">
-                    {selectedCompany.updated_at 
+                    {selectedCompany.updated_at
                       ? new Date(selectedCompany.updated_at).toLocaleString()
                       : 'N/A'}
                   </p>
@@ -637,7 +684,7 @@ export default function SysAdDashboardPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Inactivate Company</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to inactivate <strong>{selectedCompany?.company_name}</strong>? 
+              Are you sure you want to inactivate <strong>{selectedCompany?.company_name}</strong>?
               The company and its users will not be able to access the system until reactivated.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -661,7 +708,7 @@ export default function SysAdDashboardPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Company</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{selectedCompany?.company_name}</strong>? 
+              Are you sure you want to delete <strong>{selectedCompany?.company_name}</strong>?
               This action cannot be undone. All company data, users, and related records will be permanently deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>

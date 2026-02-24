@@ -5,6 +5,7 @@ import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { AgentBrand, AgentVariant } from './types';
 import { AgentInventoryContext } from './hooks';
+import { hasInventory } from '@/lib/roleUtils';
 
 export function AgentInventoryProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -13,7 +14,8 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
 
   // Fetch agent inventory from Supabase
   const fetchAgentInventory = async () => {
-    if (!user || user.role !== 'mobile_sales') {
+    // Support mobile_sales, team_leaders, and managers
+    if (!user || !hasInventory(user.role)) {
       setLoading(false);
       return;
     }
@@ -21,41 +23,49 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
     try {
       setLoading(true);
 
-      // 1. Fetch all brands
-      const { data: brandsData, error: brandsError } = await supabase
-        .from('brands')
-        .select('id, name')
-        .order('name');
+      // ⚡ OPTIMIZED: Run all 3 queries in parallel instead of sequentially
+      // This is 3x faster than awaiting each query one by one
+      const [brandsResult, inventoryResult, mainInventoryResult] = await Promise.all([
+        // 1. Fetch all brands
+        supabase
+          .from('brands')
+          .select('id, name')
+          .order('name'),
 
-      if (brandsError) throw brandsError;
+        // 2. Fetch agent's inventory items
+        supabase
+          .from('agent_inventory')
+          .select(`
+            variant_id,
+            stock,
+            allocated_price,
+            dsp_price,
+            rsp_price,
+            status,
+            variants (
+              id,
+              name,
+              variant_type,
+              brand_id
+            )
+          `)
+          .eq('agent_id', user.id),
 
-      // 2. Fetch agent's inventory items
-      const { data: inventoryData, error: inventoryError } = await supabase
-        .from('agent_inventory')
-        .select(`
-          variant_id,
-          stock,
-          allocated_price,
-          dsp_price,
-          rsp_price,
-          status,
-          variants (
-            id,
-            name,
-            variant_type,
-            brand_id
-          )
-        `)
-        .eq('agent_id', user.id);
+        // 3. Fetch main inventory prices (unit_price) for reference
+        supabase
+          .from('main_inventory')
+          .select('variant_id, unit_price, selling_price')
+      ]);
 
-      if (inventoryError) throw inventoryError;
+      // Check for errors
+      if (brandsResult.error) throw brandsResult.error;
+      if (inventoryResult.error) throw inventoryResult.error;
+      if (mainInventoryResult.error) throw mainInventoryResult.error;
 
-      // 3. Fetch main inventory prices (unit_price) for reference
-      const { data: mainInventoryData, error: mainInventoryError } = await supabase
-        .from('main_inventory')
-        .select('variant_id, unit_price, selling_price');
-
-      if (mainInventoryError) throw mainInventoryError;
+      // Extract data from results
+      const brandsData = brandsResult.data;
+      const inventoryData = inventoryResult.data;
+      const mainInventoryData = mainInventoryResult.data;
 
       // Create a map of main inventory prices
       const mainPrices = new Map();
@@ -75,7 +85,10 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
           id: brand.id,
           name: brand.name,
           flavors: [],
-          batteries: []
+          batteries: [],
+          posms: [],
+          allVariants: [],
+          variantsByType: new Map<string, AgentVariant[]>()
         });
       });
 
@@ -88,15 +101,12 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
         if (brand) {
           const mainPriceInfo = mainPrices.get(variant.id) || { unit_price: 0, selling_price: 0 };
 
-          // Determine effective price: selling_price (explicit) > allocated_price > unit_price
-          // For agents, we primarily care about allocated_price (what they owe) or selling_price (SRP)
-          // Let's use allocated_price as the primary "cost" to agent, and selling_price as SRP
-
           const agentVariant: AgentVariant = {
             id: variant.id,
             name: variant.name,
+            variantType: variant.variant_type || 'flavor',
             stock: item.stock,
-            price: item.allocated_price || mainPriceInfo.unit_price || 0, // Default to allocated price
+            price: item.allocated_price || mainPriceInfo.unit_price || 0,
             allocatedPrice: item.allocated_price,
             dspPrice: item.dsp_price,
             rspPrice: item.rsp_price,
@@ -105,17 +115,30 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
             status: item.status
           };
 
-          if (variant.variant_type === 'flavor') {
+          // Add to allVariants
+          brand.allVariants.push(agentVariant);
+
+          // Add to variantsByType map
+          const typeLower = variant.variant_type?.toLowerCase() || 'flavor';
+          if (!brand.variantsByType.has(typeLower)) {
+            brand.variantsByType.set(typeLower, []);
+          }
+          brand.variantsByType.get(typeLower)!.push(agentVariant);
+
+          // Maintain legacy arrays for backward compatibility
+          if (typeLower === 'flavor') {
             brand.flavors.push(agentVariant);
-          } else {
+          } else if (typeLower === 'battery') {
             brand.batteries.push(agentVariant);
+          } else if (typeLower === 'posm') {
+            brand.posms.push(agentVariant);
           }
         }
       });
 
       // Convert map to array and sort
       const formattedBrands = Array.from(brandsMap.values()).filter(b =>
-        b.flavors.length > 0 || b.batteries.length > 0
+        b.allVariants.length > 0
       );
 
       setAgentBrands(formattedBrands);
@@ -127,25 +150,53 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    if (!user?.id) {
+      console.log('⚠️ No user ID available, skipping inventory fetch and subscription');
+      setLoading(false);
+      return;
+    }
+
+    console.log(`📦 AgentInventoryContext: Fetching inventory for user ${user.id} (${user.role})`);
     fetchAgentInventory();
 
     let channel: RealtimeChannel | null = null;
+    let debounceTimer: NodeJS.Timeout | null = null;
 
-    if (user?.id && user.role === 'mobile_sales') {
+    // Debounced refresh to prevent multiple rapid updates
+    const debouncedRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        console.log('🔄 Real-time update: Refreshing agent inventory...');
+        fetchAgentInventory();
+      }, 300); // 300ms debounce
+    };
+
+    // Subscribe to agent_inventory changes for users with inventory (mobile_sales, team_leader, manager)
+    if (hasInventory(user.role)) {
+      console.log(`🎧 Setting up real-time subscription for agent_inventory (user: ${user.id}, role: ${user.role})`);
+
       // Subscribe to agent_inventory changes for this user
       channel = subscribeToTable(
         'agent_inventory',
-        () => {
-          console.log('🔔 Agent inventory updated, refreshing...');
-          fetchAgentInventory();
+        (payload) => {
+          console.log('🔔 Agent inventory change detected:', payload.eventType, payload);
+          debouncedRefresh();
         },
         '*',
         { column: 'agent_id', value: user.id }
       );
+
+      console.log(`✅ Subscription initiated for agent_inventory (user: ${user.id})`);
+    } else {
+      console.log(`ℹ️ User role ${user.role} does not require agent_inventory subscription`);
     }
 
     return () => {
-      if (channel) unsubscribe(channel);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (channel) {
+        console.log('🔌 Unsubscribing from agent_inventory');
+        unsubscribe(channel);
+      }
     };
   }, [user]);
 
@@ -156,7 +207,7 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
   const reduceStock = (
     brandName: string,
     variantName: string,
-    variantType: 'flavor' | 'battery',
+    variantType: string,
     quantity: number
   ) => {
     // Optimistic update
@@ -174,10 +225,20 @@ export function AgentInventoryProvider({ children }: { children: ReactNode }) {
           return v;
         };
 
+        const typeLower = variantType.toLowerCase();
+
         return {
           ...brand,
-          flavors: variantType === 'flavor' ? brand.flavors.map(updateVariant) : brand.flavors,
-          batteries: variantType === 'battery' ? brand.batteries.map(updateVariant) : brand.batteries
+          allVariants: brand.allVariants.map(updateVariant),
+          flavors: typeLower === 'flavor' ? brand.flavors.map(updateVariant) : brand.flavors,
+          batteries: typeLower === 'battery' ? brand.batteries.map(updateVariant) : brand.batteries,
+          posms: typeLower === 'posm' ? brand.posms.map(updateVariant) : brand.posms,
+          variantsByType: new Map(
+            Array.from(brand.variantsByType.entries()).map(([type, variants]) => [
+              type,
+              type === typeLower ? variants.map(updateVariant) : variants
+            ])
+          )
         };
       });
     });

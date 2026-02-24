@@ -24,9 +24,13 @@ type TableName =
   | 'inventory_transactions'
   | 'financial_transactions'
   | 'notifications'
+  | 'events'
   | 'remittances_log'
   | 'inventory_requests'
-  | 'leader_teams';
+  | 'stock_requests'
+  | 'leader_teams'
+  | 'sub_teams'
+  | 'cash_deposits';
 
 type ChangeEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 
@@ -45,8 +49,12 @@ export function subscribeToTable<T = any>(
   event: ChangeEvent = '*',
   filter?: { column: string; value: string | number }
 ): RealtimeChannel {
+  const channelName = filter 
+    ? `${table}-${filter.column}-${filter.value}-changes`
+    : `${table}-changes`;
+    
   let channel = supabase
-    .channel(`${table}-changes`)
+    .channel(channelName)
     .on(
       'postgres_changes' as any,
       {
@@ -56,9 +64,25 @@ export function subscribeToTable<T = any>(
         ...(filter && { filter: `${filter.column}=eq.${filter.value}` }),
       },
       callback
-    );
-
-  channel.subscribe();
+    )
+    .subscribe((status) => {
+      console.log(`🔄 Real-time subscription status for ${table}:`, status);
+      
+      if (status === 'SUBSCRIBED') {
+        console.log(`✅ Successfully subscribed to ${table}${filter ? ` (${filter.column}=${filter.value})` : ''}`);
+      } else if (status === 'CHANNEL_ERROR') {
+        // CHANNEL_ERROR can occur for multiple reasons:
+        // 1. Realtime not enabled (but user confirmed it is)
+        // 2. RLS policies blocking subscription
+        // 3. Invalid filter syntax
+        // 4. Permission issues
+        console.warn(`⚠️ Subscription to ${table} encountered an error. This may be due to RLS policies or permissions. Realtime updates may not work, but regular queries will still function.`);
+      } else if (status === 'TIMED_OUT') {
+        console.warn(`⏱️ Subscription to ${table} timed out. Check your connection.`);
+      } else if (status === 'CLOSED') {
+        console.log(`🔌 Subscription to ${table} was closed.`);
+      }
+    });
 
   return channel;
 }

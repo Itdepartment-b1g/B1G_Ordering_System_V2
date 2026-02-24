@@ -53,8 +53,36 @@ import {
   Image as ImageIcon,
   Upload,
   Eye,
-  ClipboardList
+  ClipboardList,
+  Check,
+  MapPin,
+  Camera,
+  X
 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+
+// Fix Leaflet marker icon issue
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+
+const DefaultIcon = L.icon({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41]
+});
+
+L.Marker.prototype.options.icon = DefaultIcon;
+
+// Function to update map center when position changes
+function ChangeView({ center }: { center: [number, number] }) {
+  const map = useMap();
+  map.setView(center, map.getZoom());
+  return null;
+}
 
 interface Task {
   id: string;
@@ -76,6 +104,11 @@ interface Task {
   notes: string | null;
   attachment_url?: string | null;
   urgency_status: 'overdue' | 'due_soon' | 'on_time';
+  client_id?: string;
+  client_name?: string;
+  client_company?: string;
+  client_latitude?: number;
+  client_longitude?: number;
 }
 
 interface AgentWithTasks {
@@ -89,11 +122,13 @@ interface TeamMember {
   id: string;
   full_name: string;
   email: string;
-  position: string;
+  role: string;
 }
 
 export default function TasksPage() {
   const { user } = useAuth();
+
+  const isMobileSales = user?.role === 'mobile_sales';
   const { toast } = useToast();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -103,13 +138,41 @@ export default function TasksPage() {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   
+  // Client selection states
+  const [agentClients, setAgentClients] = useState<{id: string, name: string}[]>([]);
+  const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
+  const [fetchingClients, setFetchingClients] = useState(false);
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+
+  // Record Visit states
+  const [showRecordVisitDialog, setShowRecordVisitDialog] = useState(false);
+  const [visitPhoto, setVisitPhoto] = useState<string | null>(null);
+  const [visitForm, setVisitForm] = useState({
+    notes: ''
+  });
+  const [visitLocation, setVisitLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    address: string;
+    city?: string;
+  } | null>(null);
+
+  const [isUploading, setIsUploading] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const [visitedTask, setVisitedTask] = useState<Task | null>(null);
+
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  
+  /** When false: task is due today only (current behavior). When true: leader can pick any date. */
+  const [plotForSpecificDate, setPlotForSpecificDate] = useState(false);
+
   // Form states
   const [formData, setFormData] = useState({
     agent_id: '',
@@ -137,8 +200,10 @@ export default function TasksPage() {
     return `${year}-${month}-${day}`;
   };
 
-  // Check if user is a leader
-  const isLeader = user?.position === 'Leader';
+  // Check if user is a leader or mobile sales
+  const isLeader = user?.role === 'team_leader' || user?.role === 'admin' || user?.role === 'manager';
+
+  const canAccess = isLeader || isMobileSales;
 
   const toggleAgentExpansion = (agentId: string) => {
     setExpandedAgents(prev => {
@@ -153,26 +218,28 @@ export default function TasksPage() {
   };
 
   useEffect(() => {
-    if (isLeader) {
+    if (canAccess) {
       fetchTasks();
-      fetchTeamMembers();
+      if (isLeader) {
+        fetchTeamMembers();
+      }
     }
-  }, [isLeader]);
+  }, [canAccess, isLeader]);
 
   const fetchTasks = async () => {
     try {
       setLoading(true);
-      
+
       // Get today's date range
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      
+
       // First try to fetch from task_details view
       let { data, error } = await supabase
         .from('task_details')
-        .select('*')
+        .select('id, leader_id, leader_name, leader_email, agent_id, agent_name, agent_email, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, attachment_url, urgency_status')
         .eq('leader_id', user?.id)
         .gte('due_date', today.toISOString())
         .lt('due_date', tomorrow.toISOString())
@@ -181,32 +248,48 @@ export default function TasksPage() {
       // If task_details view doesn't exist, try fetching from tasks table directly
       if (error && error.code === '42P01') { // relation does not exist
         console.log('task_details view not found, trying tasks table...');
-        const tasksQuery = await supabase
+        let tasksQuery = supabase
           .from('tasks')
           .select(`
-            *,
+            id, leader_id, agent_id, client_id, title, description, status, priority, created_at, given_at, completed_at, due_date, time, notes, attachment_url,
             leader:profiles!tasks_leader_id_fkey(full_name, email),
-            agent:profiles!tasks_agent_id_fkey(full_name, email)
-          `)
-          .eq('leader_id', user?.id)
+            agent:profiles!tasks_agent_id_fkey(full_name, email),
+            leader:profiles!tasks_leader_id_fkey(full_name, email),
+            agent:profiles!tasks_agent_id_fkey(full_name, email),
+            client:clients!tasks_client_id_fkey(name, company, location_latitude, location_longitude)
+          `);
+
+        if (isMobileSales) {
+          tasksQuery = tasksQuery.eq('agent_id', user?.id || '');
+        } else {
+          tasksQuery = tasksQuery.eq('leader_id', user?.id || '');
+        }
+
+        const { data: tasksData, error: tasksError } = await tasksQuery
           .gte('due_date', today.toISOString())
           .lt('due_date', tomorrow.toISOString())
           .order('created_at', { ascending: false });
-
-        if (tasksQuery.error) throw tasksQuery.error;
         
+        if (tasksError) throw tasksError;
+
         // Transform the data to match the expected format
-        data = tasksQuery.data?.map(task => ({
+        data = tasksData?.map((task: any) => ({
+
+
           ...task,
-          leader_name: task.leader?.full_name || 'Unknown Leader',
-          leader_email: task.leader?.email || '',
-          agent_name: task.agent?.full_name || 'Unknown Agent',
-          agent_email: task.agent?.email || '',
-          urgency_status: task.due_date && task.due_date < new Date().toISOString() && task.status !== 'completed' 
-            ? 'overdue' 
+          leader_name: (task.leader as any)?.full_name || 'Unknown Leader',
+          leader_email: (task.leader as any)?.email || '',
+          agent_name: (task.agent as any)?.full_name || 'Unknown Agent',
+          agent_email: (task.agent as any)?.email || '',
+          client_name: (task.client as any)?.name || '',
+          client_company: (task.client as any)?.company || '',
+          client_latitude: (task.client as any)?.location_latitude,
+          client_longitude: (task.client as any)?.location_longitude,
+          urgency_status: task.due_date && task.due_date < new Date().toISOString() && task.status !== 'completed'
+            ? 'overdue'
             : task.due_date && new Date(task.due_date) <= new Date(Date.now() + 24 * 60 * 60 * 1000) && task.status !== 'completed'
-            ? 'due_soon'
-            : 'on_time'
+              ? 'due_soon'
+              : 'on_time'
         })) || [];
       } else if (error) {
         throw error;
@@ -236,7 +319,7 @@ export default function TasksPage() {
             id,
             full_name,
             email,
-            position
+            role
           )
         `)
         .eq('leader_id', user?.id);
@@ -247,7 +330,7 @@ export default function TasksPage() {
         id: (item.profiles as any).id,
         full_name: (item.profiles as any).full_name,
         email: (item.profiles as any).email,
-        position: (item.profiles as any).position
+        role: (item.profiles as any).role
       })) || [];
 
       setTeamMembers(members);
@@ -261,27 +344,108 @@ export default function TasksPage() {
     }
   };
 
+  const fetchAgentClients = async (agentId: string) => {
+    if (!agentId) {
+      setAgentClients([]);
+      return;
+    }
+    
+    setFetchingClients(true);
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, name, company')
+        .eq('agent_id', agentId)
+        .order('company');
+        
+      if (error) throw error;
+      
+      setAgentClients(data?.map((c: any) => ({
+        id: c.id,
+        name: c.company || c.name || 'Unnamed Client'
+      })) || []);
+    } catch (error) {
+      console.error('Error fetching agent clients:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load agent clients',
+        variant: 'destructive'
+      });
+    } finally {
+      setFetchingClients(false);
+    }
+  };
+
   const handleCreateTask = async () => {
     try {
-      const { error } = await supabase
-        .from('tasks')
-        .insert({
-          leader_id: user?.id,
-          agent_id: formData.agent_id,
-          title: formData.title,
-          description: formData.description,
-          priority: formData.priority,
-          due_date: formData.due_date || null,
-          time: formData.due_time || null,
-          notes: formData.notes || null
+      if (!user?.company_id) {
+        toast({
+          title: 'Error',
+          description: 'User company information is missing',
+          variant: 'destructive'
         });
+        return;
+      }
 
-      if (error) throw error;
+      if (selectedClientIds.length > 0) {
+        // Create multiple tasks for selected clients
+        const createPromises = selectedClientIds.map(clientId => {
+          const client = agentClients.find(c => c.id === clientId);
+          const clientName = client?.name || 'Unknown Client';
+          
+          return supabase
+            .from('tasks')
+            .insert({
+              company_id: user.company_id,
+              leader_id: user.id,
+              agent_id: formData.agent_id,
+              client_id: clientId,
+              title: `${formData.title} - ${clientName}`,
+              description: formData.description,
+              priority: formData.priority,
+              due_date: formData.due_date || null,
+              time: '23:59', // Auto set to midnight as requested
+              notes: formData.notes || null,
+              status: 'pending' // Explicitly set status
+            });
+        });
+        
+        const results = await Promise.all(createPromises);
+        const errors = results.filter(r => r.error);
+        
+        if (errors.length > 0) {
+          console.error('Errors creating tasks:', errors);
+          throw new Error(`Failed to create ${errors.length} tasks`);
+        }
+        
+        toast({
+          title: 'Success',
+          description: `${selectedClientIds.length} tasks created successfully`
+        });
+      } else {
+        // Single task without client selection
+        const { error } = await supabase
+          .from('tasks')
+          .insert({
+            company_id: user.company_id,
+            leader_id: user.id,
+            agent_id: formData.agent_id,
+            title: formData.title,
+            description: formData.description,
+            priority: formData.priority,
+            due_date: formData.due_date || null,
+            time: formData.due_time || null,
+            notes: formData.notes || null,
+            status: 'pending'
+          });
 
-      toast({
-        title: 'Success',
-        description: 'Task created successfully'
-      });
+        if (error) throw error;
+
+        toast({
+          title: 'Success',
+          description: 'Task created successfully'
+        });
+      }
 
       setCreateDialogOpen(false);
       resetForm();
@@ -295,6 +459,7 @@ export default function TasksPage() {
       });
     }
   };
+
 
   const handleUpdateTask = async () => {
     if (!selectedTask) return;
@@ -337,7 +502,7 @@ export default function TasksPage() {
     setSelectedTask(task);
     const dueDate = task.due_date ? task.due_date.split('T')[0] : '';
     const dueTime = task.time || '09:00';
-    
+
     setFormData({
       agent_id: task.agent_id,
       title: task.title,
@@ -386,6 +551,7 @@ export default function TasksPage() {
   };
 
   const resetForm = () => {
+    setPlotForSpecificDate(false);
     setFormData({
       agent_id: '',
       title: '',
@@ -396,6 +562,186 @@ export default function TasksPage() {
       notes: '',
       attachment: null
     });
+    setAgentClients([]);
+    setSelectedClientIds([]);
+  };
+
+  // Helper functions for Record Visit
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3; // Earth radius in meters
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) *
+      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  const startCamera = async () => {
+    setShowCamera(true);
+    try {
+      // Get Location first
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            setVisitLocation({
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              accuracy: position.coords.accuracy,
+              address: 'Fetching address...'
+            });
+          },
+          (error) => {
+            console.error("Error getting location", error);
+            toast({ title: 'Error', description: 'Could not get location.', variant: 'destructive' });
+          },
+          { enableHighAccuracy: true }
+        );
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      });
+      setStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Error accessing camera", err);
+      toast({ title: 'Error', description: 'Could not access camera', variant: 'destructive' });
+      setShowCamera(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    setShowCamera(false);
+  };
+
+  const captureVisitPhoto = () => {
+    if (videoRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setVisitPhoto(dataUrl);
+        stopCamera();
+      }
+    }
+  };
+
+  const removeVisitPhoto = () => {
+    setVisitPhoto(null);
+  };
+
+  const handleRecordVisit = async () => {
+    if (!visitPhoto || !visitLocation || !visitedTask || !visitedTask.client_id) {
+      toast({ title: 'Error', description: 'Missing photo, location or client info', variant: 'destructive' });
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const base64Data = visitPhoto.split(',')[1];
+      const byteCharacters = atob(base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+      const timestamp = Date.now();
+      const fileName = `${user?.id}/visit_${visitedTask.client_id}_${timestamp}.jpg`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('daily-attachments')
+        .upload(fileName, blob, { contentType: 'image/jpeg' });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from('daily-attachments')
+        .getPublicUrl(fileName);
+
+      // Insert Visit Log
+      const distance = (visitedTask.client_latitude && visitedTask.client_longitude)
+        ? calculateDistance(visitLocation.latitude, visitLocation.longitude, visitedTask.client_latitude, visitedTask.client_longitude)
+        : 0;
+
+      const { error: dbError } = await supabase
+        .from('visit_logs')
+        .insert({
+          agent_id: user?.id,
+          client_id: visitedTask.client_id,
+          task_id: visitedTask.id, // Linked task
+          visited_at: new Date().toISOString(),
+          notes: visitForm.notes,
+          photo_url: urlData.publicUrl,
+          latitude: visitLocation.latitude,
+          longitude: visitLocation.longitude,
+          address: visitLocation.address,
+          is_within_radius: distance <= 100,
+          distance_meters: distance,
+          radius_limit_meters: 100
+        });
+
+      if (dbError) throw dbError;
+
+      // Auto-complete the task and save photo
+      if (visitedTask) {
+        const { error: taskError } = await supabase
+          .from('tasks')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            attachment_url: urlData.publicUrl
+          })
+          .eq('id', visitedTask.id);
+
+        if (taskError) {
+          console.error("Error auto-completing task:", taskError);
+          toast({ title: 'Warning', description: 'Visit recorded but failed to update task status.', variant: 'destructive' });
+        } else {
+          // Optimistic update or refetch
+          setTasks(prev => prev.map(t => 
+            t.id === visitedTask.id 
+              ? { ...t, status: 'completed', completed_at: new Date().toISOString(), attachment_url: urlData.publicUrl }
+              : t
+          ));
+        }
+      }
+
+      toast({ title: 'Success', description: 'Visit recorded and task completed successfully' });
+      setShowRecordVisitDialog(false);
+      setVisitPhoto(null);
+      setVisitForm({ notes: '' });
+      setVisitLocation(null);
+      setVisitedTask(null);
+      
+      // Refresh tasks to ensure consistency
+      fetchTasks();
+
+    } catch (err) {
+      console.error(err);
+      toast({ title: 'Error', description: 'Failed to record visit', variant: 'destructive' });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const openRecordVisitDialog = (task: Task) => {
+    setVisitedTask(task);
+    setShowRecordVisitDialog(true);
   };
 
   const handleViewTask = (task: Task) => {
@@ -405,7 +751,7 @@ export default function TasksPage() {
 
   const groupTasksByAgent = (tasks: Task[]): AgentWithTasks[] => {
     const grouped = new Map<string, AgentWithTasks>();
-    
+
     tasks.forEach(task => {
       if (!grouped.has(task.agent_id)) {
         grouped.set(task.agent_id, {
@@ -417,7 +763,7 @@ export default function TasksPage() {
       }
       grouped.get(task.agent_id)!.tasks.push(task);
     });
-    
+
     return Array.from(grouped.values());
   };
 
@@ -463,22 +809,24 @@ export default function TasksPage() {
 
   const filteredTasks = tasks.filter(task => {
     const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         task.agent_name.toLowerCase().includes(searchQuery.toLowerCase());
+      task.agent_name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
     const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
-    
+
     return matchesSearch && matchesStatus && matchesPriority;
   });
 
   const agentsWithTasks = groupTasksByAgent(filteredTasks);
 
-  if (!isLeader) {
+
+
+  if (!canAccess) {
     return (
       <div className="p-8">
         <Card>
           <CardContent className="p-8 text-center">
             <h2 className="text-2xl font-bold text-gray-600">Access Denied</h2>
-            <p className="text-gray-500 mt-2">Only leaders can access the tasks page.</p>
+            <p className="text-gray-500 mt-2">You do not have permission to view this page.</p>
           </CardContent>
         </Card>
       </div>
@@ -491,28 +839,35 @@ export default function TasksPage() {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Task Management</h1>
-          <p className="text-gray-600">Manage tasks for your team members</p>
+          <p className="text-gray-600">
+            {isMobileSales ? 'View your assigned tasks' : 'Manage tasks for your team members'}
+          </p>
         </div>
-        
-        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Task
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+
+        {isLeader && (
+          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Create Task
+              </Button>
+            </DialogTrigger>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New Task</DialogTitle>
               <DialogDescription>
                 Assign a new task to one of your team members
               </DialogDescription>
             </DialogHeader>
-            
-            <div className="space-y-4">
+
+            <div className="space-y-4 px-1">
               <div>
                 <Label htmlFor="agent">Team Member</Label>
-                <Select value={formData.agent_id} onValueChange={(value) => setFormData({...formData, agent_id: value})}>
+                <Select value={formData.agent_id} onValueChange={(value) => {
+                  setFormData({ ...formData, agent_id: value });
+                  setSelectedClientIds([]); // Reset selected clients
+                  fetchAgentClients(value);
+                }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select team member" />
                   </SelectTrigger>
@@ -526,12 +881,74 @@ export default function TasksPage() {
                 </Select>
               </div>
 
+              {/* Client Selection (Optional) */}
+              {agentClients.length > 0 && (
+                <div className="border rounded-md p-3 bg-slate-50">
+                  <Label className="mb-2 block font-medium">Select Clients (Optional)</Label>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Selecting multiple clients will create separate tasks for each client.
+                  </p>
+                  
+                  {/* Search Bar */}
+                  <div className="relative mb-3">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search clients..."
+                      value={clientSearchQuery}
+                      onChange={(e) => setClientSearchQuery(e.target.value)}
+                      className="pl-8 h-9 text-sm"
+                    />
+                  </div>
+
+                  <div className="max-h-40 overflow-y-auto space-y-2 p-1">
+                    {agentClients
+                      .filter(client => 
+                        client.name.toLowerCase().includes(clientSearchQuery.toLowerCase())
+                      )
+                      .map(client => (
+                      <div key={client.id} className="flex items-center space-x-2 bg-white p-2 rounded border border-gray-100 shadow-sm">
+                        <Checkbox 
+                          id={`client-${client.id}`} 
+                          checked={selectedClientIds.includes(client.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedClientIds([...selectedClientIds, client.id]);
+                            } else {
+                              setSelectedClientIds(selectedClientIds.filter(id => id !== client.id));
+                            }
+                          }}
+                        />
+                        <Label 
+                          htmlFor={`client-${client.id}`} 
+                          className="text-sm font-normal cursor-pointer flex-1"
+                        >
+                          {client.name}
+                        </Label>
+                      </div>
+                    ))}
+                    {agentClients.filter(client => 
+                      client.name.toLowerCase().includes(clientSearchQuery.toLowerCase())
+                    ).length === 0 && (
+                      <div className="text-center py-4 text-sm text-muted-foreground">
+                        No clients found
+                      </div>
+                    )}
+                  </div>
+                  {selectedClientIds.length > 0 && (
+                    <div className="mt-2 text-xs text-blue-600 font-medium flex items-center">
+                      <Check className="h-3 w-3 mr-1" />
+                      {selectedClientIds.length} tasks will be created due by midnight
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <Label htmlFor="title">Task Title</Label>
                 <Input
                   id="title"
                   value={formData.title}
-                  onChange={(e) => setFormData({...formData, title: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   placeholder="Enter task title"
                 />
               </div>
@@ -541,16 +958,16 @@ export default function TasksPage() {
                 <Textarea
                   id="description"
                   value={formData.description}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Enter task description"
                   rows={3}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="priority">Priority</Label>
-                  <Select value={formData.priority} onValueChange={(value: any) => setFormData({...formData, priority: value})}>
+                  <Select value={formData.priority} onValueChange={(value: any) => setFormData({ ...formData, priority: value })}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -564,27 +981,51 @@ export default function TasksPage() {
                 </div>
 
                 <div>
-                  <Label htmlFor="due_date" className="flex items-center gap-2">
-                    Due Date
-                    <Badge variant="secondary" className="text-xs">Today Only</Badge>
-                  </Label>
-                  <Input
-                    id="due_date"
-                    type="date"
-                    value={formData.due_date}
-                    readOnly
-                    disabled
-                    className="bg-gray-50 cursor-not-allowed"
-                  />
+                  <Label className="mb-2 block">When should this task be due?</Label>
+                  <Select
+                    value={plotForSpecificDate ? 'specific' : 'today'}
+                    onValueChange={(value) => {
+                      const useSpecific = value === 'specific';
+                      setPlotForSpecificDate(useSpecific);
+                      if (!useSpecific) setFormData((prev) => ({ ...prev, due_date: getTodayDate() }));
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:max-w-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="today">Today</SelectItem>
+                      <SelectItem value="specific">Pick a date (plot for another day)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {plotForSpecificDate && (
+                    <div className="mt-2">
+                      <Label htmlFor="due_date">Due Date</Label>
+                      <Input
+                        id="due_date"
+                        type="date"
+                        min={getTodayDate()}
+                        value={formData.due_date}
+                        onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                        className="mt-1"
+                      />
+                    </div>
+                  )}
+                  {!plotForSpecificDate && (
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      Due: {formData.due_date} (today)
+                    </p>
+                  )}
                 </div>
 
-                <div>
+                <div className="sm:col-span-2">
                   <Label htmlFor="due_time">Due Time</Label>
                   <Input
                     id="due_time"
                     type="time"
                     value={formData.due_time}
-                    onChange={(e) => setFormData({...formData, due_time: e.target.value})}
+                    onChange={(e) => setFormData({ ...formData, due_time: e.target.value })}
+                    className="max-w-full sm:max-w-xs"
                   />
                 </div>
               </div>
@@ -594,23 +1035,35 @@ export default function TasksPage() {
                 <Textarea
                   id="notes"
                   value={formData.notes}
-                  onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                   placeholder="Additional notes (optional)"
                   rows={2}
                 />
               </div>
 
-              <div className="flex justify-end space-x-2">
-                <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:space-x-2 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setCreateDialogOpen(false);
+                    setClientSearchQuery(''); // Reset search on close
+                  }}
+                  className="w-full sm:w-auto"
+                >
                   Cancel
                 </Button>
-                <Button onClick={handleCreateTask} disabled={!formData.agent_id || !formData.title}>
+                <Button 
+                  onClick={handleCreateTask} 
+                  disabled={!formData.agent_id || !formData.title}
+                  className="w-full sm:w-auto"
+                >
                   Create Task
                 </Button>
               </div>
             </div>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Filters */}
@@ -628,7 +1081,7 @@ export default function TasksPage() {
                 />
               </div>
             </div>
-            
+
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-40">
                 <SelectValue placeholder="Status" />
@@ -687,11 +1140,11 @@ export default function TasksPage() {
                 {filteredTasks.length === 0 && tasks.length > 0
                   ? "No tasks match your current search or filters. Try adjusting your filters or search query."
                   : filteredTasks.length === 0
-                  ? "You don't have any tasks scheduled for today. Create a task to get started!"
-                  : "Great job! Your team has no tasks due today."}
+                    ? "You don't have any tasks scheduled for today. Create a task to get started!"
+                    : "Great job! Your team has no tasks due today."}
               </p>
               {filteredTasks.length === 0 && (
-                <Button 
+                <Button
                   onClick={() => setCreateDialogOpen(true)}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg shadow-sm hover:shadow-md transition-all"
                 >
@@ -705,7 +1158,7 @@ export default function TasksPage() {
               {agentsWithTasks.map((agent) => (
                 <div key={agent.agent_id} className="border rounded-lg overflow-hidden">
                   {/* Agent Header */}
-                  <div 
+                  <div
                     className="flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
                     onClick={() => toggleAgentExpansion(agent.agent_id)}
                   >
@@ -725,14 +1178,14 @@ export default function TasksPage() {
                       {agent.tasks.length} {agent.tasks.length === 1 ? 'task' : 'tasks'}
                     </Badge>
                   </div>
-                  
+
                   {/* Agent Tasks Subtable */}
                   {expandedAgents.has(agent.agent_id) && (
                     <div className="border-t bg-white">
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className="w-40">Title</TableHead>
+                            <TableHead className="w-40">Task / Client</TableHead>
                             <TableHead className="w-28">Priority</TableHead>
                             <TableHead className="w-32">Status</TableHead>
                             <TableHead className="w-36">Due Time</TableHead>
@@ -743,7 +1196,14 @@ export default function TasksPage() {
                         <TableBody>
                           {agent.tasks.map((task) => (
                             <TableRow key={task.id} className="hover:bg-gray-50">
-                              <TableCell className="font-medium">{task.title}</TableCell>
+                              <TableCell className="font-medium">
+                                <div>
+                                  <div>{task.title}</div>
+                                  {task.client_company && (
+                                    <div className="text-xs text-muted-foreground">{task.client_company}</div>
+                                  )}
+                                </div>
+                              </TableCell>
                               <TableCell>{getPriorityBadge(task.priority)}</TableCell>
                               <TableCell>{getStatusBadge(task.status)}</TableCell>
                               <TableCell>
@@ -758,6 +1218,17 @@ export default function TasksPage() {
                               </TableCell>
                               <TableCell>
                                 <div className="flex space-x-1">
+                                  {isMobileSales && task.client_id && (
+                                    <Button
+                                      variant="default"
+                                      size="sm"
+                                      className="bg-green-600 hover:bg-green-700 text-white"
+                                      onClick={() => openRecordVisitDialog(task)}
+                                      title="Record Visit"
+                                    >
+                                      <MapPin className="h-4 w-4" />
+                                    </Button>
+                                  )}
                                   {task.attachment_url && (
                                     <Button
                                       variant="outline"
@@ -814,7 +1285,7 @@ export default function TasksPage() {
               View complete task information
             </DialogDescription>
           </DialogHeader>
-          
+
           {selectedTask && (
             <div className="space-y-6 py-4">
               {/* Task Title & Status */}
@@ -866,8 +1337,8 @@ export default function TasksPage() {
                 <div>
                   <Label className="text-sm font-semibold">Completed</Label>
                   <div className="mt-2 text-sm text-gray-600">
-                    {selectedTask.completed_at 
-                      ? new Date(selectedTask.completed_at).toLocaleString() 
+                    {selectedTask.completed_at
+                      ? new Date(selectedTask.completed_at).toLocaleString()
                       : 'Not completed'}
                   </div>
                 </div>
@@ -913,6 +1384,22 @@ export default function TasksPage() {
                 </div>
               )}
 
+              {/* Client Information */}
+              {(selectedTask.client_name || selectedTask.client_company) && (
+                <div className="border-t pt-4">
+                  <Label className="text-sm font-semibold mb-3 block">Client Information</Label>
+                  <div className="flex items-center space-x-3 p-3 bg-blue-50/50 rounded-lg border border-blue-100">
+                    <User className="h-8 w-8 text-blue-600" />
+                    <div>
+                      <div className="font-medium">{selectedTask.client_name}</div>
+                      {selectedTask.client_company && (
+                        <div className="text-sm text-gray-500">{selectedTask.client_company}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Agent Information */}
               <div className="border-t pt-4">
                 <Label className="text-sm font-semibold mb-3 block">Agent Information</Label>
@@ -944,14 +1431,14 @@ export default function TasksPage() {
               Update task details
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="space-y-4">
             <div>
               <Label htmlFor="edit-title">Task Title</Label>
               <Input
                 id="edit-title"
                 value={formData.title}
-                onChange={(e) => setFormData({...formData, title: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 placeholder="Enter task title"
               />
             </div>
@@ -961,7 +1448,7 @@ export default function TasksPage() {
               <Textarea
                 id="edit-description"
                 value={formData.description}
-                onChange={(e) => setFormData({...formData, description: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="Enter task description"
                 rows={3}
               />
@@ -970,7 +1457,7 @@ export default function TasksPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="edit-priority">Priority</Label>
-                <Select value={formData.priority} onValueChange={(value: any) => setFormData({...formData, priority: value})}>
+                <Select value={formData.priority} onValueChange={(value: any) => setFormData({ ...formData, priority: value })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -989,7 +1476,7 @@ export default function TasksPage() {
                   id="edit-due_date"
                   type="date"
                   value={formData.due_date}
-                  onChange={(e) => setFormData({...formData, due_date: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
                 />
               </div>
 
@@ -999,7 +1486,7 @@ export default function TasksPage() {
                   id="edit-due_time"
                   type="time"
                   value={formData.due_time}
-                  onChange={(e) => setFormData({...formData, due_time: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, due_time: e.target.value })}
                 />
               </div>
             </div>
@@ -1009,7 +1496,7 @@ export default function TasksPage() {
               <Textarea
                 id="edit-notes"
                 value={formData.notes}
-                onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                 placeholder="Additional notes (optional)"
                 rows={2}
               />
@@ -1026,8 +1513,166 @@ export default function TasksPage() {
           </div>
         </DialogContent>
       </Dialog>
+      
+      {/* Record Visit Dialog */}
+      <Dialog open={showRecordVisitDialog} onOpenChange={(open) => {
+        setShowRecordVisitDialog(open);
+        if (!open) {
+          setVisitPhoto(null);
+          setVisitLocation(null);
+          setVisitForm({ notes: '' });
+          stopCamera();
+        }
+      }}>
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Record Client Visit</DialogTitle>
+            <DialogDescription>
+              Verify your visit for task: {visitedTask?.title}
+            </DialogDescription>
+          </DialogHeader>
 
-      {/* Delete Confirmation Dialog */}
+          <div className="space-y-4 py-2">
+            {/* 1. Client Info (Read only) */}
+             <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+               <div className="font-medium text-blue-900">{visitedTask?.client_name || 'Client'}</div>
+               {visitedTask?.client_company && (
+                 <div className="text-sm text-blue-700">{visitedTask?.client_company}</div>
+               )}
+            </div>
+
+            {/* 2. Camera & Location Section */}
+            <div className="space-y-2">
+              <Label>Verification Photo *</Label>
+
+              {/* Camera Logic Reuse */}
+              {!visitPhoto && !showCamera && (
+                <div className="border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" onClick={startCamera}>
+                  <Camera className="h-10 w-10 text-muted-foreground mb-2" />
+                  <p className="font-medium text-sm">Tap to Take Photo</p>
+                  <p className="text-xs text-muted-foreground">Camera & Location required</p>
+                </div>
+              )}
+
+              {/* Camera View */}
+              {showCamera && (
+                <div className="relative rounded-lg overflow-hidden bg-black">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-64 object-cover"
+                  />
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4 z-20">
+                    <Button
+                      variant="destructive"
+                      onClick={stopCamera}
+                      className="rounded-full w-12 h-12 p-0 flex items-center justify-center"
+                    >
+                      <X className="h-6 w-6" />
+                    </Button>
+                    <Button
+                      onClick={() => captureVisitPhoto()}
+                      className="rounded-full w-16 h-16 p-0 flex items-center justify-center bg-white hover:bg-gray-200 border-4 border-gray-300"
+                    >
+                      <div className="w-12 h-12 rounded-full bg-red-500"></div>
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Photo Preview & Map */}
+              {visitPhoto && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Map */}
+                  <div className="h-64 rounded-lg overflow-hidden border relative z-0 shadow-sm">
+                    {visitLocation && visitedTask?.client_latitude && visitedTask?.client_longitude ? (
+                      <MapContainer
+                        center={[visitLocation.latitude, visitLocation.longitude]}
+                        zoom={18}
+                        style={{ height: '100%', width: '100%' }}
+                        dragging={true}
+                      >
+                        <ChangeView center={[visitLocation.latitude, visitLocation.longitude]} />
+                        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                        <Circle
+                          center={[visitedTask.client_latitude, visitedTask.client_longitude]}
+                          pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.8, fillOpacity: 0.2 }}
+                          radius={100}
+                        />
+                        <Marker position={[visitedTask.client_latitude, visitedTask.client_longitude]} />
+                        <Marker position={[visitLocation.latitude, visitLocation.longitude]}>
+                          <Popup>You are here</Popup>
+                        </Marker>
+                      </MapContainer>
+                    ) : (
+                      <div className="flex items-center justify-center h-full bg-muted text-muted-foreground p-4 text-center">
+                        <p>Map unavailable (missing locations)</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Photo */}
+                  <div className="relative h-64 rounded-lg overflow-hidden border bg-black">
+                    <img src={visitPhoto} className="w-full h-full object-contain" />
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      className="absolute top-2 right-2"
+                      onClick={removeVisitPhoto}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+
+                    {/* Distance Status */}
+                    {visitLocation && visitedTask?.client_latitude && visitedTask?.client_longitude && (
+                      <div className={`absolute bottom-0 left-0 right-0 p-2 text-center text-xs font-bold text-white 
+                                  ${calculateDistance(visitLocation.latitude, visitLocation.longitude, visitedTask.client_latitude, visitedTask.client_longitude) <= 100 ? 'bg-green-600/90' : 'bg-red-600/90'}
+                               `}>
+                        Distance: {Math.round(calculateDistance(visitLocation.latitude, visitLocation.longitude, visitedTask.client_latitude, visitedTask.client_longitude))}m
+                        {calculateDistance(visitLocation.latitude, visitLocation.longitude, visitedTask.client_latitude, visitedTask.client_longitude) > 100 ? ' (Too Far)' : ' (Verified)'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Notes */}
+            <div className="space-y-2">
+              <Label>Visit Notes</Label>
+              <Textarea
+                placeholder="Details about the visit..."
+                value={visitForm.notes}
+                onChange={(e) => setVisitForm({ ...visitForm, notes: e.target.value })}
+              />
+            </div>
+
+            <Button
+              className="w-full"
+              onClick={handleRecordVisit}
+              disabled={
+                isUploading ||
+                !visitPhoto ||
+                !visitLocation ||
+                (!!visitLocation &&
+                  visitedTask?.client_latitude != null &&
+                  visitedTask?.client_longitude != null &&
+                  calculateDistance(
+                    visitLocation.latitude,
+                    visitLocation.longitude,
+                    visitedTask.client_latitude,
+                    visitedTask.client_longitude
+                  ) > 100)
+              }
+            >
+              {isUploading ? 'Recording...' : 'Submit Visit Log'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -1036,12 +1681,12 @@ export default function TasksPage() {
               Delete Task
             </DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-4 py-4">
             <p className="text-muted-foreground">
               Are you sure you want to delete this task? This action cannot be undone.
             </p>
-            
+
             {selectedTask && (
               <div className="bg-gray-50 p-3 rounded-lg">
                 <h4 className="font-medium text-sm text-gray-700 mb-1">Task Details:</h4>
@@ -1052,15 +1697,15 @@ export default function TasksPage() {
                 )}
               </div>
             )}
-            
+
             <div className="flex justify-end gap-3">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => setDeleteConfirmOpen(false)}
               >
                 Cancel
               </Button>
-              <Button 
+              <Button
                 variant="destructive"
                 onClick={confirmDeleteTask}
               >

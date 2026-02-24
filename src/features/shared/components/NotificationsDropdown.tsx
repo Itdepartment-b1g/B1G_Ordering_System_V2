@@ -8,10 +8,10 @@ import {
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { getNotifications, markNotificationAsRead } from '@/lib/database.helpers';
 import { useAuth } from '@/features/auth/hooks';
 import { supabase } from '@/lib/supabase';
 import { Notification } from '@/types/database.types';
+import { getNotifications, markNotificationAsRead, markAllNotificationsAsRead } from '@/lib/database.helpers';
 import { formatDistanceToNow } from 'date-fns';
 
 export function NotificationsDropdown() {
@@ -22,8 +22,8 @@ export function NotificationsDropdown() {
   const [open, setOpen] = useState(false);
   const [teamAgentIds, setTeamAgentIds] = useState<string[]>([]);
 
-  // Check if user is a leader
-  const isLeader = user?.role === 'sales_agent' && user?.position === 'Leader';
+  // Check if user is a leader (use role instead of position)
+  const isLeader = user?.role === 'team_leader';
   const isAdmin = user?.role === 'admin';
 
   // Fetch notifications with role-based filtering
@@ -38,7 +38,7 @@ export function NotificationsDropdown() {
         // Admin: see all notifications
         const { data: allNotifications, error } = await supabase
           .from('notifications')
-          .select('*')
+          .select('id, company_id, user_id, notification_type, title, message, reference_type, reference_id, is_read, created_at')
           .order('created_at', { ascending: false })
           .limit(100);
 
@@ -50,7 +50,7 @@ export function NotificationsDropdown() {
         if (allowedUserIds.length > 0) {
           const { data: teamNotifications, error } = await supabase
             .from('notifications')
-            .select('*')
+            .select('id, company_id, user_id, notification_type, title, message, reference_type, reference_id, is_read, created_at')
             .in('user_id', allowedUserIds)
             .order('created_at', { ascending: false })
             .limit(100);
@@ -60,7 +60,15 @@ export function NotificationsDropdown() {
         }
       } else {
         // Sales Agent: only their own notifications
-        data = await getNotifications(user.id, false);
+        const { data: agentNotifications, error } = await supabase
+          .from('notifications')
+          .select('id, company_id, user_id, notification_type, title, message, reference_type, reference_id, is_read, created_at')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (error) throw error;
+        data = agentNotifications || [];
       }
 
       setNotifications(data);
@@ -74,8 +82,11 @@ export function NotificationsDropdown() {
 
   // Mark notification as read
   const handleMarkAsRead = async (notificationId: string) => {
+    if (!user?.id) return;
+
     try {
       await markNotificationAsRead(notificationId);
+
       setNotifications(prev =>
         prev.map(n =>
           n.id === notificationId ? { ...n, is_read: true } : n
@@ -92,10 +103,8 @@ export function NotificationsDropdown() {
     if (!user?.id) return;
 
     try {
-      const unreadNotifications = notifications.filter(n => !n.is_read);
-      await Promise.all(
-        unreadNotifications.map(n => markNotificationAsRead(n.id))
-      );
+      await markAllNotificationsAsRead(user.id);
+
       setNotifications(prev =>
         prev.map(n => ({ ...n, is_read: true }))
       );

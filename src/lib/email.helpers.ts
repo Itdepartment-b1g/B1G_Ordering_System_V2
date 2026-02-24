@@ -1,463 +1,646 @@
 import { supabase } from './supabase';
 
 interface OrderEmailData {
-  orderNumber: string;
-  clientName: string;
-  clientEmail: string;
-  orderDate: string;
-  items: Array<{
-    brandName: string;
-    variantName: string;
-    variantType: string;
-    quantity: number;
-    unitPrice: number;
+    orderNumber: string;
+    clientName: string;
+    clientEmail: string;
+    orderDate: string;
+    items: Array<{
+        brandName: string;
+        variantName: string;
+        variantType: string;
+        quantity: number;
+        unitPrice: number;
+        total: number;
+    }>;
+    subtotal: number;
+    tax: number;
+    discount: number;
     total: number;
-  }>;
-  subtotal: number;
-  tax: number;
-  discount: number;
-  total: number;
-  notes?: string;
-  signatureUrl?: string;
-  // Optional: agent contact info for support
-  agentName?: string;
-  agentEmail?: string;
-  agentPhone?: string;
-  // Optional: leader info and payment info for IT receipt
-  leaderName?: string;
-  paymentMethod?: string;
-  paymentProofUrl?: string;
-  // Sales invoice request
-  requestSalesInvoice?: boolean;
+    notes?: string;
+    signatureUrl?: string;
+    agentName?: string;
+    agentEmail?: string;
+    agentPhone?: string;
+    leaderName?: string;
+    paymentMethod?: string;
+    selectedBank?: string;
+    paymentProofUrl?: string;
+    // NEW: Split payment support
+    paymentMode?: 'FULL' | 'SPLIT';
+    paymentSplits?: Array<{
+        method: string;
+        bank?: string;
+        amount: number;
+        proofUrl?: string;
+    }>;
+    pricingStrategy?: string;
+    requestSalesInvoice?: boolean;
+    companyId?: string;
 }
 
-// Generate HTML email from order data for client
+// CLIENT EMAIL - Simple, human, transactional
 function generateEmailHTML(orderData: OrderEmailData): string {
-  const itemsHTML = orderData.items.map(item => `
-    <tr style="border-bottom: 1px solid #e5e7eb;">
-      <td style="padding: 12px; color: #374151;">${item.brandName} - ${item.variantName}</td>
-      <td style="padding: 12px; color: #374151; text-align: center;">${item.variantType}</td>
-      <td style="padding: 12px; color: #374151; text-align: center;">${item.quantity}</td>
-      <td style="padding: 12px; color: #374151; text-align: right;">₱${item.unitPrice.toFixed(2)}</td>
-      <td style="padding: 12px; color: #374151; text-align: right; font-weight: 600;">₱${item.total.toFixed(2)}</td>
-    </tr>
-  `).join('');
+    const formatPrice = (price: number) => `₱${price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    
+    const formatPaymentMethod = (method: string, bankName?: string) => {
+        if (!method) return 'Cash';
+        
+        // Handle enum values
+        if (method === 'BANK_TRANSFER') {
+            return bankName ? `Bank Transfer (${bankName})` : 'Bank Transfer';
+        }
+        if (method === 'GCASH') return 'GCash';
+        if (method === 'CHEQUE') return 'Cheque';
+        if (method === 'CASH') return 'Cash';
+        
+        // Already formatted (like "Bank Transfer (BPI)")
+        return method;
+    };
+    
+    const itemsHTML = orderData.items.map(item => `
+        <tr>
+            <td style="padding: 8px 12px 8px 0; border-bottom: 1px solid #eee;">
+                <div style="font-weight: 500; color: #111;">${item.brandName}</div>
+                <div style="font-size: 13px; color: #666; margin-top: 2px;">${item.variantName} · ${item.variantType}</div>
+            </td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #eee; text-align: right; color: #666;">${item.quantity}</td>
+            <td style="padding: 8px 0 8px 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: 500;">${formatPrice(item.total)}</td>
+        </tr>
+    `).join('');
 
-  return `
+    const hasSplitPayments = orderData.paymentMode === 'SPLIT' && Array.isArray(orderData.paymentSplits) && orderData.paymentSplits.length > 0;
+
+    const splitSummary = hasSplitPayments
+        ? orderData.paymentSplits!
+            .map(split => {
+                if (split.method === 'BANK_TRANSFER') {
+                    return split.bank ? `Bank Transfer (${split.bank})` : 'Bank Transfer';
+                }
+                if (split.method === 'GCASH') return 'GCash';
+                if (split.method === 'CASH') return 'Cash';
+                if (split.method === 'CHEQUE') return 'Cheque';
+                return split.method;
+            })
+            .join(' + ')
+        : '';
+
+    const paymentMethodDisplay = hasSplitPayments
+        ? `Split Payment – ${splitSummary}`
+        : formatPaymentMethod(orderData.paymentMethod, orderData.selectedBank);
+
+    const splitBreakdownHTML = hasSplitPayments ? `
+        <div style="margin-bottom: 24px;">
+            <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: #111;">Payment Breakdown</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <thead>
+                    <tr>
+                        <th style="padding: 8px 12px 8px 0; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Method</th>
+                        <th style="padding: 8px 12px; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Details</th>
+                        <th style="padding: 8px 0 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${orderData.paymentSplits!.map(split => {
+                        const methodLabel =
+                            split.method === 'BANK_TRANSFER'
+                                ? 'Bank Transfer'
+                                : split.method === 'GCASH'
+                                ? 'GCash'
+                                : split.method === 'CHEQUE'
+                                ? 'Cheque'
+                                : 'Cash';
+
+                        const detailsLabel =
+                            split.method === 'BANK_TRANSFER' && split.bank
+                                ? split.bank
+                                : split.method === 'GCASH'
+                                ? 'GCash Wallet'
+                                : split.method === 'CASH'
+                                ? 'Cash Payment'
+                                : split.method === 'CHEQUE'
+                                ? 'Cheque Payment'
+                                : '';
+
+                        return `
+                            <tr>
+                                <td style="padding: 8px 12px 8px 0; border-bottom: 1px solid #eee;">${methodLabel}</td>
+                                <td style="padding: 8px 12px; border-bottom: 1px solid #eee; color: #666;">${detailsLabel}</td>
+                                <td style="padding: 8px 0 8px 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: 500;">${formatPrice(split.amount)}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    ` : '';
+
+    return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Confirmation</title>
+    <title>Order ${orderData.orderNumber}</title>
 </head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f3f4f6;">
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.5; color: #333; background: #fafafa;">
     <table role="presentation" style="width: 100%; border-collapse: collapse;">
         <tr>
             <td align="center" style="padding: 40px 20px;">
-                <table role="presentation" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-                    <tr>
-                        <td style="padding: 40px 40px 20px; background-color: #1f2937; border-radius: 8px 8px 0 0;">
-                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">B1G Corporation</h1>
-                            <p style="margin: 8px 0 0; color: #d1d5db; font-size: 14px;">Order Confirmation</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 30px 40px;">
-                            <p style="margin: 0 0 16px; color: #6b7280; font-size: 14px; line-height: 1.6;">Dear ${orderData.clientName},</p>
-                            <p style="margin: 0 0 16px; color: #374151; font-size: 15px; line-height: 1.6;">Thank you for your order with B1G Corporation. Your order has been received and is pending approval.</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <table role="presentation" style="width: 100%; background-color: #f9fafb; border-radius: 8px; padding: 20px;">
+                <div style="max-width: 600px; background: #fff; border: 1px solid #e5e5e5; padding: 32px;">
+                    
+                    <!-- Header -->
+                    <div style="border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 24px;">
+                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">B1G Corporation</h1>
+                    </div>
+
+                    <!-- Main Content -->
+                    <div style="margin-bottom: 24px;">
+                        <p style="margin: 0 0 16px 0; color: #666; font-size: 14px;">Order confirmation</p>
+                        <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 600; color: #111;">${orderData.orderNumber}</h2>
+                        <p style="margin: 0 0 4px 0; color: #666; text-align: left;">Hi <strong>${orderData.clientName}</strong>,</p>
+                        <p style="margin: 0 0 24px 0; color: #333; text-align: left;">This email serves as your official e-receipt. Thank you for your transaction with B1G Corporation.</p>
+                    </div>
+
+                    <!-- Order Details -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: #fafafa; border-left: 3px solid #111;">
+                        <table style="width: 100%; font-size: 14px;">
+                            <tr>
+                                <td style="padding: 4px 0; color: #666;">Order date:</td>
+                                <td style="padding: 4px 0; text-align: right; color: #111;">${new Date(orderData.orderDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 4px 0; color: #666;">Payment method:</td>
+                                <td style="padding: 4px 0; text-align: right; color: #111;">${paymentMethodDisplay}</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    ${splitBreakdownHTML}
+
+                    <!-- Items -->
+                    <div style="margin-bottom: 24px;">
+                        <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: #111;">Items</h3>
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
                                 <tr>
-                                    <td>
-                                        <table role="presentation" style="width: 100%;">
-                                            <tr>
-                                                <td style="padding-bottom: 12px;">
-                                                    <span style="color: #6b7280; font-size: 14px;">Order Number:</span><br>
-                                                    <span style="color: #111827; font-size: 18px; font-weight: 600;">${orderData.orderNumber}</span>
-                                                </td>
-                                                <td align="right" style="padding-bottom: 12px;">
-                                                    <span style="color: #6b7280; font-size: 14px;">Order Date:</span><br>
-                                                    <span style="color: #111827; font-size: 14px; font-weight: 500;">${new Date(orderData.orderDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
-                                                </td>
-                                            </tr>
-                                        </table>
-                                    </td>
+                                    <th style="padding: 8px 12px 8px 0; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Product</th>
+                                    <th style="padding: 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Qty</th>
+                                    <th style="padding: 8px 0 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Amount</th>
                                 </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <h2 style="margin: 0 0 16px; color: #111827; font-size: 18px; font-weight: 600;">Order Items</h2>
-                            <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
-                                <thead>
-                                    <tr style="background-color: #f9fafb;">
-                                        <th style="padding: 12px; text-align: left; color: #6b7280; font-size: 14px; font-weight: 600;">Product</th>
-                                        <th style="padding: 12px; text-align: center; color: #6b7280; font-size: 14px; font-weight: 600;">Type</th>
-                                        <th style="padding: 12px; text-align: center; color: #6b7280; font-size: 14px; font-weight: 600;">Qty</th>
-                                        <th style="padding: 12px; text-align: right; color: #6b7280; font-size: 14px; font-weight: 600;">Unit Price</th>
-                                        <th style="padding: 12px; text-align: right; color: #6b7280; font-size: 14px; font-weight: 600;">Total</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${itemsHTML}</tbody>
-                            </table>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <table role="presentation" style="width: 100%;">
-                                <tr>
-                                    <td align="right">
-                                        <table role="presentation" style="margin-left: auto; width: 300px;">
-                                            <tr>
-                                                <td style="padding: 4px 0; color: #6b7280; font-size: 14px; text-align: right; width: 60%;">Subtotal:</td>
-                                                <td style="padding: 4px 0; color: #111827; font-size: 14px; text-align: right; width: 40%; font-weight: 500;">₱${orderData.subtotal.toFixed(2)}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 4px 0; color: #6b7280; font-size: 14px; text-align: right;">Tax:</td>
-                                                <td style="padding: 4px 0; color: #111827; font-size: 14px; text-align: right; font-weight: 500;">₱${orderData.tax.toFixed(2)}</td>
-                                            </tr>
-                                            ${orderData.discount > 0 ? `
-                                            <tr>
-                                                <td style="padding: 4px 0; color: #6b7280; font-size: 14px; text-align: right;">Discount:</td>
-                                                <td style="padding: 4px 0; color: #10b981; font-size: 14px; text-align: right; font-weight: 500;">- ₱${orderData.discount.toFixed(2)}</td>
-                                            </tr>
-                                            ` : ''}
-                                            <tr style="border-top: 2px solid #e5e7eb;">
-                                                <td style="padding: 12px 0 0; color: #111827; font-size: 18px; font-weight: 700; text-align: right;">Total Amount:</td>
-                                                <td style="padding: 12px 0 0; color: #111827; font-size: 18px; font-weight: 700; text-align: right;">₱${orderData.total.toFixed(2)}</td>
-                                            </tr>
-                                        </table>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
+                            </thead>
+                            <tbody>${itemsHTML}</tbody>
+                        </table>
+                    </div>
+
+                    <!-- Totals -->
+                    <div style="margin-bottom: 24px; padding-top: 16px; border-top: 2px solid #ddd;">
+                        <table style="width: 100%; max-width: 300px; margin-left: auto;">
+                            <tr>
+                                <td style="padding: 6px 0; color: #666;">Subtotal</td>
+                                <td style="padding: 6px 0; text-align: right; color: #111;">${formatPrice(orderData.subtotal)}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 6px 0; color: #666;">Tax</td>
+                                <td style="padding: 6px 0; text-align: right; color: #111;">${formatPrice(orderData.tax)}</td>
+                            </tr>
+                            ${orderData.discount > 0 ? `
+                            <tr>
+                                <td style="padding: 6px 0; color: #666;">Discount</td>
+                                <td style="padding: 6px 0; text-align: right; color: #10b981;">−${formatPrice(orderData.discount)}</td>
+                            </tr>
+                            ` : ''}
+                            <tr style="border-top: 2px solid #ddd;">
+                                <td style="padding: 12px 0 0 0; font-weight: 600; color: #111;">Total</td>
+                                <td style="padding: 12px 0 0 0; text-align: right; font-weight: 600; font-size: 18px; color: #111;">${formatPrice(orderData.total)}</td>
+                            </tr>
+                        </table>
+                    </div>
+
                     ${orderData.notes ? `
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <div style="background-color: #f9fafb; border-left: 4px solid #3b82f6; padding: 16px; border-radius: 4px;">
-                                <p style="margin: 0 0 8px; color: #6b7280; font-size: 14px; font-weight: 600;">Notes:</p>
-                                <p style="margin: 0; color: #374151; font-size: 14px; line-height: 1.6;">${orderData.notes}</p>
-                            </div>
-                        </td>
-                    </tr>
+                    <!-- Notes -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: #fffbeb; border-left: 3px solid #f59e0b;">
+                        <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: #92400e;">Note</p>
+                        <p style="margin: 0; font-size: 14px; color: #78350f;">${orderData.notes}</p>
+                    </div>
                     ` : ''}
+
                     ${orderData.requestSalesInvoice ? `
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; border-radius: 4px;">
-                                <p style="margin: 0 0 8px; color: #92400e; font-size: 14px; font-weight: 600;">📄 Sales Invoice Requested</p>
-                                <p style="margin: 0; color: #78350f; font-size: 14px; line-height: 1.6;">A sales invoice has been requested for this order. The invoice will be processed and sent separately.</p>
-                            </div>
-                        </td>
-                    </tr>
+                    <div style="margin-bottom: 24px; padding: 12px; background: #fffbeb; border-left: 3px solid #f59e0b;">
+                        <p style="margin: 0; font-size: 14px; color: #78350f;">Sales invoice requested — We’ll provide your agent with a copy of the sales invoice. Please contact your agent for the copy.</p>
+                    </div>
                     ` : ''}
+
                     ${orderData.signatureUrl ? `
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-                                <p style="margin: 0 0 16px; color: #6b7280; font-size: 14px; font-weight: 600;">Client Signature:</p>
-                                <div style="background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 4px; padding: 16px; text-align: center;">
-                                    <img src="${orderData.signatureUrl}" alt="Client Signature" style="max-width: 100%; height: auto; border-radius: 4px;" />
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
+                    <!-- Signature -->
+                    <div style="margin-bottom: 24px;">
+                        <p style="margin: 0 0 8px 0; font-size: 13px; color: #666;">Your signature</p>
+                        <div style="border: 1px solid #e5e5e5; padding: 12px; background: #fafafa;">
+                            <img src="${orderData.signatureUrl}" alt="Signature" style="max-width: 100%; height: auto; display: block;" />
+                        </div>
+                    </div>
                     ` : ''}
+
                     ${orderData.agentName || orderData.agentEmail || orderData.agentPhone ? `
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <div style="background-color: #f9fafb; border-left: 4px solid #10b981; padding: 16px; border-radius: 4px;">
-                                <p style="margin: 0 0 8px; color: #6b7280; font-size: 14px; font-weight: 600;">Need help with your order?</p>
-                                <p style="margin: 0; color: #374151; font-size: 14px; line-height: 1.6;">
-                                  Your sales agent ${orderData.agentName ? `<strong>${orderData.agentName}</strong>` : ''}${orderData.agentEmail || orderData.agentPhone ? ' can be reached at ' : ''}
-                                  ${orderData.agentEmail ? `<a href="mailto:${orderData.agentEmail}" style="color:#2563eb; text-decoration:none;">${orderData.agentEmail}</a>` : ''}
-                                  ${orderData.agentEmail && orderData.agentPhone ? ' · ' : ''}
-                                  ${orderData.agentPhone ? `<a href="tel:${orderData.agentPhone}" style="color:#2563eb; text-decoration:none;">${orderData.agentPhone}</a>` : ''}
-                                  .
-                                </p>
-                            </div>
-                        </td>
-                    </tr>
+                    <!-- Contact -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: #f0fdf4; border-left: 3px solid #10b981;">
+                        <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: #065f46;">Questions about your order?</p>
+                        <p style="margin: 0; font-size: 14px; color: #047857;">
+                            ${orderData.agentName ? `Contact ${orderData.agentName}` : 'Contact your sales agent'}${orderData.agentEmail || orderData.agentPhone ? ':' : '.'}<br>
+                            ${orderData.agentEmail ? `<a href="mailto:${orderData.agentEmail}" style="color: #047857;">${orderData.agentEmail}</a>` : ''}
+                            ${orderData.agentEmail && orderData.agentPhone ? '<br>' : ''}
+                            ${orderData.agentPhone ? `<a href="tel:${orderData.agentPhone}" style="color: #047857;">${orderData.agentPhone}</a>` : ''}
+                        </p>
+                    </div>
                     ` : ''}
-                    <tr>
-                        <td style="padding: 30px 40px; background-color: #f9fafb; border-radius: 0 0 8px 8px; border-top: 1px solid #e5e7eb;">
-                            <p style="margin: 0 0 8px; color: #9ca3af; font-size: 13px; line-height: 1.6;"><strong>Status:</strong> Pending Approval</p>
-                            <p style="margin: 16px 0 0; color: #9ca3af; font-size: 13px; line-height: 1.6;">This is an automated confirmation email. Your order will be processed once approved.<br>We will notify you once your order has been approved.</p>
-                            <p style="margin: 24px 0 0; color: #d1d5db; font-size: 12px; text-align: center;">© ${new Date().getFullYear()} B1G Corporation. All rights reserved.</p>
-                        </td>
-                    </tr>
-                </table>
+
+                    <!-- Footer -->
+                    <div style="padding-top: 24px; border-top: 1px solid #e5e5e5; font-size: 13px; color: #999;">
+                        <p style="margin: 0;">— B1G Corporation</p>
+                    </div>
+
+                </div>
             </td>
         </tr>
     </table>
 </body>
 </html>
-  `;
+`;
 }
 
-// Generate HTML email for IT department (order receipt/confirmation)
+// INTERNAL RECEIPT - Finance & System Admin
 function generateITReceiptHTML(orderData: OrderEmailData): string {
-  const itemsHTML = orderData.items.map(item => `
-    <tr style="border-bottom: 1px solid #e5e7eb;">
-      <td style="padding: 12px; color: #374151;">${item.brandName} - ${item.variantName}</td>
-      <td style="padding: 12px; color: #374151; text-align: center;">${item.variantType}</td>
-      <td style="padding: 12px; color: #374151; text-align: center;">${item.quantity}</td>
-      <td style="padding: 12px; color: #374151; text-align: right;">₱${item.unitPrice.toFixed(2)}</td>
-      <td style="padding: 12px; color: #374151; text-align: right; font-weight: 600;">₱${item.total.toFixed(2)}</td>
-    </tr>
-  `).join('');
+    const formatPrice = (price: number) => `₱${price.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    
+    const formatPaymentMethod = (method: string, selectedBank?: string) => {
+        if (!method) return 'Cash';
+        
+        // Handle enum values
+        if (method === 'BANK_TRANSFER') {
+            return selectedBank ? `Bank Transfer (${selectedBank})` : 'Bank Transfer';
+        }
+        if (method === 'GCASH') return 'GCash';
+        if (method === 'CHEQUE') return 'Cheque';
+        if (method === 'CASH') return 'Cash';
+        
+        // Already formatted (like "Bank Transfer (BPI)")
+        return method;
+    };
+    
+    const itemsHTML = orderData.items.map(item => `
+        <tr>
+            <td style="padding: 8px 12px 8px 0; border-bottom: 1px solid #eee;">
+                <div style="font-weight: 500; color: #111;">${item.brandName}</div>
+                <div style="font-size: 13px; color: #666; margin-top: 2px;">${item.variantName} · ${item.variantType}</div>
+            </td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #eee; text-align: right; color: #666;">${item.quantity}</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #eee; text-align: right; color: #666;">${formatPrice(item.unitPrice)}</td>
+            <td style="padding: 8px 0 8px 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: 500;">${formatPrice(item.total)}</td>
+        </tr>
+    `).join('');
 
-  return `
+    const hasSplitPayments = orderData.paymentMode === 'SPLIT' && Array.isArray(orderData.paymentSplits) && orderData.paymentSplits.length > 0;
+
+    const splitSummary = hasSplitPayments
+        ? orderData.paymentSplits!
+            .map(split => {
+                if (split.method === 'BANK_TRANSFER') {
+                    return split.bank ? `Bank Transfer (${split.bank})` : 'Bank Transfer';
+                }
+                if (split.method === 'GCASH') return 'GCash';
+                if (split.method === 'CASH') return 'Cash';
+                if (split.method === 'CHEQUE') return 'Cheque';
+                return split.method;
+            })
+            .join(' + ')
+        : '';
+
+    const paymentMethodDisplay = hasSplitPayments
+        ? `Split Payment – ${splitSummary}`
+        : formatPaymentMethod(orderData.paymentMethod, orderData.selectedBank);
+
+    const splitBreakdownHTML = hasSplitPayments ? `
+        <div style="margin-bottom: 24px;">
+            <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: #111;">Payment Breakdown</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <thead>
+                    <tr>
+                        <th style="padding: 8px 12px 8px 0; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Method</th>
+                        <th style="padding: 8px 12px; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Details</th>
+                        <th style="padding: 8px 12px; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Proof</th>
+                        <th style="padding: 8px 0 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${orderData.paymentSplits!.map((split, index) => {
+                        const methodLabel =
+                            split.method === 'BANK_TRANSFER'
+                                ? 'Bank Transfer'
+                                : split.method === 'GCASH'
+                                ? 'GCash'
+                                : split.method === 'CHEQUE'
+                                ? 'Cheque'
+                                : 'Cash';
+
+                        const detailsLabel =
+                            split.method === 'BANK_TRANSFER' && split.bank
+                                ? split.bank
+                                : split.method === 'GCASH'
+                                ? 'GCash Wallet'
+                                : split.method === 'CASH'
+                                ? 'Cash Payment'
+                                : split.method === 'CHEQUE'
+                                ? 'Cheque Payment'
+                                : '';
+
+                        const proofCell = split.proofUrl
+                            ? `<img src="${split.proofUrl}" alt="Payment proof ${index + 1}" style="max-width: 260px; max-height: 260px; border: 1px solid #e5e5e5; border-radius: 4px; display: block;" />`
+                            : '<span style="color: #999;">—</span>';
+
+                        return `
+                            <tr>
+                                <td style="padding: 8px 12px 8px 0; border-bottom: 1px solid #eee; vertical-align: top;">${methodLabel}</td>
+                                <td style="padding: 8px 12px; border-bottom: 1px solid #eee; color: #666; vertical-align: top;">${detailsLabel}</td>
+                                <td style="padding: 8px 12px; border-bottom: 1px solid #eee; vertical-align: top;">${proofCell}</td>
+                                <td style="padding: 8px 0 8px 12px; border-bottom: 1px solid #eee; text-align: right; font-weight: 500; vertical-align: top;">${formatPrice(split.amount)}</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    ` : '';
+
+    return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Order Receipt - ${orderData.orderNumber}</title>
+    <title>New Order ${orderData.orderNumber}</title>
 </head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f3f4f6;">
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.5; color: #333; background: #fafafa;">
     <table role="presentation" style="width: 100%; border-collapse: collapse;">
         <tr>
             <td align="center" style="padding: 40px 20px;">
-                <table role="presentation" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-                    <tr>
-                        <td style="padding: 40px 40px 20px; background-color: #1f2937; border-radius: 8px 8px 0 0;">
-                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">B1G Corporation</h1>
-                            <p style="margin: 8px 0 0; color: #d1d5db; font-size: 14px;">Order Receipt - Internal Confirmation</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 30px 40px;">
-                            <p style="margin: 0 0 16px; color: #374151; font-size: 15px; line-height: 1.6;">A new order has been created and requires confirmation.</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <table role="presentation" style="width: 100%; background-color: #f9fafb; border-radius: 8px; padding: 20px;">
+                <div style="max-width: 700px; background: #fff; border: 1px solid #e5e5e5; padding: 32px;">
+                    
+                    <!-- Header -->
+                    <div style="border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 24px;">
+                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">B1G Corporation · Internal Receipt</h1>
+                    </div>
+
+                    <!-- Alert -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: #eff6ff; border-left: 3px solid #3b82f6;">
+                        <p style="margin: 0; font-weight: 500; color: #1e40af;">New order awaiting approval</p>
+                    </div>
+
+                    <!-- Order Info -->
+                    <div style="margin-bottom: 24px;">
+                        <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 600; color: #111;">${orderData.orderNumber}</h2>
+                        <table style="width: 100%; font-size: 14px;">
+                            <tr>
+                                <td style="padding: 4px 0; color: #666; width: 140px;">Order date:</td>
+                                <td style="padding: 4px 0; color: #111;">${new Date(orderData.orderDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 4px 0; color: #666;">Pricing strategy:</td>
+                                <td style="padding: 4px 0; color: #111; font-weight: 500;">${orderData.pricingStrategy === 'special' ? 'Special (Allocated)' : (orderData.pricingStrategy?.toUpperCase() || 'RSP')}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 4px 0; color: #666;">Payment method:</td>
+                                <td style="padding: 4px 0; color: #111;">${paymentMethodDisplay}</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <!-- Client Info -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: #fafafa; border-left: 3px solid #666;">
+                        <p style="margin: 0 0 4px 0; font-size: 13px; color: #666;">Client</p>
+                        <p style="margin: 0 0 2px 0; font-weight: 500; color: #111;">${orderData.clientName}</p>
+                        <p style="margin: 0; font-size: 14px; color: #666;">${orderData.clientEmail}</p>
+                    </div>
+
+                    ${orderData.agentName ? `
+                    <!-- Agent Info -->
+                    <div style="margin-bottom: 24px;">
+                        <table style="width: 100%; font-size: 14px;">
+                            <tr>
+                                <td style="padding: 4px 0; color: #666; width: 140px;">Sales agent</td>
+                                <td style="padding: 4px 0; color: #111;">${orderData.agentName}</td>
+                            </tr>
+                            ${orderData.agentEmail ? `
+                            <tr>
+                                <td style="padding: 4px 0; color: #666;"></td>
+                                <td style="padding: 4px 0; color: #666;">${orderData.agentEmail}</td>
+                            </tr>
+                            ` : ''}
+                            ${orderData.agentPhone ? `
+                            <tr>
+                                <td style="padding: 4px 0; color: #666;"></td>
+                                <td style="padding: 4px 0; color: #666;">${orderData.agentPhone}</td>
+                            </tr>
+                            ` : ''}
+                            ${orderData.leaderName ? `
+                            <tr>
+                                <td style="padding: 4px 0; color: #666;">Team leader</td>
+                                <td style="padding: 4px 0; color: #111;">${orderData.leaderName}</td>
+                            </tr>
+                            ` : ''}
+                        </table>
+                    </div>
+                    ` : ''}
+
+                    <!-- Items -->
+                    <div style="margin-bottom: 24px;">
+                        <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: #111;">Items</h3>
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
                                 <tr>
-                                    <td>
-                                        <table role="presentation" style="width: 100%;">
-                                            <tr>
-                                                <td style="padding-bottom: 12px;">
-                                                    <span style="color: #6b7280; font-size: 14px;">Order Number:</span><br>
-                                                    <span style="color: #111827; font-size: 18px; font-weight: 600;">${orderData.orderNumber}</span>
-                                                </td>
-                                                <td align="right" style="padding-bottom: 12px;">
-                                                    <span style="color: #6b7280; font-size: 14px;">Order Date:</span><br>
-                                                    <span style="color: #111827; font-size: 14px; font-weight: 500;">${new Date(orderData.orderDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
-                                                </td>
-                                            </tr>
-                                            <tr>
-                                                <td colspan="2" style="padding-top: 12px; border-top: 1px solid #e5e7eb;">
-                                                    <span style="color: #6b7280; font-size: 14px;">Client:</span><br>
-                                                    <span style="color: #111827; font-size: 16px; font-weight: 600;">${orderData.clientName}</span><br>
-                                                    <span style="color: #6b7280; font-size: 13px;">${orderData.clientEmail}</span>
-                                                </td>
-                                            </tr>
-                                            ${orderData.agentName ? `
-                                            <tr>
-                                                <td colspan="2" style="padding-top: 12px;">
-                                                    <span style="color: #6b7280; font-size: 14px;">Sales Agent:</span><br>
-                                                    <span style="color: #111827; font-size: 14px; font-weight: 500;">${orderData.agentName}</span>
-                                                    ${orderData.agentEmail ? `<br><span style="color: #6b7280; font-size: 13px;">${orderData.agentEmail}</span>` : ''}
-                                                    ${orderData.agentPhone ? `<br><span style="color: #6b7280; font-size: 13px;">${orderData.agentPhone}</span>` : ''}
-                                                </td>
-                                            </tr>
-                                            ` : ''}
-                                            ${orderData.leaderName ? `
-                                            <tr>
-                                                <td colspan="2" style="padding-top: 12px;">
-                                                    <span style="color: #6b7280; font-size: 14px;">Leader:</span><br>
-                                                    <span style="color: #111827; font-size: 14px; font-weight: 500;">${orderData.leaderName}</span>
-                                                </td>
-                                            </tr>
-                                            ` : ''}
-                                        </table>
-                                    </td>
+                                    <th style="padding: 8px 12px 8px 0; text-align: left; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Product</th>
+                                    <th style="padding: 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Qty</th>
+                                    <th style="padding: 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Unit Price</th>
+                                    <th style="padding: 8px 0 8px 12px; text-align: right; font-size: 13px; font-weight: 500; color: #666; border-bottom: 2px solid #ddd;">Amount</th>
                                 </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <h2 style="margin: 0 0 16px; color: #111827; font-size: 18px; font-weight: 600;">Order Items</h2>
-                            <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
-                                <thead>
-                                    <tr style="background-color: #f9fafb;">
-                                        <th style="padding: 12px; text-align: left; color: #6b7280; font-size: 14px; font-weight: 600;">Product</th>
-                                        <th style="padding: 12px; text-align: center; color: #6b7280; font-size: 14px; font-weight: 600;">Type</th>
-                                        <th style="padding: 12px; text-align: center; color: #6b7280; font-size: 14px; font-weight: 600;">Qty</th>
-                                        <th style="padding: 12px; text-align: right; color: #6b7280; font-size: 14px; font-weight: 600;">Unit Price</th>
-                                        <th style="padding: 12px; text-align: right; color: #6b7280; font-size: 14px; font-weight: 600;">Total</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${itemsHTML}</tbody>
-                            </table>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <table role="presentation" style="width: 100%;">
-                                <tr>
-                                    <td align="right">
-                                        <table role="presentation" style="margin-left: auto; width: 300px;">
-                                            <tr>
-                                                <td style="padding: 4px 0; color: #6b7280; font-size: 14px; text-align: right; width: 60%;">Subtotal:</td>
-                                                <td style="padding: 4px 0; color: #111827; font-size: 14px; text-align: right; width: 40%; font-weight: 500;">₱${orderData.subtotal.toFixed(2)}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 4px 0; color: #6b7280; font-size: 14px; text-align: right;">Tax:</td>
-                                                <td style="padding: 4px 0; color: #111827; font-size: 14px; text-align: right; font-weight: 500;">₱${orderData.tax.toFixed(2)}</td>
-                                            </tr>
-                                            ${orderData.discount > 0 ? `
-                                            <tr>
-                                                <td style="padding: 4px 0; color: #6b7280; font-size: 14px; text-align: right;">Discount:</td>
-                                                <td style="padding: 4px 0; color: #10b981; font-size: 14px; text-align: right; font-weight: 500;">- ₱${orderData.discount.toFixed(2)}</td>
-                                            </tr>
-                                            ` : ''}
-                                            <tr style="border-top: 2px solid #e5e7eb;">
-                                                <td style="padding: 12px 0 0; color: #111827; font-size: 18px; font-weight: 700; text-align: right;">Total Amount:</td>
-                                                <td style="padding: 12px 0 0; color: #111827; font-size: 18px; font-weight: 700; text-align: right;">₱${orderData.total.toFixed(2)}</td>
-                                            </tr>
-                                        </table>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
+                            </thead>
+                            <tbody>${itemsHTML}</tbody>
+                        </table>
+                    </div>
+
+                    <!-- Totals -->
+                    <div style="margin-bottom: 24px; padding-top: 16px; border-top: 2px solid #ddd;">
+                        <table style="width: 100%; max-width: 300px; margin-left: auto;">
+                            <tr>
+                                <td style="padding: 6px 0; color: #666;">Subtotal</td>
+                                <td style="padding: 6px 0; text-align: right; color: #111;">${formatPrice(orderData.subtotal)}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 6px 0; color: #666;">Tax</td>
+                                <td style="padding: 6px 0; text-align: right; color: #111;">${formatPrice(orderData.tax)}</td>
+                            </tr>
+                            ${orderData.discount > 0 ? `
+                            <tr>
+                                <td style="padding: 6px 0; color: #666;">Discount</td>
+                                <td style="padding: 6px 0; text-align: right; color: #10b981;">−${formatPrice(orderData.discount)}</td>
+                            </tr>
+                            ` : ''}
+                            <tr style="border-top: 2px solid #ddd;">
+                                <td style="padding: 12px 0 0 0; font-weight: 600; color: #111;">Total</td>
+                                <td style="padding: 12px 0 0 0; text-align: right; font-weight: 600; font-size: 18px; color: #111;">${formatPrice(orderData.total)}</td>
+                            </tr>
+                        </table>
+                    </div>
+
                     ${orderData.notes ? `
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <div style="background-color: #f9fafb; border-left: 4px solid #3b82f6; padding: 16px; border-radius: 4px;">
-                                <p style="margin: 0 0 8px; color: #6b7280; font-size: 14px; font-weight: 600;">Notes:</p>
-                                <p style="margin: 0; color: #374151; font-size: 14px; line-height: 1.6;">${orderData.notes}</p>
-                            </div>
-                        </td>
-                    </tr>
+                    <!-- Notes -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: #fffbeb; border-left: 3px solid #f59e0b;">
+                        <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: #92400e;">Client note</p>
+                        <p style="margin: 0; font-size: 14px; color: #78350f;">${orderData.notes}</p>
+                    </div>
                     ` : ''}
+
                     ${orderData.requestSalesInvoice ? `
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; border-radius: 4px;">
-                                <p style="margin: 0 0 8px; color: #92400e; font-size: 14px; font-weight: 600;">📄 Sales Invoice Requested</p>
-                                <p style="margin: 0; color: #78350f; font-size: 14px; line-height: 1.6;">A sales invoice has been requested for this order. Please process and send the invoice to the client.</p>
-                            </div>
-                        </td>
-                    </tr>
+                    <div style="margin-bottom: 24px; padding: 12px; background: #fffbeb; border-left: 3px solid #f59e0b;">
+                        <p style="margin: 0; font-size: 14px; color: #78350f;"><strong>Sales invoice requested</strong> — process and send separately to client.</p>
+                    </div>
                     ` : ''}
-                    ${orderData.paymentMethod && orderData.paymentProofUrl ? `
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-                                <p style="margin: 0 0 8px; color: #6b7280; font-size: 14px; font-weight: 600;">Payment Method:</p>
-                                <p style="margin: 0 0 16px; color: #374151; font-size: 16px; font-weight: 600;">${orderData.paymentMethod}</p>
-                                <p style="margin: 0 0 16px; color: #6b7280; font-size: 14px; font-weight: 600;">Payment Proof:</p>
-                                <div style="background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 4px; padding: 16px; text-align: center;">
-                                    <img src="${orderData.paymentProofUrl}" alt="Payment Proof" style="max-width: 100%; max-height: 400px; height: auto; border-radius: 4px; object-fit: contain;" />
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                    ` : ''}
+
+                    ${hasSplitPayments ? splitBreakdownHTML : (orderData.paymentProofUrl ? `
+                    <!-- Payment Proof -->
+                    <div style="margin-bottom: 24px;">
+                        <p style="margin: 0 0 8px 0; font-size: 13px; color: #666;">Payment proof</p>
+                        <div style="border: 1px solid #e5e5e5; padding: 12px; background: #fafafa;">
+                            <img src="${orderData.paymentProofUrl}" alt="Payment proof" style="max-width: 100%; max-height: 360px; height: auto; display: block;" />
+                        </div>
+                    </div>
+                    ` : '')}
+
                     ${orderData.signatureUrl ? `
-                    <tr>
-                        <td style="padding: 0 40px 30px;">
-                            <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-                                <p style="margin: 0 0 16px; color: #6b7280; font-size: 14px; font-weight: 600;">Client Signature:</p>
-                                <div style="background-color: #ffffff; border: 1px solid #d1d5db; border-radius: 4px; padding: 16px; text-align: center;">
-                                    <img src="${orderData.signatureUrl}" alt="Client Signature" style="max-width: 100%; height: auto; border-radius: 4px;" />
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
+                    <!-- Signature -->
+                    <div style="margin-bottom: 24px;">
+                        <p style="margin: 0 0 8px 0; font-size: 13px; color: #666;">Client signature</p>
+                        <div style="border: 1px solid #e5e5e5; padding: 12px; background: #fafafa;">
+                            <img src="${orderData.signatureUrl}" alt="Signature" style="max-width: 100%; height: auto; display: block;" />
+                        </div>
+                    </div>
                     ` : ''}
-                    <tr>
-                        <td style="padding: 30px 40px; background-color: #f9fafb; border-radius: 0 0 8px 8px; border-top: 1px solid #e5e7eb;">
-                            <p style="margin: 0 0 8px; color: #9ca3af; font-size: 13px; line-height: 1.6;"><strong>Status:</strong> Pending Approval</p>
-                            <p style="margin: 16px 0 0; color: #9ca3af; font-size: 13px; line-height: 1.6;">This is an automated order receipt for internal confirmation purposes.</p>
-                            <p style="margin: 24px 0 0; color: #d1d5db; font-size: 12px; text-align: center;">© ${new Date().getFullYear()} B1G Corporation. All rights reserved.</p>
-                        </td>
-                    </tr>
-                </table>
+
+                    <!-- Footer -->
+                    <div style="padding-top: 24px; border-top: 1px solid #e5e5e5; font-size: 13px; color: #999;">
+                        <p style="margin: 0;">Internal receipt for Finance & System Admin</p>
+                    </div>
+
+                </div>
             </td>
         </tr>
     </table>
 </body>
 </html>
-  `;
+`;
 }
 
 export async function sendOrderConfirmationEmail(data: OrderEmailData) {
-  try {
-    console.log('📧 Sending order confirmation email to:', data.clientEmail);
-
-    const htmlContent = generateEmailHTML(data);
-    const itReceiptContent = generateITReceiptHTML(data);
-
-    // Determine API URL - Vercel automatically serves API routes from the same domain
-    const apiUrl = `${window.location.origin}/api/send-email`;
-
-    console.log('🚀 Using email API URL:', apiUrl);
-
-    // Send email to client
-    const clientResponse = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        to: data.clientEmail,
-        subject: `Order Confirmation - ${data.orderNumber}`,
-        html: htmlContent,
-      }),
-    });
-
-    if (!clientResponse.ok) {
-      const errorData = await clientResponse.json().catch(() => ({ error: 'Unknown error' }));
-      console.error('❌ Email API error for client:', errorData);
-      throw new Error(errorData.error || `Failed to send email: ${clientResponse.status} ${clientResponse.statusText}`);
-    }
-
-    const clientResult = await clientResponse.json();
-    console.log('✅ Email sent successfully to client:', clientResult);
-
-    // Send receipt email to IT department
     try {
-      const itResponse = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          to: 'financedepartment.b1g@gmail.com',
-          subject: `Order Receipt - ${data.orderNumber} - ${data.clientName}`,
-          html: itReceiptContent,
-        }),
-      });
+        console.log('📧 Sending order confirmation email to:', data.clientEmail);
 
-      if (!itResponse.ok) {
-        const errorData = await itResponse.json().catch(() => ({ error: 'Unknown error' }));
-        console.error('⚠️ Failed to send receipt email to IT department:', errorData);
-        // Don't throw error - client email was sent successfully
-      } else {
-        const itResult = await itResponse.json();
-        console.log('✅ Receipt email sent successfully to IT department:', itResult);
-      }
-    } catch (itError) {
-      console.error('⚠️ Error sending receipt email to IT department (non-critical):', itError);
-      // Don't throw error - client email was sent successfully
+        const htmlContent = generateEmailHTML(data);
+        const itReceiptContent = generateITReceiptHTML(data);
+
+        // Determine API URL - Vercel automatically serves API routes from the same domain
+        const apiUrl = `${window.location.origin}/api/send-email`;
+
+        console.log('🚀 Using email API URL:', apiUrl);
+
+        // Send email to client
+        const clientResponse = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                to: data.clientEmail,
+                subject: `Order Confirmation - ${data.orderNumber}`,
+                html: htmlContent,
+            }),
+        });
+
+        if (!clientResponse.ok) {
+            const errorData = await clientResponse.json().catch(() => ({ error: 'Unknown error' }));
+            console.error('❌ Email API error for client:', errorData);
+            throw new Error(errorData.error || `Failed to send email: ${clientResponse.status} ${clientResponse.statusText}`);
+        }
+
+        const clientResult = await clientResponse.json();
+        console.log('✅ Email sent successfully to client:', clientResult);
+
+        // Fetch super admin and finance emails dynamically
+        let superAdminEmail = 'itdepartment.b1g@gmail.com'; // Fallback
+        let financeEmail = 'flmromey.b1g@gmail.com'; // Fallback
+
+        if (data.companyId) {
+            try {
+                // Fetch super admin email from company
+                const { data: company, error: companyError } = await supabase
+                    .from('companies')
+                    .select('super_admin_email')
+                    .eq('id', data.companyId)
+                    .single();
+
+                if (!companyError && company?.super_admin_email) {
+                    superAdminEmail = company.super_admin_email;
+                    console.log('📧 Using super admin email:', superAdminEmail);
+                }
+
+                // Fetch finance email from profiles
+                const { data: financeProfile, error: financeError } = await supabase
+                    .from('profiles')
+                    .select('email')
+                    .eq('company_id', data.companyId)
+                    .eq('role', 'finance')
+                    .eq('status', 'active')
+                    .limit(1)
+                    .single();
+
+                if (!financeError && financeProfile?.email) {
+                    financeEmail = financeProfile.email;
+                    console.log('📧 Using finance email:', financeEmail);
+                }
+            } catch (fetchError) {
+                console.warn('⚠️ Failed to fetch dynamic emails, using fallbacks:', fetchError);
+            }
+        }
+
+        // Send receipt email to Super Admin and Finance department
+        try {
+            const recipients = `${superAdminEmail},${financeEmail}`;
+            const itResponse = await fetch(apiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    to: recipients,
+                    subject: `New Order ${data.orderNumber} - ${data.clientName}`,
+                    html: itReceiptContent,
+                }),
+            });
+
+            if (!itResponse.ok) {
+                const errorData = await itResponse.json().catch(() => ({ error: 'Unknown error' }));
+                console.error('⚠️ Failed to send receipt email to Super Admin and Finance departments:', errorData);
+                // Don't throw error - client email was sent successfully
+            } else {
+                const itResult = await itResponse.json();
+                console.log('✅ Receipt email sent successfully to Super Admin and Finance departments:', itResult);
+            }
+        } catch (itError) {
+            console.error('⚠️ Error sending receipt email to Super Admin and Finance departments (non-critical):', itError);
+            // Don't throw error - client email was sent successfully
+        }
+
+        return clientResult;
+    } catch (error) {
+        console.error('Failed to send order confirmation email:', error);
+        throw error;
     }
-
-    return clientResult;
-  } catch (error) {
-    console.error('Failed to send order confirmation email:', error);
-    throw error;
-  }
 }
-

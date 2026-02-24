@@ -10,13 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Check, ChevronsUpDown, Loader2 } from 'lucide-react';
-import { 
-  Calendar as CalendarIcon, 
-  ChevronLeft, 
-  ChevronRight, 
-  Plus, 
-  Clock, 
-  MapPin, 
+import {
+  Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Clock,
+  MapPin,
   Users,
   Filter,
   Grid3X3,
@@ -29,13 +29,47 @@ import {
   Search,
   BarChart3,
   Camera,
-  X
+  X,
+  RotateCcw
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+
+// Fix Leaflet marker icon issue
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+
+const DefaultIcon = L.icon({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41]
+});
+
+L.Marker.prototype.options.icon = DefaultIcon;
+
+// Function to update map center when position changes
+function ChangeView({ center }: { center: [number, number] }) {
+  const map = useMap();
+  map.setView(center, map.getZoom());
+  return null;
+}
+
+import { VisitLog } from '@/types/database.types';
 
 // Types
+type VisitLogWithClient = VisitLog & {
+  client: {
+    name: string;
+    location_latitude?: number;
+    location_longitude?: number;
+  } | null;
+};
+
 interface Task {
   id: string;
   leader_id: string;
@@ -56,6 +90,13 @@ interface Task {
   notes: string | null;
   urgency_status: 'overdue' | 'due_soon' | 'on_time';
   attachment_url?: string | null;
+  client_id?: string;
+  client_name?: string;
+  client_company?: string;
+  client_address?: string;
+  client_latitude?: number;
+  client_longitude?: number;
+  visit_logs?: any[]; // To store attached visit verification
 }
 
 interface CalendarEvent {
@@ -65,13 +106,17 @@ interface CalendarEvent {
   startTime: string;
   endTime: string;
   date: string;
-  type: 'meeting' | 'appointment' | 'task' | 'reminder';
-  priority: 'low' | 'medium' | 'high';
+  type: 'task' | 'visit';
+  priority?: 'low' | 'medium' | 'high';
+  status?: 'scheduled' | 'pending' | 'completed' | 'cancelled';
+  taskData?: Task;
+  visitData?: VisitLog;
+  relatedVisit?: VisitLog; // Linked visit for task verification
+  attachment_url?: string | null;
+  agentColorClass?: string;
+  agentId?: string;
+  agentName?: string;
   location?: string;
-  attendees?: string[];
-  status: 'scheduled' | 'completed' | 'cancelled';
-  taskData?: Task; // For tasks from database
-  attachment_url?: string | null; // For task attachments
 }
 
 interface CalendarDay {
@@ -81,7 +126,7 @@ interface CalendarDay {
   events: CalendarEvent[];
 }
 
-  
+
 
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -97,28 +142,49 @@ export default function CalendarPage() {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [mobileTab, setMobileTab] = useState<'today' | 'all'>('today');
   const [currentTime, setCurrentTime] = useState(new Date());
+
   const [isMobile, setIsMobile] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [visits, setVisits] = useState<VisitLogWithClient[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
-  
+
+  // Team-leader specific state
+  const [teamAgents, setTeamAgents] = useState<Array<{ id: string; full_name: string }>>([]);
+  const [selectedAgentFilter, setSelectedAgentFilter] = useState<string>('all');
+
   // Daily task creation states
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
-  const [dailyTaskPhoto, setDailyTaskPhoto] = useState<string | null>(null);
   const [dailyTaskForm, setDailyTaskForm] = useState({
     title: '',
     description: '',
     date: new Date().toISOString().split('T')[0],
     time: '',
+    notes: '',
+    priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent'
+  });
+
+  // Record Visit states
+  const [showRecordVisitDialog, setShowRecordVisitDialog] = useState(false);
+  const [visitPhoto, setVisitPhoto] = useState<string | null>(null);
+  const [visitForm, setVisitForm] = useState({
     notes: ''
   });
+  const [visitLocation, setVisitLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    address: string;
+    city?: string;
+  } | null>(null);
+
   const [isUploading, setIsUploading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [capturingPhoto, setCapturingPhoto] = useState(false);
-  
+
   // Client selection states
   const [clients, setClients] = useState<Array<{
     id: string;
@@ -142,37 +208,72 @@ export default function CalendarPage() {
     location_latitude?: number;
     location_longitude?: number;
   } | null>(null);
+  const [visitedTask, setVisitedTask] = useState<Task | null>(null);
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
-  const [isPrewarmingLocation, setIsPrewarmingLocation] = useState(false);
-  const [prewarmPosition, setPrewarmPosition] = useState<GeolocationPosition | null>(null);
-  
-  // Location capture states for daily task
-  const [taskLocation, setTaskLocation] = useState<{
-    latitude: number;
-    longitude: number;
-    accuracy: number;
-    address: string;
-    city?: string;
-  } | null>(null);
-  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
-  
+
+
+
   const { toast } = useToast();
   const { user } = useAuth();
+  // Role helpers: managers (and admins) can see their full team; others only see their own tasks
+  const isManager = user?.role === 'manager' || user?.role === 'admin';
+  const isTeamLeader = user?.role === 'team_leader';
+  const isMobileSales = user?.role === 'mobile_sales';
+  const hasTeamView = isManager || isTeamLeader;
 
   // Convert tasks from database to calendar events
   const allEvents = useMemo(() => {
+    // When a team leader is viewing the calendar, assign each agent a unique color
+    const agentColorPalette = [
+      'bg-blue-100 text-blue-800 border-blue-200',
+      'bg-emerald-100 text-emerald-800 border-emerald-200',
+      'bg-amber-100 text-amber-800 border-amber-200',
+      'bg-rose-100 text-rose-800 border-rose-200',
+      'bg-violet-100 text-violet-800 border-violet-200',
+      'bg-cyan-100 text-cyan-800 border-cyan-200',
+      'bg-lime-100 text-lime-800 border-lime-200',
+      'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200'
+    ];
+
+    let agentColorMap: Record<string, string> = {};
+
+    if (hasTeamView) {
+      const uniqueAgentIds: string[] = [];
+      tasks.forEach(task => {
+        if (task.agent_id && !uniqueAgentIds.includes(task.agent_id)) {
+          uniqueAgentIds.push(task.agent_id);
+        }
+      });
+
+      uniqueAgentIds.forEach((agentId, index) => {
+        agentColorMap[agentId] = agentColorPalette[index % agentColorPalette.length];
+      });
+    }
+
     const taskEvents: CalendarEvent[] = tasks.map(task => {
       // Use the separate time field if available, otherwise default to 09:00
       let startTime = '09:00';
       let endTime = '10:00';
-      
-      if (task.time) {
+
+      if (task.status === 'completed' && task.completed_at) {
+        // If completed, show at actual completion time
+        const completedDate = new Date(task.completed_at);
+        const hours = completedDate.getHours().toString().padStart(2, '0');
+        const minutes = completedDate.getMinutes().toString().padStart(2, '0');
+        startTime = `${hours}:${minutes}`;
+
+        // Set end time to +30 mins
+        const endDate = new Date(completedDate.getTime() + 30 * 60000);
+        const endHourStr = endDate.getHours().toString().padStart(2, '0');
+        const endMinuteStr = endDate.getMinutes().toString().padStart(2, '0');
+        endTime = `${endHourStr}:${endMinuteStr}`;
+      } else if (task.time) {
         // Extract hours and minutes from time field (format: HH:MM:SS)
         const timeParts = task.time.split(':');
         const hours = timeParts[0].padStart(2, '0');
         const minutes = timeParts[1].padStart(2, '0');
         startTime = `${hours}:${minutes}`;
-        
+
         // Set end time to 1 hour after start time
         const startHour = parseInt(hours);
         const startMinute = parseInt(minutes);
@@ -187,17 +288,63 @@ export default function CalendarPage() {
         description: task.description,
         startTime,
         endTime,
-        date: task.due_date ? task.due_date.split('T')[0] : task.given_at.split('T')[0],
+        date: (task.status === 'completed' && task.completed_at)
+          ? task.completed_at.split('T')[0]
+          : (task.due_date ? task.due_date.split('T')[0] : task.given_at.split('T')[0]),
         type: 'task' as const,
         priority: task.priority === 'urgent' ? 'high' : task.priority === 'high' ? 'high' : task.priority === 'medium' ? 'medium' : 'low',
         status: task.status === 'completed' ? 'completed' : task.status === 'cancelled' ? 'cancelled' : 'scheduled',
         taskData: task,
-        attachment_url: task.attachment_url || null
+        visitData: undefined,
+        relatedVisit: task.visit_logs && task.visit_logs.length > 0 ? {
+          ...task.visit_logs[0],
+          client: {
+            location_latitude: task.client_latitude,
+            location_longitude: task.client_longitude
+          }
+        } : undefined,
+        attachment_url: task.attachment_url || null,
+        agentColorClass: hasTeamView ? agentColorMap[task.agent_id] : undefined,
+        agentId: task.agent_id,
+        agentName: task.agent_name
       };
     });
 
-    return taskEvents; // Only show tasks, no sample events
-  }, [tasks]);
+    const visitEvents: CalendarEvent[] = visits
+      .filter(visit => {
+         // Exclude visits that are already linked to a task in the list
+         // This prevents "double" events since the task acts as the record now
+         return !visit.task_id || !tasks.find(t => t.id === visit.task_id);
+      })
+      .map(visit => {
+      const visitDate = new Date(visit.visited_at);
+      const hours = visitDate.getHours().toString().padStart(2, '0');
+      const minutes = visitDate.getMinutes().toString().padStart(2, '0');
+      const startTime = `${hours}:${minutes}`;
+
+      const endDate = new Date(visitDate.getTime() + 30 * 60000); // +30 mins
+      const endHours = endDate.getHours().toString().padStart(2, '0');
+      const endMinutes = endDate.getMinutes().toString().padStart(2, '0');
+      const endTime = `${endHours}:${endMinutes}`;
+
+      return {
+        id: `visit-${visit.id}`,
+        title: `Visited ${visit.client?.name || 'Client'}`,
+        description: visit.notes || 'No notes',
+        startTime,
+        endTime,
+        date: visit.visited_at.split('T')[0],
+        type: 'visit' as const,
+        priority: 'medium',
+        status: visit.is_within_radius ? 'completed' : 'pending',
+        visitData: visit,
+        location: visit.address,
+        attachment_url: visit.photo_url
+      };
+    });
+
+    return [...taskEvents, ...visitEvents];
+  }, [tasks, visits, hasTeamView]);
 
   // Update current time every minute
   useEffect(() => {
@@ -230,23 +377,32 @@ export default function CalendarPage() {
     }
   }, []);
 
-  // Fetch tasks for the current user
+  // Fetch tasks / visits for the current user (or team, for managers)
   useEffect(() => {
     if (user?.id) {
       fetchTasks();
+      fetchVisits();
+
+      if (hasTeamView) {
+        fetchTeamAgents();
+      }
     }
-    
+
     // Cleanup subscriptions on unmount
     return () => {
       if (realtimeEnabled) {
         supabase.removeAllChannels();
       }
     };
-  }, [user?.id]);
+  }, [user?.id, hasTeamView]);
 
   // Setup real-time subscriptions for tasks
   const setupRealtimeSubscriptions = () => {
     if (!user?.id) return;
+
+    const taskFilter = hasTeamView
+      ? `leader_id=eq.${user.id}`
+      : `agent_id=eq.${user.id}`;
 
     // Subscribe to task changes
     const tasksSubscription = supabase
@@ -257,11 +413,11 @@ export default function CalendarPage() {
           event: '*',
           schema: 'public',
           table: 'tasks',
-          filter: `agent_id=eq.${user.id}`
+          filter: taskFilter
         },
         (payload) => {
           console.log('Real-time task update:', payload);
-          
+
           // Handle different event types
           switch (payload.eventType) {
             case 'INSERT':
@@ -273,26 +429,13 @@ export default function CalendarPage() {
               });
               fetchTasks(); // Refresh tasks
               break;
-              
-            case 'UPDATE':
-              // Task updated
-              const updatedTask = payload.new as any;
-              if (updatedTask.status === 'completed') {
-                toast({
-                  title: 'Task Completed',
-                  description: 'Great job! Task marked as completed',
-                  duration: 2000
-                });
-              } else if (updatedTask.status === 'in_progress') {
-                toast({
-                  title: 'Task Started',
-                  description: 'Task is now in progress',
-                  duration: 2000
-                });
-              }
-              fetchTasks(); // Refresh tasks
+
+            case 'UPDATE': {
+              // Task updated - just refresh tasks, no status toasts
+              fetchTasks();
               break;
-              
+            }
+
             case 'DELETE':
               // Task deleted
               toast({
@@ -316,7 +459,7 @@ export default function CalendarPage() {
           event: '*',
           schema: 'public',
           table: 'task_details',
-          filter: `agent_id=eq.${user.id}`
+          filter: taskFilter
         },
         (payload) => {
           console.log('Real-time task_details update:', payload);
@@ -331,22 +474,118 @@ export default function CalendarPage() {
       taskDetailsSubscription.unsubscribe();
     };
   };
+
+  /**
+   * Helper: for managers, resolve all team member ids (team leaders + mobile sales)
+   * using the sub_teams_overview hierarchy view.
+   */
+  const getManagerTeamAgentIds = async (): Promise<string[]> => {
+    if (!user?.id) return [];
+
+    try {
+      const { data, error } = await supabase
+        .from('sub_teams_overview')
+        .select('leader_id, member_ids')
+        .eq('manager_id', user.id);
+
+      if (error) {
+        console.error('Error fetching manager sub-teams for calendar:', error);
+        return [user.id];
+      }
+
+      const idSet = new Set<string>();
+
+      (data || []).forEach((st: any) => {
+        if (st.leader_id) idSet.add(st.leader_id);
+        if (Array.isArray(st.member_ids)) {
+          st.member_ids.forEach((memberId: string | null) => {
+            if (memberId) idSet.add(memberId);
+          });
+        }
+      });
+
+      // Always include manager themselves
+      idSet.add(user.id);
+
+      return Array.from(idSet);
+    } catch (err) {
+      console.error('Error resolving manager team agent ids:', err);
+      return [user.id];
+    }
+  };
   const fetchTasks = async () => {
     try {
       // Only show loading on initial load, not on real-time updates
       if (!realtimeEnabled) {
         setLoadingTasks(true);
       }
-      
-      const { data, error } = await supabase
-        .from('task_details')
-        .select('*')
-        .eq('agent_id', user?.id)
-        .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      let data: Task[] | null = null;
+
+      if (hasTeamView) {
+        // Managers/Team Leaders: show tasks for all team members
+        let teamAgentIds: string[] = [];
+        
+        if (isManager) {
+             teamAgentIds = await getManagerTeamAgentIds();
+        } else if (isTeamLeader) {
+             // Team leaders: get agents reporting to them directly
+            const { data: teamData } = await supabase
+              .from('leader_teams')
+              .select('agent_id')
+              .eq('leader_id', user!.id);
+              
+            teamAgentIds = (teamData || []).map((t: any) => t.agent_id);
+            // Include themselves
+            teamAgentIds.push(user!.id);
+        }
+
+        const { data: managerViewTasks, error: managerTasksError } = await supabase
+          .from('tasks')
+          .select(
+            '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, address, location_latitude, location_longitude), visit_logs(*)'
+          )
+          .in('agent_id', teamAgentIds)
+          .order('created_at', { ascending: false });
+
+        if (managerTasksError) throw managerTasksError;
+
+        data = (managerViewTasks as any[] | null)?.map(task => ({
+          ...task,
+          client_name: task.client?.name || '',
+          client_company: task.client?.company || '',
+          client_address: task.client?.address || '',
+          client_latitude: task.client?.location_latitude,
+          client_longitude: task.client?.location_longitude,
+          leader_name: task.leader?.full_name || 'Unknown',
+          leader_email: task.leader?.email || '',
+          agent_name: task.agent?.full_name || 'Unassigned',
+          agent_email: task.agent?.email || '',
+        })) || [];
+      } else {
+        // Mobile sales see only their own tasks
+        const { data: agentTasks, error } = await supabase
+          .from('tasks')
+          .select(
+            '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, address, location_latitude, location_longitude), visit_logs(*)'
+          )
+          .eq('agent_id', user?.id)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        
+        data = (agentTasks as any[] | null)?.map(task => ({
+          ...task,
+          client_name: task.client?.name || '',
+          client_company: task.client?.company || '',
+          client_address: task.client?.address || '',
+          client_latitude: task.client?.location_latitude,
+          client_longitude: task.client?.location_longitude,
+        })) || [];
+      }
+
       setTasks(data || []);
-      
+
       // Enable real-time subscriptions after initial load
       if (!realtimeEnabled) {
         setupRealtimeSubscriptions();
@@ -364,65 +603,130 @@ export default function CalendarPage() {
     }
   };
 
-  const handleStartTask = async (taskId: string) => {
+  const fetchVisits = async () => {
     try {
-      // Optimistic update - update UI immediately
-      setTasks(prevTasks => 
-        prevTasks.map(task => 
-          task.id === taskId 
-            ? { ...task, status: 'in_progress', updated_at: new Date().toISOString() }
-            : task
-        )
-      );
+      if (!user?.id) return;
 
-      const { error } = await supabase
-        .from('tasks')
-        .update({
-          status: 'in_progress',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', taskId);
+      const isManagerRole = user.role === 'manager' || user.role === 'admin';
+      const isTeamLeaderRole = user.role === 'team_leader';
 
-      if (error) {
-        // Revert optimistic update on error
-        setTasks(prevTasks => 
-          prevTasks.map(task => 
-            task.id === taskId 
-              ? { ...task, status: 'pending' }
-              : task
-          )
-        );
-        throw error;
+      let agentIds: string[] = [user.id];
+      if (isManagerRole) {
+        agentIds = await getManagerTeamAgentIds();
+      } else if (isTeamLeaderRole) {
+         const { data: teamData } = await supabase
+              .from('leader_teams')
+              .select('agent_id')
+              .eq('leader_id', user.id);
+         const teamMembers = (teamData || []).map((t: any) => t.agent_id);
+         agentIds = [...agentIds, ...teamMembers];
       }
 
-      toast({
-        title: 'Success',
-        description: 'Task started successfully'
-      });
+      const { data, error } = await supabase
+        .from('visit_logs')
+        .select(`
+          *,
+          client:clients (
+            name,
+            location_latitude,
+            location_longitude
+          )
+        `)
+        .in('agent_id', agentIds)
+        .order('visited_at', { ascending: false });
+
+      if (error) throw error;
+      setVisits(data || []);
     } catch (error) {
-      console.error('Error starting task:', error);
+      console.error('Error fetching visits:', error);
+    }
+  };
+
+  // Fetch team agents for filters
+  const fetchTeamAgents = async () => {
+    if (!user?.id) return;
+
+    try {
+      if (isManager) {
+        // Managers: derive leaders + mobile sales from sub_teams_overview
+        const { data, error } = await supabase
+          .from('sub_teams_overview')
+          .select('leader_id, leader_name, member_ids, members_details')
+          .eq('manager_id', user.id);
+
+        if (error) throw error;
+
+        const map = new Map<string, { id: string; full_name: string }>();
+
+        (data || []).forEach((st: any) => {
+          if (st.leader_id && st.leader_name) {
+            map.set(st.leader_id, { id: st.leader_id, full_name: st.leader_name });
+          }
+          if (Array.isArray(st.member_ids)) {
+            st.member_ids.forEach((memberId: string | null, idx: number) => {
+              if (!memberId) return;
+              const memberName =
+                st.members_details?.[idx]?.name ||
+                st.members_details?.[idx]?.full_name ||
+                'Team Member';
+              map.set(memberId, { id: memberId, full_name: memberName });
+            });
+          }
+        });
+
+        setTeamAgents(Array.from(map.values()));
+      } else {
+        // Team leaders: mobile sales directly under them via leader_teams
+        const { data, error } = await supabase
+          .from('leader_teams')
+          .select(`
+            agent_id,
+            profiles!leader_teams_agent_id_fkey (
+              id,
+              full_name
+            )
+          `)
+          .eq('leader_id', user.id);
+
+        if (error) throw error;
+
+        const agents =
+          data?.map(item => ({
+            id: (item.profiles as any).id,
+            full_name: (item.profiles as any).full_name || 'Mobile Sales',
+          })) || [];
+
+        setTeamAgents(agents);
+      }
+    } catch (error) {
+      console.error('Error fetching team agents for calendar:', error);
       toast({
         title: 'Error',
-        description: 'Failed to start task',
-        variant: 'destructive'
+        description: 'Failed to load team members for calendar view',
+        variant: 'destructive',
       });
     }
+  };
+
+  // Deprecated: tasks are auto-completed for agent-created tasks; explicit "start" is no longer used in calendar.
+  const handleStartTask = async (_taskId: string) => {
+    return;
   };
 
   const handleCompleteTask = async (taskId: string) => {
     try {
       const completionTime = new Date().toISOString();
-      
+
       // Optimistic update - update UI immediately
-      setTasks(prevTasks => 
-        prevTasks.map(task => 
-          task.id === taskId 
-            ? { 
-                ...task, 
-                status: 'completed', 
-                completed_at: completionTime,
-                updated_at: completionTime 
-              }
+      setTasks(prevTasks =>
+        prevTasks.map(task =>
+          task.id === taskId
+            ? {
+              ...task,
+              status: 'completed',
+              completed_at: completionTime,
+              updated_at: completionTime
+            }
             : task
         )
       );
@@ -438,9 +742,9 @@ export default function CalendarPage() {
 
       if (error) {
         // Revert optimistic update on error
-        setTasks(prevTasks => 
-          prevTasks.map(task => 
-            task.id === taskId 
+        setTasks(prevTasks =>
+          prevTasks.map(task =>
+            task.id === taskId
               ? { ...task, status: 'in_progress', completed_at: null }
               : task
           )
@@ -469,20 +773,10 @@ export default function CalendarPage() {
     setShowCompletionConfirm(true);
   };
 
-  // Handle daily task creation with photo upload
+  // Handle daily task creation (Simply create a task)
   const handleCreateDailyTask = async () => {
     if (!dailyTaskForm.title.trim()) {
       toast({ title: 'Error', description: 'Task title is required', variant: 'destructive' });
-      return;
-    }
-
-    if (!dailyTaskPhoto) {
-      toast({ title: 'Error', description: 'Photo is required. Please take a photo before creating the task.', variant: 'destructive' });
-      return;
-    }
-
-    if (!selectedClient) {
-      toast({ title: 'Error', description: 'Client selection is required. Please select a client before creating the task.', variant: 'destructive' });
       return;
     }
 
@@ -493,116 +787,37 @@ export default function CalendarPage() {
 
     setIsUploading(true);
     try {
-      let attachmentUrl = null;
-
-      // Photo is required, so we always upload it
-      if (dailyTaskPhoto) {
-        // Convert base64 to blob
-        const base64Data = dailyTaskPhoto.split(',')[1];
-        const byteCharacters = atob(base64Data);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: 'image/jpeg' });
-
-        // Generate unique filename
-        const sanitizeTitle = dailyTaskForm.title
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '_')
-          .replace(/_+/g, '_')
-          .replace(/^_|_$/g, '');
-        
-        const timestamp = Date.now();
-        const fileName = `${user.id}/${sanitizeTitle}_${timestamp}.jpg`;
-        
-        // Upload to Supabase Storage
-        const { error: uploadError } = await supabase.storage
-          .from('daily-attachments')
-          .upload(fileName, blob, {
-            contentType: 'image/jpeg',
-            upsert: false
-          });
-
-        if (uploadError) {
-          console.error('Upload error:', uploadError);
-          throw new Error(`Failed to upload photo: ${uploadError.message}`);
-        }
-
-        // Get public URL
-        const { data: urlData } = supabase.storage
-          .from('daily-attachments')
-          .getPublicUrl(fileName);
-        
-        attachmentUrl = urlData.publicUrl;
-      }
-
-      // Build notes with client and location info
-      let finalNotes = dailyTaskForm.notes || '';
-      if (selectedClient) {
-        finalNotes += `\n\n--- Client Information ---\n`;
-        finalNotes += `Client: ${selectedClient.name}`;
-        if (selectedClient.company) {
-          finalNotes += ` (${selectedClient.company})`;
-        }
-        if (selectedClient.city) {
-          finalNotes += `\nCity: ${selectedClient.city}`;
-        }
-        if (selectedClient.address) {
-          finalNotes += `\nAddress: ${selectedClient.address}`;
-        }
-        if (selectedClient.email) {
-          finalNotes += `\nEmail: ${selectedClient.email}`;
-        }
-        if (selectedClient.phone) {
-          finalNotes += `\nPhone: ${selectedClient.phone}`;
-        }
-      }
-      if (taskLocation) {
-        finalNotes += `\n\n--- Task Location ---\n`;
-        finalNotes += `Location: ${taskLocation.address}${taskLocation.city ? ` (${taskLocation.city})` : ''}\n`;
-        finalNotes += `Coordinates: ${taskLocation.latitude.toFixed(6)}, ${taskLocation.longitude.toFixed(6)}\n`;
-        finalNotes += `Accuracy: ±${Math.round(taskLocation.accuracy)}m`;
-        if (selectedClient && selectedClient.location_latitude && selectedClient.location_longitude) {
-          const distance = calculateDistance(
-            taskLocation.latitude,
-            taskLocation.longitude,
-            selectedClient.location_latitude,
-            selectedClient.location_longitude
-          );
-          finalNotes += `\nDistance from client: ${Math.round(distance)}m`;
-          if (distance > 100) {
-            finalNotes += ` (⚠ Warning: More than 100m away)`;
-          } else {
-            finalNotes += ` (✓ Verified)`;
-          }
-        }
-      }
+      // Auto-capture current date & time for agent-created tasks
+      const now = new Date();
+      const isoNow = now.toISOString();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const timeStr = `${hours}:${minutes}:00`;
 
       // Create task in database
-      // Note: For agent-created tasks: leader_id = NULL, agent_id = current user
-      // For leader-assigned tasks: leader_id = leader who assigns, agent_id = assigned agent
-      const { error } = await supabase
+      const { data: taskData, error: taskError } = await supabase
         .from('tasks')
         .insert({
           agent_id: user.id,
           leader_id: null, // NULL for agent-created tasks
+          client_id: selectedClient?.id || null, // Optional client link
           title: dailyTaskForm.title,
           description: dailyTaskForm.description || null,
-          due_date: dailyTaskForm.date || null,
-          time: dailyTaskForm.time || null,
-          notes: finalNotes.trim() || null,
-          attachment_url: attachmentUrl,
-          status: 'pending',
-          priority: 'medium'
-        });
+          due_date: isoNow,
+          time: timeStr,
+          notes: dailyTaskForm.notes || null,
+          priority: dailyTaskForm.priority,
+          status: 'completed',
+          completed_at: new Date().toISOString()
+        })
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (taskError) throw taskError;
 
       toast({
         title: 'Success',
-        description: 'Daily task created successfully'
+        description: 'Task created successfully'
       });
 
       // Reset form and close dialog
@@ -611,23 +826,20 @@ export default function CalendarPage() {
         description: '',
         date: new Date().toISOString().split('T')[0],
         time: '',
-        notes: ''
+        notes: '',
+        priority: 'medium'
       });
-      setDailyTaskPhoto(null);
-      setTaskLocation(null);
       setSelectedClient(null);
       setClientPopoverOpen(false);
-      setPrewarmPosition(null);
-      setIsPrewarmingLocation(false);
       setShowAddTaskDialog(false);
 
       // Refresh tasks (real-time will also handle this)
       await fetchTasks();
     } catch (error) {
-      console.error('Error creating daily task:', error);
+      console.error('Error creating task:', error);
       toast({
         title: 'Error',
-        description: 'Failed to create daily task. Please try again.',
+        description: 'Failed to create task. Please try again.',
         variant: 'destructive'
       });
     } finally {
@@ -635,9 +847,166 @@ export default function CalendarPage() {
     }
   };
 
-  const removeTaskPhoto = () => {
-    setDailyTaskPhoto(null);
-    setTaskLocation(null);
+  // Handle Record Visit
+  const handleRecordVisit = async () => {
+    if (!visitPhoto) {
+      toast({ title: 'Error', description: 'Photo is required for visit verification.', variant: 'destructive' });
+      return;
+    }
+
+    if (!selectedClient) {
+      toast({ title: 'Error', description: 'Client user is required.', variant: 'destructive' });
+      return;
+    }
+
+    if (!visitLocation) {
+      toast({ title: 'Error', description: 'Location is required for visit verification.', variant: 'destructive' });
+      return;
+    }
+
+    if (!user?.id) {
+      toast({ title: 'Error', description: 'User not authenticated', variant: 'destructive' });
+      return;
+    }
+
+    // Radius Check
+    if (selectedClient.location_latitude && selectedClient.location_longitude) {
+      const distance = calculateDistance(
+        visitLocation.latitude,
+        visitLocation.longitude,
+        selectedClient.location_latitude,
+        selectedClient.location_longitude
+      );
+
+      if (distance > 100) {
+        toast({
+          title: 'Outside Perimeter',
+          description: `You are ${Math.round(distance)}m away from the client. Must be within 100m.`,
+          variant: 'destructive'
+        });
+        return;
+      }
+    } else {
+      toast({ title: 'Warning', description: 'Client has no location set. Visit recorded but unverified.', variant: 'default' });
+    }
+
+    setIsUploading(true);
+    try {
+      let photoUrl = null;
+
+      // Upload Photo
+      if (visitPhoto) {
+        const base64Data = visitPhoto.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+        const sanitizeName = selectedClient.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const timestamp = Date.now();
+        const fileName = `${user.id}/visit_${sanitizeName}_${timestamp}.jpg`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('daily-attachments') // Reuse bucket or create new 'visit-photos'
+          .upload(fileName, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          });
+
+        if (uploadError) throw new Error(`Failed to upload photo: ${uploadError.message}`);
+
+        const { data: urlData } = supabase.storage
+          .from('daily-attachments')
+          .getPublicUrl(fileName);
+
+        photoUrl = urlData.publicUrl;
+      }
+
+      // Calculate distance for log
+      let distance = 0;
+      let isWithin = false;
+      if (selectedClient.location_latitude && selectedClient.location_longitude) {
+        distance = calculateDistance(
+          visitLocation.latitude,
+          visitLocation.longitude,
+          selectedClient.location_latitude,
+          selectedClient.location_longitude
+        );
+        isWithin = distance <= 100;
+      }
+
+      // Create Visit Log
+      const { error: visitError } = await supabase
+        .from('visit_logs')
+        .insert({
+          company_id: user.company_id || '', // Ensure company_id is available
+          agent_id: user.id,
+          client_id: selectedClient.id,
+          task_id: visitedTask?.id || null, // Link to task if available
+          latitude: visitLocation.latitude,
+          longitude: visitLocation.longitude,
+          address: visitLocation.address,
+          is_within_radius: isWithin,
+          distance_meters: distance,
+          radius_limit_meters: 100,
+          photo_url: photoUrl,
+          notes: visitForm.notes
+        });
+
+      if (visitError) throw visitError;
+
+      // Auto-complete the task and save photo
+      if (visitedTask) {
+        const { error: taskError } = await supabase
+          .from('tasks')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            attachment_url: photoUrl
+          })
+          .eq('id', visitedTask.id);
+
+        if (taskError) {
+          console.error("Error auto-completing task:", taskError);
+          toast({ title: 'Warning', description: 'Visit recorded but failed to update task status.', variant: 'destructive' });
+        } else {
+          // Optimistic update or refetch can be handled by fetchTasks()
+        }
+      }
+
+      // Refresh tasks
+      fetchTasks();
+
+      toast({
+        title: 'Visit Recorded',
+        description: 'Visit logged and task updated successfully.'
+      });
+
+      // Reset
+      setVisitPhoto(null);
+      setVisitLocation(null);
+      setVisitForm({ notes: '' });
+      setSelectedClient(null);
+      setShowRecordVisitDialog(false);
+
+    } catch (error) {
+      console.error('Error recording visit:', error);
+      toast({
+        title: 'Error',
+        description: (error as Error).message || 'Failed to record visit.',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const removeVisitPhoto = () => {
+    setVisitPhoto(null);
+    setVisitLocation(null);
   };
 
   // Start camera
@@ -649,7 +1018,7 @@ export default function CalendarPage() {
       });
       setStream(mediaStream);
       setShowCamera(true);
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
@@ -702,137 +1071,28 @@ export default function CalendarPage() {
     const Δφ = (lat2 - lat1) * Math.PI / 180;
     const Δλ = (lon2 - lon1) * Math.PI / 180;
 
-    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-              Math.cos(φ1) * Math.cos(φ2) *
-              Math.sin(Δλ/2) * Math.sin(Δλ/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) *
+      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
     return R * c; // Distance in meters
   };
 
-  const getAccuracyBadge = (accuracy: number) => {
-    if (accuracy <= 50) {
-      return {
-        label: 'Excellent',
-        color: 'bg-green-50 text-green-700 border-green-200',
-        icon: '🎯'
-      };
-    } else if (accuracy <= 100) {
-      return {
-        label: 'Good',
-        color: 'bg-blue-50 text-blue-700 border-blue-200',
-        icon: '✓'
-      };
-    } else if (accuracy <= 500) {
-      return {
-        label: 'Fair',
-        color: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-        icon: '⚠'
-      };
-    }
 
-    return {
-      label: 'Poor',
-      color: 'bg-red-50 text-red-700 border-red-200',
-      icon: '⚠️'
-    };
-  };
 
-  // Get current location
-  const getCurrentLocation = (): Promise<GeolocationPosition> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error('Geolocation is not supported by your browser'));
-        return;
-      }
 
-      navigator.geolocation.getCurrentPosition(
-        resolve,
-        reject,
-        {
-          enableHighAccuracy: true,
-          timeout: 30000,
-          maximumAge: 0
-        }
-      );
-    });
-  };
-
-  // Pre-warm GPS when dialog opens
-  const startLocationPrewarm = async () => {
-    setIsPrewarmingLocation(true);
-    try {
-      const position = await getCurrentLocation();
-      setPrewarmPosition(position);
-    } catch (error) {
-      console.error('Pre-warm location error:', error);
-    } finally {
-      setIsPrewarmingLocation(false);
-    }
-  };
-
-  // Reverse geocode location
-  const reverseGeocode = async (latitude: number, longitude: number): Promise<{ address: string; city: string }> => {
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-        {
-          headers: {
-            'Accept-Language': 'en'
-          }
-        }
-      );
-      
-      const data = await response.json();
-      
-      if (data && data.address) {
-        const addr = data.address;
-        const city = addr.city || addr.town || addr.village || addr.municipality || '';
-        const parts = [
-          addr.house_number,
-          addr.road,
-          addr.suburb || addr.neighbourhood,
-          addr.city || addr.town || addr.village,
-          addr.state,
-          addr.country
-        ].filter(Boolean);
-        return { address: parts.join(', '), city };
-      } else if (data && data.display_name) {
-        return { address: data.display_name, city: '' };
-      }
-      
-      return { address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, city: '' };
-    } catch (error) {
-      console.error('Reverse geocoding error:', error);
-      return { address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, city: '' };
-    }
-  };
-
-  const processTaskLocation = async (position: GeolocationPosition) => {
-    const { latitude, longitude, accuracy } = position.coords;
-    const { address, city } = await reverseGeocode(latitude, longitude);
-
-    setTaskLocation({ latitude, longitude, accuracy, address, city });
-
-    const badge = getAccuracyBadge(accuracy);
-    toast({
-      title: 'Location Captured',
-      description: `${badge.icon} ${badge.label} (±${Math.round(accuracy)}m)`
-    });
-
-    return { latitude, longitude, accuracy, address, city };
-  };
 
   // Switch camera (front/back)
   const switchCamera = async () => {
     const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(newFacingMode);
-    
+
     // Stop current stream
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
     }
-    
+
     // Start new stream
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -840,7 +1100,7 @@ export default function CalendarPage() {
         audio: false
       });
       setStream(mediaStream);
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
@@ -854,79 +1114,7 @@ export default function CalendarPage() {
     }
   };
 
-  // Capture photo from camera
-  const capturePhoto = async () => {
-    if (!videoRef.current) return;
-    
-    setCapturingPhoto(true);
-    const video = videoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    
-    if (ctx) {
-      ctx.drawImage(video, 0, 0);
-      const dataUrl = canvas.toDataURL('image/jpeg');
-      setDailyTaskPhoto(dataUrl);
-    }
-    
-    stopCamera();
-    setCapturingPhoto(false);
-    
-    // Capture location when photo is taken, mirroring add-client logic
-    try {
-      setIsCapturingLocation(true);
-      let position: GeolocationPosition;
 
-      if (prewarmPosition) {
-        position = prewarmPosition;
-      } else {
-        toast({
-          title: 'Getting location...',
-          description: 'Please wait while we capture your current location.'
-        });
-        position = await getCurrentLocation();
-      }
-
-      const locationData = await processTaskLocation(position);
-      setPrewarmPosition(null);
-
-      if (locationData && selectedClient && selectedClient.location_latitude && selectedClient.location_longitude) {
-        const distance = calculateDistance(
-          locationData.latitude,
-          locationData.longitude,
-          selectedClient.location_latitude,
-          selectedClient.location_longitude
-        );
-
-        if (distance > 100) {
-          toast({
-            title: 'Location Mismatch',
-            description: `You are ${Math.round(distance)}m away from the client's location. Please ensure you are at the correct location.`,
-            variant: 'destructive'
-          });
-        } else {
-          toast({
-            title: 'Location Verified',
-            description: `Location confirmed. You are ${Math.round(distance)}m from the client's location.`
-          });
-        }
-      }
-
-      // Prewarm again in case the user needs to retake the photo
-      startLocationPrewarm();
-    } catch (error: any) {
-      console.error('Error capturing location:', error);
-      toast({
-        title: 'Location Error',
-        description: error.message || 'Failed to capture location. Please ensure location permissions are enabled.',
-        variant: 'destructive'
-      });
-    } finally {
-      setIsCapturingLocation(false);
-    }
-  };
 
   // Cleanup camera on unmount
   useEffect(() => {
@@ -982,22 +1170,28 @@ export default function CalendarPage() {
   const getFilteredEvents = (events: CalendarEvent[]) => {
     return events.filter(event => {
       // Status filter
-      const statusMatch = filterType === 'all' || 
+      const statusMatch = filterType === 'all' ||
         (event.taskData && event.taskData.status === filterType);
-      
+
       // Search filter
-      const searchMatch = !searchQuery || 
+      const searchMatch = !searchQuery ||
         event.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (event.taskData && (
           event.taskData.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
           event.taskData.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
           event.taskData.agent_name?.toLowerCase().includes(searchQuery.toLowerCase())
         ));
-      
+
       // Priority filter
-      const priorityMatch = priorityFilter === 'all' || 
+      const priorityMatch = priorityFilter === 'all' ||
         (event.taskData && event.taskData.priority === priorityFilter);
-      
+
+      // Agent filter (managers only, tasks only)
+      const agentMatch =
+        !isManager ||
+        selectedAgentFilter === 'all' ||
+        (event.taskData && event.taskData.agent_id === selectedAgentFilter);
+
       // Mobile tab filter
       let mobileMatch = true;
       if (isMobile && mobileTab !== 'all') {
@@ -1009,8 +1203,8 @@ export default function CalendarPage() {
             break;
         }
       }
-      
-      return statusMatch && searchMatch && priorityMatch && mobileMatch;
+
+      return statusMatch && searchMatch && priorityMatch && agentMatch && mobileMatch;
     });
   };
 
@@ -1018,24 +1212,24 @@ export default function CalendarPage() {
   const generateCalendarDays = (): CalendarDay[] => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    
+
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
     const startDate = new Date(firstDay);
     startDate.setDate(startDate.getDate() - firstDay.getDay());
-    
+
     const days: CalendarDay[] = [];
     const today = new Date();
-    
+
     for (let i = 0; i < 42; i++) {
       const date = new Date(startDate);
       date.setDate(startDate.getDate() + i);
-      
+
       const dayEvents = getFilteredEvents(allEvents).filter(event => {
         const eventDate = new Date(event.date);
         return eventDate.toDateString() === date.toDateString();
       });
-      
+
       days.push({
         date,
         isCurrentMonth: date.getMonth() === month,
@@ -1043,7 +1237,7 @@ export default function CalendarPage() {
         events: dayEvents
       });
     }
-    
+
     return days;
   };
 
@@ -1053,19 +1247,19 @@ export default function CalendarPage() {
     const day = startOfWeek.getDay();
     const diff = startOfWeek.getDate() - day;
     startOfWeek.setDate(diff);
-    
+
     const weekDays: CalendarDay[] = [];
     const today = new Date();
-    
+
     for (let i = 0; i < 7; i++) {
       const date = new Date(startOfWeek);
       date.setDate(startOfWeek.getDate() + i);
-      
+
       const dayEvents = getFilteredEvents(allEvents).filter(event => {
         const eventDate = new Date(event.date);
         return eventDate.toDateString() === date.toDateString();
       });
-      
+
       weekDays.push({
         date,
         isCurrentMonth: true,
@@ -1073,7 +1267,7 @@ export default function CalendarPage() {
         events: dayEvents
       });
     }
-    
+
     return weekDays;
   };
 
@@ -1086,15 +1280,19 @@ export default function CalendarPage() {
     }).sort((a, b) => a.startTime.localeCompare(b.startTime));
   };
 
-  // Event type colors
-  const getEventTypeColor = (type: CalendarEvent['type']) => {
+  // Event colors (type-based, but tasks can be colored per-agent for leaders)
+  const getEventTypeColor = (event: CalendarEvent) => {
+    if (hasTeamView && event.type === 'task' && event.agentColorClass) {
+      return event.agentColorClass;
+    }
+
     const colors = {
       meeting: 'bg-blue-100 text-blue-800 border-blue-200',
       appointment: 'bg-green-100 text-green-800 border-green-200',
       task: 'bg-yellow-100 text-yellow-800 border-yellow-200',
       reminder: 'bg-purple-100 text-purple-800 border-purple-200'
     };
-    return colors[type];
+    return colors[event.type];
   };
 
   // Priority colors
@@ -1126,424 +1324,471 @@ export default function CalendarPage() {
   const weekDays = getWeekDays();
   const dayEvents = getDayEvents();
 
+  const captureVisitPhoto = async () => {
+    if (!videoRef.current) return;
+
+    try {
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        ctx.drawImage(video, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setVisitPhoto(dataUrl);
+        stopCamera();
+
+        // Start location capture
+        toast({
+          title: 'Acquiring Location...',
+          description: 'Please wait, getting high-accuracy GPS...',
+          duration: 3000
+        });
+
+        // 1. Define getPos helper
+        const getPos = (opts: PositionOptions): Promise<GeolocationPosition> => {
+          return new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, opts);
+          });
+        };
+
+        // 2. Try High Accuracy
+        let position: GeolocationPosition | null = null;
+        try {
+          position = await getPos({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+        } catch (e) {
+          console.warn('High accuracy failed, trying low accuracy...');
+          try {
+            position = await getPos({ enableHighAccuracy: false, timeout: 15000, maximumAge: 20000 });
+          } catch (e2) {
+            console.error('All location attempts failed');
+            throw new Error('Could not acquire location. Please check your GPS settings.');
+          }
+        }
+
+        if (!position) throw new Error('Location capture failed.');
+
+        // 3. Process Location
+        const { latitude, longitude, accuracy } = position.coords;
+
+        // Reverse Geocode
+        let address = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+          const data = await r.json();
+          if (data && data.display_name) address = data.display_name;
+        } catch (e) { console.error('Reverse geocode failed', e); }
+
+        setVisitLocation({
+          latitude, longitude, accuracy, address
+        });
+
+        toast({
+          title: 'Location Captured',
+          description: `Accuracy: ±${Math.round(accuracy)}m`,
+          className: "bg-green-50 border-green-200 text-green-800"
+        });
+      }
+    } catch (error) {
+      console.error('Capture error:', error);
+      toast({
+        title: 'Error',
+        description: (error as Error).message || 'Failed to capture photo/location.',
+        variant: 'destructive'
+      });
+      setVisitPhoto(null);
+    }
+  };
+
   return (
     <div className="p-3 sm:p-4 md:p-6 lg:p-8 space-y-3 sm:space-y-4 md:space-y-6 overflow-x-hidden max-w-full">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:gap-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold">Calendar</h1>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-xs sm:text-sm md:text-base text-muted-foreground">Manage your tasks and schedule</p>
-              {realtimeEnabled && (
-                <div className="flex items-center gap-1 text-green-600 shrink-0">
-                  <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-[10px] sm:text-xs font-medium">Live</span>
-                </div>
-              )}
-            </div>
+
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Calendar & Visits</h1>
+            <p className="text-muted-foreground">Manage your schedule and record client visits.</p>
           </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {/* Add Daily Task Button - Full width on mobile */}
-          <Dialog open={showAddTaskDialog} onOpenChange={(open) => {
-            setShowAddTaskDialog(open);
-            if (open) {
-              // Fetch clients when dialog opens
-              fetchClients();
-              // Set system time when opening the dialog (only once, won't update when system time changes)
-              const now = new Date();
-              const hours = now.getHours().toString().padStart(2, '0');
-              const minutes = now.getMinutes().toString().padStart(2, '0');
-              setDailyTaskForm(prev => ({
-                ...prev,
-                time: `${hours}:${minutes}`
-              }));
-              startLocationPrewarm();
-            } else {
-              // Reset form when closing dialog
-              setDailyTaskForm({
-                title: '',
-                description: '',
-                date: new Date().toISOString().split('T')[0],
-                time: '',
-                notes: ''
-              });
-              setDailyTaskPhoto(null);
-              setTaskLocation(null);
-              setSelectedClient(null);
-              setClientPopoverOpen(false);
-              setPrewarmPosition(null);
-              setIsPrewarmingLocation(false);
-            }
-          }}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="w-full sm:w-auto min-h-[44px] sm:min-h-0">
-                <Plus className="h-4 w-4 mr-2" />
-                <span className="text-sm sm:text-base">Add Daily Task</span>
-              </Button>
-            </DialogTrigger>
-            <DialogContent 
-              className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto"
-              onInteractOutside={(e) => e.preventDefault()}
-            >
-              <DialogHeader>
-                <DialogTitle className="text-lg sm:text-xl">Create Daily Task</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                {/* Camera View */}
-                {showCamera && (
-                  <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Camera</Label>
-                    
-                    <div className="relative bg-black rounded-lg overflow-hidden aspect-[4/3]">
-                      {!stream && (
-                        <div className="flex items-center justify-center h-full text-white">
-                          <div className="text-center">
-                            <Camera className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                            <p>Loading camera...</p>
-                          </div>
-                        </div>
-                      )}
-                      
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        className="w-full h-full object-cover"
-                        style={{ display: stream ? 'block' : 'none' }}
-                      />
-                      
-                      <div className="absolute top-2 right-2 flex flex-col gap-2">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="bg-white/80 hover:bg-white"
-                          onClick={switchCamera}
-                          title={`Switch to ${facingMode === 'user' ? 'back' : 'front'} camera`}
-                        >
-                          <Camera className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      
-                      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex gap-3">
-                        <Button
-                          variant="destructive"
-                          size="icon"
-                          className="bg-white/80 hover:bg-white"
-                          onClick={stopCamera}
-                        >
-                          <X className="h-5 w-5" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          className="h-14 w-14 rounded-full bg-white shadow-lg"
-                          onClick={capturePhoto}
-                          disabled={capturingPhoto || !stream}
-                        >
-                          <div className="h-12 w-12 rounded-full border-4 border-gray-300"></div>
-                        </Button>
-                        <div className="w-12"></div>
-                      </div>
-                    </div>
-                    
-                    <p className="text-xs text-muted-foreground text-center">
-                      {facingMode === 'user' ? 'Front Camera' : 'Back Camera'}
-                    </p>
-                  </div>
-                )}
-
-                {/* Client Selection - Required */}
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">
-                    Client *
-                    {selectedClient && selectedClient.city && (
-                      <span className="text-xs text-muted-foreground ml-2">📍 {selectedClient.city}</span>
-                    )}
-                  </Label>
-                  <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={clientPopoverOpen}
-                        className="w-full justify-between min-h-[44px]"
-                      >
-                        {selectedClient ? (
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <span className="truncate font-medium">{selectedClient.name}</span>
-                            {selectedClient.company && (
-                              <span className="text-xs text-muted-foreground truncate hidden sm:inline">
-                                ({selectedClient.company})
-                              </span>
-                            )}
-                            {selectedClient.city && (
-                              <span className="text-xs text-muted-foreground hidden md:inline">
-                                📍 {selectedClient.city}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">Select client...</span>
-                        )}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                      <Command>
-                        <CommandInput placeholder="Search clients by name, company, or email..." />
-                        <CommandList>
-                          <CommandEmpty>No clients found.</CommandEmpty>
-                          <CommandGroup>
-                            {clients.map((client) => (
-                              <CommandItem
-                                key={client.id}
-                                value={`${client.name} ${client.company || ''} ${client.email || ''} ${client.city || ''}`}
-                                onSelect={() => {
-                                  setSelectedClient(client);
-                                  setClientPopoverOpen(false);
-                                }}
-                                className="cursor-pointer"
-                              >
-                                <Check
-                                  className={`mr-2 h-4 w-4 ${
-                                    selectedClient?.id === client.id ? 'opacity-100' : 'opacity-0'
-                                  }`}
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-medium truncate">{client.name}</p>
-                                  {client.company && (
-                                    <p className="text-xs text-muted-foreground truncate">{client.company}</p>
-                                  )}
-                                  {client.city && (
-                                    <p className="text-xs text-muted-foreground">📍 {client.city}</p>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                  
-                  {/* Selected Client Info */}
-                  {selectedClient && (
-                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-1">
-                      <p className="font-semibold text-sm">{selectedClient.name}</p>
-                      {selectedClient.company && (
-                        <p className="text-xs text-muted-foreground">Company: {selectedClient.company}</p>
-                      )}
-                      {selectedClient.city && (
-                        <p className="text-xs text-muted-foreground">📍 City: <span className="font-medium">{selectedClient.city}</span></p>
-                      )}
-                      {selectedClient.address && (
-                        <p className="text-xs text-muted-foreground">Address: {selectedClient.address}</p>
-                      )}
-                      {selectedClient.email && (
-                        <p className="text-xs text-muted-foreground">Email: {selectedClient.email}</p>
-                      )}
-                      {selectedClient.phone && (
-                        <p className="text-xs text-muted-foreground">Phone: {selectedClient.phone}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Photo Preview */}
-                {!showCamera && (
-                  <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Photo *</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Take a photo for this task (required)
-                      {selectedClient && ' - Location will be captured and validated against client location'}
-                    </p>
-                    
-                    {!dailyTaskPhoto && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={startCamera}
-                        className="w-full min-h-[44px]"
-                        disabled={isCapturingLocation}
-                      >
-                        <Camera className="h-4 w-4 mr-2" />
-                        {isCapturingLocation ? 'Capturing Location...' : 'Take Photo'}
-                      </Button>
-                    )}
-                    
-                    {isPrewarmingLocation && !dailyTaskPhoto && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-2">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Preparing GPS for accurate location...
-                      </p>
-                    )}
-                    
-                    {dailyTaskPhoto && (
-                      <div className="relative">
-                        <img
-                          src={dailyTaskPhoto}
-                          alt="Task attachment preview"
-                          className="w-full h-64 object-cover rounded-lg border"
-                        />
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          size="icon"
-                          className="absolute top-2 right-2"
-                          onClick={() => {
-                            removeTaskPhoto();
-                            setTaskLocation(null);
-                          }}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={startCamera}
-                          className="w-full mt-2"
-                          disabled={isCapturingLocation}
-                        >
-                          <Camera className="h-4 w-4 mr-2" />
-                          Retake Photo
-                        </Button>
-                        
-                        {/* Location Info */}
-                        {taskLocation && (
-                          <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-xs">
-                            <p className="font-medium text-green-800">📍 Location Captured</p>
-                            <p className="text-green-700">Accuracy: ±{Math.round(taskLocation.accuracy)}m</p>
-                            <p className="text-green-700 truncate">{taskLocation.address}</p>
-                            {taskLocation.city && (
-                              <p className="text-green-700 truncate">City: {taskLocation.city}</p>
-                            )}
-                            {selectedClient && selectedClient.location_latitude && selectedClient.location_longitude && (
-                              (() => {
-                                const distance = calculateDistance(
-                                  taskLocation.latitude,
-                                  taskLocation.longitude,
-                                  selectedClient.location_latitude!,
-                                  selectedClient.location_longitude!
-                                );
-                                return (
-                                  <p className={`font-medium mt-1 ${distance <= 100 ? 'text-green-700' : 'text-orange-600'}`}>
-                                    {distance <= 100 
-                                      ? `✓ Verified: ${Math.round(distance)}m from client location`
-                                      : `⚠ Warning: ${Math.round(distance)}m from client location`
-                                    }
-                                  </p>
-                                );
-                              })()
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Task Title */}
-                <div className="space-y-2">
-                  <Label>Task Title *</Label>
-                  <Input 
-                    placeholder="Enter task title" 
-                    value={dailyTaskForm.title}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, title: e.target.value })}
-                  />
-                </div>
-
-                {/* Description */}
-                <div className="space-y-2">
-                  <Label>Description</Label>
-                  <Textarea 
-                    placeholder="Task description (optional)" 
-                    value={dailyTaskForm.description}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, description: e.target.value })}
-                  />
-                </div>
-
-                {/* Date and Time */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-sm">
-                      Date
-                      <Badge variant="secondary" className="text-xs">Today Only</Badge>
-                    </Label>
-                    <Input 
-                      type="date"
-                      value={dailyTaskForm.date}
-                      readOnly
-                      disabled
-                      className="bg-gray-50 cursor-not-allowed text-sm"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2 text-sm">
-                      Time
-                      <Badge variant="secondary" className="text-xs">Auto</Badge>
-                    </Label>
-                    <Input 
-                      type="time"
-                      value={dailyTaskForm.time}
-                      readOnly
-                      disabled
-                      className="bg-gray-50 cursor-not-allowed text-sm"
-                    />
-                  </div>
-                </div>
-
-                {/* Notes */}
-                <div className="space-y-2">
-                  <Label>Notes</Label>
-                  <Textarea 
-                    placeholder="Additional notes (optional)" 
-                    value={dailyTaskForm.notes}
-                    onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, notes: e.target.value })}
-                  />
-                </div>
-
-                <Button 
-                  className="w-full" 
-                  onClick={handleCreateDailyTask} 
-                  disabled={isUploading || !dailyTaskForm.title.trim() || !dailyTaskPhoto || !selectedClient}
-                >
-                  {isUploading ? (
-                    <>
-                      <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-                      Creating...
-                    </>
-                  ) : (
-                    'Create Task'
-                  )}
+          {!isManager && (
+          <div className="flex gap-2 w-full sm:w-auto">
+            {/* Record Visit Button */}
+            <Dialog open={showRecordVisitDialog} onOpenChange={(open) => {
+              setShowRecordVisitDialog(open);
+              if (open) {
+                // startLocationPrewarm(); // Optional: prewarm on open
+              } else {
+                setVisitPhoto(null);
+                setVisitLocation(null);
+                setVisitForm({ notes: '' });
+                setSelectedClient(null);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button className="flex-1 sm:flex-none bg-green-600 hover:bg-green-700 text-white">
+                  <MapPin className="mr-2 h-4 w-4" />
+                  Record Visit
                 </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Record Client Visit</DialogTitle>
+                </DialogHeader>
 
+                <div className="space-y-4 py-2">
+                  {/* 1. Client Selection (Mandatory) */}
+                  <div className="space-y-2">
+                    <Label>Select Client *</Label>
+                    <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={clientPopoverOpen}
+                          className="w-full justify-between"
+                          onClick={() => fetchClients()}
+                        >
+                          {selectedClient ? selectedClient.name : "Select a client..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[300px] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search clients..." />
+                          <CommandList>
+                            <CommandEmpty>No client found.</CommandEmpty>
+                            <CommandGroup>
+                              {clients.map((client) => (
+                                <CommandItem
+                                  key={client.id}
+                                  value={client.name}
+                                  onSelect={() => {
+                                    setSelectedClient(client);
+                                    setClientPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${selectedClient?.id === client.id ? "opacity-100" : "opacity-0"
+                                      }`}
+                                  />
+                                  <div className="flex flex-col">
+                                    <span>{client.name}</span>
+                                    {client.company && <span className="text-xs text-muted-foreground">{client.company}</span>}
+                                    {client.city && <span className="text-xs text-muted-foreground">{client.city}</span>}
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  {/* 2. Camera & Location Section */}
+                  <div className="space-y-2">
+                    <Label>Verification Photo *</Label>
+
+                    {/* Camera Logic Reuse */}
+                    {!visitPhoto && !showCamera && (
+                      <div className="border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" onClick={startCamera}>
+                        <Camera className="h-10 w-10 text-muted-foreground mb-2" />
+                        <p className="font-medium text-sm">Tap to Take Photo</p>
+                        <p className="text-xs text-muted-foreground">Camera & Location required</p>
+                      </div>
+                    )}
+
+                    {/* Camera View */}
+                    {showCamera && (
+                      <div className="relative rounded-lg overflow-hidden bg-black">
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-64 object-cover"
+                        />
+                        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4 z-20">
+                          <Button
+                            variant="destructive"
+                            onClick={stopCamera}
+                            className="rounded-full w-12 h-12 p-0 flex items-center justify-center"
+                          >
+                            <X className="h-6 w-6" />
+                          </Button>
+                          <Button
+                            onClick={() => captureVisitPhoto()}
+                            className="rounded-full w-16 h-16 p-0 flex items-center justify-center bg-white hover:bg-gray-200 border-4 border-gray-300"
+                          >
+                            <div className="w-12 h-12 rounded-full bg-red-500"></div>
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={switchCamera}
+                            className="rounded-full w-12 h-12 p-0 flex items-center justify-center bg-gray-800/50 hover:bg-gray-800/70 text-white backdrop-blur-sm border border-white/20"
+                          >
+                            <RotateCcw className="h-5 w-5" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Photo Preview & Map */}
+                    {visitPhoto && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Map */}
+                        <div className="h-64 rounded-lg overflow-hidden border relative z-0 shadow-sm">
+                          {visitLocation && selectedClient?.location_latitude && selectedClient?.location_longitude ? (
+                            <MapContainer
+                              center={[visitLocation.latitude, visitLocation.longitude]}
+                              zoom={18}
+                              style={{ height: '100%', width: '100%' }}
+                              dragging={!isMobile}
+                            >
+                              <ChangeView center={[visitLocation.latitude, visitLocation.longitude]} />
+                              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                              <Circle
+                                center={[selectedClient.location_latitude, selectedClient.location_longitude]}
+                                pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.8, fillOpacity: 0.2 }}
+                                radius={100}
+                              />
+                              <Marker position={[selectedClient.location_latitude, selectedClient.location_longitude]} />
+                              <Marker position={[visitLocation.latitude, visitLocation.longitude]}>
+                                <Popup>You are here</Popup>
+                              </Marker>
+                            </MapContainer>
+                          ) : (
+                            <div className="flex items-center justify-center h-full bg-muted text-muted-foreground p-4 text-center">
+                              <p>Map unavailable (missing locations)</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Photo */}
+                        <div className="relative h-64 rounded-lg overflow-hidden border bg-black">
+                          <img src={visitPhoto} className="w-full h-full object-contain" />
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="absolute top-2 right-2"
+                            onClick={removeVisitPhoto}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+
+                          {/* Distance Status */}
+                          {visitLocation && selectedClient?.location_latitude && (
+                            <div className={`absolute bottom-0 left-0 right-0 p-2 text-center text-xs font-bold text-white 
+                                        ${calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude) <= 100 ? 'bg-green-600/90' : 'bg-red-600/90'}
+                                     `}>
+                              Distance: {Math.round(calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude))}m
+                              {calculateDistance(visitLocation.latitude, visitLocation.longitude, selectedClient.location_latitude, selectedClient.location_longitude) > 100 ? ' (Too Far)' : ' (Verified)'}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notes */}
+                  <div className="space-y-2">
+                    <Label>Visit Notes</Label>
+                    <Textarea
+                      placeholder="Details about the visit..."
+                      value={visitForm.notes}
+                      onChange={(e) => setVisitForm({ ...visitForm, notes: e.target.value })}
+                    />
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    onClick={handleRecordVisit}
+                    disabled={
+                      isUploading ||
+                      !visitPhoto ||
+                      !visitLocation ||
+                      !selectedClient ||
+                      (!!visitLocation &&
+                        selectedClient?.location_latitude != null &&
+                        selectedClient?.location_longitude != null &&
+                        calculateDistance(
+                          visitLocation.latitude,
+                          visitLocation.longitude,
+                          selectedClient.location_latitude,
+                          selectedClient.location_longitude
+                        ) > 100)
+                    }
+                  >
+                    {isUploading ? 'Recording...' : 'Submit Visit Log'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={showAddTaskDialog} onOpenChange={(open) => {
+              setShowAddTaskDialog(open);
+              if (!open) {
+                setDailyTaskForm({
+                  title: '',
+                  description: '',
+                  date: new Date().toISOString().split('T')[0],
+                  time: '',
+                  notes: '',
+                  priority: 'medium'
+                });
+                setSelectedClient(null);
+                setClientPopoverOpen(false);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Task
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Add New Task</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  {/* Task Title */}
+                  <div className="space-y-2">
+                    <Label>Task Title *</Label>
+                    <Input
+                      placeholder="Enter task title"
+                      value={dailyTaskForm.title}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, title: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Optional Client Link */}
+                  <div className="space-y-2">
+                    <Label>Link Client (Optional)</Label>
+                    <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={clientPopoverOpen}
+                          className="w-full justify-between"
+                          onClick={() => fetchClients()}
+                        >
+                          {selectedClient ? selectedClient.name : "Select a client..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[300px] p-0">
+                        <Command>
+                          <CommandInput placeholder="Search clients..." />
+                          <CommandList>
+                            <CommandEmpty>No client found.</CommandEmpty>
+                            <CommandGroup>
+                              {clients.map((client) => (
+                                <CommandItem
+                                  key={client.id}
+                                  value={client.name}
+                                  onSelect={() => {
+                                    setSelectedClient(client);
+                                    setClientPopoverOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${selectedClient?.id === client.id ? "opacity-100" : "opacity-0"
+                                      }`}
+                                  />
+                                  <div className="flex flex-col">
+                                    <span>{client.name}</span>
+                                    {client.company && <span className="text-xs text-muted-foreground">{client.company}</span>}
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  {/* Description */}
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Textarea
+                      placeholder="Task description (optional)"
+                      value={dailyTaskForm.description}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, description: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Date and Time (auto-set to now for mobile sales; no manual selection) */}
+                  <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                    Date and time will be set automatically when you create this task.
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Priority</Label>
+                    <Select
+                      value={dailyTaskForm.priority}
+                      onValueChange={(val: string) => setDailyTaskForm({ ...dailyTaskForm, priority: val as 'low' | 'medium' | 'high' | 'urgent' })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="urgent">Urgent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Notes */}
+                  <div className="space-y-2">
+                    <Label>Notes</Label>
+                    <Textarea
+                      placeholder="Additional notes (optional)"
+                      value={dailyTaskForm.notes}
+                      onChange={(e) => setDailyTaskForm({ ...dailyTaskForm, notes: e.target.value })}
+                    />
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    onClick={handleCreateDailyTask}
+                    disabled={isUploading || !dailyTaskForm.title.trim()}
+                  >
+                    {isUploading ? 'Creating...' : 'Create Task'}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+          )}
+        </div>
+        <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4">
           {/* Mobile Tab Navigation */}
           {isMobile ? (
             <div className="flex w-full">
-              <div className="flex border rounded-lg w-full min-h-[44px]">
-                <Button
-                  variant={mobileTab === 'today' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setMobileTab('today')}
-                  className="flex-1 text-xs sm:text-sm min-h-[44px]"
-                >
-                  Today
-                </Button>
-                <Button
-                  variant={mobileTab === 'all' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setMobileTab('all')}
-                  className="flex-1 text-xs sm:text-sm min-h-[44px]"
-                >
-                  All
-                </Button>
-              </div>
+              <Button
+                variant={mobileTab === 'today' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setMobileTab('today')}
+                className="flex-1 text-xs sm:text-sm min-h-[44px]"
+              >
+                Today
+              </Button>
+              <Button
+                variant={mobileTab === 'all' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setMobileTab('all')}
+                className="flex-1 text-xs sm:text-sm min-h-[44px]"
+              >
+                All
+              </Button>
             </div>
+
           ) : (
             <>
               {/* Search Bar */}
@@ -1608,8 +1853,8 @@ export default function CalendarPage() {
               </div>
             </>
           )}
-          
-          {/* Filter */}
+
+          {/* Status Filter */}
           <Select value={filterType} onValueChange={setFilterType}>
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -1622,7 +1867,24 @@ export default function CalendarPage() {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
-          
+
+          {/* Agent Filter (Managers & Team Leaders) */}
+          {hasTeamView && (
+            <Select value={selectedAgentFilter} onValueChange={setSelectedAgentFilter}>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Filter by agent" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Team Members</SelectItem>
+                {teamAgents.map(agent => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.full_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
         </div>
       </div>
 
@@ -1631,9 +1893,9 @@ export default function CalendarPage() {
         <CardHeader className="p-3 sm:p-6">
           <div className="flex items-center justify-between gap-2 w-full overflow-x-hidden">
             <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0 overflow-x-hidden">
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   if (isMobile) navigateWeek('prev');
                   else if (viewMode === 'month') navigateMonth('prev');
@@ -1644,7 +1906,7 @@ export default function CalendarPage() {
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              
+
               <h2 className="text-base sm:text-lg md:text-xl font-semibold truncate text-center flex-1">
                 {isMobile
                   ? currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -1654,10 +1916,10 @@ export default function CalendarPage() {
                     (viewMode === 'day' && currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }))
                   )}
               </h2>
-              
-              <Button 
-                variant="outline" 
-                size="sm" 
+
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   if (isMobile) navigateWeek('next');
                   else if (viewMode === 'month') navigateMonth('next');
@@ -1669,10 +1931,10 @@ export default function CalendarPage() {
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            
-            <Button 
-              variant="outline" 
-              size="sm" 
+
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setCurrentDate(new Date())}
               className="min-h-[44px] px-3 sm:px-4 text-xs sm:text-sm shrink-0"
             >
@@ -1680,7 +1942,7 @@ export default function CalendarPage() {
             </Button>
           </div>
         </CardHeader>
-        
+
         <CardContent className="p-3 sm:p-6 overflow-x-hidden w-full">
           {/* Mobile: fixed week strip with selected day's list below */}
           {isMobile && (
@@ -1704,9 +1966,8 @@ export default function CalendarPage() {
                     return (
                       <button
                         key={index}
-                        className={`py-2.5 sm:py-3 text-sm sm:text-base border-r last:border-r-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-colors min-h-[44px] sm:min-h-[48px] active:scale-95 ${
-                          isSelected ? 'bg-primary text-primary-foreground font-semibold' : isToday ? 'bg-muted font-semibold' : 'hover:bg-muted/50'
-                        }`}
+                        className={`py-2.5 sm:py-3 text-sm sm:text-base border-r last:border-r-0 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 transition-colors min-h-[44px] sm:min-h-[48px] active:scale-95 ${isSelected ? 'bg-primary text-primary-foreground font-semibold' : isToday ? 'bg-muted font-semibold' : 'hover:bg-muted/50'
+                          }`}
                         onClick={() => handleDayClick(day.date)}
                         aria-label={`Select ${day.date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`}
                       >
@@ -1726,16 +1987,16 @@ export default function CalendarPage() {
                       const hourEvents = dayEvents.filter(event => parseInt(event.startTime.split(':')[0]) === hour);
                       // Skip early morning hours (0-5) if they have no events
                       if (hourEvents.length === 0 && hour < 6) return null;
-                      
+
                       // Check if current time is in this hour for sticky positioning
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
-                        <div 
-                          key={hour} 
+                        <div
+                          key={hour}
                           className="flex items-start gap-2 sm:gap-3 p-2.5 sm:p-3 min-h-[48px] sm:min-h-[56px] relative"
                           data-hour={hour}
                         >
@@ -1752,7 +2013,7 @@ export default function CalendarPage() {
                                 {hourEvents.map(event => (
                                   <div
                                     key={event.id}
-                                    className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 p-2 sm:px-3 sm:py-2 rounded border ${getEventTypeColor(event.type)} cursor-pointer active:opacity-80 transition-opacity min-h-[44px]`}
+                                    className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 p-2 sm:px-3 sm:py-2 rounded border ${getEventTypeColor(event)} cursor-pointer active:opacity-80 transition-opacity min-h-[44px]`}
                                     onClick={() => handleEventClick(event)}
                                   >
                                     <div className="font-semibold text-xs sm:text-sm truncate flex-1 min-w-0">{event.title}</div>
@@ -1760,34 +2021,7 @@ export default function CalendarPage() {
                                       <div className="text-[10px] sm:text-xs opacity-75 truncate">{event.startTime} - {event.endTime}</div>
                                       {event.type === 'task' && event.taskData && (
                                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                          {event.taskData.status === 'pending' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleStartTask(event.taskData!.id)}
-                                              className="h-8 w-8 p-0 min-h-[44px] min-w-[44px]"
-                                              aria-label="Start task"
-                                            >
-                                              <Play className="h-3.5 w-3.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'in_progress' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleCompleteTask(event.taskData!.id)}
-                                              className="h-8 w-8 p-0 min-h-[44px] min-w-[44px]"
-                                              aria-label="Complete task"
-                                            >
-                                              <CheckCircle className="h-3.5 w-3.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'completed' && (
-                                            <div className="flex items-center gap-1 text-green-600 text-[10px] sm:text-xs font-medium">
-                                              <CheckCircle className="h-3.5 w-3.5" />
-                                              <span className="hidden sm:inline">Completed</span>
-                                            </div>
-                                          )}
+                                      {/* Task actions hidden in calendar view */}
                                         </div>
                                       )}
                                     </div>
@@ -1796,22 +2030,22 @@ export default function CalendarPage() {
                               </div>
                             )}
                           </div>
-                          
+
                           {/* Current time indicator - Sticky within this hour row */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute left-2 sm:left-3 -top-1.5 w-3 h-3 sm:w-4 sm:h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute right-2 sm:right-3 -top-2.5 sm:-top-3 text-[10px] sm:text-xs md:text-sm text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -1881,23 +2115,22 @@ export default function CalendarPage() {
                     const priorityOrder = { urgent: 4, high: 3, medium: 2, low: 1 };
                     const aPriority = priorityOrder[a.taskData?.priority as keyof typeof priorityOrder] || 0;
                     const bPriority = priorityOrder[b.taskData?.priority as keyof typeof priorityOrder] || 0;
-                    
+
                     if (aPriority !== bPriority) {
                       return bPriority - aPriority;
                     }
-                    
+
                     return a.startTime.localeCompare(b.startTime);
                   })
                   .map(event => (
                     <Card
                       key={event.id}
-                      className={`cursor-pointer transition-all hover:shadow-sm active:scale-[0.98] border-l-4 ${
-                        event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                      className={`cursor-pointer transition-all hover:shadow-sm active:scale-[0.98] border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
                         event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                        event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                        event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                        'border-l-gray-500 bg-gray-50'
-                      } ${event.taskData?.status === 'completed' ? 'opacity-75' : ''}`}
+                          event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                            event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                              'border-l-gray-500 bg-gray-50'
+                        } ${event.taskData?.status === 'completed' ? 'opacity-75' : ''}`}
                       onClick={() => handleEventClick(event)}
                     >
                       <CardContent className="p-3">
@@ -1906,27 +2139,16 @@ export default function CalendarPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <h4 className={`font-medium text-sm leading-tight truncate ${
-                                  event.taskData?.status === 'completed' ? 'line-through text-muted-foreground' : ''
-                                }`}>
+                                <h4 className="font-medium text-sm leading-tight truncate">
                                   {event.title}
                                 </h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-[10px] px-1.5 py-0 h-5 shrink-0">
                                   {event.taskData?.priority}
                                 </Badge>
-                                {event.taskData?.status === 'completed' && (
-                                  <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
-                                )}
-                                {event.taskData?.status === 'in_progress' && (
-                                  <Play className="h-4 w-4 text-blue-600 shrink-0" />
-                                )}
-                                {event.taskData?.status === 'pending' && (
-                                  <Clock className="h-4 w-4 text-gray-600 shrink-0" />
-                                )}
                               </div>
                               {event.taskData?.description && (
                                 <p className="text-xs text-gray-600 line-clamp-1">
@@ -1974,24 +2196,10 @@ export default function CalendarPage() {
                             )}
                           </div>
 
-                          {/* Action Buttons - Compact */}
+                          {/* Action Buttons - Compact (Complete only for mobile sales) */}
                           <div className="flex items-center justify-between pt-2 border-t border-gray-200">
                             <div className="flex items-center gap-2">
-                              {event.taskData?.status === 'pending' && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleStartTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <Play className="h-3 w-3 mr-1" />
-                                  Start
-                                </Button>
-                              )}
-                              {event.taskData?.status === 'in_progress' && (
+                              {isMobileSales && event.taskData && event.taskData.status !== 'completed' && (
                                 <Button
                                   size="sm"
                                   className="h-7 px-2 text-xs"
@@ -2011,7 +2219,7 @@ export default function CalendarPage() {
                                 </div>
                               )}
                             </div>
-                            
+
                             <span className="text-[10px] text-gray-500">
                               {new Date(event.taskData?.created_at || '').toLocaleDateString('en-US', {
                                 month: 'short',
@@ -2047,26 +2255,22 @@ export default function CalendarPage() {
                   {day}
                 </div>
               ))}
-              
+
               {/* Calendar Days */}
               {calendarDays.map((day, index) => {
                 const isClicked = clickedDay && clickedDay.toDateString() === day.date.toDateString();
                 return (
                   <div
                     key={index}
-                    className={`min-h-[120px] p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${
-                      day.isCurrentMonth ? 'bg-background' : 'bg-muted/50'
-                    } ${day.isToday ? 'ring-2 ring-primary' : ''} ${
-                      isClicked ? 'bg-primary/10 border-primary ring-2 ring-primary/20' : ''
-                    }`}
+                    className={`min-h-[120px] p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${day.isCurrentMonth ? 'bg-background' : 'bg-muted/50'
+                      } ${day.isToday ? 'ring-2 ring-primary' : ''} ${isClicked ? 'bg-primary/10 border-primary ring-2 ring-primary/20' : ''
+                      }`}
                     onClick={() => handleDayClick(day.date)}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <div className={`text-sm font-medium ${
-                        day.isCurrentMonth ? 'text-foreground' : 'text-muted-foreground'
-                      } ${day.isToday ? 'text-primary font-bold' : ''} ${
-                        isClicked ? 'text-primary font-bold' : ''
-                      }`}>
+                      <div className={`text-sm font-medium ${day.isCurrentMonth ? 'text-foreground' : 'text-muted-foreground'
+                        } ${day.isToday ? 'text-primary font-bold' : ''} ${isClicked ? 'text-primary font-bold' : ''
+                        }`}>
                         {day.date.getDate()}
                       </div>
                       {day.events.length > 0 && (
@@ -2075,12 +2279,12 @@ export default function CalendarPage() {
                         </Badge>
                       )}
                     </div>
-                    
+
                     <div className="space-y-1">
                       {day.events.slice(0, 3).map(event => (
                         <div
                           key={event.id}
-                          className={`text-xs p-1 rounded border ${getEventTypeColor(event.type)} cursor-pointer hover:opacity-80 transition-opacity`}
+                          className={`text-xs p-1 rounded border ${getEventTypeColor(event)} cursor-pointer hover:opacity-80 transition-opacity`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleEventClick(event);
@@ -2091,17 +2295,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {event.taskData.status === 'pending' && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleStartTask(event.taskData!.id)}
-                                    className="h-4 px-1 text-xs"
-                                  >
-                                    <Play className="h-2 w-2" />
-                                  </Button>
-                                )}
-                                {event.taskData.status === 'in_progress' && (
+                                {isMobileSales && event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2140,10 +2334,9 @@ export default function CalendarPage() {
                 const isClicked = clickedDay && clickedDay.toDateString() === day.date.toDateString();
                 return (
                   <div key={index} className="space-y-2">
-                    <div 
-                      className={`text-center p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${
-                        day.isToday ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                      } ${isClicked ? 'bg-primary/20 border-primary ring-2 ring-primary/20' : ''}`}
+                    <div
+                      className={`text-center p-2 border rounded-lg cursor-pointer transition-all duration-200 hover:bg-accent/50 ${day.isToday ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                        } ${isClicked ? 'bg-primary/20 border-primary ring-2 ring-primary/20' : ''}`}
                       onClick={() => handleDayClick(day.date)}
                     >
                       <div className="text-sm font-medium">
@@ -2154,12 +2347,12 @@ export default function CalendarPage() {
                       </div>
                       {/* plus indicator removed for mobile spec */}
                     </div>
-                    
+
                     <div className="space-y-1">
                       {day.events.map(event => (
                         <div
                           key={event.id}
-                          className={`text-xs p-2 rounded border ${getEventTypeColor(event.type)} cursor-pointer hover:opacity-80 transition-opacity`}
+                          className={`text-xs p-2 rounded border ${getEventTypeColor(event)} cursor-pointer hover:opacity-80 transition-opacity`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleEventClick(event);
@@ -2170,17 +2363,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {event.taskData.status === 'pending' && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleStartTask(event.taskData!.id)}
-                                    className="h-4 px-1 text-xs"
-                                  >
-                                    <Play className="h-2 w-2" />
-                                  </Button>
-                                )}
-                                {event.taskData.status === 'in_progress' && (
+                                {isMobileSales && event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2220,16 +2403,16 @@ export default function CalendarPage() {
                         const eventHour = parseInt(event.startTime.split(':')[0]);
                         return eventHour === hour;
                       });
-                      
+
                       // Skip early morning hours (0-5) if they have no events
                       if (hourEvents.length === 0 && hour < 6) return null;
-                      
+
                       // Check if current time is in this hour
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
                         <div key={hour} className="relative min-h-[44px] sm:min-h-[52px] border-b last:border-b-0">
                           <div className="flex gap-2 sm:gap-3 p-2 sm:p-3">
@@ -2237,7 +2420,7 @@ export default function CalendarPage() {
                             <div className="w-12 sm:w-16 text-[10px] sm:text-xs text-muted-foreground font-medium shrink-0 pt-0.5">
                               {hour.toString().padStart(2, '0')}:00
                             </div>
-                            
+
                             {/* Events for this hour */}
                             <div className="flex-1 space-y-1.5 sm:space-y-2 min-w-0">
                               {hourEvents.length === 0 ? (
@@ -2246,7 +2429,7 @@ export default function CalendarPage() {
                                 hourEvents.map(event => (
                                   <div
                                     key={event.id}
-                                    className={`text-[10px] sm:text-xs p-1.5 sm:p-2 rounded border cursor-pointer active:opacity-80 transition-opacity ${getEventTypeColor(event.type)}`}
+                                    className={`text-[10px] sm:text-xs p-1.5 sm:p-2 rounded border cursor-pointer active:opacity-80 transition-opacity ${getEventTypeColor(event)}`}
                                     onClick={() => handleEventClick(event)}
                                   >
                                     <div className="font-medium truncate text-xs sm:text-sm">{event.title}</div>
@@ -2256,17 +2439,7 @@ export default function CalendarPage() {
                                       </div>
                                       {event.type === 'task' && event.taskData && (
                                         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                          {event.taskData.status === 'pending' && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => handleStartTask(event.taskData!.id)}
-                                              className="h-5 w-5 p-0"
-                                            >
-                                              <Play className="h-2.5 w-2.5" />
-                                            </Button>
-                                          )}
-                                          {event.taskData.status === 'in_progress' && (
+                                          {isMobileSales && event.taskData.status !== 'completed' && (
                                             <Button
                                               variant="outline"
                                               size="sm"
@@ -2287,22 +2460,22 @@ export default function CalendarPage() {
                               )}
                             </div>
                           </div>
-                          
+
                           {/* Current time indicator - Sticky within this hour row */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute left-2 sm:left-3 -top-1.5 w-3 h-3 sm:w-4 sm:h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute right-2 sm:right-3 -top-2.5 sm:-top-3 text-[10px] sm:text-xs md:text-sm text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -2318,26 +2491,26 @@ export default function CalendarPage() {
                         const eventHour = parseInt(event.startTime.split(':')[0]);
                         return eventHour === hour;
                       });
-                      
+
                       // Check if current time is in this hour
                       const currentHour = currentTime.getHours();
                       const currentMinute = currentTime.getMinutes();
                       const isCurrentHour = isCurrentDay() && hour === currentHour;
                       const minuteOffset = isCurrentHour ? (currentMinute / 60) : 0;
-                      
+
                       return (
                         <div key={hour} className="relative min-h-[60px] border-r border-gray-200 p-2">
                           {/* Time label */}
                           <div className="text-xs text-muted-foreground font-medium mb-2">
                             {hour.toString().padStart(2, '0')}:00
                           </div>
-                          
+
                           {/* Events for this hour */}
                           <div className="space-y-1">
                             {hourEvents.map(event => (
                               <div
                                 key={event.id}
-                                className={`text-xs p-2 rounded border cursor-pointer hover:opacity-80 transition-opacity ${getEventTypeColor(event.type)}`}
+                                className={`text-xs p-2 rounded border cursor-pointer hover:opacity-80 transition-opacity ${getEventTypeColor(event)}`}
                                 onClick={() => handleEventClick(event)}
                               >
                                 <div className="font-medium truncate">{event.title}</div>
@@ -2345,17 +2518,7 @@ export default function CalendarPage() {
                                   <div className="text-xs opacity-75">{event.startTime} - {event.endTime}</div>
                                   {event.type === 'task' && event.taskData && (
                                     <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                      {event.taskData.status === 'pending' && (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => handleStartTask(event.taskData!.id)}
-                                          className="h-4 px-1 text-xs"
-                                        >
-                                          <Play className="h-2 w-2" />
-                                        </Button>
-                                      )}
-                                      {event.taskData.status === 'in_progress' && (
+                                      {isMobileSales && event.taskData.status !== 'completed' && (
                                         <Button
                                           variant="outline"
                                           size="sm"
@@ -2371,22 +2534,22 @@ export default function CalendarPage() {
                               </div>
                             ))}
                           </div>
-                          
+
                           {/* Current time indicator - Within this hour column */}
                           {isCurrentHour && (
-                            <div 
+                            <div
                               className="absolute left-0 right-0 h-0.5 bg-red-500 z-20 pointer-events-none"
-                              style={{ 
+                              style={{
                                 top: `${minuteOffset * 100}%`,
                                 transform: 'translateY(-50%)'
                               }}
                             >
                               <div className="absolute -left-2 -top-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow-sm"></div>
                               <div className="absolute -right-16 -top-1 text-xs text-red-600 font-medium bg-white/90 backdrop-blur-sm px-1 rounded shadow-sm whitespace-nowrap">
-                                {currentTime.toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
+                                {currentTime.toLocaleTimeString('en-US', {
+                                  hour: '2-digit',
                                   minute: '2-digit',
-                                  hour12: false 
+                                  hour12: false
                                 })}
                               </div>
                             </div>
@@ -2397,7 +2560,7 @@ export default function CalendarPage() {
                   </div>
                 )}
               </div>
-              
+
               {/* Empty state when no events */}
               {dayEvents.length === 0 && (
                 <div className="text-center py-8 sm:py-12 text-muted-foreground border-2 border-dashed border-gray-200 rounded-lg">
@@ -2446,13 +2609,12 @@ export default function CalendarPage() {
                       .map(event => (
                         <Card
                           key={event.id}
-                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${
-                            event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
                             event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                            event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                            event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                            'border-l-gray-500 bg-gray-50'
-                          }`}
+                              event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                                event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                                  'border-l-gray-500 bg-gray-50'
+                            }`}
                           onClick={() => handleEventClick(event)}
                         >
                           <CardContent className="p-4">
@@ -2461,8 +2623,8 @@ export default function CalendarPage() {
                                 <h4 className="font-medium text-sm leading-tight">{event.title}</h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-xs">
                                   {event.taskData?.priority}
                                 </Badge>
@@ -2505,18 +2667,6 @@ export default function CalendarPage() {
                               </div>
 
                               <div className="flex items-center justify-between pt-2 border-t">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-6 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleStartTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <Play className="h-3 w-3 mr-1" />
-                                  Start
-                                </Button>
                                 <span className="text-xs text-gray-500">
                                   {new Date(event.taskData?.created_at || '').toLocaleDateString()}
                                 </span>
@@ -2548,13 +2698,12 @@ export default function CalendarPage() {
                       .map(event => (
                         <Card
                           key={event.id}
-                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${
-                            event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
+                          className={`cursor-pointer transition-all hover:shadow-md hover:scale-105 border-l-4 ${event.taskData?.priority === 'urgent' ? 'border-l-red-500 bg-red-50' :
                             event.taskData?.priority === 'high' ? 'border-l-orange-500 bg-orange-50' :
-                            event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
-                            event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
-                            'border-l-gray-500 bg-gray-50'
-                          }`}
+                              event.taskData?.priority === 'medium' ? 'border-l-yellow-500 bg-yellow-50' :
+                                event.taskData?.priority === 'low' ? 'border-l-green-500 bg-green-50' :
+                                  'border-l-gray-500 bg-gray-50'
+                            }`}
                           onClick={() => handleEventClick(event)}
                         >
                           <CardContent className="p-4">
@@ -2563,8 +2712,8 @@ export default function CalendarPage() {
                                 <h4 className="font-medium text-sm leading-tight">{event.title}</h4>
                                 <Badge variant={
                                   event.taskData?.priority === 'urgent' ? 'destructive' :
-                                  event.taskData?.priority === 'high' ? 'default' :
-                                  event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
+                                    event.taskData?.priority === 'high' ? 'default' :
+                                      event.taskData?.priority === 'medium' ? 'secondary' : 'outline'
                                 } className="text-xs">
                                   {event.taskData?.priority}
                                 </Badge>
@@ -2594,17 +2743,19 @@ export default function CalendarPage() {
                               </div>
 
                               <div className="flex items-center justify-between pt-2 border-t">
-                                <Button
-                                  size="sm"
-                                  className="h-6 px-2 text-xs"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCompleteTask(event.taskData!.id);
-                                  }}
-                                >
-                                  <CheckCircle className="h-3 w-3 mr-1" />
-                                  Complete
-                                </Button>
+                                {isMobileSales && (
+                                  <Button
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleCompleteTask(event.taskData!.id);
+                                    }}
+                                  >
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    Complete
+                                  </Button>
+                                )}
                                 <span className="text-xs text-gray-500">
                                   {new Date(event.taskData?.created_at || '').toLocaleDateString()}
                                 </span>
@@ -2742,229 +2893,356 @@ export default function CalendarPage() {
 
       {/* Event Details Dialog */}
       <Dialog open={showEventDetails} onOpenChange={setShowEventDetails}>
-        <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-            <DialogTitle className="text-lg sm:text-xl flex items-center gap-2">
-              <CalendarIcon className="h-5 w-5" />
-              Event Details
-            </DialogTitle>
-          </DialogHeader>
-          
+        <DialogContent className="max-w-[95vw] sm:max-w-3xl max-h-[90vh] overflow-y-auto p-0 gap-0">
           {selectedEvent && (
-            <div className="space-y-6 py-4">
-              {/* Event Header */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <Badge className={getEventTypeColor(selectedEvent.type)}>
-                    {selectedEvent.type}
-                  </Badge>
-                  <Badge variant="outline" className={getPriorityColor(selectedEvent.priority)}>
-                    {selectedEvent.priority} priority
-                  </Badge>
-                  <Badge variant="outline" className="bg-gray-100 text-gray-600">
-                    {selectedEvent.status}
-                  </Badge>
-                </div>
-                
-                <h2 className="text-xl sm:text-2xl font-bold">{selectedEvent.title}</h2>
-                
-                {selectedEvent.description && (
-                  <p className="text-muted-foreground text-sm sm:text-lg">{selectedEvent.description}</p>
-                )}
-              </div>
-
-              {/* Event Details Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Date & Time */}
-                <div className="space-y-3">
-                  <h3 className="font-semibold text-lg flex items-center gap-2">
-                    <Clock className="h-5 w-5" />
-                    Schedule
-                  </h3>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">Date:</span>
-                      <span>{new Date(selectedEvent.date).toLocaleDateString('en-US', { 
-                        weekday: 'long', 
-                        year: 'numeric', 
-                        month: 'long', 
-                        day: 'numeric' 
-                      })}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">Time:</span>
-                      <span>{selectedEvent.startTime} - {selectedEvent.endTime}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">Duration:</span>
-                      <span>
-                        {(() => {
-                          const start = new Date(`2000-01-01T${selectedEvent.startTime}`);
-                          const end = new Date(`2000-01-01T${selectedEvent.endTime}`);
-                          const diff = end.getTime() - start.getTime();
-                          const hours = Math.floor(diff / (1000 * 60 * 60));
-                          const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                          return `${hours}h ${minutes}m`;
-                        })()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Task Completion Info */}
-                {selectedEvent.type === 'task' && selectedEvent.taskData && (
-                  <div className="space-y-3">
-                    <h3 className="font-semibold text-lg flex items-center gap-2">
-                      <CheckCircle className="h-5 w-5" />
-                      Task Status
-                    </h3>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Status:</span>
-                        <Badge variant="outline" className={
-                          selectedEvent.taskData.status === 'completed' ? 'bg-green-100 text-green-600' :
-                          selectedEvent.taskData.status === 'in_progress' ? 'bg-blue-100 text-blue-600' :
-                          selectedEvent.taskData.status === 'pending' ? 'bg-yellow-100 text-yellow-600' :
-                          'bg-gray-100 text-gray-600'
-                        }>
+            <>
+              {/* distinct Header Area */}
+              <div className={`px-6 py-4 border-b flex flex-col gap-2 ${selectedEvent.type === 'task' ? 'bg-slate-50' : 'bg-blue-50/50'
+                }`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className={`${getEventTypeColor(selectedEvent)} shadow-sm`}>
+                        {selectedEvent.type === 'task' ? 'Task' : selectedEvent.type}
+                      </Badge>
+                      <Badge variant="outline" className={`${getPriorityColor(selectedEvent.priority)} bg-white shadow-sm`}>
+                        {selectedEvent.priority} Priority
+                      </Badge>
+                      {/* Show Status Badge for Tasks */}
+                      {selectedEvent.type === 'task' && selectedEvent.taskData && (
+                        <Badge variant="outline" className={`bg-white shadow-sm capitalize ${selectedEvent.taskData.status === 'completed' ? 'text-green-700 border-green-200' :
+                          selectedEvent.taskData.status === 'cancelled' ? 'text-gray-500 border-gray-200' :
+                            'text-blue-700 border-blue-200'
+                          }`}>
                           {selectedEvent.taskData.status.replace('_', ' ')}
                         </Badge>
-                      </div>
-                      {selectedEvent.taskData.completed_at && (
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">Completed:</span>
-                          <span>{new Date(selectedEvent.taskData.completed_at).toLocaleString('en-US', {
-                            weekday: 'long',
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}</span>
-                        </div>
                       )}
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Assigned by:</span>
-                        <span>{selectedEvent.taskData.leader_name}</span>
-                      </div>
                     </div>
+                    <DialogTitle className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
+                      {selectedEvent.title}
+                    </DialogTitle>
                   </div>
-                )}
+                </div>
 
-                {/* Task Attachment/Photo */}
-                {selectedEvent.type === 'task' && selectedEvent.taskData?.attachment_url && (
-                  <div className="space-y-3">
-                    <h3 className="font-semibold text-lg flex items-center gap-2">
-                      <Camera className="h-5 w-5" />
-                      Attachment
-                    </h3>
-                    <div className="relative rounded-lg overflow-hidden border">
-                      <img
-                        src={selectedEvent.taskData.attachment_url}
-                        alt="Task attachment"
-                        className="w-full h-96 object-contain bg-gray-50"
-                        onClick={() => {
-                          const newWindow = window.open();
-                          if (newWindow) {
-                            newWindow.document.write(`
-                              <html>
-                                <head><title>Task Attachment</title></head>
-                                <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#000;">
-                                  <img src="${selectedEvent.taskData.attachment_url}" style="max-width:100%;max-height:100vh;object-fit:contain;" />
-                                </body>
-                              </html>
-                            `);
-                          }
-                        }}
-                        style={{ cursor: 'pointer' }}
-                      />
-                    </div>
-                    <p className="text-sm text-muted-foreground">Click image to view full size</p>
+                {/* Sub-header info row */}
+                <div className="flex items-center gap-4 text-sm text-gray-500 mt-1 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <CalendarIcon className="h-4 w-4" />
+                    <span>
+                      {new Date(selectedEvent.date).toLocaleDateString('en-US', {
+                        weekday: 'short', month: 'short', day: 'numeric'
+                      })}
+                    </span>
                   </div>
-                )}
-
-                {/* Location & Attendees */}
-                <div className="space-y-3">
-                  {selectedEvent.location && (
-                    <div>
-                      <h3 className="font-semibold text-lg flex items-center gap-2">
-                        <MapPin className="h-5 w-5" />
-                        Location
-                      </h3>
-                      <p className="text-muted-foreground">{selectedEvent.location}</p>
-                    </div>
-                  )}
-                  
-                  {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
-                    <div>
-                      <h3 className="font-semibold text-lg flex items-center gap-2">
-                        <Users className="h-5 w-5" />
-                        Attendees ({selectedEvent.attendees.length})
-                      </h3>
-                      <div className="space-y-1">
-                        {selectedEvent.attendees.map((attendee, index) => (
-                          <div key={index} className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-primary rounded-full"></div>
-                            <span className="text-muted-foreground">{attendee}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="h-4 w-4" />
+                    <span>{selectedEvent.startTime} - {selectedEvent.endTime}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <User className="h-4 w-4" />
+                    <span>{selectedEvent.type === 'task' ? selectedEvent.taskData?.agent_name : selectedEvent.agentName || 'Unassigned'}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <Button variant="outline" onClick={() => setShowEventDetails(false)}>
-                  Close
-                </Button>
+              {/* Main Content Grid */}
+              <div className="p-6 grid grid-cols-1 md:grid-cols-12 gap-6">
                 
-                {/* Task-specific actions */}
-                {selectedEvent.type === 'task' && selectedEvent.taskData && (
-                  <>
-                    {selectedEvent.taskData.status === 'pending' && (
-                      <Button 
-                        variant="default" 
-                        onClick={() => handleStartTask(selectedEvent.taskData!.id)}
-                        className="flex items-center gap-2"
-                      >
-                        <Play className="h-4 w-4" />
-                        Start Task
-                      </Button>
-                    )}
-                    {selectedEvent.taskData.status === 'in_progress' && (
-                      <Button 
-                        variant="default" 
-                        onClick={handleCompleteTaskWithConfirmation}
-                        className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
-                      >
-                        <CheckCircle className="h-4 w-4" />
-                        Complete Task
-                      </Button>
-                    )}
-                    {selectedEvent.taskData.status === 'completed' && (
-                      <div className="flex items-center gap-2 text-green-600 font-medium">
-                        <CheckCircle className="h-4 w-4" />
-                        Task Completed
+                {/* Left Column: Description & Primary Info (md:col-span-7) */}
+                <div className="md:col-span-7 space-y-6">
+                  {/* Description Section */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900 mb-2 uppercase tracking-wider text-xs">Description</h3>
+                    <div className="bg-gray-50 p-4 rounded-lg border text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                      {selectedEvent.description || "No description provided."}
+                    </div>
+                  </div>
+
+                  {/* Client / Location Context */}
+                  {(selectedEvent.taskData?.client_name || selectedEvent.location) && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-900 mb-2 uppercase tracking-wider text-xs">Client & Location</h3>
+                      <Card>
+                        <CardContent className="p-4 space-y-3">
+                          {selectedEvent.taskData?.client_name && (
+                            <div className="flex items-start gap-3">
+                              <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                                <Users className="h-4 w-4 text-blue-600" />
+                              </div>
+                              <div>
+                                <p className="font-medium text-sm text-gray-900">{selectedEvent.taskData.client_name}</p>
+                                {selectedEvent.taskData.client_company && (
+                                  <p className="text-xs text-gray-500">{selectedEvent.taskData.client_company}</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {(selectedEvent.taskData?.client_address || selectedEvent.location || selectedEvent.taskData?.client_latitude) && (
+                            <div className="flex items-start gap-3">
+                              <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center shrink-0">
+                                <MapPin className="h-4 w-4 text-green-600" />
+                              </div>
+                              <div className="text-sm">
+                                <p className="text-gray-700">
+                                  {selectedEvent.taskData?.client_address || selectedEvent.location || (selectedEvent.taskData?.client_latitude ? "Client Location" : "No location specified")}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {/* Visit Verification / Attachments - Enhanced View */}
+                  {selectedEvent.type === 'task' && (
+                    (selectedEvent.relatedVisit || selectedEvent.taskData?.attachment_url) && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900 mb-2 uppercase tracking-wider text-xs flex items-center gap-2">
+                          <CheckCircle className="h-3 w-3" /> Verification Proof
+                        </h3>
+                        
+                        {selectedEvent.relatedVisit ? (
+                          <div className="space-y-3">
+                            {/* Verification Status Banner */}
+                            <div className={`p-3 rounded-lg border-l-4 text-sm flex items-start gap-3 ${
+                              selectedEvent.relatedVisit.is_within_radius 
+                                ? 'bg-green-50 border-l-green-500 text-green-800' 
+                                : 'bg-red-50 border-l-red-500 text-red-800'
+                            }`}>
+                              {selectedEvent.relatedVisit.is_within_radius ? (
+                                <CheckCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                              ) : (
+                                <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                              )}
+                              <div>
+                                <p className="font-bold">
+                                  {selectedEvent.relatedVisit.is_within_radius ? 'Verified Visit' : 'Location Check Failed'}
+                                </p>
+                                <p className="text-xs mt-1 opacity-90">
+                                  {selectedEvent.relatedVisit.is_within_radius
+                                    ? `Agent checked in within ${Math.round(selectedEvent.relatedVisit.distance_meters || 0)}m of client.`
+                                    : `Agent was ${Math.round(selectedEvent.relatedVisit.distance_meters || 0)}m away (Limit: 100m).`
+                                  }
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                {/* Photo Preview */}
+                                <div 
+                                  className="aspect-video bg-black rounded-lg overflow-hidden relative group cursor-pointer border"
+                                  onClick={() => window.open(selectedEvent.relatedVisit?.photo_url || '', '_blank')}  
+                                >
+                                  {selectedEvent.relatedVisit.photo_url ? (
+                                    <>
+                                      <img 
+                                        src={selectedEvent.relatedVisit.photo_url} 
+                                        className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" 
+                                        alt="Visit proof"
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="bg-white/90 p-2 rounded-full shadow-sm">
+                                          <Search className="h-4 w-4 text-black" />
+                                        </div>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-gray-500 text-xs">No Photo</div>
+                                  )}
+                                  <Badge className="absolute bottom-2 right-2 bg-black/50 text-white border-0 text-[10px]">Photo</Badge>
+                                </div>
+
+                                {/* Map Preview */}
+                                <div className="aspect-video bg-slate-100 rounded-lg overflow-hidden border relative z-0">
+                                   {selectedEvent.relatedVisit.latitude ? (
+                                      <MapContainer
+                                        center={[selectedEvent.relatedVisit.latitude, selectedEvent.relatedVisit.longitude]}
+                                        zoom={15}
+                                        style={{ height: '100%', width: '100%' }}
+                                        zoomControl={false}
+                                        dragging={false}
+                                        doubleClickZoom={false}
+                                        scrollWheelZoom={false}
+                                        attributionControl={false}
+                                      >
+                                        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                                        {/* Client Location */}
+                                        {(selectedEvent.relatedVisit as any).client?.location_latitude && (
+                                          <Circle
+                                            center={[(selectedEvent.relatedVisit as any).client.location_latitude, (selectedEvent.relatedVisit as any).client.location_longitude]}
+                                            pathOptions={{ fillColor: '#22c55e', color: '#16a34a', weight: 1, opacity: 0.5 }}
+                                            radius={selectedEvent.relatedVisit.radius_limit_meters || 100}
+                                          />
+                                        )}
+                                        {/* Agent Location */}
+                                        <Marker position={[selectedEvent.relatedVisit.latitude, selectedEvent.relatedVisit.longitude]} />
+                                      </MapContainer>
+                                   ) : (
+                                     <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">No GPS Data</div>
+                                   )}
+                                   <Badge className="absolute bottom-2 right-2 bg-white/80 text-black border shadow-sm text-[10px] z-[400]">Map</Badge>
+                                </div>
+                            </div>
+                          </div>
+                        ) : selectedEvent.taskData?.attachment_url ? (
+                          <div 
+                            className="w-full aspect-video bg-gray-100 rounded-lg border overflow-hidden relative group cursor-pointer"
+                            onClick={() => window.open(selectedEvent.taskData?.attachment_url || '', '_blank')}
+                          >
+                            <img 
+                              src={selectedEvent.taskData.attachment_url} 
+                              className="w-full h-full object-contain" 
+                              alt="Attachment"
+                            />
+                            <div className="absolute inset-0 bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                               <Button variant="secondary" size="sm">View Fullscreen</Button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                    )}
-                  </>
-                )}
-                
-                {/* General event actions (for non-task events) */}
-                {selectedEvent.type !== 'task' && (
-                  <>
-                    <Button variant="outline">
-                      Edit Event
-                    </Button>
-                    <Button variant="destructive">
-                      Delete Event
-                    </Button>
-                  </>
-                )}
+                    )
+                  )}
+
+                  {/* Visit Details for separate Visit Events */}
+                 {selectedEvent.visitData && (
+                     <div>
+                        <h3 className="text-sm font-semibold text-gray-900 mb-2 uppercase tracking-wider text-xs flex items-center gap-2">
+                           <CheckCircle className="h-3 w-3" /> Visit Log
+                        </h3>
+                        <div className="bg-white border rounded-lg overflow-hidden">
+                           {/* Similar rich verification UI for standalone visit events */}
+                            <div className={`p-4 border-b text-sm flex items-start gap-3 ${
+                              selectedEvent.visitData.is_within_radius 
+                                ? 'bg-green-50' 
+                                : 'bg-red-50'
+                            }`}>
+                              {selectedEvent.visitData.is_within_radius ? (
+                                <CheckCircle className="h-5 w-5 text-green-600 mt-0.5" />
+                              ) : (
+                                <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
+                              )}
+                              <div>
+                                <p className={`font-bold ${selectedEvent.visitData.is_within_radius ? 'text-green-800' : 'text-red-800'}`}>
+                                  {selectedEvent.visitData.is_within_radius ? 'Verified Location' : 'Location Mismatch'}
+                                </p>
+                              </div>
+                            </div>
+                            {selectedEvent.visitData.photo_url && (
+                                <div className="p-4 bg-gray-50 flex justify-center">
+                                  <div className="h-48 rounded overflow-hidden border shadow-sm cursor-pointer" onClick={() => window.open(selectedEvent.visitData!.photo_url, '_blank')}>
+                                     <img src={selectedEvent.visitData.photo_url} className="h-full object-contain" />
+                                  </div>
+                                </div>
+                            )}
+                        </div>
+                     </div>
+                 )}
+
+                </div>
+
+                {/* Right Column: Actions & Meta (md:col-span-5) */}
+                <div className="md:col-span-5 space-y-6 flex flex-col h-full">
+                  {/* Event Actions - hidden for managers, team leaders (viewing team tasks), and completed tasks */}
+                  {!isManager && !isTeamLeader && !(selectedEvent.type === 'task' && selectedEvent.taskData?.status === 'completed') && (
+                    <div className="bg-gray-50/50 p-4 rounded-xl border space-y-4">
+                      <h3 className="text-sm font-semibold text-gray-900">Event Actions</h3>
+
+                      <div className="flex flex-col gap-2">
+                        {/* Primary Action Button */}
+                        {isMobileSales &&
+                          selectedEvent.type === 'task' &&
+                          selectedEvent.taskData?.client_id &&
+                          (selectedEvent.taskData.status === 'pending' || selectedEvent.taskData.status === 'in_progress') && (
+                            <Button
+                              className="w-full bg-green-600 hover:bg-green-700 text-white shadow-sm"
+                              size="lg"
+                              onClick={() => {
+                                if (selectedEvent.taskData) {
+                                  setSelectedClient({
+                                    id: selectedEvent.taskData.client_id!,
+                                    name: selectedEvent.taskData.client_name || 'Unknown Client',
+                                    company: selectedEvent.taskData.client_company,
+                                    location_latitude: selectedEvent.taskData.client_latitude || 0,
+                                    location_longitude: selectedEvent.taskData.client_longitude || 0,
+                                  } as any);
+                                  setVisitedTask(selectedEvent.taskData);
+                                  setShowRecordVisitDialog(true);
+                                  setShowEventDetails(false);
+                                }
+                              }}
+                            >
+                              <MapPin className="h-4 w-4 mr-2" />
+                              Record Visit
+                            </Button>
+                          )}
+
+                        {/* Complete Button - only for mobile sales (assignee); team leaders/managers cannot mark tasks completed */}
+                        {isMobileSales && selectedEvent.type === 'task' && selectedEvent.taskData?.status !== 'completed' && (
+                          <Button
+                            variant={selectedEvent.taskData?.client_id ? "outline" : "default"} // Demote if "Record Visit" is primary
+                            className={`w-full ${!selectedEvent.taskData?.client_id ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}`}
+                            onClick={() => handleCompleteTaskWithConfirmation()}
+                          >
+                            <CheckCircle className="h-4 w-4 mr-2" />
+                            Mark as Completed
+                          </Button>
+                        )}
+
+                        {/* Secondary Actions */}
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          {selectedEvent.type !== 'task' && (
+                            <>
+                              <Button variant="outline" size="sm" className="w-full">
+                                Edit
+                              </Button>
+                              <Button variant="outline" size="sm" className="w-full text-red-600 hover:bg-red-50 hover:text-red-700">
+                                Delete
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Metadata Box */}
+                  <div className="border rounded-lg p-4 space-y-3 bg-white">
+                     <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">Timeline</h3>
+                     
+                     <div className="space-y-3 relative before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-100">
+                        <div className="relative pl-6">
+                           <div className="absolute left-0 top-1.5 w-3 h-3 rounded-full bg-blue-500 border-2 border-white shadow-sm z-10"></div>
+                           <p className="text-xs text-gray-500">Created</p>
+                           <p className="text-sm font-medium">
+                              {new Date(selectedEvent.taskData?.created_at || selectedEvent.date).toLocaleDateString()}
+                           </p>
+                        </div>
+                        
+                        {selectedEvent.type === 'task' && selectedEvent.taskData?.completed_at && (
+                           <div className="relative pl-6">
+                              <div className="absolute left-0 top-1.5 w-3 h-3 rounded-full bg-green-500 border-2 border-white shadow-sm z-10"></div>
+                              <p className="text-xs text-gray-500">Completed</p>
+                              <p className="text-sm font-medium">
+                                 {new Date(selectedEvent.taskData.completed_at).toLocaleDateString()} 
+                                 <span className="text-gray-400 ml-1">{new Date(selectedEvent.taskData.completed_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                              </p>
+                           </div>
+                        )}
+                     </div>
+                  </div>
+                </div>
               </div>
-            </div>
+
+               {/* Footer */}
+               <div className="bg-gray-50 px-6 py-4 border-t flex justify-end items-center">
+                  <Button variant="outline" size="sm" onClick={() => setShowEventDetails(false)}>
+                    Close Details
+                  </Button>
+               </div>
+
+            </>
           )}
         </DialogContent>
       </Dialog>
@@ -2978,12 +3256,12 @@ export default function CalendarPage() {
               Complete Task
             </DialogTitle>
           </DialogHeader>
-          
+
           <div className="space-y-4 py-4">
             <p className="text-muted-foreground">
               Are you sure you want to mark this task as completed? This action cannot be undone.
             </p>
-            
+
             {selectedEvent?.taskData && (
               <div className="bg-gray-50 p-3 rounded-lg">
                 <h4 className="font-medium text-sm text-gray-700 mb-1">Task Details:</h4>
@@ -2993,16 +3271,16 @@ export default function CalendarPage() {
                 )}
               </div>
             )}
-            
+
             <div className="flex flex-col sm:flex-row justify-end gap-3">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => setShowCompletionConfirm(false)}
                 className="w-full sm:w-auto"
               >
                 Cancel
               </Button>
-              <Button 
+              <Button
                 variant="default"
                 onClick={() => selectedEvent?.taskData && handleCompleteTask(selectedEvent.taskData.id)}
                 className="bg-green-600 hover:bg-green-700 w-full sm:w-auto"
@@ -3015,6 +3293,6 @@ export default function CalendarPage() {
         </DialogContent>
       </Dialog>
 
-    </div>
+    </div >
   );
 }

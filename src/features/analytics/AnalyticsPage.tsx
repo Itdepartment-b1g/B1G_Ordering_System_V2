@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -26,7 +28,8 @@ import {
   ArrowDownRight,
   Eye,
   CalendarIcon,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -41,13 +44,18 @@ import {
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer, 
-  Legend 
+  Legend,
+  ScatterChart,
+  Scatter,
+  ZAxis,
+  Label
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { format, subMonths, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
+import { format, subMonths, startOfMonth, endOfMonth, startOfDay, endOfDay, isSameMonth } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/features/auth';
+import AgentAnalyticsTab from './AgentAnalyticsTab';
 
 // Types
 interface CityPerformance {
@@ -56,6 +64,8 @@ interface CityPerformance {
   revenue: number;
   clients: number;
   growth: number;
+  visits: number;
+  agents: string[]; // Array of agent names assigned to this city
 }
 
 interface ProductPerformance {
@@ -114,22 +124,42 @@ interface BrandOption {
   name: string;
 }
 
+interface ClientMetrics {
+  clientId: string;
+  clientName: string;
+  company: string;
+  city: string;
+  totalOrders: number;
+  totalRevenue: number;
+  totalVisits: number;
+  lastOrderDate: string | null;
+  agentName?: string; // Agent assigned to this client
+}
+
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
 
 export default function AnalyticsPage() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
-  const isLeader = user?.position === 'Leader';
+  const navigate = useNavigate();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'system_administrator';
+  const isLeader = (user?.role as string) === 'team_leader';
+  const isManager = (user?.role as string) === 'manager';
   
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  
+  // Team filtering for Leaders and Managers
+  const [teamAgentIds, setTeamAgentIds] = useState<string[]>([]);
+  const [teamAgentsResolved, setTeamAgentsResolved] = useState(false);
   
   // Analytics Data
   const [cityPerformance, setCityPerformance] = useState<CityPerformance[]>([]);
   const [productPerformance, setProductPerformance] = useState<ProductPerformance[]>([]);
   const [agentKPIs, setAgentKPIs] = useState<AgentKPI[]>([]);
-  const [aiInsights, setAIInsights] = useState<AIInsight[]>([]);
+  const [clientPerformance, setClientPerformance] = useState<{ id: string; name: string; revenue: number; lastOrder: string | null }[]>([]);
+
+
   
   // Summary Stats
   const [totalRevenue, setTotalRevenue] = useState(0);
@@ -144,10 +174,244 @@ export default function AnalyticsPage() {
   const [selectedBrand, setSelectedBrand] = useState<string>('');
   const [variantSales, setVariantSales] = useState<VariantSales[]>([]);
   const [loadingVariants, setLoadingVariants] = useState(false);
+
+  // Agent Client Data
+  const [agentClients, setAgentClients] = useState<ClientMetrics[]>([]);
+  const [loadingClients, setLoadingClients] = useState(false);
+
+  // City Detail Dialog State
+  const [cityDetailDialogOpen, setCityDetailDialogOpen] = useState(false);
+  const [selectedCity, setSelectedCity] = useState<CityPerformance | null>(null);
+  const [cityClients, setCityClients] = useState<ClientMetrics[]>([]);
+  const [loadingCityDetails, setLoadingCityDetails] = useState(false);
+
+  const fetchCityClients = async (cityName: string) => {
+    try {
+      setLoadingCityDetails(true);
+      
+      let clientsQuery = supabase
+        .from('clients')
+        .select(`
+          id, 
+          name, 
+          company, 
+          city,
+          agent_id,
+          profiles:agent_id(full_name),
+          visit_logs (count),
+          client_orders (
+            id,
+            total_amount,
+            created_at,
+            stage
+          )
+        `)
+        .eq('city', cityName);
+
+      // Filter by team agents if Leader or Manager
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        clientsQuery = clientsQuery.in('agent_id', teamAgentIds);
+      }
+
+      const { data: clientsData, error } = await clientsQuery;
+
+      if (error) throw error;
+
+      if (!clientsData) {
+        setCityClients([]);
+        return;
+      }
+
+      const metrics: ClientMetrics[] = clientsData.map(client => {
+        // Filter only approved orders
+        // @ts-ignore
+        const approvedOrders = client.client_orders?.filter((o: any) => o.stage === 'admin_approved') || [];
+        
+        const totalRevenue = approvedOrders.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
+        
+        // Find last order date
+        let lastOrderDate = null;
+        if (approvedOrders.length > 0) {
+           const dates = approvedOrders.map((o: any) => new Date(o.created_at).getTime());
+           lastOrderDate = new Date(Math.max(...dates)).toISOString();
+        }
+
+        return {
+          clientId: client.id,
+          clientName: client.name,
+          company: client.company || 'N/A',
+          city: client.city || 'N/A',
+          totalOrders: approvedOrders.length,
+          totalRevenue,
+          // @ts-ignore
+          totalVisits: client.visit_logs?.[0]?.count || 0,
+          lastOrderDate,
+          // @ts-ignore
+          agentName: client.profiles?.full_name || null
+        };
+      });
+
+      // Sort by revenue descending
+      metrics.sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+      setCityClients(metrics);
+    } catch (error) {
+      console.error('Error fetching city clients:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load city details',
+        variant: 'destructive'
+      });
+    } finally {
+      setLoadingCityDetails(false);
+    }
+  };
+
+  const handleViewCityDetails = (city: CityPerformance) => {
+    setSelectedCity(city);
+    setCityDetailDialogOpen(true);
+    fetchCityClients(city.city);
+  };
   
-  // Date Range Filter State
+  // Date Range Filter State (for other analytics)
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+  
+  // Active Tab State - to persist tab selection
+  const [activeTab, setActiveTab] = useState<string>('agents'); // Default to agents tab
+  
+  // Agent KPI Date Filter State
+  const [agentKpiDateFrom, setAgentKpiDateFrom] = useState<Date | undefined>(undefined);
+  const [agentKpiDateTo, setAgentKpiDateTo] = useState<Date | undefined>(undefined);
+  const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
+  const [showOverallView, setShowOverallView] = useState(false);
+  
+  // Function to fetch oldest order date and set overall view
+  const handleOverallView = async () => {
+    if (!showOverallView) {
+      // Fetch oldest order date from database
+      try {
+        const { data: oldestOrder, error } = await supabase
+          .from('client_orders')
+          .select('created_at')
+          .order('created_at', { ascending: true })
+          .limit(1);
+        
+        if (error) {
+          console.error('Error fetching oldest order:', error);
+          // Fallback to 1 year ago if error
+          const oneYearAgo = new Date();
+          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+          setAgentKpiDateFrom(startOfDay(oneYearAgo));
+          setAgentKpiDateTo(endOfDay(new Date()));
+        } else if (oldestOrder && oldestOrder.length > 0) {
+          // Set date range from oldest order to current date
+          const oldestDate = new Date(oldestOrder[0].created_at);
+          setAgentKpiDateFrom(startOfDay(oldestDate));
+          setAgentKpiDateTo(endOfDay(new Date()));
+        } else {
+          // No orders found, use 1 year ago as fallback
+          const oneYearAgo = new Date();
+          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+          setAgentKpiDateFrom(startOfDay(oneYearAgo));
+          setAgentKpiDateTo(endOfDay(new Date()));
+        }
+      } catch (error) {
+        console.error('Error in handleOverallView:', error);
+        // Fallback to 1 year ago
+        const oneYearAgo = new Date();
+        oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+        setAgentKpiDateFrom(startOfDay(oneYearAgo));
+        setAgentKpiDateTo(endOfDay(new Date()));
+      }
+    } else {
+      // Reset to current month when toggling off
+      const now = new Date();
+      const currentMonthStart = startOfMonth(now);
+      const currentMonthEnd = endOfMonth(now);
+      setAgentKpiDateFrom(currentMonthStart);
+      setAgentKpiDateTo(currentMonthEnd);
+    }
+    setShowOverallView(!showOverallView);
+    setShowCustomDatePicker(false);
+  };
+  
+  // Helper function to set date range from preset
+  const setAgentKpiDatePreset = (preset: 'current_month' | 'last_month' | 'last_3_months' | 'custom') => {
+    const now = new Date();
+    
+    // Turn off overall view when preset is selected
+    if (showOverallView) {
+      setShowOverallView(false);
+    }
+    
+    switch (preset) {
+      case 'current_month': {
+        const currentMonthStart = startOfMonth(new Date(now));
+        const currentMonthEnd = endOfMonth(new Date(now));
+        // Ensure we create new Date objects to trigger React state update
+        setAgentKpiDateFrom(new Date(currentMonthStart));
+        setAgentKpiDateTo(new Date(currentMonthEnd));
+        setShowCustomDatePicker(false);
+        break;
+      }
+      case 'last_month': {
+        const lastMonth = subMonths(now, 1);
+        const lastMonthStart = startOfMonth(new Date(lastMonth));
+        const lastMonthEnd = endOfMonth(new Date(lastMonth));
+        // Ensure we create new Date objects to trigger React state update
+        setAgentKpiDateFrom(new Date(lastMonthStart));
+        setAgentKpiDateTo(new Date(lastMonthEnd));
+        setShowCustomDatePicker(false);
+        break;
+      }
+      case 'last_3_months': {
+        const threeMonthsAgo = subMonths(now, 3);
+        const threeMonthsAgoStart = startOfMonth(new Date(threeMonthsAgo));
+        const currentEnd = endOfMonth(new Date(now));
+        // Ensure we create new Date objects to trigger React state update
+        setAgentKpiDateFrom(new Date(threeMonthsAgoStart));
+        setAgentKpiDateTo(new Date(currentEnd));
+        setShowCustomDatePicker(false);
+        break;
+      }
+      case 'custom':
+        setShowCustomDatePicker(true);
+        break;
+    }
+  };
+  
+  // Get current preset based on dates
+  const getCurrentPreset = (): 'current_month' | 'last_month' | 'last_3_months' | 'custom' | null => {
+    if (!agentKpiDateFrom || !agentKpiDateTo) return 'current_month';
+    
+    const now = new Date();
+    const currentMonthStart = startOfMonth(now);
+    const currentMonthEnd = endOfMonth(now);
+    
+    if (isSameMonth(agentKpiDateFrom, now) && 
+        agentKpiDateFrom.getTime() === currentMonthStart.getTime() &&
+        agentKpiDateTo.getTime() === currentMonthEnd.getTime()) {
+      return 'current_month';
+    }
+    
+    const lastMonthStart = startOfMonth(subMonths(now, 1));
+    const lastMonthEnd = endOfMonth(subMonths(now, 1));
+    
+    if (isSameMonth(agentKpiDateFrom, subMonths(now, 1)) &&
+        agentKpiDateFrom.getTime() === lastMonthStart.getTime() &&
+        agentKpiDateTo.getTime() === lastMonthEnd.getTime()) {
+      return 'last_month';
+    }
+    
+    const threeMonthsAgo = subMonths(now, 3);
+    if (agentKpiDateFrom.getTime() === startOfMonth(threeMonthsAgo).getTime() &&
+        agentKpiDateTo.getTime() === endOfMonth(now).getTime()) {
+      return 'last_3_months';
+    }
+    
+    return 'custom';
+  };
   
   // Target Management State
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
@@ -157,34 +421,151 @@ export default function AnalyticsPage() {
     targetQty?: number | null;
   }>>({});
   const [savingTargets, setSavingTargets] = useState<Set<string>>(new Set());
+  const [removingTargets, setRemovingTargets] = useState<Set<string>>(new Set());
+  const [removeTargetDialogOpen, setRemoveTargetDialogOpen] = useState(false);
+  const [agentToRemove, setAgentToRemove] = useState<{ id: string; name: string } | null>(null);
   
   useEffect(() => {
     if (user) {
-      fetchAnalyticsData();
+      setTeamAgentsResolved(false);
+      fetchTeamAgents();
+    } else {
+      setTeamAgentsResolved(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.role, user?.position]);
+  }, [user?.id, user?.role]);
 
-  // Auto-generate insights when data is loaded
   useEffect(() => {
-    if (!isAdmin) return;
-    if (!loading && cityPerformance.length > 0 && productPerformance.length > 0 && agentKPIs.length > 0) {
-      generateAIInsights();
+    // Only fetch analytics data when:
+    // 1. User exists
+    // 2. For Admins: immediately (no team filtering needed)
+    // 3. For Leaders/Managers: after teamAgentIds has been fetched (even if empty array)
+    const shouldFetch = user && (
+      isAdmin || 
+      ((isLeader || isManager) && teamAgentIds !== undefined && teamAgentIds.length >= 0)
+    );
+    
+    if (shouldFetch) {
+      fetchAnalyticsData();
+      fetchAgentKPIs();
     }
-  }, [loading, cityPerformance.length, productPerformance.length, agentKPIs.length, isAdmin]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.role, teamAgentIds, agentKpiDateFrom, agentKpiDateTo]);
+
+  // Fetch team agents for Leaders and Managers
+  const fetchTeamAgents = async () => {
+    if (!user?.id) {
+      setTeamAgentIds([]);
+      return;
+    }
+    
+    if (isLeader) {
+      try {
+        // Team leader: only their direct sub-team (agents assigned to them in leader_teams), same company
+        let leaderTeamsQuery = supabase
+          .from('leader_teams')
+          .select('agent_id')
+          .eq('leader_id', user.id);
+        if (user.company_id) {
+          leaderTeamsQuery = leaderTeamsQuery.eq('company_id', user.company_id);
+        }
+        const { data: teamData, error } = await leaderTeamsQuery;
+
+        if (error) {
+          console.error('Error fetching team agents for leader:', error);
+          toast({
+            title: 'Error',
+            description: 'Failed to load team data. Please refresh the page.',
+            variant: 'destructive'
+          });
+          setTeamAgentIds([]);
+          return;
+        }
+        
+        const agentIds = (teamData || []).map((member: any) => member.agent_id).filter(Boolean);
+        console.log('Leader team agents loaded (sub-team only):', agentIds.length);
+        setTeamAgentIds(agentIds);
+        setTeamAgentsResolved(true);
+      } catch (error) {
+        console.error('Error fetching team agents for leader:', error);
+        setTeamAgentIds([]);
+        setTeamAgentsResolved(true);
+      }
+    } else if (isManager) {
+      try {
+        // For Manager: Get team hierarchy via leader_teams table
+        // Manager → Team Leaders → Mobile Sales Agents
+        const { data: relationships, error: relationshipsError } = await supabase
+          .from('leader_teams')
+          .select('agent_id, leader_id')
+          .eq('company_id', user.company_id);
+
+        if (relationshipsError) {
+          console.error('Error fetching leader_teams for manager:', relationshipsError);
+          toast({
+            title: 'Error',
+            description: 'Failed to load team data. Please refresh the page.',
+            variant: 'destructive'
+          });
+          setTeamAgentIds([]);
+          return;
+        }
+
+        // Direct reports = Team Leaders (where leader_id = manager's ID)
+        const directReports = (relationships || [])
+          .filter(r => r.leader_id === user.id)
+          .map(r => r.agent_id);
+
+        if (directReports.length === 0) {
+          console.log('Manager has no team leaders assigned');
+          setTeamAgentIds([]);
+          return;
+        }
+
+        // Second level reports = Mobile Sales Agents (where leader_id = any team leader ID)
+        const secondLevelReports = (relationships || [])
+          .filter(r => directReports.includes(r.leader_id))
+          .map(r => r.agent_id);
+
+        // Combine all team members (leaders + agents)
+        const allTeamIds = Array.from(new Set([...directReports, ...secondLevelReports]));
+        
+        console.log('Manager team loaded:', {
+          leaders: directReports.length,
+          agents: secondLevelReports.length,
+          total: allTeamIds.length
+        });
+        
+        setTeamAgentIds(allTeamIds);
+        setTeamAgentsResolved(true);
+      } catch (error) {
+        console.error('Error in manager team fetch:', error);
+        setTeamAgentIds([]);
+        setTeamAgentsResolved(true);
+      }
+    } else if (isAdmin) {
+      // Admin sees all, no need to filter
+      console.log('Admin user - no team filtering');
+      setTeamAgentIds([]);
+      setTeamAgentsResolved(true);
+    } else {
+      setTeamAgentsResolved(true);
+    }
+  };
+
+
 
   const fetchAnalyticsData = async () => {
     setLoading(true);
     try {
-      if (isAdmin) {
+      if (isAdmin || isLeader || isManager) {
         await Promise.all([
           fetchCityPerformance(),
           fetchProductPerformance(),
           fetchAgentKPIs(),
+          fetchClientPerformance(),
           fetchSummaryStats()
         ]);
-      } else if (isLeader) {
-        await fetchAgentKPIs();
       } else {
         // Other roles currently have no analytics access
         setAgentKPIs([]);
@@ -193,7 +574,7 @@ export default function AnalyticsPage() {
       console.error('Error fetching analytics:', error);
       toast({
         title: 'Error',
-        description: 'Failed to load analytics data',
+        description: 'Failed to load analytics data. Please try again.',
         variant: 'destructive'
       });
     } finally {
@@ -211,23 +592,37 @@ export default function AnalyticsPage() {
       const prevMonthStart = startOfMonth(subMonths(new Date(), 1));
       const prevMonthEnd = endOfMonth(subMonths(new Date(), 1));
 
-      // Current month orders (using stage = 'admin_approved' for completed orders)
-      const { data: currentOrders, error: currentError } = await supabase
+      // Build query for current month orders
+      let currentOrdersQuery = supabase
         .from('client_orders')
-        .select('total_amount')
+        .select('total_amount, agent_id')
         .gte('created_at', currentMonthStart.toISOString())
         .lte('created_at', currentMonthEnd.toISOString())
         .eq('stage', 'admin_approved');
 
+      // Filter by team agents if Leader or Manager
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        currentOrdersQuery = currentOrdersQuery.in('agent_id', teamAgentIds);
+      }
+
+      const { data: currentOrders, error: currentError } = await currentOrdersQuery;
+
       if (currentError) throw currentError;
 
-      // Previous month orders
-      const { data: prevOrders, error: prevError } = await supabase
+      // Build query for previous month orders
+      let prevOrdersQuery = supabase
         .from('client_orders')
-        .select('total_amount')
+        .select('total_amount, agent_id')
         .gte('created_at', prevMonthStart.toISOString())
         .lte('created_at', prevMonthEnd.toISOString())
         .eq('stage', 'admin_approved');
+
+      // Filter by team agents if Leader or Manager
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        prevOrdersQuery = prevOrdersQuery.in('agent_id', teamAgentIds);
+      }
+
+      const { data: prevOrders, error: prevError } = await prevOrdersQuery;
 
       if (prevError) throw prevError;
 
@@ -249,8 +644,8 @@ export default function AnalyticsPage() {
 
   const fetchCityPerformance = async () => {
     try {
-      // Get all completed orders with client city information
-      const { data: orders, error: ordersError } = await supabase
+      // Build query for completed orders with client city and agent information
+      let ordersQuery = supabase
         .from('client_orders')
         .select(`
           id,
@@ -258,12 +653,22 @@ export default function AnalyticsPage() {
           stage,
           created_at,
           client_id,
+          agent_id,
           clients!inner(
             id,
-            city
+            city,
+            agent_id,
+            profiles:agent_id(full_name)
           )
         `)
         .eq('stage', 'admin_approved');
+
+      // Filter by team agents if Leader or Manager
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
+      }
+
+      const { data: orders, error: ordersError } = await ordersQuery;
 
       if (ordersError) throw ordersError;
 
@@ -276,19 +681,25 @@ export default function AnalyticsPage() {
         orders: number;
         revenue: number;
         clients: Set<string>;
+        visits: number;
         currentMonthRevenue: number;
         prevMonthRevenue: number;
+        agents: Set<string>; // Track unique agent names
       }>();
 
       orders?.forEach((order: any) => {
         const city = order.clients?.city || 'Unknown';
+        const agentName = order.clients?.profiles?.full_name || null;
+        
         if (!cityMap.has(city)) {
           cityMap.set(city, {
             orders: 0,
             revenue: 0,
             clients: new Set(),
+            visits: 0,
             currentMonthRevenue: 0,
-            prevMonthRevenue: 0
+            prevMonthRevenue: 0,
+            agents: new Set()
           });
         }
 
@@ -296,6 +707,11 @@ export default function AnalyticsPage() {
         cityData.clients.add(order.client_id);
         cityData.orders += 1;
         cityData.revenue += order.total_amount || 0;
+        
+        // Add agent name if available
+        if (agentName) {
+          cityData.agents.add(agentName);
+        }
 
         const orderDate = new Date(order.created_at);
         if (orderDate >= currentMonthStart) {
@@ -304,6 +720,92 @@ export default function AnalyticsPage() {
           cityData.prevMonthRevenue += order.total_amount || 0;
         }
       });
+
+      // Fetch visit logs to aggregate visits by city
+      let visitsQuery = supabase
+        .from('visit_logs')
+        .select(`
+          id,
+          agent_id,
+          clients!inner(
+            city,
+            agent_id,
+            profiles:agent_id(full_name)
+          )
+        `);
+
+      // Filter by team agents if Leader or Manager
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        visitsQuery = visitsQuery.in('agent_id', teamAgentIds);
+      }
+
+      const { data: visits, error: visitsError } = await visitsQuery;
+
+      if (!visitsError && visits) {
+        visits.forEach((visit: any) => {
+          const city = visit.clients?.city || 'Unknown';
+          const agentName = visit.clients?.profiles?.full_name || null;
+          
+          if (!cityMap.has(city)) {
+             // If city has visits but no orders yet, initialize it
+             cityMap.set(city, {
+                orders: 0,
+                revenue: 0,
+                clients: new Set(),
+                visits: 0,
+                currentMonthRevenue: 0,
+                prevMonthRevenue: 0,
+                agents: new Set()
+             });
+          }
+          const cityData = cityMap.get(city)!;
+          cityData.visits += 1;
+          
+          // Add agent name if available
+          if (agentName) {
+            cityData.agents.add(agentName);
+          }
+        });
+      }
+
+      // Also fetch clients directly to ensure we capture all agents assigned to cities
+      let clientsQuery = supabase
+        .from('clients')
+        .select(`
+          city,
+          agent_id,
+          profiles:agent_id(full_name)
+        `)
+        .not('city', 'is', null);
+
+      // Filter by team agents if Leader or Manager
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        clientsQuery = clientsQuery.in('agent_id', teamAgentIds);
+      }
+
+      const { data: allClients, error: clientsError } = await clientsQuery;
+
+      if (!clientsError && allClients) {
+        allClients.forEach((client: any) => {
+          const city = client.city || 'Unknown';
+          const agentName = client.profiles?.full_name || null;
+          
+          if (city && agentName) {
+            if (!cityMap.has(city)) {
+              cityMap.set(city, {
+                orders: 0,
+                revenue: 0,
+                clients: new Set(),
+                visits: 0,
+                currentMonthRevenue: 0,
+                prevMonthRevenue: 0,
+                agents: new Set()
+              });
+            }
+            cityMap.get(city)!.agents.add(agentName);
+          }
+        });
+      }
 
       // Convert to array with growth calculation
       const cityPerformanceData: CityPerformance[] = Array.from(cityMap.entries()).map(([city, data]) => {
@@ -316,7 +818,9 @@ export default function AnalyticsPage() {
           orders: data.orders,
           revenue: data.revenue,
           clients: data.clients.size,
-          growth
+          visits: data.visits,
+          growth,
+          agents: Array.from(data.agents).sort() // Sort alphabetically for consistency
         };
       });
 
@@ -337,7 +841,7 @@ export default function AnalyticsPage() {
         .select(`
           quantity,
           unit_price,
-          client_orders!inner(stage, created_at),
+          client_orders!inner(stage, created_at, agent_id),
           variants!inner(
             name,
             variant_type,
@@ -347,6 +851,14 @@ export default function AnalyticsPage() {
         .eq('client_orders.stage', 'admin_approved');
 
       if (error) throw error;
+
+      // Filter by team agents if Leader or Manager
+      let filteredOrderItems = orderItems;
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        filteredOrderItems = orderItems?.filter((item: any) => 
+          teamAgentIds.includes(item.client_orders?.agent_id)
+        );
+      }
 
       // Get previous month date for trend calculation
       const prevMonthStart = startOfMonth(subMonths(new Date(), 1));
@@ -362,7 +874,7 @@ export default function AnalyticsPage() {
         prevMonthOrders: number;
       }>();
 
-      orderItems?.forEach((item: any) => {
+      filteredOrderItems?.forEach((item: any) => {
         const brand = item.variants?.brands?.name || 'Unknown';
         const variant = item.variants?.name || 'Unknown';
         const key = `${brand}|${variant}`;
@@ -417,152 +929,223 @@ export default function AnalyticsPage() {
     }
   };
 
+  const fetchClientPerformance = async () => {
+    try {
+      // Build query for approved orders to aggregate client revenue
+      let ordersQuery = supabase
+        .from('client_orders')
+        .select('client_id, total_amount, created_at, agent_id, clients(id, name)')
+        .eq('stage', 'admin_approved');
+
+      // Filter by team agents if Leader or Manager
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
+      }
+
+      const { data: orders, error } = await ordersQuery;
+
+      if (error) throw error;
+
+      if (!orders) return;
+
+      const clientStats = new Map<string, { name: string; revenue: number; lastOrder: string | null }>();
+
+      orders.forEach(order => {
+        // @ts-ignore - Supabase join types can be tricky
+        const clientName = order.clients?.name || 'Unknown Client';
+        const clientId = order.client_id;
+        
+        const current = clientStats.get(clientId) || { name: clientName, revenue: 0, lastOrder: null };
+        
+        current.revenue += order.total_amount || 0;
+        if (!current.lastOrder || new Date(order.created_at) > new Date(current.lastOrder)) {
+          current.lastOrder = order.created_at;
+        }
+
+        clientStats.set(clientId, current);
+      });
+
+      const performanceData = Array.from(clientStats.entries()).map(([id, stats]) => ({
+        id,
+        ...stats
+      }));
+
+      setClientPerformance(performanceData);
+    } catch (error) {
+      console.error('Error fetching global client performance:', error);
+    }
+  };
+
+
+
+  // Helper function to check if date range is current month
+  const isCurrentMonth = (dateFrom?: Date, dateTo?: Date): boolean => {
+    if (!dateFrom || !dateTo) return false;
+    const now = new Date();
+    const currentMonthStart = startOfMonth(now);
+    const currentMonthEnd = endOfMonth(now);
+    
+    // Check if both dates are in the current month and span the full month
+    return isSameMonth(dateFrom, now) && 
+           isSameMonth(dateTo, now) &&
+           dateFrom.getTime() === currentMonthStart.getTime() &&
+           dateTo.getTime() === currentMonthEnd.getTime();
+  };
+
   const fetchAgentKPIs = async () => {
     try {
       let agentsQuery = supabase
         .from('profiles')
         .select('id, full_name')
-        .eq('role', 'sales_agent');
+        .eq('role', 'mobile_sales');
 
-      if (isLeader && user?.id) {
-        const { data: teamData, error: teamError } = await supabase
-          .from('leader_teams')
-          .select('agent_id')
-          .eq('leader_id', user.id);
-
-        if (teamError) throw teamError;
-
-        const agentIds = (teamData || []).map((member: any) => member.agent_id).filter(Boolean);
-
-        if (agentIds.length === 0) {
-          setAgentKPIs([]);
-          return;
-        }
-
-        agentsQuery = agentsQuery.in('id', agentIds);
+      // Filter by team agents for Leaders and Managers using the teamAgentIds state
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        agentsQuery = agentsQuery.in('id', teamAgentIds);
+      } else if ((isLeader || isManager) && teamAgentIds.length === 0) {
+        // If Leader/Manager has no team agents, return empty
+        setAgentKPIs([]);
+        return;
       }
 
       const { data: agents, error: agentsError } = await agentsQuery;
 
-      if (agentsError) throw agentsError;
+      if (agentsError) {
+        console.error('Error fetching agents:', agentsError);
+        throw agentsError;
+      }
 
-      // Get current month range for target calculation
+      // If no agents found, return empty
+      if (!agents || agents.length === 0) {
+        setAgentKPIs([]);
+        return;
+      }
+
+      // Determine date range for filtering
       const currentMonthStart = startOfMonth(new Date());
       const currentMonthEnd = endOfMonth(new Date());
       const currentMonthFirstDay = currentMonthStart.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+      
+      // Use date filter if provided, otherwise use current month
+      const filterStart = agentKpiDateFrom ? startOfDay(agentKpiDateFrom) : currentMonthStart;
+      const filterEnd = agentKpiDateTo ? endOfDay(agentKpiDateTo) : currentMonthEnd;
+      const isFilterCurrentMonth = isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo);
 
-      // Fetch all targets for current month
-      const agentIds = (agents || []).map(a => a.id);
-      const { data: targets, error: targetsError } = await supabase
-        .from('agent_monthly_targets')
-        .select('agent_id, target_clients, target_revenue, target_qty, target_orders')
-        .eq('target_month', currentMonthFirstDay)
-        .in('agent_id', agentIds);
-
-      if (targetsError) {
-        console.error('Error fetching targets:', targetsError);
-        // Continue without targets if there's an error
-      }
-
-      // Create maps for targets
-      const targetsMap = new Map<string, {
+      // Only fetch targets if filtering by current month
+      let targetsMap = new Map<string, {
         targetClients?: number | null;
         targetRevenue?: number | null;
         targetQty?: number | null;
         targetOrders?: number | null;
       }>();
-      (targets || []).forEach((t: any) => {
-        targetsMap.set(t.agent_id, {
-          targetClients: t.target_clients ?? null,
-          targetRevenue: t.target_revenue ? parseFloat(t.target_revenue) : null,
-          targetQty: t.target_qty ?? null,
-          targetOrders: t.target_orders ?? null
-        });
-      });
+
+      if (isFilterCurrentMonth) {
+        // Fetch all targets for current month
+        const agentIds = agents.map(a => a.id);
+        
+        const { data: targets, error: targetsError } = await supabase
+          .from('agent_monthly_targets')
+          .select('agent_id, target_clients, target_revenue, target_qty, target_orders')
+          .eq('target_month', currentMonthFirstDay)
+          .in('agent_id', agentIds);
+
+        if (targetsError) {
+          console.error('Error fetching targets (continuing without targets):', targetsError);
+          // Continue without targets if there's an error
+        } else {
+          (targets || []).forEach((t: any) => {
+            targetsMap.set(t.agent_id, {
+              targetClients: t.target_clients ?? null,
+              targetRevenue: t.target_revenue ? parseFloat(t.target_revenue) : null,
+              targetQty: t.target_qty ?? null,
+              targetOrders: t.target_orders ?? null
+            });
+          });
+        }
+      }
 
       // Get orders for each agent
       const agentKPIsData: AgentKPI[] = await Promise.all(
         (agents || []).map(async (agent) => {
-          // Get all approved orders (admin_approved stage) for total stats
-          const { data: allOrders } = await supabase
+          // Get filtered orders based on date range (or all time if no filter)
+          const { data: filteredOrders } = await supabase
             .from('client_orders')
             .select('id, total_amount, client_id, created_at')
             .eq('agent_id', agent.id)
-            .eq('stage', 'admin_approved');
-
-          // Get current month orders for target achievement calculation
-          const { data: currentMonthOrders } = await supabase
-            .from('client_orders')
-            .select('id, total_amount, client_id')
-            .eq('agent_id', agent.id)
             .eq('stage', 'admin_approved')
-            .gte('created_at', currentMonthStart.toISOString())
-            .lte('created_at', currentMonthEnd.toISOString());
+            .gte('created_at', filterStart.toISOString())
+            .lte('created_at', filterEnd.toISOString());
 
-          // Get current month clients (clients created this month)
-          const { data: currentMonthClients } = await supabase
+          // Get filtered clients (clients created in date range)
+          const { data: filteredClients } = await supabase
             .from('clients')
             .select('id')
             .eq('agent_id', agent.id)
-            .gte('created_at', currentMonthStart.toISOString())
-            .lte('created_at', currentMonthEnd.toISOString());
+            .gte('created_at', filterStart.toISOString())
+            .lte('created_at', filterEnd.toISOString());
 
-          // Get current month order items to calculate total quantity
-          const { data: currentMonthOrderItems } = await supabase
+          // Get filtered order items to calculate total quantity
+          const { data: filteredOrderItems } = await supabase
             .from('client_order_items')
             .select('quantity, client_orders!inner(agent_id, stage, created_at)')
             .eq('client_orders.agent_id', agent.id)
             .eq('client_orders.stage', 'admin_approved')
-            .gte('client_orders.created_at', currentMonthStart.toISOString())
-            .lte('client_orders.created_at', currentMonthEnd.toISOString());
+            .gte('client_orders.created_at', filterStart.toISOString())
+            .lte('client_orders.created_at', filterEnd.toISOString());
 
-          // Calculate actual values for current month
-          const actualClients = currentMonthClients?.length || 0;
-          const actualRevenue = currentMonthOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
-          const actualQty = currentMonthOrderItems?.reduce((sum, item: any) => sum + (item.quantity || 0), 0) || 0;
+          // Calculate actual values for filtered period
+          const actualClients = filteredClients?.length || 0;
+          const actualRevenue = filteredOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+          const actualQty = filteredOrderItems?.reduce((sum, item: any) => sum + (item.quantity || 0), 0) || 0;
 
-          // Get unique clients (all time)
-          const uniqueClients = new Set(allOrders?.map(o => o.client_id) || []);
+          // Get unique clients from filtered orders
+          const uniqueClients = new Set(filteredOrders?.map(o => o.client_id) || []);
 
-          // Get total clients assigned to this agent (all time)
+          // Get total clients assigned to this agent (all time) for conversion rate
           const { data: totalClients } = await supabase
             .from('clients')
             .select('id')
             .eq('agent_id', agent.id);
 
-          const totalOrders = allOrders?.length || 0;
-          const totalRevenue = allOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+          const totalOrders = filteredOrders?.length || 0;
+          const totalRevenue = filteredOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
           const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
           const conversionRate = totalClients && totalClients.length > 0 
             ? (uniqueClients.size / totalClients.length) * 100 
             : 0;
 
-          // Get targets
-          const agentTargets = targetsMap.get(agent.id) || {
-            targetClients: null,
-            targetRevenue: null,
-            targetQty: null,
-            targetOrders: null
-          };
+          // Get targets (only if filtering by current month)
+          const agentTargets = isFilterCurrentMonth 
+            ? (targetsMap.get(agent.id) || {
+                targetClients: null,
+                targetRevenue: null,
+                targetQty: null,
+                targetOrders: null
+              })
+            : {
+                targetClients: null,
+                targetRevenue: null,
+                targetQty: null,
+                targetOrders: null
+              };
 
-          // Calculate achievement percentages
-          const achievementClients = agentTargets.targetClients && agentTargets.targetClients > 0
+          // Calculate achievement percentages (only if filtering by current month and targets exist)
+          const achievementClients = isFilterCurrentMonth && agentTargets.targetClients && agentTargets.targetClients > 0
             ? (actualClients / agentTargets.targetClients) * 100
             : undefined;
 
-          const achievementRevenue = agentTargets.targetRevenue && agentTargets.targetRevenue > 0
+          const achievementRevenue = isFilterCurrentMonth && agentTargets.targetRevenue && agentTargets.targetRevenue > 0
             ? (actualRevenue / agentTargets.targetRevenue) * 100
             : undefined;
 
-          const achievementQty = agentTargets.targetQty && agentTargets.targetQty > 0
+          const achievementQty = isFilterCurrentMonth && agentTargets.targetQty && agentTargets.targetQty > 0
             ? (actualQty / agentTargets.targetQty) * 100
             : undefined;
 
           // Legacy achievement calculation (for backward compatibility)
           const targetOrders = agentTargets.targetOrders;
-          const currentMonthOrderCount = currentMonthOrders?.length || 0;
-          const targetAchievement = targetOrders && targetOrders > 0
-            ? (currentMonthOrderCount / targetOrders) * 100
+          const targetAchievement = isFilterCurrentMonth && targetOrders && targetOrders > 0
+            ? (totalOrders / targetOrders) * 100
             : undefined;
 
           // Determine performance
@@ -580,10 +1163,10 @@ export default function AnalyticsPage() {
             avgOrderValue,
             conversionRate,
             performance,
-            // Target values
-            targetClients: agentTargets.targetClients,
-            targetRevenue: agentTargets.targetRevenue,
-            targetQty: agentTargets.targetQty,
+            // Target values (only set if filtering by current month)
+            targetClients: isFilterCurrentMonth ? agentTargets.targetClients : null,
+            targetRevenue: isFilterCurrentMonth ? agentTargets.targetRevenue : null,
+            targetQty: isFilterCurrentMonth ? agentTargets.targetQty : null,
             // Actual values
             actualClients,
             actualRevenue,
@@ -604,7 +1187,7 @@ export default function AnalyticsPage() {
 
       setAgentKPIs(agentKPIsData);
     } catch (error) {
-      console.error('Error fetching agent KPIs:', error);
+      console.error('❌ Error fetching agent KPIs:', error);
     }
   };
 
@@ -622,16 +1205,26 @@ export default function AnalyticsPage() {
     }
   };
 
-  const fetchVariantSalesForAgent = async (agentId: string, brandId: string) => {
+  const fetchVariantSalesForAgent = async (
+    agentId: string, 
+    brandId: string, 
+    fromDate?: Date | null, 
+    toDate?: Date | null
+  ) => {
     if (!brandId) return;
     
     setLoadingVariants(true);
     try {
-      // Get all variants for this brand
-      const { data: variants, error: variantsError } = await supabase
+      // Get variants - all variants if "all" is selected, or specific brand
+      let variantsQuery = supabase
         .from('variants')
-        .select('id, name')
-        .eq('brand_id', brandId);
+        .select('id, name, brand_id, brands!inner(name)');
+      
+      if (brandId !== 'all') {
+        variantsQuery = variantsQuery.eq('brand_id', brandId);
+      }
+      
+      const { data: variants, error: variantsError } = await variantsQuery;
       
       if (variantsError) throw variantsError;
 
@@ -653,12 +1246,15 @@ export default function AnalyticsPage() {
         .eq('client_orders.agent_id', agentId)
         .eq('client_orders.stage', 'admin_approved');
 
-      // Apply date filters if set
-      if (dateFrom) {
-        query = query.gte('client_orders.created_at', startOfDay(dateFrom).toISOString());
+      // Apply date filters: use explicit null to clear, undefined to use state
+      const effectiveFromDate = fromDate === undefined ? dateFrom : fromDate;
+      const effectiveToDate = toDate === undefined ? dateTo : toDate;
+      
+      if (effectiveFromDate) {
+        query = query.gte('client_orders.created_at', startOfDay(effectiveFromDate).toISOString());
       }
-      if (dateTo) {
-        query = query.lte('client_orders.created_at', endOfDay(dateTo).toISOString());
+      if (effectiveToDate) {
+        query = query.lte('client_orders.created_at', endOfDay(effectiveToDate).toISOString());
       }
 
       const { data: orderItems, error: itemsError } = await query;
@@ -682,10 +1278,15 @@ export default function AnalyticsPage() {
 
       // Combine with variant names
       const variantSalesData: VariantSales[] = (variants || [])
-        .map((variant) => {
+        .map((variant: any) => {
           const sales = salesMap.get(variant.id) || { quantity: 0, orderCount: 0, clients: new Set<string>() };
+          // Include brand name if showing all brands
+          const displayName = brandId === 'all' 
+            ? `${variant.brands?.name || 'Unknown'} - ${variant.name}` 
+            : variant.name;
+          
           return {
-            variantName: variant.name,
+            variantName: displayName,
             quantity: sales.quantity,
             orderCount: sales.orderCount,
             clients: Array.from(sales.clients)
@@ -707,6 +1308,97 @@ export default function AnalyticsPage() {
     }
   };
 
+  const fetchAgentClients = async (agentId: string) => {
+    setLoadingClients(true);
+    try {
+      // 1. Get all clients for this agent
+      const { data: clients, error: clientsError } = await supabase
+        .from('clients')
+        .select('id, name, company, city')
+        .eq('agent_id', agentId);
+
+      if (clientsError) throw clientsError;
+
+      if (!clients || clients.length === 0) {
+        setAgentClients([]);
+        return;
+      }
+
+      // 2. Get aggregated order stats for these clients
+      const clientIds = clients.map(c => c.id);
+      
+      // Fetch approved orders for these clients
+      const { data: orders, error: ordersError } = await supabase
+        .from('client_orders')
+        .select('client_id, total_amount, created_at')
+        .in('client_id', clientIds)
+        .eq('stage', 'admin_approved');
+
+      if (ordersError) throw ordersError;
+
+      // 3. Fetch visit counts for these clients
+      const { data: visits, error: visitsError } = await supabase
+        .from('visit_logs')
+        .select('client_id')
+        .in('client_id', clientIds);
+
+      // Count visits per client
+      const visitCounts = new Map<string, number>();
+      if (!visitsError && visits) {
+        visits.forEach((visit: any) => {
+          const count = visitCounts.get(visit.client_id) || 0;
+          visitCounts.set(visit.client_id, count + 1);
+        });
+      }
+
+      // 4. Process data to build metrics
+      const clientStats = new Map<string, { orders: number; revenue: number; lastOrder: string | null }>();
+
+      orders?.forEach(order => {
+        const current = clientStats.get(order.client_id) || { orders: 0, revenue: 0, lastOrder: null };
+        
+        current.orders += 1;
+        current.revenue += order.total_amount || 0;
+        
+        // Update last order date if this one is more recent
+        if (!current.lastOrder || new Date(order.created_at) > new Date(current.lastOrder)) {
+          current.lastOrder = order.created_at;
+        }
+
+        clientStats.set(order.client_id, current);
+      });
+
+      // 5. Combine client info with stats
+      const metrics: ClientMetrics[] = clients.map(client => {
+        const stats = clientStats.get(client.id) || { orders: 0, revenue: 0, lastOrder: null };
+        return {
+          clientId: client.id,
+          clientName: client.name,
+          company: client.company || '—',
+          city: client.city || '—',
+          totalOrders: stats.orders,
+          totalRevenue: stats.revenue,
+          totalVisits: visitCounts.get(client.id) || 0,
+          lastOrderDate: stats.lastOrder
+        };
+      });
+
+      // Sort by revenue descending
+      metrics.sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+      setAgentClients(metrics);
+    } catch (error) {
+      console.error('Error fetching agent clients:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load client data',
+        variant: 'destructive'
+      });
+    } finally {
+      setLoadingClients(false);
+    }
+  };
+
   const handleViewAgentDetails = async (agent: AgentKPI) => {
     setSelectedAgent(agent);
     setSelectedBrand('');
@@ -716,18 +1408,23 @@ export default function AnalyticsPage() {
     setAgentDetailDialogOpen(true);
     
     // Fetch brands when dialog opens
-    await fetchBrands();
+    await Promise.all([
+      fetchBrands(),
+      fetchAgentClients(agent.id)
+    ]);
   };
 
   const handleBrandChange = async (brandId: string) => {
     setSelectedBrand(brandId);
     if (selectedAgent && brandId) {
+      // Don't pass date params - will use current state values
       await fetchVariantSalesForAgent(selectedAgent.id, brandId);
     }
   };
 
   const handleDateFilterChange = async () => {
     if (selectedAgent && selectedBrand) {
+      // Don't pass date params - will use current state values
       await fetchVariantSalesForAgent(selectedAgent.id, selectedBrand);
     }
   };
@@ -736,7 +1433,8 @@ export default function AnalyticsPage() {
     setDateFrom(undefined);
     setDateTo(undefined);
     if (selectedAgent && selectedBrand) {
-      await fetchVariantSalesForAgent(selectedAgent.id, selectedBrand);
+      // Explicitly pass null to clear date filters and fetch all data
+      await fetchVariantSalesForAgent(selectedAgent.id, selectedBrand, null, null);
     }
   };
 
@@ -847,6 +1545,68 @@ export default function AnalyticsPage() {
     }
   };
 
+  const handleRemoveTarget = async (agentId: string) => {
+    const agent = agentKPIs.find(a => a.id === agentId);
+    if (!agent) return;
+
+    setAgentToRemove({ id: agentId, name: agent.name });
+    setRemoveTargetDialogOpen(true);
+  };
+
+  const confirmRemoveTarget = async () => {
+    if (!agentToRemove) return;
+
+    setRemovingTargets(prev => new Set(prev).add(agentToRemove.id));
+    try {
+      const currentMonthFirstDay = startOfMonth(new Date()).toISOString().split('T')[0];
+      
+      // Delete the target record
+      const { error } = await supabase
+        .from('agent_monthly_targets')
+        .delete()
+        .eq('agent_id', agentToRemove.id)
+        .eq('target_month', currentMonthFirstDay);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Target Removed',
+        description: `Targets removed for ${agentToRemove.name}`,
+      });
+
+      // Clear the input for this agent
+      setTargetInputs(prev => {
+        const next = { ...prev };
+        next[agentToRemove.id] = {
+          targetClients: null,
+          targetRevenue: null,
+          targetQty: null
+        };
+        return next;
+      });
+
+      // Refetch to update the UI
+      await fetchAgentKPIs();
+      
+      // Close dialog
+      setRemoveTargetDialogOpen(false);
+      setAgentToRemove(null);
+    } catch (error: any) {
+      console.error('Error removing target:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to remove target',
+        variant: 'destructive'
+      });
+    } finally {
+      setRemovingTargets(prev => {
+        const next = new Set(prev);
+        next.delete(agentToRemove.id);
+        return next;
+      });
+    }
+  };
+
   const handleSaveAllTargets = async () => {
     const targetsToSave = Object.entries(targetInputs).filter(([_, targets]) => 
       targets && (targets.targetClients || targets.targetRevenue || targets.targetQty)
@@ -905,195 +1665,7 @@ export default function AnalyticsPage() {
     }
   };
 
-  const generateAIInsights = useCallback(async () => {
-    if (!isAdmin) return;
-    setAnalyzing(true);
-    try {
-      const insights: AIInsight[] = [];
 
-      // City Insights
-      if (cityPerformance.length > 0) {
-        const topCity = cityPerformance[0];
-        const lowestCity = cityPerformance[cityPerformance.length - 1];
-
-        insights.push({
-          type: 'success',
-          category: 'Geographic',
-          title: `${topCity.city} is Your Top Market`,
-          description: `${topCity.city} generates ₱${topCity.revenue.toLocaleString()} (${((topCity.revenue / totalRevenue) * 100).toFixed(1)}% of total revenue) with ${topCity.clients} active clients.`,
-          impact: 'high',
-          actionable: `Consider expanding your agent team in ${topCity.city} to capitalize on this strong market.`
-        });
-
-        if (lowestCity.orders < topCity.orders * 0.2) {
-          insights.push({
-            type: 'opportunity',
-            category: 'Geographic',
-            title: `Untapped Potential in ${lowestCity.city}`,
-            description: `${lowestCity.city} only has ${lowestCity.orders} orders compared to ${topCity.orders} in ${topCity.city}.`,
-            impact: 'medium',
-            actionable: `Deploy marketing campaigns or assign dedicated agents to ${lowestCity.city} to boost sales.`
-          });
-        }
-
-        // Growth opportunities
-        const growingCities = cityPerformance.filter(c => c.growth > 20);
-        if (growingCities.length > 0) {
-          insights.push({
-            type: 'success',
-            category: 'Growth',
-            title: `${growingCities.length} Cities Showing Strong Growth`,
-            description: growingCities.map(c => `${c.city} (+${c.growth.toFixed(1)}%)`).join(', '),
-            impact: 'high',
-            actionable: 'Increase inventory allocation to these high-growth cities to meet rising demand.'
-          });
-        }
-
-        const decliningCities = cityPerformance.filter(c => c.growth < -10);
-        if (decliningCities.length > 0) {
-          insights.push({
-            type: 'warning',
-            category: 'Retention',
-            title: `${decliningCities.length} Cities Declining`,
-            description: decliningCities.map(c => `${c.city} (${c.growth.toFixed(1)}%)`).join(', '),
-            impact: 'high',
-            actionable: 'Investigate customer satisfaction and competitive pressure in these markets.'
-          });
-        }
-      }
-
-      // Product Insights
-      if (productPerformance.length > 0) {
-        const topProduct = productPerformance[0];
-        const trendingUp = productPerformance.filter(p => p.trend === 'up').length;
-        const trendingDown = productPerformance.filter(p => p.trend === 'down').length;
-
-        insights.push({
-          type: 'success',
-          category: 'Product',
-          title: `${topProduct.brand} ${topProduct.variant} is Your Best Seller`,
-          description: `${topProduct.orders} orders, ${topProduct.quantity} units sold, generating ₱${topProduct.revenue.toLocaleString()}.`,
-          impact: 'high',
-          actionable: `Ensure ${topProduct.brand} ${topProduct.variant} is always in stock across all regions.`
-        });
-
-        if (trendingUp > 0) {
-          insights.push({
-            type: 'opportunity',
-            category: 'Product',
-            title: `${trendingUp} Products Trending Upward`,
-            description: 'These products are gaining popularity month-over-month.',
-            impact: 'medium',
-            actionable: 'Increase stock levels for trending products to avoid stockouts.'
-          });
-        }
-
-        if (trendingDown > 3) {
-          insights.push({
-            type: 'warning',
-            category: 'Product',
-            title: `${trendingDown} Products Losing Momentum`,
-            description: 'These products show declining order volumes.',
-            impact: 'medium',
-            actionable: 'Consider promotions or phase out underperforming products to optimize inventory.'
-          });
-        }
-
-        // Low performers
-        const lowPerformers = productPerformance.filter(p => p.revenue < totalRevenue * 0.01);
-        if (lowPerformers.length > 5) {
-          insights.push({
-            type: 'suggestion',
-            category: 'Inventory',
-            title: `${lowPerformers.length} Products Underperforming`,
-            description: 'These products contribute less than 1% of total revenue each.',
-            impact: 'low',
-            actionable: 'Review if these SKUs are worth keeping or if inventory space could be better used.'
-          });
-        }
-      }
-
-      // Agent Insights
-      if (agentKPIs.length > 0) {
-        const excellentAgents = agentKPIs.filter(a => a.performance === 'excellent');
-        const needsImprovement = agentKPIs.filter(a => a.performance === 'needs_improvement');
-        const avgConversion = agentKPIs.reduce((sum, a) => sum + a.conversionRate, 0) / agentKPIs.length;
-
-        if (excellentAgents.length > 0) {
-          insights.push({
-            type: 'success',
-            category: 'Team',
-            title: `${excellentAgents.length} Star Performers`,
-            description: excellentAgents.map(a => `${a.name} (₱${a.revenue.toLocaleString()})`).join(', '),
-            impact: 'high',
-            actionable: 'Analyze their strategies and replicate best practices across the team.'
-          });
-        }
-
-        if (needsImprovement.length > 0) {
-          insights.push({
-            type: 'warning',
-            category: 'Team',
-            title: `${needsImprovement.length} Agents Need Support`,
-            description: `These agents have lower conversion rates (avg: ${avgConversion.toFixed(1)}%) or revenue.`,
-            impact: 'high',
-            actionable: 'Provide additional training, mentorship, or reassign territories.'
-          });
-        }
-
-        // Conversion rate insights
-        const highConversion = agentKPIs.filter(a => a.conversionRate > 60);
-        if (highConversion.length > 0) {
-          insights.push({
-            type: 'success',
-            category: 'Sales Efficiency',
-            title: `${highConversion.length} Agents with 60%+ Conversion`,
-            description: 'These agents are highly effective at converting clients to buyers.',
-            impact: 'medium',
-            actionable: 'Document and share their client relationship strategies company-wide.'
-          });
-        }
-      }
-
-      // Overall business insights
-      if (revenueGrowth > 10) {
-        insights.push({
-          type: 'success',
-          category: 'Business Health',
-          title: `Strong Revenue Growth: +${revenueGrowth.toFixed(1)}%`,
-          description: 'Your business is growing month-over-month.',
-          impact: 'high',
-          actionable: 'Consider expanding your product line or entering new markets.'
-        });
-      } else if (revenueGrowth < -5) {
-        insights.push({
-          type: 'warning',
-          category: 'Business Health',
-          title: `Revenue Decline: ${revenueGrowth.toFixed(1)}%`,
-          description: 'Sales are down compared to last month.',
-          impact: 'high',
-          actionable: 'Review pricing strategy, marketing efforts, and competitive landscape.'
-        });
-      }
-
-      setAIInsights(insights);
-      
-      toast({
-        title: 'AI Analysis Complete',
-        description: `Generated ${insights.length} actionable insights`,
-      });
-    } catch (error: any) {
-      console.error('Error generating insights:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to generate AI insights',
-        variant: 'destructive'
-      });
-    } finally {
-      setAnalyzing(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analyzing, cityPerformance, productPerformance, agentKPIs, revenueGrowth, totalRevenue, isAdmin]);
 
   const getPerformanceBadge = (performance: string) => {
     switch (performance) {
@@ -1135,20 +1707,7 @@ export default function AnalyticsPage() {
     );
   };
 
-  const getInsightIcon = (type: string) => {
-    switch (type) {
-      case 'success':
-        return <CheckCircle className="h-5 w-5 text-green-600" />;
-      case 'warning':
-        return <AlertCircle className="h-5 w-5 text-red-600" />;
-      case 'opportunity':
-        return <Target className="h-5 w-5 text-blue-600" />;
-      case 'suggestion':
-        return <Sparkles className="h-5 w-5 text-purple-600" />;
-      default:
-        return <Brain className="h-5 w-5" />;
-    }
-  };
+
 
   if (loading) {
     return (
@@ -1160,157 +1719,6 @@ export default function AnalyticsPage() {
     );
   }
 
-  const renderAgentKPISection = () => (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {/* Agent Performance Chart */}
-      <Card className="col-span-1 lg:col-span-2">
-        <CardHeader>
-          <CardTitle>Agent Revenue Performance</CardTitle>
-          <CardDescription>Top performing sales agents</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {agentKPIs.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={agentKPIs.slice(0, 10)}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-45} textAnchor="end" height={80} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
-                <Bar dataKey="revenue" fill="#8b5cf6" name="Revenue (₱)" />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
-              <Users className="h-10 w-10 opacity-50 mb-2" />
-              <p>No agent revenue data available</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Agent KPI Table */}
-      <Card className="col-span-1 lg:col-span-2">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Agent Key Performance Indicators</CardTitle>
-              <CardDescription>Comprehensive agent metrics and ratings</CardDescription>
-            </div>
-            {isLeader && (
-              <Button
-                variant="outline"
-                onClick={handleOpenTargetDialog}
-                className="gap-2"
-              >
-                <Target className="h-4 w-4" />
-                Set Targets
-              </Button>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="border rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead rowSpan={2} className="text-center align-middle">Agent</TableHead>
-                    <TableHead colSpan={3} className="text-center bg-blue-50">Target</TableHead>
-                    <TableHead colSpan={3} className="text-center bg-green-50">Actual</TableHead>
-                    <TableHead colSpan={3} className="text-center bg-yellow-50">Achievement</TableHead>
-                    <TableHead rowSpan={2} className="text-center align-middle">Actions</TableHead>
-                  </TableRow>
-                  <TableRow>
-                    {/* Target columns */}
-                    <TableHead className="text-center bg-blue-50">Clients</TableHead>
-                    <TableHead className="text-center bg-blue-50">Revenue</TableHead>
-                    <TableHead className="text-center bg-blue-50">Qty</TableHead>
-                    {/* Actual columns */}
-                    <TableHead className="text-center bg-green-50">Clients</TableHead>
-                    <TableHead className="text-center bg-green-50">Revenue</TableHead>
-                    <TableHead className="text-center bg-green-50">Qty</TableHead>
-                    {/* Achievement columns */}
-                    <TableHead className="text-center bg-yellow-50">Clients %</TableHead>
-                    <TableHead className="text-center bg-yellow-50">Revenue %</TableHead>
-                    <TableHead className="text-center bg-yellow-50">Qty %</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {agentKPIs.map((agent, index) => (
-                    <TableRow key={agent.id}>
-                      <TableCell className="font-medium text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          {index < 3 && <Award className="h-4 w-4 text-yellow-500" />}
-                          {agent.name}
-                        </div>
-                      </TableCell>
-                      {/* Target values */}
-                      <TableCell className="text-center bg-blue-50/30">
-                        <span className="text-sm font-medium">
-                          {agent.targetClients ?? '-'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-center bg-blue-50/30">
-                        <span className="text-sm font-medium">
-                          {agent.targetRevenue ? `₱${Math.floor(agent.targetRevenue).toLocaleString()}` : '-'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-center bg-blue-50/30">
-                        <span className="text-sm font-medium">
-                          {agent.targetQty ?? '-'}
-                        </span>
-                      </TableCell>
-                      {/* Actual values */}
-                      <TableCell className="text-center bg-green-50/30">
-                        <span className="text-sm">{agent.actualClients ?? 0}</span>
-                      </TableCell>
-                      <TableCell className="text-center bg-green-50/30">
-                        <span className="text-sm font-semibold">
-                          ₱{agent.actualRevenue ? Math.floor(agent.actualRevenue).toLocaleString() : '0'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-center bg-green-50/30">
-                        <span className="text-sm">{agent.actualQty ?? 0}</span>
-                      </TableCell>
-                      {/* Achievement percentages */}
-                      <TableCell className="text-center bg-yellow-50/30">
-                        {renderAchievementPercentage(agent.achievementClients)}
-                      </TableCell>
-                      <TableCell className="text-center bg-yellow-50/30">
-                        {renderAchievementPercentage(agent.achievementRevenue)}
-                      </TableCell>
-                      <TableCell className="text-center bg-yellow-50/30">
-                        {renderAchievementPercentage(agent.achievementQty)}
-                      </TableCell>
-                      {/* Actions */}
-                      <TableCell className="text-center">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleViewAgentDetails(agent)}
-                          className="gap-2"
-                        >
-                          <Eye className="h-4 w-4" />
-                          View
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {agentKPIs.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
-                        {isLeader ? 'No agents assigned to your team yet.' : 'No agent data available'}
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -1325,12 +1733,14 @@ export default function AnalyticsPage() {
         </p>
       </div>
 
-      {/* Summary Cards (Admin Only) */}
-      {isAdmin && (
+      {/* Summary Cards */}
+      {(isAdmin || isLeader || isManager) && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Revenue (This Month)</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {isAdmin ? 'Total Revenue (This Month)' : 'Team Revenue (This Month)'}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">₱{totalRevenue.toLocaleString()}</div>
@@ -1349,7 +1759,9 @@ export default function AnalyticsPage() {
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Orders</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {isAdmin ? 'Total Orders' : 'Team Orders'}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{totalOrders.toLocaleString()}</div>
@@ -1385,10 +1797,10 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {isAdmin && (
+      {(isAdmin || isLeader || isManager) && (
         <>
           {/* Main Analytics Tabs */}
-          <Tabs defaultValue="cities" className="space-y-4">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="cities">
                 <MapPin className="h-4 w-4 mr-2" />
@@ -1400,14 +1812,16 @@ export default function AnalyticsPage() {
               </TabsTrigger>
               <TabsTrigger value="agents">
                 <Users className="h-4 w-4 mr-2" />
-                Agent KPIs
+                {isAdmin ? 'Agent Analytics' : 'Team Analytics'}
               </TabsTrigger>
             </TabsList>
 
             {/* City Performance Tab */}
             <TabsContent value="cities" className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* City Revenue Chart */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+                
+                {/* City Revenue Chart */}
             <Card className="col-span-1 lg:col-span-2">
               <CardHeader>
                 <CardTitle>Revenue by City</CardTitle>
@@ -1420,7 +1834,13 @@ export default function AnalyticsPage() {
                     <XAxis dataKey="city" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
-                    <Bar dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
+                    <Bar 
+                      dataKey="revenue" 
+                      fill="#3b82f6" 
+                      name="Revenue (₱)" 
+                      onClick={(data) => handleViewCityDetails(data)}
+                      cursor="pointer"
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1438,6 +1858,7 @@ export default function AnalyticsPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>City</TableHead>
+                        <TableHead>Agent(s)</TableHead>
                         <TableHead className="text-right">Orders</TableHead>
                         <TableHead className="text-right">Revenue</TableHead>
                         <TableHead className="text-right">Clients</TableHead>
@@ -1452,6 +1873,20 @@ export default function AnalyticsPage() {
                               <MapPin className="h-4 w-4 text-primary" />
                               {city.city}
                             </div>
+                          </TableCell>
+                          <TableCell>
+                            {city.agents && city.agents.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {city.agents.map((agent, idx) => (
+                                  <Badge key={idx} variant="outline" className="text-xs">
+                                    <Award className="h-3 w-3 mr-1" />
+                                    {agent}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground text-sm">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-right">{city.orders}</TableCell>
                           <TableCell className="text-right font-semibold">
@@ -1474,7 +1909,7 @@ export default function AnalyticsPage() {
                       ))}
                       {cityPerformance.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                             No city data available
                           </TableCell>
                         </TableRow>
@@ -1579,110 +2014,333 @@ export default function AnalyticsPage() {
 
             {/* Agent KPIs Tab */}
             <TabsContent value="agents" className="space-y-4">
-              {renderAgentKPISection()}
-            </TabsContent>
-          </Tabs>
+              {/* Agent Performance Overview Chart */}
+              <AgentAnalyticsTab 
+                userId={user!.id} 
+                isAdmin={isAdmin} 
+                isLeader={isLeader}
+                isManager={isManager}
+                onViewAgentDetails={handleViewAgentDetails}
+                onOpenTargetDialog={handleOpenTargetDialog}
+                agentKPIs={agentKPIs}
+              />
 
-          {/* AI Insights List Section */}
-          <Card className="border-2 border-primary/20">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <Brain className="h-5 w-5 text-primary" />
-                    AI Business Insights
-                    {analyzing && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-                  </CardTitle>
-                  <CardDescription>
-                    {aiInsights.length > 0 
-                      ? `${aiInsights.length} actionable recommendations based on your data`
-                      : 'Analyzing your business data...'
-                    }
-                  </CardDescription>
-                </div>
-                {aiInsights.length > 0 && (
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={generateAIInsights}
-                    disabled={analyzing}
-                  >
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Refresh Insights
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              {aiInsights.length > 0 ? (
-                <div className="space-y-2">
-                  {aiInsights.map((insight, index) => (
-                    <div 
-                      key={index}
-                      className="flex items-start gap-3 p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
-                    >
-                      {/* Icon */}
-                      <div className="flex-shrink-0 mt-0.5">
-                        {getInsightIcon(insight.type)}
-                      </div>
+              {/* V1 Agent KPI Section - Agent Revenue Performance & Key Performance Indicators */}
+              {agentKPIs && agentKPIs.length > 0 ? (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Agent Revenue Performance Chart */}
+                  <Card className="col-span-1 lg:col-span-2">
+                    <CardHeader>
+                      <CardTitle>Agent Revenue Performance</CardTitle>
+                      <CardDescription>Top performing sales agents</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={agentKPIs.slice(0, 10)}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-45} textAnchor="end" height={80} />
+                          <YAxis tick={{ fontSize: 12 }} />
+                          <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
+                          <Bar dataKey="revenue" fill="#8b5cf6" name="Revenue (₱)" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </CardContent>
+                  </Card>
 
-                      {/* Content */}
-                      <div className="flex-1 min-w-0 space-y-1">
+                  {/* Agent Key Performance Indicators Table */}
+                  <Card className="col-span-1 lg:col-span-2">
+                    <CardHeader>
+                      <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <CardTitle>Agent Key Performance Indicators</CardTitle>
+                            <CardDescription>Comprehensive agent metrics and ratings</CardDescription>
+                          </div>
+                          {/* Only Admin and Leader can set targets, Manager is view-only */}
+                          {(isAdmin || isLeader) && (
+                            <Button
+                              variant="outline"
+                              onClick={handleOpenTargetDialog}
+                              className="gap-2"
+                            >
+                              <Target className="h-4 w-4" />
+                              Set Targets
+                            </Button>
+                          )}
+                        </div>
+                        {/* Date Filter and Overall View Toggle for Agent KPIs */}
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-sm">{insight.title}</span>
-                          <Badge variant="outline" className="text-xs">
-                            {insight.category}
-                          </Badge>
-                          <Badge 
-                            variant="outline" 
-                            className={`text-xs ${
-                              insight.impact === 'high' ? 'border-red-500 text-red-700 bg-red-50' :
-                              insight.impact === 'medium' ? 'border-yellow-500 text-yellow-700 bg-yellow-50' :
-                              'border-gray-400 text-gray-700 bg-gray-50'
-                            }`}
-                          >
-                            {insight.impact.toUpperCase()}
-                          </Badge>
-                        </div>
-                        
-                        <p className="text-sm text-muted-foreground">{insight.description}</p>
-                        
-                        <div className="flex items-start gap-2 mt-2 p-2 bg-blue-50 rounded-md border-l-2 border-blue-500">
-                          <Target className="h-3.5 w-3.5 text-blue-600 mt-0.5 flex-shrink-0" />
-                          <p className="text-xs text-blue-900">
-                            <strong>Recommended Action:</strong> {insight.actionable}
-                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              variant={getCurrentPreset() === 'current_month' ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => setAgentKpiDatePreset('current_month')}
+                              className="h-8 text-xs"
+                            >
+                              Current Month
+                            </Button>
+                            <Button
+                              variant={getCurrentPreset() === 'last_month' ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => setAgentKpiDatePreset('last_month')}
+                              className="h-8 text-xs"
+                            >
+                              Last Month
+                            </Button>
+                            <Button
+                              variant={getCurrentPreset() === 'last_3_months' ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => setAgentKpiDatePreset('last_3_months')}
+                              className="h-8 text-xs"
+                            >
+                              Last 3 Months
+                            </Button>
+                            <Popover open={showCustomDatePicker} onOpenChange={setShowCustomDatePicker}>
+                              <PopoverTrigger asChild>
+                                <Button 
+                                  variant={getCurrentPreset() === 'custom' ? 'default' : 'outline'}
+                                  size="sm"
+                                  onClick={() => setAgentKpiDatePreset('custom')}
+                                  className="h-8 text-xs"
+                                >
+                                  <CalendarIcon className="h-3.5 w-3.5 mr-1" />
+                                  Custom
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-3" align="start">
+                                <div className="space-y-3">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1.5">
+                                      <label className="text-xs font-medium text-muted-foreground">From</label>
+                                      <Input
+                                        type="date"
+                                        value={agentKpiDateFrom ? agentKpiDateFrom.toISOString().split('T')[0] : ''}
+                                        onChange={(e) => {
+                                          const date = e.target.value ? new Date(e.target.value) : undefined;
+                                          if (date) {
+                                            date.setHours(0, 0, 0, 0);
+                                            setAgentKpiDateFrom(date);
+                                            // Turn off overall view when custom date is selected
+                                            if (showOverallView) {
+                                              setShowOverallView(false);
+                                            }
+                                          }
+                                        }}
+                                        className="h-8 text-xs"
+                                      />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <label className="text-xs font-medium text-muted-foreground">To</label>
+                                      <Input
+                                        type="date"
+                                        value={agentKpiDateTo ? agentKpiDateTo.toISOString().split('T')[0] : ''}
+                                        onChange={(e) => {
+                                          const date = e.target.value ? new Date(e.target.value) : undefined;
+                                          if (date) {
+                                            date.setHours(23, 59, 59, 999);
+                                            setAgentKpiDateTo(date);
+                                            // Turn off overall view when custom date is selected
+                                            if (showOverallView) {
+                                              setShowOverallView(false);
+                                            }
+                                          }
+                                        }}
+                                        className="h-8 text-xs"
+                                      />
+                                    </div>
+                                  </div>
+                                  {agentKpiDateFrom && agentKpiDateTo && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="w-full h-8 text-xs"
+                                      onClick={() => {
+                                        setAgentKpiDateFrom(undefined);
+                                        setAgentKpiDateTo(undefined);
+                                        setShowCustomDatePicker(false);
+                                        setAgentKpiDatePreset('current_month');
+                                      }}
+                                    >
+                                      Reset to Current Month
+                                    </Button>
+                                  )}
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                          </div>
+                          <div className="flex items-center gap-1.5 border-l pl-2">
+                            <Button
+                              variant={showOverallView ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={handleOverallView}
+                              className="h-8 text-xs"
+                            >
+                              <Users className="h-3.5 w-3.5 mr-1" />
+                              Overall
+                            </Button>
+                          </div>
+                          {isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo) ? (
+                            <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                              Targets Enabled
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs text-muted-foreground">
+                              Targets Hidden
+                            </Badge>
+                          )}
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              ) : analyzing ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-                  <p className="text-sm text-muted-foreground">Analyzing your business data...</p>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead rowSpan={2} className="text-center align-middle">Agent</TableHead>
+                                {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
+                                  <>
+                                    <TableHead colSpan={3} className="text-center bg-blue-50">Target</TableHead>
+                                  </>
+                                )}
+                                <TableHead colSpan={3} className="text-center bg-green-50">Actual</TableHead>
+                                {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
+                                  <>
+                                    <TableHead colSpan={3} className="text-center bg-yellow-50">Achievement</TableHead>
+                                  </>
+                                )}
+                                <TableHead rowSpan={2} className="text-center align-middle">Actions</TableHead>
+                              </TableRow>
+                              <TableRow>
+                                {/* Target columns - only show if current month */}
+                                {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
+                                  <>
+                                    <TableHead className="text-center bg-blue-50">Clients</TableHead>
+                                    <TableHead className="text-center bg-blue-50">Revenue</TableHead>
+                                    <TableHead className="text-center bg-blue-50">Qty</TableHead>
+                                  </>
+                                )}
+                                {/* Actual columns - always show */}
+                                <TableHead className="text-center bg-green-50">Clients</TableHead>
+                                <TableHead className="text-center bg-green-50">Revenue</TableHead>
+                                <TableHead className="text-center bg-green-50">Qty</TableHead>
+                                {/* Achievement columns - only show if current month */}
+                                {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
+                                  <>
+                                    <TableHead className="text-center bg-yellow-50">Clients %</TableHead>
+                                    <TableHead className="text-center bg-yellow-50">Revenue %</TableHead>
+                                    <TableHead className="text-center bg-yellow-50">Qty %</TableHead>
+                                  </>
+                                )}
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {/* Always show individual agents - Overall button just indicates viewing all agents */}
+                              {agentKPIs.map((agent, index) => {
+                                const showTargets = isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo);
+                                
+                                return (
+                                  <TableRow key={agent.id}>
+                                    <TableCell className="font-medium text-center">
+                                      <div className="flex items-center justify-center gap-2">
+                                        {index < 3 && <Award className="h-4 w-4 text-yellow-500" />}
+                                        {agent.name}
+                                      </div>
+                                    </TableCell>
+                                    {/* Target values - only show if current month */}
+                                    {showTargets && (
+                                      <>
+                                        <TableCell className="text-center bg-blue-50/30">
+                                          <span className="text-sm font-medium">
+                                            {agent.targetClients ?? '-'}
+                                          </span>
+                                        </TableCell>
+                                        <TableCell className="text-center bg-blue-50/30">
+                                          <span className="text-sm font-medium">
+                                            {agent.targetRevenue ? `₱${Math.floor(agent.targetRevenue).toLocaleString()}` : '-'}
+                                          </span>
+                                        </TableCell>
+                                        <TableCell className="text-center bg-blue-50/30">
+                                          <span className="text-sm font-medium">
+                                            {agent.targetQty ?? '-'}
+                                          </span>
+                                        </TableCell>
+                                      </>
+                                    )}
+                                    {/* Actual values - always show */}
+                                    <TableCell className="text-center bg-green-50/30">
+                                      <span className="text-sm">{agent.actualClients ?? 0}</span>
+                                    </TableCell>
+                                    <TableCell className="text-center bg-green-50/30">
+                                      <span className="text-sm font-semibold">
+                                        ₱{agent.actualRevenue ? Math.floor(agent.actualRevenue).toLocaleString() : '0'}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-center bg-green-50/30">
+                                      <span className="text-sm">{agent.actualQty ?? 0}</span>
+                                    </TableCell>
+                                    {/* Achievement percentages - only show if current month */}
+                                    {showTargets && (
+                                      <>
+                                        <TableCell className="text-center bg-yellow-50/30">
+                                          {renderAchievementPercentage(agent.achievementClients)}
+                                        </TableCell>
+                                        <TableCell className="text-center bg-yellow-50/30">
+                                          {renderAchievementPercentage(agent.achievementRevenue)}
+                                        </TableCell>
+                                        <TableCell className="text-center bg-yellow-50/30">
+                                          {renderAchievementPercentage(agent.achievementQty)}
+                                        </TableCell>
+                                      </>
+                                    )}
+                                    {/* Actions */}
+                                    <TableCell className="text-center">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleViewAgentDetails(agent)}
+                                        className="gap-2"
+                                      >
+                                        <Eye className="h-4 w-4" />
+                                        View
+                                      </Button>
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                              {agentKPIs.length === 0 && (
+                                <TableRow>
+                                  <TableCell 
+                                    colSpan={
+                                      (isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) 
+                                        ? 10  // Agent + 3 Target + 3 Achievement + 3 Actual + Actions
+                                        : 5   // Agent + 3 Actual + Actions
+                                    } 
+                                    className="text-center py-8 text-muted-foreground"
+                                  >
+                                    No agent data available
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Brain className="h-12 w-12 text-muted-foreground/50 mb-4" />
-                  <p className="text-sm text-muted-foreground">No insights available yet</p>
-                </div>
+                <Card className="bg-yellow-50 border-2 border-yellow-400">
+                  <CardContent className="pt-6">
+                    <p className="text-center text-sm text-yellow-800">
+                      ⚠️ Agent KPIs data is empty. The chart and table will appear when data is loaded.
+                    </p>
+                  </CardContent>
+                </Card>
               )}
-            </CardContent>
-          </Card>
+            </TabsContent>
+          </Tabs>
         </>
-      )}
-
-      {isLeader && (
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold">Team Performance Overview</CardTitle>
-              <CardDescription>Metrics for agents assigned under your leadership</CardDescription>
-            </CardHeader>
-          </Card>
-          {renderAgentKPISection()}
-        </div>
       )}
 
       {/* Agent Detail Dialog */}
@@ -1729,7 +2387,16 @@ export default function AnalyticsPage() {
               </div>
             )}
 
-            {/* Brand Selector */}
+
+
+            <Tabs defaultValue="sales" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="sales">Sales Analysis</TabsTrigger>
+                <TabsTrigger value="clients">Client Book</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="sales" className="space-y-6 mt-4">
+                {/* Brand Selector */}
             <div className="space-y-2">
               <label className="text-sm font-medium">Select Brand</label>
               <Select value={selectedBrand} onValueChange={handleBrandChange}>
@@ -1737,6 +2404,9 @@ export default function AnalyticsPage() {
                   <SelectValue placeholder="Choose a brand to view variant sales..." />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="all">
+                    <span className="font-semibold">All Brands</span>
+                  </SelectItem>
                   {brands.map((brand) => (
                     <SelectItem key={brand.id} value={brand.id}>
                       {brand.name}
@@ -1865,9 +2535,27 @@ export default function AnalyticsPage() {
             {!loadingVariants && selectedBrand && variantSales.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Variant Sales Breakdown</CardTitle>
+                  <CardTitle>
+                    {selectedBrand === 'all' 
+                      ? 'All Brands - Variant Sales Breakdown' 
+                      : `Variant Sales Breakdown - ${brands.find(b => b.id === selectedBrand)?.name || ''}`
+                    }
+                  </CardTitle>
                   <CardDescription>
-                    Approved orders by product variant (flavors & batteries)
+                    {selectedBrand === 'all'
+                      ? 'Approved orders across all brands and variants'
+                      : 'Approved orders by product variant (flavors & batteries)'
+                    }
+                    {(dateFrom || dateTo) && (
+                      <span className="block mt-1 text-blue-600">
+                        Filtered: {dateFrom && dateTo 
+                          ? `${format(dateFrom, 'MMM d, yyyy')} - ${format(dateTo, 'MMM d, yyyy')}`
+                          : dateFrom 
+                          ? `From ${format(dateFrom, 'MMM d, yyyy')}`
+                          : `Until ${format(dateTo!, 'MMM d, yyyy')}`
+                        }
+                      </span>
+                    )}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -1965,8 +2653,16 @@ export default function AnalyticsPage() {
               <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
                 <Package className="h-12 w-12 text-muted-foreground/50 mb-4" />
                 <p className="text-sm text-muted-foreground">
-                  No approved sales found for this brand
+                  {selectedBrand === 'all' 
+                    ? 'No approved sales found' 
+                    : `No approved sales found for ${brands.find(b => b.id === selectedBrand)?.name || 'this brand'}`
+                  }
                 </p>
+                {(dateFrom || dateTo) && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Try clearing the date filter to see all sales
+                  </p>
+                )}
               </div>
             )}
 
@@ -1977,29 +2673,200 @@ export default function AnalyticsPage() {
                 <p className="text-sm text-muted-foreground">
                   Select a brand above to view detailed variant sales
                 </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Choose "All Brands" to see sales across all products
+                </p>
               </div>
             )}
+              </TabsContent>
+
+              <TabsContent value="clients" className="mt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Assigned Clients & Performance</CardTitle>
+                    <CardDescription>
+                      Performance metrics for each client managed by {selectedAgent?.name}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {loadingClients ? (
+                      <div className="flex justify-center py-12">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                      </div>
+                    ) : (
+                      <div className="border rounded-lg overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Client Name</TableHead>
+                              <TableHead>Location</TableHead>
+                              <TableHead className="text-right">Orders</TableHead>
+                              <TableHead className="text-right">Total Revenue</TableHead>
+                              <TableHead className="text-right">Last Order</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {agentClients.map((client) => (
+                              <TableRow key={client.clientId}>
+                                <TableCell>
+                                  <div className="font-medium">{client.clientName}</div>
+                                  <div className="text-xs text-muted-foreground">{client.company}</div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-1 text-muted-foreground">
+                                    <MapPin className="h-3 w-3" />
+                                    {client.city}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right">{client.totalOrders}</TableCell>
+                                <TableCell className="text-right font-semibold">
+                                  ₱{client.totalRevenue.toLocaleString()}
+                                </TableCell>
+                                <TableCell className="text-right text-muted-foreground text-sm">
+                                  {client.lastOrderDate 
+                                    ? new Date(client.lastOrderDate).toLocaleDateString()
+                                    : 'Never'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            {agentClients.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                                  No clients assigned to this agent yet.
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+
+      
+      {/* City Detail Dialog */}
+      <Dialog open={cityDetailDialogOpen} onOpenChange={setCityDetailDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-primary" />
+              City Analysis - {selectedCity?.city}
+            </DialogTitle>
+            <DialogDescription>
+              Detailed breakdown of clients and revenue in this market.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+             <div className="grid grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{cityClients.length}</div>
+                    <p className="text-xs text-muted-foreground">Total Clients</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">₱{selectedCity?.revenue.toLocaleString()}</div>
+                    <p className="text-xs text-muted-foreground">Total Revenue</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{selectedCity?.orders}</div>
+                    <p className="text-xs text-muted-foreground">Total Orders</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{selectedCity?.visits}</div>
+                    <p className="text-xs text-muted-foreground">Total Visits</p>
+                  </CardContent>
+                </Card>
+             </div>
+
+             <Card>
+                <CardHeader>
+                  <CardTitle>Top Clients in {selectedCity?.city}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {loadingCityDetails ? (
+                    <div className="flex justify-center py-8">
+                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Client</TableHead>
+                          <TableHead>Agent</TableHead>
+                          <TableHead className="text-right">Revenue</TableHead>
+                          <TableHead className="text-right">Orders</TableHead>
+                          <TableHead className="text-right">Visits</TableHead>
+                          <TableHead className="text-right">Last Active</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {cityClients.map((client) => (
+                           <TableRow 
+                             key={client.clientId}
+                             onClick={() => navigate(`/analytics/client/${client.clientId}`)}
+                             className="cursor-pointer hover:bg-muted/50 transition-colors"
+                           >
+                             <TableCell>
+                               <div className="font-medium">{client.clientName}</div>
+                               <div className="text-xs text-muted-foreground">{client.company}</div>
+                             </TableCell>
+                             <TableCell>
+                               {client.agentName ? (
+                                 <Badge variant="outline" className="text-xs">
+                                   <Award className="h-3 w-3 mr-1" />
+                                   {client.agentName}
+                                 </Badge>
+                               ) : (
+                                 <span className="text-muted-foreground text-sm">—</span>
+                               )}
+                             </TableCell>
+                             <TableCell className="text-right">₱{client.totalRevenue.toLocaleString()}</TableCell>
+                             <TableCell className="text-right">{client.totalOrders}</TableCell>
+                             <TableCell className="text-right">{client.totalVisits}</TableCell>
+                             <TableCell className="text-right text-xs">
+                                {client.lastOrderDate ? new Date(client.lastOrderDate).toLocaleDateString() : 'N/A'}
+                             </TableCell>
+                           </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+             </Card>
           </div>
         </DialogContent>
       </Dialog>
 
       {/* Target Management Dialog */}
       <Dialog open={targetDialogOpen} onOpenChange={setTargetDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] sm:max-w-3xl max-h-[90vh] overflow-y-auto px-4 sm:px-6">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Target className="h-5 w-5 text-primary" />
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Target className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
               Set Monthly Targets
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs sm:text-sm">
               Set targets for {format(startOfMonth(new Date()), 'MMMM yyyy')}. Targets will be used to calculate achievement percentages.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             {/* Info Banner */}
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm text-blue-800">
+            <div className="p-2 sm:p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-xs sm:text-sm text-blue-800">
                 <strong>Note:</strong> Targets are set for the current month ({format(startOfMonth(new Date()), 'MMMM yyyy')}). 
                 Achievement is calculated based on approved orders for this month.
               </p>
@@ -2008,21 +2875,21 @@ export default function AnalyticsPage() {
             {/* Targets Table */}
             <div className="border rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
-                <Table>
+                <Table className="min-w-[800px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead rowSpan={2} className="align-middle">Agent Name</TableHead>
-                      <TableHead colSpan={3} className="text-center bg-blue-50">Current Targets</TableHead>
-                      <TableHead colSpan={3} className="text-center bg-green-50">New Targets</TableHead>
-                      <TableHead rowSpan={2} className="text-center align-middle">Action</TableHead>
+                      <TableHead rowSpan={2} className="align-middle text-xs sm:text-sm">Agent Name</TableHead>
+                      <TableHead colSpan={3} className="text-center bg-blue-50 text-xs sm:text-sm">Current Targets</TableHead>
+                      <TableHead colSpan={3} className="text-center bg-green-50 text-xs sm:text-sm">New Targets</TableHead>
+                      <TableHead rowSpan={2} className="text-center align-middle text-xs sm:text-sm">Action</TableHead>
                     </TableRow>
                     <TableRow>
-                      <TableHead className="text-right bg-blue-50">Clients</TableHead>
-                      <TableHead className="text-right bg-blue-50">Revenue</TableHead>
-                      <TableHead className="text-right bg-blue-50">Qty</TableHead>
-                      <TableHead className="text-right bg-green-50">Clients</TableHead>
-                      <TableHead className="text-right bg-green-50">Revenue</TableHead>
-                      <TableHead className="text-right bg-green-50">Qty</TableHead>
+                      <TableHead className="text-right bg-blue-50 text-xs">Clients</TableHead>
+                      <TableHead className="text-right bg-blue-50 text-xs">Revenue</TableHead>
+                      <TableHead className="text-right bg-blue-50 text-xs">Qty</TableHead>
+                      <TableHead className="text-right bg-green-50 text-xs">Clients</TableHead>
+                      <TableHead className="text-right bg-green-50 text-xs">Revenue</TableHead>
+                      <TableHead className="text-right bg-green-50 text-xs">Qty</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -2036,20 +2903,20 @@ export default function AnalyticsPage() {
                       
                       return (
                         <TableRow key={agent.id}>
-                          <TableCell className="font-medium">{agent.name}</TableCell>
+                          <TableCell className="font-medium text-xs sm:text-sm whitespace-nowrap">{agent.name}</TableCell>
                           {/* Current Targets */}
                           <TableCell className="text-right bg-blue-50/30">
-                            <span className="text-sm text-muted-foreground">
+                            <span className="text-xs sm:text-sm text-muted-foreground">
                               {agent.targetClients ?? '-'}
                             </span>
                           </TableCell>
                           <TableCell className="text-right bg-blue-50/30">
-                            <span className="text-sm text-muted-foreground">
+                            <span className="text-xs sm:text-sm text-muted-foreground whitespace-nowrap">
                               {agent.targetRevenue ? `₱${agent.targetRevenue.toLocaleString()}` : '-'}
                             </span>
                           </TableCell>
                           <TableCell className="text-right bg-blue-50/30">
-                            <span className="text-sm text-muted-foreground">
+                            <span className="text-xs sm:text-sm text-muted-foreground">
                               {agent.targetQty ?? '-'}
                             </span>
                           </TableCell>
@@ -2059,7 +2926,7 @@ export default function AnalyticsPage() {
                               type="text"
                               value={formatNumberWithCommas(targets.targetClients)}
                               onChange={(e) => handleTargetInputChange(agent.id, 'targetClients', e.target.value)}
-                              className="w-24 h-8 text-right ml-auto"
+                              className="w-16 sm:w-24 h-7 sm:h-8 text-right ml-auto text-xs sm:text-sm"
                               placeholder="0"
                               disabled={isSaving}
                             />
@@ -2069,7 +2936,7 @@ export default function AnalyticsPage() {
                               type="text"
                               value={formatNumberWithCommas(targets.targetRevenue)}
                               onChange={(e) => handleTargetInputChange(agent.id, 'targetRevenue', e.target.value)}
-                              className="w-28 h-8 text-right ml-auto"
+                              className="w-20 sm:w-28 h-7 sm:h-8 text-right ml-auto text-xs sm:text-sm"
                               placeholder="0"
                               disabled={isSaving}
                             />
@@ -2079,28 +2946,54 @@ export default function AnalyticsPage() {
                               type="text"
                               value={formatNumberWithCommas(targets.targetQty)}
                               onChange={(e) => handleTargetInputChange(agent.id, 'targetQty', e.target.value)}
-                              className="w-24 h-8 text-right ml-auto"
+                              className="w-16 sm:w-24 h-7 sm:h-8 text-right ml-auto text-xs sm:text-sm"
                               placeholder="0"
                               disabled={isSaving}
                             />
                           </TableCell>
                           <TableCell className="text-center">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleSaveTarget(agent.id)}
-                              disabled={isSaving || (!targets.targetClients && !targets.targetRevenue && !targets.targetQty)}
-                              className="gap-2"
-                            >
-                              {isSaving ? (
-                                <>
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                  Saving...
-                                </>
-                              ) : (
-                                'Save'
+                            <div className="flex items-center gap-1 justify-center">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleSaveTarget(agent.id)}
+                                disabled={isSaving || removingTargets.has(agent.id) || (!targets.targetClients && !targets.targetRevenue && !targets.targetQty)}
+                                className="gap-1 text-xs sm:text-sm h-7 sm:h-8 px-2 sm:px-3"
+                              >
+                                {isSaving ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <span className="hidden sm:inline">Saving...</span>
+                                    <span className="sm:hidden">...</span>
+                                  </>
+                                ) : (
+                                  'Save'
+                                )}
+                              </Button>
+                              {(agent.targetClients || agent.targetRevenue || agent.targetQty) && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleRemoveTarget(agent.id)}
+                                  disabled={isSaving || removingTargets.has(agent.id)}
+                                  className="gap-1 text-xs sm:text-sm h-7 sm:h-8 px-2 sm:px-3 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                >
+                                  {removingTargets.has(agent.id) ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                      <span className="hidden sm:inline">Removing...</span>
+                                      <span className="sm:hidden">...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Trash2 className="h-3 w-3" />
+                                      <span className="hidden sm:inline">Remove</span>
+                                      <span className="sm:hidden">×</span>
+                                    </>
+                                  )}
+                                </Button>
                               )}
-                            </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -2118,22 +3011,23 @@ export default function AnalyticsPage() {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex items-center justify-between pt-4 border-t">
-              <p className="text-sm text-muted-foreground">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 pt-4 border-t">
+              <p className="text-xs sm:text-sm text-muted-foreground">
                 Set individual targets above, or save all at once using the button below.
               </p>
-              <div className="flex gap-2">
+              <div className="flex flex-col-reverse sm:flex-row gap-2 w-full sm:w-auto">
                 <Button
                   variant="outline"
                   onClick={() => setTargetDialogOpen(false)}
                   disabled={savingTargets.size > 0}
+                  className="w-full sm:w-auto"
                 >
                   Cancel
                 </Button>
                 <Button
                   onClick={handleSaveAllTargets}
                   disabled={savingTargets.size > 0}
-                  className="gap-2"
+                  className="gap-2 w-full sm:w-auto"
                 >
                   {savingTargets.size > 0 ? (
                     <>
@@ -2152,6 +3046,38 @@ export default function AnalyticsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Remove Target Confirmation Dialog */}
+      <AlertDialog open={removeTargetDialogOpen} onOpenChange={setRemoveTargetDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Target?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove all targets for <strong>{agentToRemove?.name}</strong> for {format(startOfMonth(new Date()), 'MMMM yyyy')}? 
+              This action cannot be undone. The agent will have no targets set for this month.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={agentToRemove ? removingTargets.has(agentToRemove.id) : false}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmRemoveTarget}
+              disabled={agentToRemove ? removingTargets.has(agentToRemove.id) : false}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {agentToRemove && removingTargets.has(agentToRemove.id) ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Removing...
+                </>
+              ) : (
+                'Remove Target'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

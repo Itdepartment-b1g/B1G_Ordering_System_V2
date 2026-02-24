@@ -6,7 +6,7 @@ export interface AgentInventoryContextType {
     loading: boolean;
     setAgentBrands: (brands: AgentBrand[]) => void;
     getAgentInventoryByBrand: (brandName: string) => AgentBrand | undefined;
-    reduceStock: (brandName: string, variantName: string, variantType: 'flavor' | 'battery', quantity: number) => void;
+    reduceStock: (brandName: string, variantName: string, variantType: string, quantity: number) => void;
     refreshInventory: () => Promise<void>;
 }
 
