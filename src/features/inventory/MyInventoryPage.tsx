@@ -24,6 +24,9 @@ import type { RemittanceOrder, BankOrderNote } from './types';
 const LOW_STOCK_THRESHOLD = 10;
 const isLowStock = (stock: number) => stock <= LOW_STOCK_THRESHOLD;
 
+// Sold tab (End of Day Cash Remittance): only show orders on or after this date. Orders before are v1 imports.
+const SOLD_TAB_ORDER_DATE_THRESHOLD = '2026-02-17';
+
 // Helper function to get variant type colors
 const getVariantTypeColor = (type: string) => {
   const typeLower = type.toLowerCase();
@@ -297,6 +300,7 @@ export default function MyInventory() {
         .select(`
           id,
           order_number,
+          order_date,
           total_amount,
           status,
           payment_method,
@@ -327,13 +331,13 @@ export default function MyInventory() {
       if (error) throw error;
 
       // Filter out orders with verified cash deposits (approved deposits should not appear in remittance)
+      // Also exclude v1 imports: order_date before threshold (sold tab only shows orders from 2026-02-17 onward)
       const unremittedOrders = (data || []).filter((order: any) => {
-        // Exclude orders that have a verified cash deposit
-        // Only show orders with no deposit_id OR with pending_verification deposit status
         if (order.deposit_id && order.cash_deposit) {
-          return order.cash_deposit.status !== 'verified';
+          if (order.cash_deposit.status === 'verified') return false;
         }
-        // Orders without deposit_id are fine to include
+        const orderDate = order.order_date ?? null;
+        if (!orderDate || orderDate < SOLD_TAB_ORDER_DATE_THRESHOLD) return false;
         return true;
       });
 
