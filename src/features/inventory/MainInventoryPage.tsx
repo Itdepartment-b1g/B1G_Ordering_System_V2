@@ -9,11 +9,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
-import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2 } from 'lucide-react';
+import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
 import { InventoryImportExport } from './components/InventoryImportExport';
+import { format } from 'date-fns';
+
+interface ReturnHistoryEntry {
+  id: string;
+  quantity: number;
+  notes: string | null;
+  created_at: string;
+  leaderName: string;
+  variantName: string;
+  brandName: string;
+  signatureUrl: string | null;
+}
 
 export default function MainInventoryPage() {
   const { user } = useAuth();
@@ -72,8 +84,84 @@ export default function MainInventoryPage() {
   }>>([]);
   const [updatingBulkStock, setUpdatingBulkStock] = useState(false);
 
+  // Return history states
+  const [returnHistoryOpen, setReturnHistoryOpen] = useState(false);
+  const [returnHistory, setReturnHistory] = useState<ReturnHistoryEntry[]>([]);
+  const [loadingReturns, setLoadingReturns] = useState(false);
+  const [viewSignatureUrl, setViewSignatureUrl] = useState<string | null>(null);
 
   const { toast } = useToast();
+
+  const fetchReturnHistory = async () => {
+    if (!user?.company_id) return;
+    setLoadingReturns(true);
+    try {
+      let data: any[] | null = null;
+
+      const primaryResult = await supabase
+        .from('inventory_transactions')
+        .select(`
+          id,
+          quantity,
+          notes,
+          created_at,
+          from_location,
+          signature_url,
+          variant:variants!inventory_transactions_variant_id_fkey(name, brand:brands!variants_brand_id_fkey(name)),
+          performer:profiles!inventory_transactions_performed_by_fkey(full_name)
+        `)
+        .eq('company_id', user.company_id)
+        .eq('transaction_type', 'return_to_main')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (primaryResult.error) {
+        const fallbackResult = await supabase
+          .from('inventory_transactions')
+          .select(`
+            id,
+            quantity,
+            notes,
+            created_at,
+            from_location,
+            variant:variants!inventory_transactions_variant_id_fkey(name, brand:brands!variants_brand_id_fkey(name)),
+            performer:profiles!inventory_transactions_performed_by_fkey(full_name)
+          `)
+          .eq('company_id', user.company_id)
+          .eq('transaction_type', 'return_to_main')
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (fallbackResult.error) throw fallbackResult.error;
+        data = fallbackResult.data;
+      } else {
+        data = primaryResult.data;
+      }
+
+      const entries: ReturnHistoryEntry[] = (data || []).map((row: any) => ({
+        id: row.id,
+        quantity: row.quantity,
+        notes: row.notes,
+        created_at: row.created_at,
+        leaderName: row.performer?.full_name || 'Unknown',
+        variantName: row.variant?.name || 'Unknown',
+        brandName: row.variant?.brand?.name || 'Unknown',
+        signatureUrl: row.signature_url || null,
+      }));
+
+      setReturnHistory(entries);
+    } catch (err: any) {
+      console.error('Error fetching return history:', err);
+      toast({ title: 'Error', description: 'Failed to load return history', variant: 'destructive' });
+    } finally {
+      setLoadingReturns(false);
+    }
+  };
+
+  const handleOpenReturnHistory = () => {
+    setReturnHistoryOpen(true);
+    fetchReturnHistory();
+  };
 
   const handleDeleteVariant = async (variantId: string) => {
     if (!user?.company_id) {
@@ -424,7 +512,11 @@ export default function MainInventoryPage() {
             Manage your product inventory, brands, and variants
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={handleOpenReturnHistory} className="gap-2">
+            <RotateCcw className="h-4 w-4" />
+            View Returns
+          </Button>
           <InventoryImportExport brands={brands} />
           <Button
             onClick={refreshInventory}
@@ -569,18 +661,6 @@ export default function MainInventoryPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleOpenBulkStockDialog(brand.id);
-                        }}
-                        className="mr-2"
-                      >
-                        <Edit className="h-3 w-3 mr-1" />
-                        Edit Stock
-                      </Button>
                       <Badge
                         variant={
                           getTotalStock(brand) === 0 ? 'destructive' :
@@ -1375,6 +1455,134 @@ export default function MainInventoryPage() {
                   {updatingBulkStock ? 'Updating...' : `Update Stock for ${bulkStockVariants.length} Variants`}
                 </Button>
               </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Return History Dialog */}
+      <Dialog open={returnHistoryOpen} onOpenChange={setReturnHistoryOpen}>
+        <DialogContent className="max-w-3xl w-[95vw] sm:w-full max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <RotateCcw className="h-5 w-5" />
+              Leader Stock Returns
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              History of stock returned from team leaders to main inventory
+            </p>
+          </DialogHeader>
+
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {loadingReturns ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : returnHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <RotateCcw className="h-10 w-10 text-muted-foreground/50 mb-3" />
+                <p className="font-medium">No returns found</p>
+                <p className="text-sm text-muted-foreground">Returns from team leaders will appear here.</p>
+              </div>
+            ) : (
+              <>
+                {/* Desktop table */}
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Leader</TableHead>
+                        <TableHead>Brand</TableHead>
+                        <TableHead>Variant</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead>Signature</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {returnHistory.map((entry) => (
+                        <TableRow key={entry.id}>
+                          <TableCell className="whitespace-nowrap text-sm">
+                            {format(new Date(entry.created_at), 'MMM d, yyyy h:mm a')}
+                          </TableCell>
+                          <TableCell className="font-medium">{entry.leaderName}</TableCell>
+                          <TableCell>{entry.brandName}</TableCell>
+                          <TableCell>{entry.variantName}</TableCell>
+                          <TableCell className="text-right font-semibold">{entry.quantity}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
+                            {entry.notes || '—'}
+                          </TableCell>
+                          <TableCell>
+                            {entry.signatureUrl ? (
+                              <img
+                                src={entry.signatureUrl}
+                                alt="Signature"
+                                className="h-8 cursor-pointer border rounded hover:opacity-80 transition-opacity"
+                                onClick={() => setViewSignatureUrl(entry.signatureUrl)}
+                              />
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Mobile cards */}
+                <div className="md:hidden space-y-3 p-1">
+                  {returnHistory.map((entry) => (
+                    <div key={entry.id} className="border rounded-lg p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-sm">{entry.leaderName}</span>
+                        <Badge variant="secondary" className="text-xs font-semibold">
+                          {entry.quantity} units
+                        </Badge>
+                      </div>
+                      <div className="text-sm">
+                        <span className="text-muted-foreground">Product:</span>{' '}
+                        {entry.brandName} — {entry.variantName}
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Calendar className="h-3 w-3" />
+                        {format(new Date(entry.created_at), 'MMM d, yyyy h:mm a')}
+                      </div>
+                      {entry.notes && (
+                        <div className="text-xs text-muted-foreground border-t pt-1 mt-1">
+                          {entry.notes}
+                        </div>
+                      )}
+                      {entry.signatureUrl && (
+                        <div className="border-t pt-2 mt-1">
+                          <span className="text-xs text-muted-foreground block mb-1">Signature:</span>
+                          <img
+                            src={entry.signatureUrl}
+                            alt="Signature"
+                            className="h-12 cursor-pointer border rounded hover:opacity-80 transition-opacity"
+                            onClick={() => setViewSignatureUrl(entry.signatureUrl)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Signature Viewer Dialog */}
+      <Dialog open={!!viewSignatureUrl} onOpenChange={() => setViewSignatureUrl(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Signature</DialogTitle>
+          </DialogHeader>
+          {viewSignatureUrl && (
+            <div className="flex items-center justify-center p-4">
+              <img src={viewSignatureUrl} alt="Signature" className="max-w-full max-h-64 border rounded" />
             </div>
           )}
         </DialogContent>

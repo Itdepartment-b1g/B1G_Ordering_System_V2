@@ -19,12 +19,15 @@ SET search_path = public
 AS $$
 DECLARE
   v_order_payment_method TEXT;
+  v_order_payment_mode TEXT;
+  v_order_payment_splits JSONB;
   v_deposit_id UUID;
   v_company_id UUID;
+  v_has_cash_or_cheque BOOLEAN := FALSE;
 BEGIN
   -- 1. Get order details
-  SELECT payment_method, deposit_id, company_id
-  INTO v_order_payment_method, v_deposit_id, v_company_id
+  SELECT payment_method, payment_mode, payment_splits, deposit_id, company_id
+  INTO v_order_payment_method, v_order_payment_mode, v_order_payment_splits, v_deposit_id, v_company_id
   FROM client_orders
   WHERE id = p_order_id;
 
@@ -32,15 +35,26 @@ BEGIN
     RETURN json_build_object('success', false, 'message', 'Order not found');
   END IF;
 
-  -- 2. CRITICAL CHECK: Cash/Cheque orders require a deposit_id before approval
-  IF (v_order_payment_method = 'CASH' OR v_order_payment_method = 'CHEQUE') AND v_deposit_id IS NULL THEN
+  -- 2. Determine whether this order has any CASH/CHEQUE component (FULL or SPLIT)
+  v_has_cash_or_cheque := (v_order_payment_method = 'CASH' OR v_order_payment_method = 'CHEQUE');
+
+  IF NOT v_has_cash_or_cheque AND v_order_payment_mode = 'SPLIT' AND v_order_payment_splits IS NOT NULL THEN
+    v_has_cash_or_cheque := EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements(v_order_payment_splits) AS elem
+      WHERE (elem->>'method') = 'CASH' OR (elem->>'method') = 'CHEQUE'
+    );
+  END IF;
+
+  -- 3. CRITICAL CHECK: Cash/Cheque (FULL or SPLIT) orders require a deposit_id before approval
+  IF v_has_cash_or_cheque AND v_deposit_id IS NULL THEN
     RETURN json_build_object(
       'success', false, 
       'message', 'Cash/Cheque orders cannot be approved without a recorded deposit. Please have the team leader record the deposit first.'
     );
   END IF;
 
-  -- 3. Update order status to approved
+  -- 4. Update order status to approved
   UPDATE client_orders
   SET 
     status = 'approved',
@@ -48,8 +62,8 @@ BEGIN
     updated_at = NOW()
   WHERE id = p_order_id;
 
-  -- 4. If payment method is CASH or CHEQUE and deposit_id exists, verify the cash_deposit
-  IF (v_order_payment_method = 'CASH' OR v_order_payment_method = 'CHEQUE') AND v_deposit_id IS NOT NULL THEN
+  -- 5. If order has CASH/CHEQUE component and deposit_id exists, verify the cash_deposit
+  IF v_has_cash_or_cheque AND v_deposit_id IS NOT NULL THEN
     -- Update cash/cheque deposit status to verified
     UPDATE cash_deposits
     SET 
@@ -71,6 +85,7 @@ BEGIN
       'success', true, 
       'message', 'Order approved and deposit verified',
       'payment_method', v_order_payment_method,
+      'payment_mode', v_order_payment_mode,
       'deposit_verified', true
     );
   ELSE
@@ -78,6 +93,7 @@ BEGIN
       'success', true, 
       'message', 'Order approved',
       'payment_method', v_order_payment_method,
+      'payment_mode', v_order_payment_mode,
       'deposit_verified', false
     );
   END IF;
