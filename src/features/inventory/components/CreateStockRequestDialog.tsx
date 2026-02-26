@@ -113,11 +113,72 @@ export function CreateStockRequestDialog({
         }
     }, [open, initialData]);
 
-    // Derived state for products filtering
+    // Derived state for products filtering (by brand)
     const brandProducts = useMemo(() => {
         if (!selectedBrandId) return [];
         return products.filter(p => p.brand_id === selectedBrandId || p.brand?.id === selectedBrandId);
     }, [selectedBrandId, products]);
+
+    // Consolidate any duplicate variants coming from different inventory rows
+    const consolidatedBrandProducts = useMemo(() => {
+        const map = new Map<string, Product>();
+
+        brandProducts.forEach((p) => {
+            const existing = map.get(p.id);
+            if (!existing) {
+                map.set(p.id, p);
+            } else {
+                // If we have multiple rows for the same variant, keep one entry
+                // and, for mobile requests, sum their stock for a clearer view.
+                const combinedStock =
+                    (existing.stock ?? 0) + (p.stock ?? 0);
+                map.set(p.id, {
+                    ...existing,
+                    stock: combinedStock || undefined,
+                });
+            }
+        });
+
+        return Array.from(map.values()).sort((a, b) =>
+            a.name.localeCompare(b.name)
+        );
+    }, [brandProducts]);
+
+    // Group consolidated variants by their variant_type (e.g. Flavor, Battery, FOC)
+    const groupedVariantsByType = useMemo(() => {
+        const groups = new Map<string, Product[]>();
+
+        consolidatedBrandProducts.forEach((p) => {
+            const rawType = p.variant_type || 'Other';
+            const key = rawType.trim() || 'Other';
+            const existing = groups.get(key) || [];
+            existing.push(p);
+            groups.set(key, existing);
+        });
+
+        // Preferred display order: Flavor, Battery, FOC, then others alphabetically
+        const preferredOrder = ['flavor', 'battery', 'foc'];
+
+        return Array.from(groups.entries())
+            .sort(([typeA], [typeB]) => {
+                const a = typeA.toLowerCase();
+                const b = typeB.toLowerCase();
+                const indexA = preferredOrder.indexOf(a);
+                const indexB = preferredOrder.indexOf(b);
+
+                // Known types first according to preferredOrder
+                if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                if (indexA !== -1) return -1;
+                if (indexB !== -1) return 1;
+
+                // Fallback alphabetical
+                return a.localeCompare(b);
+            })
+            .map(([type, items]) => ({
+                type,
+                items: items.sort((a, b) => a.name.localeCompare(b.name)),
+            }));
+    }, [consolidatedBrandProducts]);
 
     const handleBrandChange = (brandId: string) => {
         setSelectedBrandId(brandId);
@@ -337,49 +398,67 @@ export function CreateStockRequestDialog({
                         {selectedBrandId && (
                             <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                                 <Label>2. Enter Quantities</Label>
-                                {brandProducts.length === 0 ? (
+                                {consolidatedBrandProducts.length === 0 ? (
                                     <div className="text-center p-4 text-muted-foreground bg-background rounded border border-dashed">
                                         No products found for this brand.
                                     </div>
                                 ) : (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-2">
-                                        {brandProducts.map(product => {
-                                            const hasStock = isMobileRequest ? (product.stock || 0) > 0 : true;
-                                            const stockDisplay = isMobileRequest ? product.stock || 0 : null;
+                                    <div className="max-h-[320px] overflow-y-auto pr-1 space-y-3">
+                                        {groupedVariantsByType.map(group => (
+                                            <div key={group.type} className="space-y-1">
+                                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                                                    {group.type}
+                                                </p>
+                                                <div className="space-y-1.5">
+                                                    {group.items.map(product => {
+                                                        const hasStock = isMobileRequest ? (product.stock || 0) > 0 : true;
+                                                        const stockDisplay = isMobileRequest ? product.stock || 0 : null;
 
-                                            return (
-                                                <div key={product.id} className={`flex items-center justify-between p-3 bg-background rounded-md border shadow-sm ${!hasStock && isMobileRequest ? 'opacity-60 bg-muted' : ''}`}>
-                                                    <div className="flex-1 mr-3">
-                                                        <p className="font-medium text-sm truncate" title={product.name}>{product.name}</p>
-                                                        <div className="flex items-center gap-2 mt-1">
-                                                            <p className="text-xs text-muted-foreground capitalize">{product.variant_type}</p>
-                                                            {isMobileRequest && (
-                                                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${hasStock ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}>
-                                                                    Stock: {stockDisplay}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                    <Input 
-                                                        type="number" 
-                                                        min="0"
-                                                        max={isMobileRequest ? stockDisplay : undefined}
-                                                        placeholder="0"
-                                                        className="w-20 text-right"
-                                                        value={brandQuantities[product.id] || ''}
-                                                        disabled={isMobileRequest && !hasStock}
-                                                        onChange={e => {
-                                                            const val = parseInt(e.target.value) || 0;
-                                                            if (isMobileRequest && stockDisplay !== null && val > stockDisplay) {
-                                                                // Don't allow entering more than available
-                                                                return;
-                                                            }
-                                                            handleQuantityChange(product.id, e.target.value);
-                                                        }}
-                                                    />
+                                                        return (
+                                                            <div
+                                                                key={product.id}
+                                                                className={`flex items-center justify-between p-2.5 bg-background rounded-md border ${!hasStock && isMobileRequest ? 'opacity-60 bg-muted' : ''}`}
+                                                            >
+                                                                <div className="flex-1 mr-3 min-w-0">
+                                                                    <p
+                                                                        className="font-medium text-sm truncate"
+                                                                        title={product.name}
+                                                                    >
+                                                                        {product.name}
+                                                                    </p>
+                                                                    {isMobileRequest && (
+                                                                        <div className="flex items-center gap-2 mt-1 text-xs">
+                                                                            <span
+                                                                                className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${hasStock ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}
+                                                                            >
+                                                                                Stock: {stockDisplay}
+                                                                            </span>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                <Input 
+                                                                    type="number" 
+                                                                    min="0"
+                                                                    max={isMobileRequest ? stockDisplay : undefined}
+                                                                    placeholder="0"
+                                                                    className="w-20 text-right h-8"
+                                                                    value={brandQuantities[product.id] || ''}
+                                                                    disabled={isMobileRequest && !hasStock}
+                                                                    onChange={e => {
+                                                                        const val = parseInt(e.target.value) || 0;
+                                                                        if (isMobileRequest && stockDisplay !== null && val > stockDisplay) {
+                                                                            // Don't allow entering more than available
+                                                                            return;
+                                                                        }
+                                                                        handleQuantityChange(product.id, e.target.value);
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        );
+                                                    })}
                                                 </div>
-                                            );
-                                        })}
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                                 
