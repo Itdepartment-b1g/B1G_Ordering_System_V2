@@ -46,9 +46,10 @@ interface CashDeposit {
   referenceNumber: string;
   status: string;
   agentName: string;
-   agentId?: string;
+  agentId?: string;
   depositSlipUrl?: string;
   depositType?: 'CASH' | 'CHEQUE';
+  notes?: string | null;
 }
 
 interface DepositOrderBreakdown {
@@ -141,6 +142,7 @@ export default function LeaderCashDepositsPage() {
   const [bankAccount, setBankAccount] = useState('');
   const [cashReferenceNumber, setCashReferenceNumber] = useState('');
   const [chequeReferenceNumber, setChequeReferenceNumber] = useState('');
+  const [depositNotes, setDepositNotes] = useState('');
   const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -308,7 +310,7 @@ export default function LeaderCashDepositsPage() {
       let query = supabase
         .from('cash_deposits')
         .select(`
-          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, deposit_type,
+          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, deposit_type, notes,
           agent:profiles!cash_deposits_agent_id_fkey(full_name)
         `)
         .order('created_at', { ascending: false });
@@ -369,10 +371,10 @@ export default function LeaderCashDepositsPage() {
         referenceNumber: d.reference_number,
         status: d.status,
         agentName: d.agent?.full_name || 'Unknown',
-         agentId: d.agent_id,
+        agentId: d.agent_id,
         depositSlipUrl: d.deposit_slip_url,
-        // For legacy deposits without an explicit type, show as CASH/CHEQUE (mixed/unspecified)
-        depositType: d.deposit_type as 'CASH' | 'CHEQUE' | null
+        depositType: d.deposit_type as 'CASH' | 'CHEQUE' | null,
+        notes: d.notes || null,
       }));
 
       // Pre-load summaries for all deposits so we can show correct cash/cheque-only amounts
@@ -615,6 +617,7 @@ export default function LeaderCashDepositsPage() {
     setBankAccount('');
     setCashReferenceNumber('');
     setChequeReferenceNumber('');
+    setDepositNotes('');
     setDepositSlipFile(null);
     setShowCamera(false);
     // Preload orders for this deposit so we can show accurate total and order references
@@ -920,6 +923,7 @@ export default function LeaderCashDepositsPage() {
     setBankAccount('');
     setCashReferenceNumber('');
     setChequeReferenceNumber('');
+    setDepositNotes('');
     setDepositSlipFile(null);
     setShowCamera(false);
     setDepositType(base.depositType || 'CASH');
@@ -1239,12 +1243,11 @@ export default function LeaderCashDepositsPage() {
         .from('cash_deposits')
         .update({
           bank_account: bankAccount,
-          // For Direct to Office, reference numbers are optional; for bank deposits they were validated above
           reference_number: combinedReferenceNumber || null,
           deposit_slip_url: publicUrl,
           updated_at: new Date().toISOString(),
-          deposit_type: depositType, // Save the selected deposit type
-          // Note: status remains 'pending_verification' - requires super admin/manager verification
+          deposit_type: depositType,
+          notes: depositNotes.trim() || null,
         })
         .in('id', selectedDepositIds); // <-- FIX: Update all selected deposits for this day group
 
@@ -1677,6 +1680,7 @@ export default function LeaderCashDepositsPage() {
                   <TableHead>Bank</TableHead>
                   <TableHead>Ref Number</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Notes</TableHead>
                   <TableHead className="text-right">Status</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
@@ -1703,6 +1707,9 @@ export default function LeaderCashDepositsPage() {
                       <TableCell>{deposit.bankAccount}</TableCell>
                       <TableCell className="font-mono text-xs">{deposit.referenceNumber || '-'}</TableCell>
                       <TableCell className="text-right font-medium">₱{displayAmount.toLocaleString()}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate" title={deposit.notes || ''}>
+                        {deposit.notes || '—'}
+                      </TableCell>
                       <TableCell className="text-right">
                         <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
                           <CheckCircle2 className="h-3 w-3 mr-1" /> Verified
@@ -1879,6 +1886,17 @@ export default function LeaderCashDepositsPage() {
                         />
                       </>
                     )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium">Notes / Remarks</label>
+                    <textarea
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none"
+                      rows={2}
+                      placeholder="Optional notes or remarks about this deposit..."
+                      value={depositNotes}
+                      onChange={(e) => setDepositNotes(e.target.value)}
+                    />
                   </div>
 
                   <div className="space-y-2">
@@ -2143,6 +2161,17 @@ export default function LeaderCashDepositsPage() {
                         />
                       </>
                     )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Notes / Remarks</label>
+                    <textarea
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none"
+                      rows={2}
+                      placeholder="Optional notes or remarks about this deposit..."
+                      value={depositNotes}
+                      onChange={(e) => setDepositNotes(e.target.value)}
+                    />
                   </div>
 
                   <div className="space-y-2">

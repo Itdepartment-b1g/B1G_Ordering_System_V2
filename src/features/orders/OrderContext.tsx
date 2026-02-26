@@ -57,6 +57,7 @@ export interface Order {
   depositBankAccount?: string; // Bank account used for the deposit (null if not recorded yet)
   depositSlipUrl?: string; // URL of the deposit slip image uploaded by team leader
   depositReferenceNumber?: string; // Reference number for the cash deposit
+  depositNotes?: string | null; // Notes/remarks recorded with the deposit
 }
 
 interface OrderContextType {
@@ -112,7 +113,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           created_at,
           agent:profiles!client_orders_agent_id_fkey(full_name),
           client:clients(name, email),
-          cash_deposit:cash_deposits(status, bank_account, reference_number, deposit_slip_url),
+          cash_deposit:cash_deposits(status, bank_account, reference_number, deposit_slip_url, notes),
           items:client_order_items(
             id,
             quantity,
@@ -282,6 +283,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           depositBankAccount: hasBankDetails ? cashDeposit.bank_account : undefined,
           depositSlipUrl: cashDeposit?.deposit_slip_url || undefined,
           depositReferenceNumber: cashDeposit?.reference_number || undefined,
+          depositNotes: cashDeposit?.notes || null,
         };
       });
 
