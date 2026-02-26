@@ -276,44 +276,8 @@ export default function PendingRequestsPage() {
 
             const leaderStock = inventoryData.stock || 0;
 
-            if (teamMemberIds.length === 0) {
-              // No team members, all stock is available (but still need to check pending orders)
-              // Get pending orders quantity
-              const { data: allPendingOrders } = await supabase
-                .from('client_orders')
-                .select('id, stage')
-                .eq('status', 'pending');
-
-              // Filter out orders that have been approved (stage = 'leader_approved' or 'admin_approved')
-              const pendingOrders = allPendingOrders?.filter((o: any) =>
-                o.stage !== 'leader_approved' && o.stage !== 'admin_approved'
-              ) || [];
-
-              const pendingOrderIds = pendingOrders?.map((o: any) => o.id) || [];
-
-              // Get quantities from order items for this variant
-              const { data: pendingOrdersData } = pendingOrderIds.length > 0
-                ? await supabase
-                  .from('client_order_items')
-                  .select('quantity')
-                  .eq('variant_id', req.variant_id)
-                  .in('client_order_id', pendingOrderIds)
-                : { data: [] };
-
-              const pendingOrdersQuantity = (pendingOrdersData || []).reduce((sum: number, orderItem: any) => {
-                return sum + (orderItem.quantity || 0);
-              }, 0);
-
-              const availableStock = Math.max(0, leaderStock - pendingOrdersQuantity);
-
-              return {
-                ...req,
-                leader_stock: availableStock
-              };
-            }
-
-            // Get pending stock requests from team members for this variant
-            // These requests are already counted in this fetch, so we should exclude the current request
+            // Get other pending stock requests from team members for this same variant
+            // (so we don't double-allocate stock to multiple simultaneous requests)
             const { data: otherPendingRequests } = await supabase
               .from('stock_requests')
               .select('requested_quantity')
@@ -322,46 +286,20 @@ export default function PendingRequestsPage() {
               .eq('status', 'pending')
               .neq('id', req.id);
 
-            const otherPendingQuantity = otherPendingRequests?.reduce((sum, r) => sum + (r.requested_quantity || 0), 0) || 0;
+            const otherPendingQuantity = otherPendingRequests?.reduce(
+              (sum, r) => sum + (r.requested_quantity || 0), 0
+            ) || 0;
 
-            // Get pending orders quantity from team members that haven't been approved yet
-            // These orders will need stock allocation, so they should be reserved
-            const { data: allPendingOrders } = await supabase
-              .from('client_orders')
-              .select('id, stage, agent_id')
-              .in('agent_id', teamMemberIds)
-              .eq('status', 'pending');
-
-            // Only count orders that are still pending approval (not yet approved by leader/admin)
-            const pendingOrders = allPendingOrders?.filter((o: any) =>
-              o.stage !== 'leader_approved' && o.stage !== 'admin_approved'
-            ) || [];
-
-            const pendingOrderIds = pendingOrders?.map((o: any) => o.id) || [];
-
-            // Get quantities from order items for this variant
-            const { data: pendingOrdersData } = pendingOrderIds.length > 0
-              ? await supabase
-                .from('client_order_items')
-                .select('quantity')
-                .eq('variant_id', req.variant_id)
-                .in('client_order_id', pendingOrderIds)
-              : { data: [] };
-
-            const pendingOrdersQuantity = (pendingOrdersData || []).reduce((sum: number, orderItem: any) => {
-              return sum + (orderItem.quantity || 0);
-            }, 0);
-
-            // Available = Total Stock - Other Pending Requests - Pending Orders
-            // Note: We don't subtract already allocated stock because allocations already deducted from inventory
-            const availableStock = Math.max(0, leaderStock - otherPendingQuantity - pendingOrdersQuantity);
+            // Available = Total Stock in leader's agent_inventory - other pending requests
+            // Pending orders do NOT deduct agent_inventory stock (only fulfilled/approved orders do),
+            // so we must NOT subtract them here or the stock will always read 0.
+            const availableStock = Math.max(0, leaderStock - otherPendingQuantity);
 
             console.log(`[Available Stock Calculation] Variant ${req.variant_id}:`, {
               leaderStock,
               otherPendingQuantity,
-              pendingOrdersQuantity,
               availableStock,
-              formula: `${leaderStock} - ${otherPendingQuantity} - ${pendingOrdersQuantity} = ${availableStock}`
+              formula: `${leaderStock} - ${otherPendingQuantity} = ${availableStock}`
             });
 
             return {
