@@ -19,6 +19,7 @@ import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
+import { ReturnToMainDialog } from './components/ReturnToMainDialog';
 import type { RemittanceOrder, BankOrderNote } from './types';
 
 const LOW_STOCK_THRESHOLD = 10;
@@ -68,6 +69,7 @@ export default function MyInventory() {
   const [selectedOrder, setSelectedOrder] = useState<RemittanceOrder | null>(null);
   const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
+  const [returnToMainDialogOpen, setReturnToMainDialogOpen] = useState(false);
 
   // Confirmation checkboxes for each section
   const [unsoldConfirmed, setUnsoldConfirmed] = useState(false);
@@ -651,15 +653,26 @@ export default function MyInventory() {
               Remit
             </Button>
           )}
-          <Button
-            onClick={() => setReturnDialogOpen(true)}
-            variant="outline"
-            className="gap-2 flex-1 sm:flex-initial"
-            disabled={!leaderId}
-          >
-            <PackageMinus className="h-4 w-4" />
-            Return
-          </Button>
+          {user?.role === 'team_leader' ? (
+            <Button
+              onClick={() => setReturnToMainDialogOpen(true)}
+              variant="outline"
+              className="gap-2 flex-1 sm:flex-initial"
+            >
+              <PackageMinus className="h-4 w-4" />
+              Return to Main
+            </Button>
+          ) : (
+            <Button
+              onClick={() => setReturnDialogOpen(true)}
+              variant="outline"
+              className="gap-2 flex-1 sm:flex-initial"
+              disabled={!leaderId}
+            >
+              <PackageMinus className="h-4 w-4" />
+              Return
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1950,12 +1963,18 @@ export default function MyInventory() {
         </DialogContent>
       </Dialog>
 
-      {/* Return Inventory Dialog */}
+      {/* Return Inventory Dialog (mobile sales → leader) */}
       <ReturnInventoryDialog
         open={returnDialogOpen}
         onOpenChange={setReturnDialogOpen}
         leaderId={leaderId}
         leaderName={leaderName}
+      />
+
+      {/* Return to Main Inventory Dialog (team leader → main) */}
+      <ReturnToMainDialog
+        open={returnToMainDialogOpen}
+        onOpenChange={setReturnToMainDialogOpen}
       />
     </div>
   );
