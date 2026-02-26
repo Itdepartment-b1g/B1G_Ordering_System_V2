@@ -28,7 +28,7 @@ interface SelectedItem {
   variantId: string;
   brandName: string;
   variantName: string;
-  variantType: 'flavor' | 'battery' | 'posm';
+  variantType: string;
   unitPrice: number;
   sellingPrice?: number;
   dspPrice?: number;
@@ -36,6 +36,31 @@ interface SelectedItem {
   availableStock: number;
   quantity: number;
   customPrice?: number; // For special pricing
+}
+
+const VARIANT_TYPE_STYLES: Record<string, { bg: string; border: string; badge: string; text: string }> = {
+  flavor: { bg: 'bg-blue-50/50', border: 'border-blue-100', badge: 'bg-blue-100 text-blue-700', text: 'text-blue-700' },
+  battery: { bg: 'bg-green-50/50', border: 'border-green-100', badge: 'bg-green-100 text-green-700', text: 'text-green-700' },
+  posm: { bg: 'bg-purple-50/50', border: 'border-purple-100', badge: 'bg-purple-100 text-purple-700', text: 'text-purple-700' },
+};
+
+const DEFAULT_VARIANT_STYLE = { bg: 'bg-orange-50/50', border: 'border-orange-100', badge: 'bg-orange-100 text-orange-700', text: 'text-orange-700' };
+
+const EXTRA_STYLE_POOL = [
+  { bg: 'bg-rose-50/50', border: 'border-rose-100', badge: 'bg-rose-100 text-rose-700', text: 'text-rose-700' },
+  { bg: 'bg-cyan-50/50', border: 'border-cyan-100', badge: 'bg-cyan-100 text-cyan-700', text: 'text-cyan-700' },
+  { bg: 'bg-amber-50/50', border: 'border-amber-100', badge: 'bg-amber-100 text-amber-700', text: 'text-amber-700' },
+  { bg: 'bg-teal-50/50', border: 'border-teal-100', badge: 'bg-teal-100 text-teal-700', text: 'text-teal-700' },
+  { bg: 'bg-indigo-50/50', border: 'border-indigo-100', badge: 'bg-indigo-100 text-indigo-700', text: 'text-indigo-700' },
+];
+
+function getVariantTypeStyle(type: string, index: number) {
+  if (VARIANT_TYPE_STYLES[type]) return VARIANT_TYPE_STYLES[type];
+  return EXTRA_STYLE_POOL[index % EXTRA_STYLE_POOL.length] || DEFAULT_VARIANT_STYLE;
+}
+
+function formatTypeName(type: string) {
+  return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 export default function MyOrdersPage() {
@@ -418,8 +443,8 @@ export default function MyOrdersPage() {
     quantity: number,
     brandName: string,
     variantName: string,
-    variantType: 'flavor' | 'battery' | 'posm',
-    baseUnitPrice: number, // current displayed/effective price
+    variantType: string,
+    baseUnitPrice: number,
     availableStock: number,
     sellingPrice?: number,
     dspPrice?: number,
@@ -1740,466 +1765,163 @@ export default function MyOrdersPage() {
                     Choose products from your allocated inventory
                   </p>
 
-                  {/* Flavors */}
-                  {selectedBrand.flavors.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="font-medium text-sm text-blue-700 flex items-center gap-2">
-                        <Badge variant="secondary" className="bg-blue-100 text-blue-700">Flavors</Badge>
-                        Available: {selectedBrand.flavors.length}
-                      </h4>
-                      <div className="space-y-2 pl-4">
-                        {selectedBrand.flavors.map((flavor) => {
-                          const selectedItem = selectedItems.find(item => item.variantId === flavor.id);
-                          const currentQuantity = selectedItem?.quantity || 0;
+                  {Array.from(selectedBrand.variantsByType.entries()).map(([typeName, variants], typeIndex) => {
+                    if (variants.length === 0) return null;
+                    const style = getVariantTypeStyle(typeName, typeIndex);
+                    const label = formatTypeName(typeName);
 
-                          // Determine price to display based on selected pricing type
-                          let displayPrice = (flavor as any).sellingPrice ?? flavor.price;
-                          if (pricingType === 'dsp') {
-                            displayPrice = (flavor as any).dspPrice ?? displayPrice;
-                          } else if (pricingType === 'rsp') {
-                            displayPrice = (flavor as any).rspPrice ?? displayPrice;
-                          }
-                          return (
-                            <div key={flavor.id} className="p-3 sm:p-4 bg-blue-50/50 rounded-lg border border-blue-100">
-                              {/* Mobile: Card Layout */}
-                              <div className="block sm:hidden space-y-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1">
-                                    <p className="font-medium text-sm">{flavor.name}</p>
-                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                      <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                        {flavor.stock} in stock
-                                      </Badge>
-                                      {pricingType !== 'special' && (
-                                        <span className="text-sm font-semibold text-blue-700">₱{displayPrice.toFixed(2)}</span>
+                    return (
+                      <div key={typeName} className="space-y-3">
+                        <h4 className={`font-medium text-sm ${style.text} flex items-center gap-2`}>
+                          <Badge variant="secondary" className={style.badge}>{label}</Badge>
+                          Available: {variants.length}
+                        </h4>
+                        <div className="space-y-2 pl-4">
+                          {variants.map((variant) => {
+                            const selectedItem = selectedItems.find(item => item.variantId === variant.id);
+                            const currentQuantity = selectedItem?.quantity || 0;
+
+                            let displayPrice = variant.sellingPrice ?? variant.price;
+                            if (pricingType === 'dsp') {
+                              displayPrice = variant.dspPrice ?? displayPrice;
+                            } else if (pricingType === 'rsp') {
+                              displayPrice = variant.rspPrice ?? displayPrice;
+                            }
+
+                            return (
+                              <div key={variant.id} className={`p-3 sm:p-4 ${style.bg} rounded-lg border ${style.border}`}>
+                                {/* Mobile: Card Layout */}
+                                <div className="block sm:hidden space-y-2">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1">
+                                      <p className="font-medium text-sm">{variant.name}</p>
+                                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                        <Badge variant={variant.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                          {variant.stock} in stock
+                                        </Badge>
+                                        {pricingType !== 'special' && (
+                                          <span className={`text-sm font-semibold ${style.text}`}>₱{displayPrice.toFixed(2)}</span>
+                                        )}
+                                      </div>
+                                      {variant.stock === 0 && (
+                                        <p className="text-xs text-red-600 mt-1">No more stock available</p>
                                       )}
                                     </div>
-                                    {flavor.stock === 0 && (
-                                      <p className="text-xs text-red-600 mt-1">No more stock available</p>
-                                    )}
                                   </div>
-                                </div>
-                                <div className="flex flex-col gap-2 pt-2 border-t border-blue-200">
-                                  <div className="flex items-center gap-2">
-                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      max={flavor.stock}
-                                      value={currentQuantity === 0 ? '' : currentQuantity}
-                                      placeholder="0"
-                                      onChange={(e) => {
-                                        const value = e.target.value;
-                                        const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                        handleQuantityChange(
-                                          flavor.id,
-                                          quantity,
-                                          selectedBrand.name,
-                                          flavor.name,
-                                          'flavor',
-                                          displayPrice,
-                                          flavor.stock,
-                                          (flavor as any).sellingPrice,
-                                          (flavor as any).dspPrice,
-                                          (flavor as any).rspPrice
-                                        );
-                                      }}
-                                      className="w-24 h-9"
-                                      disabled={flavor.stock === 0}
-                                    />
-                                  </div>
-                                  {pricingType === 'special' && (
+                                  <div className={`flex flex-col gap-2 pt-2 border-t ${style.border}`}>
                                     <div className="flex items-center gap-2">
-                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
-                                      <Input
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        value={customPrices[flavor.id] || ''}
-                                        placeholder={(flavor as any).sellingPrice?.toFixed(2) || '0.00'}
-                                        onChange={(e) => handleCustomPriceChange(flavor.id, e.target.value)}
-                                        className="w-24 h-9"
-                                        disabled={flavor.stock === 0}
-                                      />
-                                      <span className="text-xs text-muted-foreground">₱</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{flavor.name}</span>
-                                  <Badge variant={flavor.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {flavor.stock} in stock
-                                  </Badge>
-                                  {pricingType !== 'special' && (
-                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                  )}
-                                </div>
-                                {flavor.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
-                                  <div className="flex items-center gap-3">
-                                    {pricingType === 'special' && (
-                                      <div className="flex items-center gap-2">
-                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
-                                        <Input
-                                          type="number"
-                                          step="0.01"
-                                          min="0"
-                                          value={customPrices[flavor.id] || ''}
-                                          placeholder={(flavor as any).sellingPrice?.toFixed(2) || '0.00'}
-                                          onChange={(e) => handleCustomPriceChange(flavor.id, e.target.value)}
-                                          className="w-24 h-8"
-                                        />
-                                        <span className="text-xs text-muted-foreground">₱</span>
-                                      </div>
-                                    )}
-                                    <div className="flex items-center gap-2">
-                                      <Label className="text-xs">Qty:</Label>
+                                      <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
                                       <Input
                                         type="number"
                                         min="0"
-                                        max={flavor.stock}
+                                        max={variant.stock}
                                         value={currentQuantity === 0 ? '' : currentQuantity}
                                         placeholder="0"
                                         onChange={(e) => {
                                           const value = e.target.value;
                                           const quantity = value === '' ? 0 : parseInt(value) || 0;
                                           handleQuantityChange(
-                                            flavor.id,
+                                            variant.id,
                                             quantity,
                                             selectedBrand.name,
-                                            flavor.name,
-                                            'flavor',
+                                            variant.name,
+                                            typeName,
                                             displayPrice,
-                                            flavor.stock,
-                                            (flavor as any).sellingPrice,
-                                            (flavor as any).dspPrice,
-                                            (flavor as any).rspPrice
+                                            variant.stock,
+                                            variant.sellingPrice,
+                                            variant.dspPrice,
+                                            variant.rspPrice
                                           );
                                         }}
-                                        className="w-20 h-8"
-                                      />
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Batteries */}
-                  {selectedBrand.batteries.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="font-medium text-sm text-green-700 flex items-center gap-2">
-                        <Badge variant="secondary" className="bg-green-100 text-green-700">Batteries</Badge>
-                        Available: {selectedBrand.batteries.length}
-                      </h4>
-                      <div className="space-y-2 pl-4">
-                        {selectedBrand.batteries.map((battery) => {
-                          const selectedItem = selectedItems.find(item => item.variantId === battery.id);
-                          const currentQuantity = selectedItem?.quantity || 0;
-
-                          // Determine price to display based on selected pricing type
-                          let displayPrice = (battery as any).sellingPrice ?? battery.price;
-                          if (pricingType === 'dsp') {
-                            displayPrice = (battery as any).dspPrice ?? displayPrice;
-                          } else if (pricingType === 'rsp') {
-                            displayPrice = (battery as any).rspPrice ?? displayPrice;
-                          }
-
-                          return (
-                            <div key={battery.id} className="p-3 sm:p-4 bg-green-50/50 rounded-lg border border-green-100">
-                              {/* Mobile: Card Layout */}
-                              <div className="block sm:hidden space-y-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1">
-                                    <p className="font-medium text-sm">{battery.name}</p>
-                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                      <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                        {battery.stock} in stock
-                                      </Badge>
-                                      {pricingType !== 'special' && (
-                                        <span className="text-sm font-semibold text-green-700">₱{displayPrice.toFixed(2)}</span>
-                                      )}
-                                    </div>
-                                    {battery.stock === 0 && (
-                                      <p className="text-xs text-red-600 mt-1">No more stock available</p>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex flex-col gap-2 pt-2 border-t border-green-200">
-                                  <div className="flex items-center gap-2">
-                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      max={battery.stock}
-                                      value={currentQuantity === 0 ? '' : currentQuantity}
-                                      placeholder="0"
-                                      onChange={(e) => {
-                                        const value = e.target.value;
-                                        const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                        handleQuantityChange(
-                                          battery.id,
-                                          quantity,
-                                          selectedBrand.name,
-                                          battery.name,
-                                          'battery',
-                                          displayPrice,
-                                          battery.stock,
-                                          (battery as any).sellingPrice,
-                                          (battery as any).dspPrice,
-                                          (battery as any).rspPrice
-                                        );
-                                      }}
-                                      className="w-24 h-9"
-                                      disabled={battery.stock === 0}
-                                    />
-                                  </div>
-                                  {pricingType === 'special' && (
-                                    <div className="flex items-center gap-2">
-                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
-                                      <Input
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        value={customPrices[battery.id] || ''}
-                                        placeholder={(battery as any).sellingPrice?.toFixed(2) || '0.00'}
-                                        onChange={(e) => handleCustomPriceChange(battery.id, e.target.value)}
                                         className="w-24 h-9"
-                                        disabled={battery.stock === 0}
+                                        disabled={variant.stock === 0}
                                       />
-                                      <span className="text-xs text-muted-foreground">₱</span>
                                     </div>
-                                  )}
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{battery.name}</span>
-                                  <Badge variant={battery.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {battery.stock} in stock
-                                  </Badge>
-                                  {pricingType !== 'special' && (
-                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                  )}
-                                </div>
-                                {battery.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
-                                  <div className="flex items-center gap-3">
                                     {pricingType === 'special' && (
                                       <div className="flex items-center gap-2">
-                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                        <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
                                         <Input
                                           type="number"
                                           step="0.01"
                                           min="0"
-                                          value={customPrices[battery.id] || ''}
-                                          placeholder={(battery as any).sellingPrice?.toFixed(2) || '0.00'}
-                                          onChange={(e) => handleCustomPriceChange(battery.id, e.target.value)}
-                                          className="w-24 h-8"
+                                          value={customPrices[variant.id] || ''}
+                                          placeholder={variant.sellingPrice?.toFixed(2) || '0.00'}
+                                          onChange={(e) => handleCustomPriceChange(variant.id, e.target.value)}
+                                          className="w-24 h-9"
+                                          disabled={variant.stock === 0}
                                         />
                                         <span className="text-xs text-muted-foreground">₱</span>
                                       </div>
                                     )}
-                                    <div className="flex items-center gap-2">
-                                      <Label className="text-xs">Qty:</Label>
-                                      <Input
-                                        type="number"
-                                        min="0"
-                                        max={battery.stock}
-                                        value={currentQuantity === 0 ? '' : currentQuantity}
-                                        placeholder="0"
-                                        onChange={(e) => {
-                                          const value = e.target.value;
-                                          const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                          handleQuantityChange(
-                                            battery.id,
-                                            quantity,
-                                            selectedBrand.name,
-                                            battery.name,
-                                            'battery',
-                                            displayPrice,
-                                            battery.stock,
-                                            (battery as any).sellingPrice,
-                                            (battery as any).dspPrice,
-                                            (battery as any).rspPrice
-                                          );
-                                        }}
-                                        className="w-20 h-8"
-                                      />
-                                    </div>
                                   </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* POSM */}
-                  {selectedBrand.posms && selectedBrand.posms.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="font-medium text-sm text-purple-700 flex items-center gap-2">
-                        <Badge variant="secondary" className="bg-purple-100 text-purple-700">POSM</Badge>
-                        Available: {selectedBrand.posms.length}
-                      </h4>
-                      <div className="space-y-2 pl-4">
-                        {selectedBrand.posms.map((posm) => {
-                          const selectedItem = selectedItems.find(item => item.variantId === posm.id);
-                          const currentQuantity = selectedItem?.quantity || 0;
-
-                          // Determine price to display based on selected pricing type
-                          let displayPrice = (posm as any).sellingPrice ?? posm.price;
-                          if (pricingType === 'dsp') {
-                            displayPrice = (posm as any).dspPrice ?? displayPrice;
-                          } else if (pricingType === 'rsp') {
-                            displayPrice = (posm as any).rspPrice ?? displayPrice;
-                          }
-
-                          return (
-                            <div key={posm.id} className="p-3 sm:p-4 bg-purple-50/50 rounded-lg border border-purple-100">
-                              {/* Mobile: Card Layout */}
-                              <div className="block sm:hidden space-y-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1">
-                                    <p className="font-medium text-sm">{posm.name}</p>
-                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                      <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                        {posm.stock} in stock
-                                      </Badge>
-                                      {pricingType !== 'special' && (
-                                        <span className="text-sm font-semibold text-purple-700">₱{displayPrice.toFixed(2)}</span>
-                                      )}
-                                    </div>
-                                    {posm.stock === 0 && (
-                                      <p className="text-xs text-red-600 mt-1">No more stock available</p>
+                                </div>
+                                {/* Desktop: Row Layout */}
+                                <div className="hidden sm:flex items-center justify-between">
+                                  <div className="flex items-center gap-3 flex-1">
+                                    <span className="font-medium">{variant.name}</span>
+                                    <Badge variant={variant.status === 'available' ? 'default' : 'secondary'} className="text-xs">
+                                      {variant.stock} in stock
+                                    </Badge>
+                                    {pricingType !== 'special' && (
+                                      <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
                                     )}
                                   </div>
-                                </div>
-                                <div className="flex flex-col gap-2 pt-2 border-t border-purple-200">
-                                  <div className="flex items-center gap-2">
-                                    <Label className="text-xs font-medium whitespace-nowrap">Qty:</Label>
-                                    <Input
-                                      type="number"
-                                      min="0"
-                                      max={posm.stock}
-                                      value={currentQuantity === 0 ? '' : currentQuantity}
-                                      placeholder="0"
-                                      onChange={(e) => {
-                                        const value = e.target.value;
-                                        const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                        handleQuantityChange(
-                                          posm.id,
-                                          quantity,
-                                          selectedBrand.name,
-                                          posm.name,
-                                          'posm',
-                                          displayPrice,
-                                          posm.stock,
-                                          (posm as any).sellingPrice,
-                                          (posm as any).dspPrice,
-                                          (posm as any).rspPrice
-                                        );
-                                      }}
-                                      className="w-24 h-9"
-                                      disabled={posm.stock === 0}
-                                    />
-                                  </div>
-                                  {pricingType === 'special' && (
-                                    <div className="flex items-center gap-2">
-                                      <Label className="text-xs font-medium whitespace-nowrap">Price:</Label>
-                                      <Input
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        value={customPrices[posm.id] || ''}
-                                        placeholder={(posm as any).sellingPrice?.toFixed(2) || '0.00'}
-                                        onChange={(e) => handleCustomPriceChange(posm.id, e.target.value)}
-                                        className="w-24 h-9"
-                                        disabled={posm.stock === 0}
-                                      />
-                                      <span className="text-xs text-muted-foreground">₱</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              {/* Desktop: Row Layout */}
-                              <div className="hidden sm:flex items-center justify-between">
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium">{posm.name}</span>
-                                  <Badge variant={posm.status === 'available' ? 'default' : 'secondary'} className="text-xs">
-                                    {posm.stock} in stock
-                                  </Badge>
-                                  {pricingType !== 'special' && (
-                                    <span className="text-sm text-muted-foreground">₱{displayPrice.toFixed(2)}</span>
-                                  )}
-                                </div>
-                                {posm.stock === 0 ? (
-                                  <span className="text-xs text-red-600">No more stock available</span>
-                                ) : (
-                                  <div className="flex items-center gap-3">
-                                    {pricingType === 'special' && (
+                                  {variant.stock === 0 ? (
+                                    <span className="text-xs text-red-600">No more stock available</span>
+                                  ) : (
+                                    <div className="flex items-center gap-3">
+                                      {pricingType === 'special' && (
+                                        <div className="flex items-center gap-2">
+                                          <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                          <Input
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={customPrices[variant.id] || ''}
+                                            placeholder={variant.sellingPrice?.toFixed(2) || '0.00'}
+                                            onChange={(e) => handleCustomPriceChange(variant.id, e.target.value)}
+                                            className="w-24 h-8"
+                                          />
+                                          <span className="text-xs text-muted-foreground">₱</span>
+                                        </div>
+                                      )}
                                       <div className="flex items-center gap-2">
-                                        <Label className="text-xs whitespace-nowrap">Price:</Label>
+                                        <Label className="text-xs">Qty:</Label>
                                         <Input
                                           type="number"
-                                          step="0.01"
                                           min="0"
-                                          value={customPrices[posm.id] || ''}
-                                          placeholder={(posm as any).sellingPrice?.toFixed(2) || '0.00'}
-                                          onChange={(e) => handleCustomPriceChange(posm.id, e.target.value)}
-                                          className="w-24 h-8"
+                                          max={variant.stock}
+                                          value={currentQuantity === 0 ? '' : currentQuantity}
+                                          placeholder="0"
+                                          onChange={(e) => {
+                                            const value = e.target.value;
+                                            const quantity = value === '' ? 0 : parseInt(value) || 0;
+                                            handleQuantityChange(
+                                              variant.id,
+                                              quantity,
+                                              selectedBrand.name,
+                                              variant.name,
+                                              typeName,
+                                              displayPrice,
+                                              variant.stock,
+                                              variant.sellingPrice,
+                                              variant.dspPrice,
+                                              variant.rspPrice
+                                            );
+                                          }}
+                                          className="w-20 h-8"
                                         />
-                                        <span className="text-xs text-muted-foreground">₱</span>
                                       </div>
-                                    )}
-                                    <div className="flex items-center gap-2">
-                                      <Label className="text-xs">Qty:</Label>
-                                      <Input
-                                        type="number"
-                                        min="0"
-                                        max={posm.stock}
-                                        value={currentQuantity === 0 ? '' : currentQuantity}
-                                        placeholder="0"
-                                        onChange={(e) => {
-                                          const value = e.target.value;
-                                          const quantity = value === '' ? 0 : parseInt(value) || 0;
-                                          handleQuantityChange(
-                                            posm.id,
-                                            quantity,
-                                            selectedBrand.name,
-                                            posm.name,
-                                            'posm',
-                                            displayPrice,
-                                            posm.stock,
-                                            (posm as any).sellingPrice,
-                                            (posm as any).dspPrice,
-                                            (posm as any).rspPrice
-                                          );
-                                        }}
-                                        className="w-20 h-8"
-                                      />
                                     </div>
-                                  </div>
-                                )}
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
               )}
 

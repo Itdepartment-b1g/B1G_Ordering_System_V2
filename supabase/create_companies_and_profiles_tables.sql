@@ -340,7 +340,7 @@ COMMENT ON TABLE remittances_log IS 'Log of stock remittances from agents to lea
 CREATE TABLE IF NOT EXISTS inventory_transactions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('purchase_order_received', 'allocated_to_agent', 'order_fulfilled', 'adjustment', 'return')),
+    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('purchase_order_received', 'allocated_to_agent', 'order_fulfilled', 'adjustment', 'return', 'return_to_main')),
     variant_id UUID NOT NULL REFERENCES variants(id) ON DELETE RESTRICT,
     quantity INTEGER NOT NULL,
     from_location TEXT,
@@ -349,6 +349,8 @@ CREATE TABLE IF NOT EXISTS inventory_transactions (
     reference_id UUID,
     performed_by UUID NOT NULL REFERENCES profiles(id),
     notes TEXT,
+    signature_url TEXT,
+    signature_path TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

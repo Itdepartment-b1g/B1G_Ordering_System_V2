@@ -1,7 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Download, FileSpreadsheet, Loader2, FileUp, FileDown, ArrowRight, Plus, Edit, Trash2 } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
@@ -42,7 +41,7 @@ export const InventoryImportExport: React.FC<InventoryImportExportProps> = ({ br
     const { toast } = useToast();
     const { refreshInventory } = useInventory();
     const [importing, setImporting] = useState(false);
-    const [replaceMode, setReplaceMode] = useState(false);
+    const replaceMode = false;
     const [showPreview, setShowPreview] = useState(false);
     const [previewData, setPreviewData] = useState<ImportPreviewItem[]>([]);
     const [pendingImportData, setPendingImportData] = useState<any[]>([]);
@@ -542,17 +541,6 @@ export const InventoryImportExport: React.FC<InventoryImportExportProps> = ({ br
                     </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
-                    <Switch 
-                        id="replace-mode" 
-                        checked={replaceMode} 
-                        onCheckedChange={setReplaceMode}
-                        disabled={importing}
-                    />
-                    <Label htmlFor="replace-mode" className="text-sm text-muted-foreground cursor-pointer">
-                        Replace Mode: Remove inventory items not in import file
-                    </Label>
-                </div>
             </div>
 
             {/* Preview Dialog */}
