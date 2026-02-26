@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import * as XLSX from 'xlsx';
 
+//orderpage
 export default function OrdersPage() {
   const { getAllOrders, updateOrderStatus } = useOrders();
   const orders = getAllOrders();
@@ -1993,6 +1994,11 @@ export default function OrdersPage() {
                               Reference: {viewingOrder.depositReferenceNumber}
                             </p>
                           )}
+                          {viewingOrder.depositNotes && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Notes: {viewingOrder.depositNotes}
+                            </p>
+                          )}
                           <div className="mt-2 border rounded-lg overflow-hidden bg-white">
                             <img
                               src={viewingOrder.depositSlipUrl}
@@ -2420,6 +2426,11 @@ export default function OrdersPage() {
                       {viewingOrderInBulk.depositReferenceNumber && (
                         <p className="text-xs text-muted-foreground mt-1">
                           Reference: {viewingOrderInBulk.depositReferenceNumber}
+                        </p>
+                      )}
+                      {viewingOrderInBulk.depositNotes && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Notes: {viewingOrderInBulk.depositNotes}
                         </p>
                       )}
                       <img
