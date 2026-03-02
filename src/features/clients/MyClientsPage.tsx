@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
@@ -47,6 +47,8 @@ export default function MyClientsPage() {
     .map((c) => c.trim())
     .filter((c) => c.length > 0);
   const [searchQuery, setSearchQuery] = useState('');
+  const [cityFilter, setCityFilter] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState(1);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newClientPhoto, setNewClientPhoto] = useState<string | null>(null);
@@ -161,11 +163,43 @@ export default function MyClientsPage() {
     fetchCompanyAccountType();
   }, [user?.company_id]);
 
-  const filteredClients = clients.filter(client =>
-    client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    client.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    client.company.toLowerCase().includes(searchQuery.toLowerCase())
+  const citiesInList = useMemo(() => {
+    const set = new Set<string>();
+    clients.forEach((c) => {
+      const city = c.city;
+      if (city && String(city).trim()) set.add(String(city).trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [clients]);
+
+  const filteredClients = clients.filter(client => {
+    const matchesSearch =
+      client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      client.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      client.company.toLowerCase().includes(searchQuery.toLowerCase());
+    const clientCity = client.city?.trim() || '';
+    const matchesCity = !cityFilter || clientCity === cityFilter;
+    return matchesSearch && matchesCity;
+  });
+
+  const CLIENTS_PAGE_SIZE = 10;
+  const totalPages = Math.max(1, Math.ceil(filteredClients.length / CLIENTS_PAGE_SIZE));
+  const paginatedClients = useMemo(
+    () =>
+      filteredClients.slice(
+        (currentPage - 1) * CLIENTS_PAGE_SIZE,
+        currentPage * CLIENTS_PAGE_SIZE
+      ),
+    [filteredClients, currentPage]
   );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, cityFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [totalPages, currentPage]);
 
   const getApprovalStatusBadge = (status: Client['approvalStatus']) => {
     switch (status) {
@@ -2473,14 +2507,30 @@ export default function MyClientsPage() {
 
       <Card>
         <CardHeader>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search clients..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search clients..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select value={cityFilter || 'all'} onValueChange={(v) => setCityFilter(v === 'all' ? '' : v)}>
+              <SelectTrigger className="w-full sm:w-[200px]">
+                <MapPin className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
+                <SelectValue placeholder="All cities" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All cities</SelectItem>
+                {citiesInList.map((city) => (
+                  <SelectItem key={city} value={city}>
+                    {city}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -2489,7 +2539,7 @@ export default function MyClientsPage() {
             {filteredClients.length === 0 ? (
               <div className="text-center text-muted-foreground py-6">No clients found</div>
             ) : (
-              filteredClients.map((client) => (
+              paginatedClients.map((client) => (
                 <div key={client.id} className="rounded-lg border bg-background p-4 shadow-sm">
                   <div className="flex items-center justify-between">
                     <div className="min-w-0">
@@ -2544,7 +2594,7 @@ export default function MyClientsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredClients.map((client) => (
+                {paginatedClients.map((client) => (
                   <TableRow key={client.id}>
                     <TableCell className="text-center">
                       {client.photo ? (
@@ -2616,6 +2666,38 @@ export default function MyClientsPage() {
               </TableBody>
             </Table>
           </div>
+
+          {/* Pagination */}
+          {filteredClients.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t mt-4">
+              <p className="text-sm text-muted-foreground">
+                Showing {(currentPage - 1) * CLIENTS_PAGE_SIZE + 1}–{Math.min(currentPage * CLIENTS_PAGE_SIZE, filteredClients.length)} of {filteredClients.length} clients
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <span className="text-sm text-muted-foreground px-2">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
