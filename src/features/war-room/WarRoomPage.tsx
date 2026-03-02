@@ -5,6 +5,9 @@ import { WarRoomFilters } from './components/WarRoomFilters';
 import { ClientMapPopup } from './components/ClientMapPopup';
 import { useWarRoomClients, WarRoomClient } from './hooks/useWarRoomClients';
 import { useWarRoomHierarchy } from './hooks/useWarRoomHierarchy';
+import { useCityBoundaries } from './hooks/useCityBoundaries';
+import { normalizeCity, getCityNameFromFeature } from './utils/cityUtils';
+import { isPointInFeature } from './utils/pointInPolygon';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -40,6 +43,7 @@ export function WarRoomPage() {
 
   const { clients, loading: clientsLoading, error: clientsError } = useWarRoomClients(effectiveCompanyIds);
   const { data: hierarchy, isLoading: hierarchyLoading } = useWarRoomHierarchy(effectiveCompanyIds);
+  const { data: cityBoundaries } = useCityBoundaries();
   
   const [selectedClient, setSelectedClient] = useState<WarRoomClient | null>(null);
   const [isPopupOpen, setIsPopupOpen] = useState(false);
@@ -133,32 +137,55 @@ export function WarRoomPage() {
   // This is used to generate the City Options available for this Manager
   const clientsInManagerScope = useMemo(() => {
     if (selectedManagerId === 'all') return clients;
-    if (!managerTeamAgentIds) return []; // Should not happen if 'all' check passes, but for safety
+    if (!managerTeamAgentIds) return [];
     
     return clients.filter(c => 
       c.agent_id && managerTeamAgentIds.has(c.agent_id)
     );
   }, [clients, selectedManagerId, managerTeamAgentIds]);
 
-  // 3. Generate City Options from Manager Scope
+  // Derived city per client from point-in-polygon (strict: only cities that contain the client's coordinates)
+  // Also tracks which specific feature index matched, so we can highlight the exact polygon (not a same-name duplicate in another province)
+  const { derivedCityByClientId, clientFeatureIndexMap } = useMemo(() => {
+    const cityMap = new Map<string, string>();
+    const indexMap = new Map<string, number>();
+    if (!cityBoundaries?.features?.length || !clients.length) return { derivedCityByClientId: cityMap, clientFeatureIndexMap: indexMap };
+    const features = cityBoundaries.features as Array<{ type: 'Feature'; geometry: unknown; properties?: Record<string, unknown> }>;
+    for (const client of clients) {
+      const lat = client.location_latitude;
+      const lng = client.location_longitude;
+      for (let i = 0; i < features.length; i++) {
+        if (isPointInFeature(lat, lng, features[i] as Parameters<typeof isPointInFeature>[2])) {
+          const displayName = getCityNameFromFeature(features[i]);
+          if (displayName) {
+            cityMap.set(client.id, displayName);
+            indexMap.set(client.id, i);
+          }
+          break;
+        }
+      }
+    }
+    return { derivedCityByClientId: cityMap, clientFeatureIndexMap: indexMap };
+  }, [clients, cityBoundaries?.features]);
+
+  // 3. Generate City Options from Manager Scope (geometry-derived only)
+  // Only include a city if at least one client in manager scope has their coordinates inside that city's boundary
   const cityOptions = useMemo(() => {
-    const cityMap = new Map<string, Set<string>>(); // City -> Set of Agent Names
+    const cityMap = new Map<string, Set<string>>();
     const cityCounts = new Map<string, number>();
 
     clientsInManagerScope.forEach(client => {
-      const city = client.city || 'Unknown';
-      if (!city || city.trim() === '') return;
+      const derivedCity = derivedCityByClientId.get(client.id);
+      if (!derivedCity || derivedCity.trim() === '') return;
 
-      // Track agent names for this city
-      if (!cityMap.has(city)) {
-        cityMap.set(city, new Set());
-        cityCounts.set(city, 0);
+      if (!cityMap.has(derivedCity)) {
+        cityMap.set(derivedCity, new Set());
+        cityCounts.set(derivedCity, 0);
       }
-      
       if (client.agent_name) {
-        cityMap.get(city)!.add(client.agent_name);
+        cityMap.get(derivedCity)!.add(client.agent_name);
       }
-      cityCounts.set(city, (cityCounts.get(city) || 0) + 1);
+      cityCounts.set(derivedCity, (cityCounts.get(derivedCity) || 0) + 1);
     });
 
     return Array.from(cityMap.entries()).map(([city, agentSet]) => ({
@@ -166,7 +193,7 @@ export function WarRoomPage() {
       holderNames: Array.from(agentSet).sort(),
       count: cityCounts.get(city) || 0
     })).sort((a, b) => a.city.localeCompare(b.city));
-  }, [clientsInManagerScope]);
+  }, [clientsInManagerScope, derivedCityByClientId]);
 
   // Generate City -> Holder Map for the Map Component
   const cityHolderMap = useMemo(() => {
@@ -197,10 +224,10 @@ export function WarRoomPage() {
     }
 
     return clientsInManagerScope.filter(client => {
-      // City Filter
+      // City Filter (by geometry-derived city)
       if (selectedCities.length > 0) {
-        const clientCity = client.city || 'Unknown';
-        if (!selectedCities.includes(clientCity)) return false;
+        const derivedCity = derivedCityByClientId.get(client.id);
+        if (derivedCity == null || !selectedCities.includes(derivedCity)) return false;
       }
 
       // Brand Filter
@@ -231,7 +258,29 @@ export function WarRoomPage() {
 
       return true;
     });
-  }, [clientsInManagerScope, selectedCities, selectedBrandIds, selectedAgentIds, searchQuery, hasActiveFilters]);
+  }, [clientsInManagerScope, derivedCityByClientId, selectedCities, selectedBrandIds, selectedAgentIds, searchQuery, hasActiveFilters]);
+
+  // Feature indices for ALL cities in the current manager/company scope (always visible as highlights)
+  const allScopeFeatureIndices = useMemo(() => {
+    const indices = new Set<number>();
+    for (const client of clientsInManagerScope) {
+      const idx = clientFeatureIndexMap.get(client.id);
+      if (idx !== undefined) indices.add(idx);
+    }
+    return indices;
+  }, [clientsInManagerScope, clientFeatureIndexMap]);
+
+  // When specific cities are selected, restrict highlights to only those cities' features;
+  // otherwise show all cities in scope so polygons remain visible even with "Select All" off
+  const highlightedFeatureIndices = useMemo(() => {
+    if (selectedCities.length === 0) return allScopeFeatureIndices;
+    const indices = new Set<number>();
+    for (const client of finalFilteredClients) {
+      const idx = clientFeatureIndexMap.get(client.id);
+      if (idx !== undefined) indices.add(idx);
+    }
+    return indices;
+  }, [selectedCities, allScopeFeatureIndices, finalFilteredClients, clientFeatureIndexMap]);
 
   // Handlers
   const handleClientClick = (client: WarRoomClient) => {
@@ -395,6 +444,8 @@ export function WarRoomPage() {
               <WarRoomMap
                 clients={finalFilteredClients}
                 cityHolders={cityHolderMap}
+                highlightedFeatureIndices={highlightedFeatureIndices}
+                clientDerivedCity={derivedCityByClientId}
                 onClientClick={handleClientClick}
                 onCityStatusChange={handleCityToggle}
               />

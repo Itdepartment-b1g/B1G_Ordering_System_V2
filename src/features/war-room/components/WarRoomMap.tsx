@@ -5,6 +5,7 @@ import { WarRoomClient } from '../hooks/useWarRoomClients';
 import { getMarkerColor } from '../utils/markerColors';
 import { useEffect, useMemo, useRef } from 'react';
 import { useCityBoundaries } from '../hooks/useCityBoundaries';
+import { normalizeCity } from '../utils/cityUtils';
 
 // Fix for default marker icon issue in React Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -16,9 +17,11 @@ L.Icon.Default.mergeOptions({
 
 interface WarRoomMapProps {
   clients: WarRoomClient[];
-  cityHolders?: Map<string, string>; // City Name -> Holder Name
+  cityHolders?: Map<string, string>;
+  /** Exact GeoJSON feature indices (from cityBoundaries.features) to highlight -- avoids same-name duplicates in different provinces */
+  highlightedFeatureIndices?: Set<number>;
+  clientDerivedCity?: Map<string, string>;
   onClientClick: (client: WarRoomClient) => void;
-  // Callback when city status changes (selected/deselected)
   onCityStatusChange?: (city: string, isSelected: boolean) => void;
 }
 
@@ -71,7 +74,7 @@ function MapBounds({ clients }: { clients: WarRoomClient[] }) {
   return null;
 }
 
-export function WarRoomMap({ clients, cityHolders, onClientClick, onCityStatusChange }: WarRoomMapProps) {
+export function WarRoomMap({ clients, cityHolders, highlightedFeatureIndices, clientDerivedCity, onClientClick, onCityStatusChange }: WarRoomMapProps) {
   // Default center: Philippines
   const defaultCenter: [number, number] = [12.8797, 121.7740];
   const defaultZoom = 6;
@@ -84,49 +87,33 @@ export function WarRoomMap({ clients, cityHolders, onClientClick, onCityStatusCh
     onCityStatusChangeRef.current = onCityStatusChange;
   }, [onCityStatusChange]);
 
-  // Normalize city name for matching
-  const normalizeCity = (name: string) => {
-    return name.toLowerCase()
-      .trim()
-      .replace(/^city of\s+/i, '') // Remove "City of" prefix
-      .replace(/\s+city$/i, '');   // Remove "City" suffix
-  };
-
-  // Filter and style GeoJSON
+  // Filter GeoJSON by exact feature indices (strict PIP-based, avoids same-name duplicates)
   const filteredGeoJSON = useMemo(() => {
-    if (!cityBoundaries || !cityHolders || cityHolders.size === 0) return null;
+    if (!cityBoundaries || !highlightedFeatureIndices || highlightedFeatureIndices.size === 0) return null;
 
-    // Create a normalized map for faster lookup
     const normalizedHolders = new Map<string, string>();
-    const normalizedToDbName = new Map<string, string>();
+    const normalizedToDisplayName = new Map<string, string>();
+    if (cityHolders) {
+      cityHolders.forEach((holder, city) => {
+        const norm = normalizeCity(city);
+        normalizedHolders.set(norm, holder);
+        normalizedToDisplayName.set(norm, city);
+      });
+    }
 
-    cityHolders.forEach((holder, city) => {
-      const norm = normalizeCity(city);
-      normalizedHolders.set(norm, holder);
-      normalizedToDbName.set(norm, city);
-    });
+    const features = cityBoundaries.features
+      .filter((_: any, idx: number) => highlightedFeatureIndices.has(idx))
+      .map((feature: any) => {
+        const rawName = feature.properties.shapeName || feature.properties.ADM3_EN || feature.properties.name || '';
+        const norm = normalizeCity(rawName);
+        feature.properties._holder = normalizedHolders.get(norm) || 'Unknown';
+        feature.properties._dbName = rawName;
+        feature.properties._originalDbCity = normalizedToDisplayName.get(norm) || rawName;
+        return feature;
+      });
 
-    const features = cityBoundaries.features.filter((feature: any) => {
-      // geoBoundaries uses 'shapeName' or 'shapeISO' or 'ADM3_EN'
-      const rawName = feature.properties.shapeName || feature.properties.ADM3_EN || feature.properties.name || '';
-      const normalizedName = normalizeCity(rawName);
-      
-      // Check for exact match or normalized match
-      // We store the matched holder in the feature properties for easier access later
-      if (normalizedHolders.has(normalizedName)) {
-        feature.properties._holder = normalizedHolders.get(normalizedName);
-        feature.properties._dbName = rawName; // Keep original name
-        feature.properties._originalDbCity = normalizedToDbName.get(normalizedName); // Store DB name for filtering
-        return true;
-      }
-      return false;
-    });
-
-    return {
-      type: 'FeatureCollection',
-      features
-    };
-  }, [cityBoundaries, cityHolders]);
+    return { type: 'FeatureCollection', features };
+  }, [cityBoundaries, highlightedFeatureIndices, cityHolders]);
 
   const geoJSONStyle = (feature: any) => {
     const rawName = feature.properties._dbName || feature.properties.shapeName || feature.properties.ADM3_EN || feature.properties.name || '';
@@ -170,8 +157,9 @@ export function WarRoomMap({ clients, cityHolders, onClientClick, onCityStatusCh
     });
   };
 
-  // Create a stable key for the GeoJSON component
-  const geoJsonKey = cityHolders ? Array.from(cityHolders.entries()).map(([k,v]) => `${k}:${v}`).join(',') : 'empty';
+  const geoJsonKey = highlightedFeatureIndices && highlightedFeatureIndices.size > 0
+    ? Array.from(highlightedFeatureIndices).sort().join(',')
+    : 'empty';
 
   return (
     <MapContainer
@@ -198,9 +186,9 @@ export function WarRoomMap({ clients, cityHolders, onClientClick, onCityStatusCh
         )}
 
         {clients.map((client) => {
-          // Use city color for the pin to match the polygon
-          // Normalize the city name to ensure it matches the GeoJSON color logic
-          const cityColor = client.city ? stringToColor(normalizeCity(client.city)) : '#6b7280'; // Gray default
+          // Use geometry-derived city for pin color when provided so it matches polygon highlight
+          const cityForColor = clientDerivedCity?.get(client.id) ?? client.city;
+          const cityColor = cityForColor ? stringToColor(normalizeCity(cityForColor)) : '#6b7280';
           const customIcon = createCustomIcon(cityColor);
 
           return (
