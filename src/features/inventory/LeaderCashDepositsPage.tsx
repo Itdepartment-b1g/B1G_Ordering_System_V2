@@ -82,6 +82,7 @@ interface DailyOrderSummary extends DepositOrderBreakdown {
   agentName: string;
   depositId: string;
   totalQuantity: number;
+  depositRecorded: boolean;
 }
 
 interface DailyAgentGroup {
@@ -103,6 +104,16 @@ interface DailyDepositGroup {
 
 const formatBankLabel = (name: string, accountNumber: string | null | undefined) =>
   accountNumber ? `${name} - ${accountNumber}` : name;
+
+// Returns true when a deposit has real bank details recorded (not a placeholder from remittance).
+const checkDepositRecorded = (depositId: string, deposits: CashDeposit[]): boolean => {
+  const deposit = deposits.find(d => d.id === depositId);
+  if (!deposit) return false;
+  return !!deposit.bankAccount &&
+    !deposit.bankAccount.includes('Cash Remittance') &&
+    !deposit.bankAccount.includes('Cheque Remittance') &&
+    deposit.bankAccount.trim() !== '';
+};
 
 // Orders with order_date before this are v1 imports; exclude from cash deposit views and totals.
 const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-18';
@@ -536,6 +547,8 @@ export default function LeaderCashDepositsPage() {
               };
             }
 
+            const depositRecorded = checkDepositRecorded(depositId, pending);
+
             const dailyOrder: DailyOrderSummary = {
               agentId,
               agentName,
@@ -550,6 +563,7 @@ export default function LeaderCashDepositsPage() {
               nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
               nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
               totalQuantity,
+              depositRecorded,
             };
 
             const agentGroup = dayAgentMaps[dateKey][agentId];
@@ -907,7 +921,10 @@ export default function LeaderCashDepositsPage() {
     if (isFinanceOnly) return;
     const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
     if (!group) return;
-    const depositsForDay = pendingDeposits.filter(d => group.depositIds.includes(d.id));
+    // Only include deposits that haven't had real bank details recorded yet (exclude already-recorded ones)
+    const depositsForDay = pendingDeposits.filter(
+      d => group.depositIds.includes(d.id) && !checkDepositRecorded(d.id, pendingDeposits)
+    );
     if (!depositsForDay.length) {
       toast({
         title: 'No Deposit Found',
@@ -1060,6 +1077,8 @@ export default function LeaderCashDepositsPage() {
             };
           }
 
+          const depositRecorded = checkDepositRecorded(order.deposit_id, pendingDeposits);
+
           const dailyOrder: DailyOrderSummary = {
             agentId,
             agentName,
@@ -1074,6 +1093,7 @@ export default function LeaderCashDepositsPage() {
             nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
             nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
             totalQuantity,
+            depositRecorded,
           };
 
           agentMap[agentId].orders.push(dailyOrder);
@@ -1417,7 +1437,15 @@ export default function LeaderCashDepositsPage() {
               )}
             </div>
           ) : (
-            filteredDailyCashData.map((day) => (
+            filteredDailyCashData.map((day) => {
+              const allDayOrders = day.agents.flatMap(a => a.orders);
+              const awaitingOrders = allDayOrders.filter(o => !o.depositRecorded);
+              const recordedOrders = allDayOrders.filter(o => o.depositRecorded);
+              const awaitingAmount = awaitingOrders.reduce((s, o) => s + o.remittedAmount, 0);
+              const recordedAmount = recordedOrders.reduce((s, o) => s + o.remittedAmount, 0);
+              const awaitingQty = awaitingOrders.reduce((s, o) => s + o.totalQuantity, 0);
+              const awaitingOrderCount = awaitingOrders.length;
+              return (
               <Collapsible
                 key={day.date}
                 open={expandedDays.includes(day.date)}
@@ -1513,7 +1541,10 @@ export default function LeaderCashDepositsPage() {
                                     </TableHeader>
                                     <TableBody>
                                       {agent.orders.map((order) => (
-                                        <TableRow key={order.orderId}>
+                                        <TableRow
+                                          key={order.orderId}
+                                          className={order.depositRecorded ? 'bg-blue-50 hover:bg-blue-100' : ''}
+                                        >
                                           <TableCell className="font-mono text-sm">
                                             {order.orderNumber}
                                           </TableCell>
@@ -1525,8 +1556,15 @@ export default function LeaderCashDepositsPage() {
                                           <TableCell className="text-right">
                                             {order.totalQuantity}
                                           </TableCell>
-                                          <TableCell className="text-right font-semibold">
-                                            ₱{order.remittedAmount.toLocaleString()}
+                                          <TableCell className="text-right">
+                                            <div className="flex flex-col items-end gap-1">
+                                              <span className="font-semibold">₱{order.remittedAmount.toLocaleString()}</span>
+                                              {order.depositRecorded && (
+                                                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                                                  Deposit Recorded
+                                                </Badge>
+                                              )}
+                                            </div>
                                           </TableCell>
                                           <TableCell className="text-right">
                                             <Button
@@ -1553,25 +1591,53 @@ export default function LeaderCashDepositsPage() {
 
                       {/* Day Summary & Actions */}
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-4 border-t">
-                        <div className="bg-muted/50 rounded-lg p-3 flex-1">
-                          <div className="grid grid-cols-3 gap-4 text-center">
-                            <div>
-                              <p className="text-xs text-muted-foreground">Total Orders</p>
-                              <p className="font-bold">
-                                {day.agents.reduce((sum, a) => sum + a.totalOrders, 0)}
-                              </p>
+                        <div className="flex-1 space-y-2">
+                          {/* Awaiting Deposit row */}
+                          {awaitingOrders.length > 0 && (
+                            <div className="bg-muted/50 rounded-lg p-3">
+                              <p className="text-xs font-medium text-muted-foreground mb-2">Awaiting Deposit</p>
+                              <div className="grid grid-cols-3 gap-4 text-center">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Orders</p>
+                                  <p className="font-bold">{awaitingOrderCount}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Quantity</p>
+                                  <p className="font-bold">{awaitingQty}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Amount</p>
+                                  <p className="font-bold text-green-600">
+                                    ₱{awaitingAmount.toLocaleString()}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground">Total Quantity</p>
-                              <p className="font-bold">{day.totalQuantity}</p>
+                          )}
+                          {/* Deposit Recorded row */}
+                          {recordedOrders.length > 0 && (
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                              <p className="text-xs font-medium text-blue-600 mb-2">Deposit Recorded</p>
+                              <div className="grid grid-cols-3 gap-4 text-center">
+                                <div>
+                                  <p className="text-xs text-blue-500">Orders</p>
+                                  <p className="font-bold text-blue-700">{recordedOrders.length}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-blue-500">Quantity</p>
+                                  <p className="font-bold text-blue-700">
+                                    {recordedOrders.reduce((s, o) => s + o.totalQuantity, 0)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-blue-500">Amount</p>
+                                  <p className="font-bold text-blue-700">
+                                    ₱{recordedAmount.toLocaleString()}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-xs text-muted-foreground">Total Amount</p>
-                              <p className="font-bold text-green-600">
-                                ₱{day.totalAmount.toLocaleString()}
-                              </p>
-                            </div>
-                          </div>
+                          )}
                         </div>
 
                         <div className="flex gap-2">
@@ -1601,7 +1667,8 @@ export default function LeaderCashDepositsPage() {
                   </CollapsibleContent>
                 </div>
               </Collapsible>
-            ))
+              );
+            })
           )}
         </CardContent>
       </Card>
