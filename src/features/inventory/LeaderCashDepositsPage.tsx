@@ -35,6 +35,7 @@ import {
   Upload,
   Receipt,
   Printer,
+  Clock,
 } from 'lucide-react';
 
 // Interfaces
@@ -50,6 +51,7 @@ interface CashDeposit {
   depositSlipUrl?: string;
   depositType?: 'CASH' | 'CHEQUE';
   notes?: string | null;
+  createdAt?: string;
 }
 
 interface DepositOrderBreakdown {
@@ -162,6 +164,12 @@ export default function LeaderCashDepositsPage() {
   const [selectedDepositToView, setSelectedDepositToView] = useState<CashDeposit | null>(null);
   const [depositOrders, setDepositOrders] = useState<DepositOrderBreakdown[]>([]);
   const [loadingDepositOrders, setLoadingDepositOrders] = useState(false);
+
+  // Day Deposits Trail Modal State (shows all deposits for a day as a timeline)
+  const [viewDayTrailOpen, setViewDayTrailOpen] = useState(false);
+  const [dayTrailDeposits, setDayTrailDeposits] = useState<CashDeposit[]>([]);
+  const [dayTrailOrders, setDayTrailOrders] = useState<Record<string, DepositOrderBreakdown[]>>({});
+  const [loadingDayTrailOrders, setLoadingDayTrailOrders] = useState(false);
 
   // Order Details Modal State
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
@@ -321,7 +329,7 @@ export default function LeaderCashDepositsPage() {
       let query = supabase
         .from('cash_deposits')
         .select(`
-          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, deposit_type, notes,
+          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, deposit_type, notes, created_at,
           agent:profiles!cash_deposits_agent_id_fkey(full_name)
         `)
         .order('created_at', { ascending: false });
@@ -386,6 +394,7 @@ export default function LeaderCashDepositsPage() {
         depositSlipUrl: d.deposit_slip_url,
         depositType: d.deposit_type as 'CASH' | 'CHEQUE' | null,
         notes: d.notes || null,
+        createdAt: d.created_at || undefined,
       }));
 
       // Pre-load summaries for all deposits so we can show correct cash/cheque-only amounts
@@ -949,36 +958,104 @@ export default function LeaderCashDepositsPage() {
   };
 
   const handleViewDepositProof = (dateKey: string) => {
-    const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
-    if (!group) return;
-
-    // 1. Prefer a verified deposit for this date (historical, already confirmed)
-    const verifiedForDay = depositHistory.filter(
-      d => format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey
-    );
-    let target = verifiedForDay[0];
-
-    // 2. If none are verified yet, fall back to a pending_verification deposit
-    //    that already has a recorded slip so the leader can review what was submitted.
-    if (!target) {
-      const pendingWithSlip = pendingDeposits.filter(
+    // Collect all recorded deposits for this day (pending + verified), sorted oldest first
+    const allForDay = [
+      ...pendingDeposits.filter(
         d =>
           format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey &&
-          !!d.depositSlipUrl
-      );
-      target = pendingWithSlip[0];
-    }
+          checkDepositRecorded(d.id, pendingDeposits)
+      ),
+      ...depositHistory.filter(
+        d => format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey
+      ),
+    ].sort((a, b) => {
+      const ta = a.createdAt ?? a.depositDate;
+      const tb = b.createdAt ?? b.depositDate;
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
 
-    if (!target) {
+    if (!allForDay.length) {
       toast({
         title: 'No Deposit Found',
-        description: 'No deposit with a recorded slip was found for this date.',
+        description: 'No deposit with recorded details was found for this date.',
         variant: 'destructive',
       });
       return;
     }
 
-    openViewDeposit(target);
+    // Open the day trail modal with all deposits
+    setDayTrailDeposits(allForDay);
+    setDayTrailOrders({});
+    setViewDayTrailOpen(true);
+
+    // Fetch orders for all those deposits in one go, grouped by deposit_id
+    (async () => {
+      try {
+        setLoadingDayTrailOrders(true);
+        const allIds = allForDay.map(d => d.id);
+        const { data, error } = await supabase
+          .from('client_orders')
+          .select(`
+            id, order_number, total_amount, payment_method, payment_mode, payment_splits, deposit_id, clients(name)
+          `)
+          .in('deposit_id', allIds);
+
+        if (error) throw error;
+
+        const grouped: Record<string, DepositOrderBreakdown[]> = {};
+        allIds.forEach(id => { grouped[id] = []; });
+
+        (data || []).forEach((order: any) => {
+          const depositId = order.deposit_id as string;
+          if (!depositId || !grouped[depositId]) return;
+
+          const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+          const paymentMethod = order.payment_method as string | null;
+          const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+          let cashPortion = 0;
+          let chequePortion = 0;
+          let nonCashPortion = 0;
+          const nonCashLabels: string[] = [];
+
+          if (paymentMode === 'SPLIT') {
+            splits.forEach((s: any) => {
+              const amt = s.amount || 0;
+              if (s.method === 'CASH') cashPortion += amt;
+              else if (s.method === 'CHEQUE') chequePortion += amt;
+              else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+                nonCashPortion += amt;
+                const lbl = s.method === 'BANK_TRANSFER' ? (s.bank || 'Bank Transfer') : 'GCash';
+                if (!nonCashLabels.includes(lbl)) nonCashLabels.push(lbl);
+              }
+            });
+          } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+            const amt = order.total_amount || 0;
+            if (paymentMethod === 'CASH') cashPortion = amt;
+            else chequePortion = amt;
+          }
+
+          const remittedAmount = cashPortion + chequePortion;
+          grouped[depositId].push({
+            orderId: order.id,
+            orderNumber: order.order_number,
+            clientName: order.clients?.name || 'Unknown',
+            remittedAmount,
+            fullOrderTotal: order.total_amount || remittedAmount,
+            cashPortion,
+            chequePortion,
+            nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
+            nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
+          });
+        });
+
+        setDayTrailOrders(grouped);
+      } catch (err) {
+        console.error('Error fetching day trail orders', err);
+      } finally {
+        setLoadingDayTrailOrders(false);
+      }
+    })();
   };
 
   const handleToggleDay = (group: DailyDepositGroup) => {
@@ -2673,6 +2750,260 @@ export default function LeaderCashDepositsPage() {
           </DialogContent>
         </Dialog>
       )}
+      {/* Day Deposits Trail Modal */}
+      {isMobile ? (
+        <Sheet open={viewDayTrailOpen} onOpenChange={setViewDayTrailOpen}>
+          <SheetContent side="bottom" className="h-[90vh] p-0">
+            <ScrollArea className="h-full">
+              <div className="p-5 space-y-4">
+                <SheetHeader>
+                  <SheetTitle className="text-base flex items-center gap-2">
+                    <Receipt className="h-4 w-4" />
+                    Deposit Trail
+                  </SheetTitle>
+                  <SheetDescription className="text-xs">All deposits recorded for this day</SheetDescription>
+                </SheetHeader>
+
+                {loadingDayTrailOrders && (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+
+                {!loadingDayTrailOrders && dayTrailDeposits.map((deposit, idx) => {
+                  const orders = dayTrailOrders[deposit.id] || [];
+                  const totalAmt = orders.reduce((s, o) => s + o.remittedAmount, 0);
+                  const displayType = getEffectiveDepositType(deposit);
+                  return (
+                    <div key={deposit.id} className="border rounded-lg overflow-hidden">
+                      {/* Deposit header */}
+                      <div className="bg-muted/50 px-3 py-2 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-muted-foreground">Deposit #{idx + 1}</span>
+                          <Badge variant="outline" className={`${getDepositTypeBadgeClass(displayType)} h-5 text-[10px]`}>
+                            {displayType === 'CHEQUE' ? <CreditCard className="h-2 w-2 mr-1" /> : <BanknoteIcon className="h-2 w-2 mr-1" />}
+                            {displayType}
+                          </Badge>
+                          {deposit.status === 'verified' ? (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 h-5 text-[10px]">
+                              <CheckCircle2 className="h-2 w-2 mr-1" />Verified
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 h-5 text-[10px]">
+                              <AlertCircle className="h-2 w-2 mr-1" />Pending
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="text-sm font-bold">₱{totalAmt.toLocaleString()}</span>
+                      </div>
+
+                      <div className="p-3 space-y-2 text-xs">
+                        {/* Timestamp */}
+                        {deposit.createdAt && (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <Clock className="h-3 w-3 shrink-0" />
+                            <span>{format(new Date(deposit.createdAt), 'MMM dd, yyyy • h:mm a')}</span>
+                          </div>
+                        )}
+                        {/* Bank */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">Bank</span>
+                          <span className="font-medium truncate ml-2">{deposit.bankAccount}</span>
+                        </div>
+                        {/* Reference */}
+                        {deposit.referenceNumber && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Reference</span>
+                            <span className="font-mono text-[10px]">{deposit.referenceNumber}</span>
+                          </div>
+                        )}
+                        {/* Notes */}
+                        {deposit.notes && (
+                          <div className="flex items-start gap-2">
+                            <span className="text-muted-foreground shrink-0">Notes</span>
+                            <span className="text-right">{deposit.notes}</span>
+                          </div>
+                        )}
+
+                        {/* Orders */}
+                        {orders.length > 0 && (
+                          <div className="mt-1 border rounded-md overflow-hidden">
+                            <div className="bg-muted/30 px-2 py-1 text-[10px] font-semibold text-muted-foreground">
+                              Orders ({orders.length})
+                            </div>
+                            {orders.map(o => (
+                              <div key={o.orderId} className="flex items-center justify-between px-2 py-1 border-t text-[11px]">
+                                <span className="font-mono text-muted-foreground">{o.orderNumber}</span>
+                                <span className="font-semibold">₱{o.remittedAmount.toLocaleString()}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Deposit Slip */}
+                        {deposit.depositSlipUrl && (
+                          <div className="mt-1 border rounded-md overflow-hidden">
+                            <img
+                              src={deposit.depositSlipUrl}
+                              alt="Deposit Slip"
+                              className="w-full h-auto object-contain max-h-[200px]"
+                            />
+                            <div className="text-center py-1">
+                              <a href={deposit.depositSlipUrl} target="_blank" rel="noopener noreferrer"
+                                className="text-[10px] text-blue-600 hover:underline">
+                                View Full Image
+                              </a>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="sticky bottom-0 bg-background pt-3 pb-2 border-t">
+                  <Button variant="outline" onClick={() => setViewDayTrailOpen(false)} className="w-full h-10 text-xs">
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={viewDayTrailOpen} onOpenChange={setViewDayTrailOpen}>
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Receipt className="h-4 w-4" />
+                Deposit Trail
+              </DialogTitle>
+              <DialogDescription>All deposits recorded for this day, in order of creation.</DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              {loadingDayTrailOrders && (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              )}
+
+              {!loadingDayTrailOrders && dayTrailDeposits.map((deposit, idx) => {
+                const orders = dayTrailOrders[deposit.id] || [];
+                const totalAmt = orders.reduce((s, o) => s + o.remittedAmount, 0);
+                const displayType = getEffectiveDepositType(deposit);
+                return (
+                  <div key={deposit.id} className="border rounded-lg overflow-hidden">
+                    {/* Deposit header bar */}
+                    <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-muted-foreground">Deposit #{idx + 1}</span>
+                        <Badge variant="outline" className={`${getDepositTypeBadgeClass(displayType)} text-xs`}>
+                          {displayType === 'CHEQUE' ? <CreditCard className="h-3 w-3 mr-1" /> : <BanknoteIcon className="h-3 w-3 mr-1" />}
+                          {displayType}
+                        </Badge>
+                        {deposit.status === 'verified' ? (
+                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
+                            <CheckCircle2 className="h-3 w-3 mr-1" />Verified
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+                            <AlertCircle className="h-3 w-3 mr-1" />Pending
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-base font-bold">₱{totalAmt.toLocaleString()}</span>
+                    </div>
+
+                    <div className="p-4 space-y-3 text-sm">
+                      {/* Timestamp */}
+                      {deposit.createdAt && (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Clock className="h-3.5 w-3.5 shrink-0" />
+                          <span className="text-xs">{format(new Date(deposit.createdAt), 'MMMM dd, yyyy • h:mm a')}</span>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-3 gap-1 text-sm">
+                        <span className="text-muted-foreground">Bank</span>
+                        <span className="col-span-2 font-medium truncate">{deposit.bankAccount}</span>
+                      </div>
+                      {deposit.referenceNumber && (
+                        <div className="grid grid-cols-3 gap-1 text-sm">
+                          <span className="text-muted-foreground">Reference</span>
+                          <span className="col-span-2 font-mono text-xs">{deposit.referenceNumber}</span>
+                        </div>
+                      )}
+                      {deposit.notes && (
+                        <div className="grid grid-cols-3 gap-1 text-sm">
+                          <span className="text-muted-foreground">Notes</span>
+                          <span className="col-span-2">{deposit.notes}</span>
+                        </div>
+                      )}
+
+                      {/* Orders */}
+                      {orders.length > 0 && (
+                        <div className="border rounded-md overflow-hidden">
+                          <div className="bg-muted/30 px-3 py-1.5 text-xs font-semibold text-muted-foreground">
+                            Orders ({orders.length})
+                          </div>
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/10">
+                                <TableHead className="text-xs py-1.5">Order #</TableHead>
+                                <TableHead className="text-xs py-1.5">Client</TableHead>
+                                <TableHead className="text-right text-xs py-1.5">Amount</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {orders.map(o => (
+                                <TableRow key={o.orderId}>
+                                  <TableCell className="font-mono text-xs py-1.5">{o.orderNumber}</TableCell>
+                                  <TableCell className="text-xs py-1.5">{o.clientName}</TableCell>
+                                  <TableCell className="text-right font-medium text-xs py-1.5">₱{o.remittedAmount.toLocaleString()}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      )}
+
+                      {/* Deposit Slip */}
+                      {deposit.depositSlipUrl && (
+                        <div className="border rounded-md overflow-hidden">
+                          <div className="bg-muted/30 px-3 py-1.5 text-xs font-semibold text-muted-foreground">
+                            Deposit Slip
+                          </div>
+                          <div className="flex justify-center bg-gray-50 p-2">
+                            <img
+                              src={deposit.depositSlipUrl}
+                              alt="Deposit Slip"
+                              className="w-full h-auto object-contain max-h-[220px]"
+                            />
+                          </div>
+                          <div className="text-center py-1.5">
+                            <a href={deposit.depositSlipUrl} target="_blank" rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline">
+                              View Full Image
+                            </a>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setViewDayTrailOpen(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
       {/* Order Details Modal */}
       <Dialog open={orderDialogOpen} onOpenChange={setOrderDialogOpen}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
