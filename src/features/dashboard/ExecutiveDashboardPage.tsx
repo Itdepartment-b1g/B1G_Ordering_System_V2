@@ -9,12 +9,12 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
-import { 
-    Building2, 
-    TrendingUp, 
-    ShoppingCart, 
-    Users, 
-    UserCheck, 
+import {
+    Building2,
+    TrendingUp,
+    ShoppingCart,
+    Users,
+    UserCheck,
     Loader2,
     DollarSign,
     Activity,
@@ -58,14 +58,14 @@ const getDateRange = (preset: DatePreset, customStart?: Date, customEnd?: Date):
     const now = new Date();
     const start = new Date();
     const end = new Date();
-    
+
     switch (preset) {
         case 'this_month':
             start.setDate(1);
             start.setHours(0, 0, 0, 0);
             end.setHours(23, 59, 59, 999);
             return { start, end };
-            
+
         case 'last_month':
             start.setMonth(now.getMonth() - 1);
             start.setDate(1);
@@ -74,26 +74,26 @@ const getDateRange = (preset: DatePreset, customStart?: Date, customEnd?: Date):
             end.setDate(0); // Last day of previous month
             end.setHours(23, 59, 59, 999);
             return { start, end };
-            
+
         case 'last_3_months':
             start.setMonth(now.getMonth() - 3);
             start.setHours(0, 0, 0, 0);
             end.setHours(23, 59, 59, 999);
             return { start, end };
-            
+
         case 'last_6_months':
             start.setMonth(now.getMonth() - 6);
             start.setHours(0, 0, 0, 0);
             end.setHours(23, 59, 59, 999);
             return { start, end };
-            
+
         case 'this_year':
             start.setMonth(0); // January
             start.setDate(1);
             start.setHours(0, 0, 0, 0);
             end.setHours(23, 59, 59, 999);
             return { start, end };
-            
+
         case 'last_year':
             start.setFullYear(now.getFullYear() - 1);
             start.setMonth(0);
@@ -104,10 +104,10 @@ const getDateRange = (preset: DatePreset, customStart?: Date, customEnd?: Date):
             end.setDate(31);
             end.setHours(23, 59, 59, 999);
             return { start, end };
-            
+
         case 'custom':
             return { start: customStart, end: customEnd };
-            
+
         case 'all':
         default:
             return { start: undefined, end: undefined };
@@ -117,18 +117,18 @@ const getDateRange = (preset: DatePreset, customStart?: Date, customEnd?: Date):
 export default function ExecutiveDashboardPage() {
     const { user } = useAuth();
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const [datePreset, setDatePreset] = useState<DatePreset>('this_month');
+    const [datePreset, setDatePreset] = useState<DatePreset>('all');
     const [customStartDate, setCustomStartDate] = useState<Date | undefined>(undefined);
     const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined);
     const [showCustomPicker, setShowCustomPicker] = useState(false);
     const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
     const [selectedBrandFilter, setSelectedBrandFilter] = useState<string | null>(null);
-    
+
     // Get date range from preset
     const dateRange = getDateRange(datePreset, customStartDate, customEndDate);
     const startDate = dateRange.start;
     const endDate = dateRange.end;
-    
+
     // Handle preset change
     const handlePresetChange = (value: DatePreset) => {
         setDatePreset(value);
@@ -138,13 +138,13 @@ export default function ExecutiveDashboardPage() {
             setShowCustomPicker(false);
         }
     };
-    
+
     // Format date for input (YYYY-MM-DD)
     const formatDateForInput = (date?: Date) => {
         if (!date) return '';
         return date.toISOString().split('T')[0];
     };
-    
+
     // Parse date from input
     const parseDateFromInput = (dateString: string): Date | undefined => {
         if (!dateString) return undefined;
@@ -152,16 +152,16 @@ export default function ExecutiveDashboardPage() {
         date.setHours(0, 0, 0, 0);
         return date;
     };
-    
+
     const { data: companiesData, isLoading: companiesLoading, refetch: refetchCompanies } = useExecutiveCompanies();
-    
+
     // 🔴 LIVE TRACKING: Auto-refresh when orders/sales happen in assigned companies
     const companyIds = companiesData?.companyIds || [];
     useExecutiveRealtime(companyIds);
-    
+
     // Filter by selected company or use all companies
     const filteredCompanyIds = selectedCompanyId ? [selectedCompanyId] : companyIds;
-    
+
     const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useExecutiveStats(startDate, endDate, filteredCompanyIds);
     const { data: breakdown, isLoading: breakdownLoading, refetch: refetchBreakdown } = useExecutiveCompanyBreakdown(startDate, endDate, filteredCompanyIds);
     const { data: trends, isLoading: trendsLoading, refetch: refetchTrends } = useExecutiveRevenueTrends(startDate, endDate, filteredCompanyIds, 30);
@@ -178,11 +178,11 @@ export default function ExecutiveDashboardPage() {
     // Calculate Brand Distribution data for Summary
     const brandDistributionData = (() => {
         if (!brandPerformance?.brands || brandPerformance.brands.length === 0) return [];
-        
+
         // Take top 4 brands, group rest as "Others"
         const topBrands = brandPerformance.brands.slice(0, 4);
         const others = brandPerformance.brands.slice(4);
-        
+
         const palette = [
             '#06b6d4', // Cyan
             '#8b5cf6', // Violet
@@ -212,15 +212,15 @@ export default function ExecutiveDashboardPage() {
         return data;
     })();
 
-    const formatCurrency = (val: number) => 
+    const formatCurrency = (val: number) =>
         `₱${(val || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    
+
     // Process data for the new "Total Brand Performance" section
     const detailedBrandData = (() => {
         if (!brandPerformance) return [];
-        
+
         const aggregated: any[] = [];
-        
+
         // Brand-specific type mapping to match image
         const getTypeLabel = (brandName: string, type: string) => {
             const b = brandName?.toUpperCase();
@@ -249,11 +249,11 @@ export default function ExecutiveDashboardPage() {
         brands.forEach(brandId => {
             const brandFlavors = brandPerformance.flavors.filter(f => f.brandId === brandId);
             const brandBatteries = brandPerformance.batteries.filter(b => b.brandId === brandId);
-            
+
             const brandName = brandFlavors[0]?.brandName || brandBatteries[0]?.brandName || 'Unknown';
-            
+
             const types: any[] = [];
-            
+
             if (brandFlavors.length > 0) {
                 const qty = brandFlavors.reduce((sum, f) => sum + f.totalQuantity, 0);
                 const rev = brandFlavors.reduce((sum, f) => sum + f.totalRevenue, 0);
@@ -266,7 +266,7 @@ export default function ExecutiveDashboardPage() {
                     unitCost: qty > 0 ? rev / qty : 0
                 });
             }
-            
+
             if (brandBatteries.length > 0) {
                 const qty = brandBatteries.reduce((sum, b) => sum + b.totalQuantity, 0);
                 const rev = brandBatteries.reduce((sum, b) => sum + b.totalRevenue, 0);
@@ -279,7 +279,7 @@ export default function ExecutiveDashboardPage() {
                     unitCost: qty > 0 ? rev / qty : 0
                 });
             }
-            
+
             if (types.length > 0) {
                 aggregated.push({
                     brandId,
@@ -288,13 +288,13 @@ export default function ExecutiveDashboardPage() {
                 });
             }
         });
-        
+
         return aggregated;
     })();
 
     const getPieColor = (label: string) => {
         const l = label.toUpperCase();
-        
+
         // Completely distinct colors from different parts of the spectrum
         // Each color is from a different hue family to avoid confusion
         if (l.includes('FORGE PODS')) return '#3B82F6'; // Blue
@@ -305,7 +305,7 @@ export default function ExecutiveDashboardPage() {
         if (l.includes('ONE BAR V1')) return '#EC4899'; // Pink
         if (l.includes('X-ULTRA LITE') || l.includes('X ULTRA LITE')) return '#06B6D4'; // Cyan
         if (l.includes('FORGE') && !l.includes('PODS') && !l.includes('BATT')) return '#14B8A6'; // Teal
-        
+
         // Fallback colors - all from completely different hue families
         const fallbackColors = [
             '#EF4444', // Red
@@ -321,12 +321,12 @@ export default function ExecutiveDashboardPage() {
             '#F472B6', // Rose
             '#0EA5E9', // Sky Blue
         ];
-        
+
         // Use label hash to pick a consistent color
         const hash = label.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
         return fallbackColors[hash % fallbackColors.length];
     };
-    
+
     // Manual refresh function
     const handleRefresh = async () => {
         setIsRefreshing(true);
@@ -409,7 +409,7 @@ export default function ExecutiveDashboardPage() {
                             Aggregated view across {companyCount} {companyCount === 1 ? 'company' : 'companies'}. Read-only access to comprehensive business metrics.
                         </p>
                     </div>
-                    
+
                     {/* Actions Section */}
                     <div className="flex items-center gap-3 lg:pt-8">
                         {/* Date Filter */}
@@ -419,18 +419,18 @@ export default function ExecutiveDashboardPage() {
                                     <div className="flex items-center gap-2">
                                         <Calendar className="h-4 w-4" />
                                         <span className="text-sm">
-                                            {datePreset === 'custom' 
+                                            {datePreset === 'custom'
                                                 ? customStartDate && customEndDate
                                                     ? `${formatDateForInput(customStartDate)} to ${formatDateForInput(customEndDate)}`
                                                     : 'Select dates...'
                                                 : datePreset === 'all' ? 'All Time'
-                                                : datePreset === 'this_month' ? 'This Month'
-                                                : datePreset === 'last_month' ? 'Last Month'
-                                                : datePreset === 'last_3_months' ? 'Last 3 Months'
-                                                : datePreset === 'last_6_months' ? 'Last 6 Months'
-                                                : datePreset === 'this_year' ? 'This Year'
-                                                : datePreset === 'last_year' ? 'Last Year'
-                                                : 'Select period'
+                                                    : datePreset === 'this_month' ? 'This Month'
+                                                        : datePreset === 'last_month' ? 'Last Month'
+                                                            : datePreset === 'last_3_months' ? 'Last 3 Months'
+                                                                : datePreset === 'last_6_months' ? 'Last 6 Months'
+                                                                    : datePreset === 'this_year' ? 'This Year'
+                                                                        : datePreset === 'last_year' ? 'Last Year'
+                                                                            : 'Select period'
                                             }
                                         </span>
                                     </div>
@@ -554,7 +554,7 @@ export default function ExecutiveDashboardPage() {
                                 </div>
                             </PopoverContent>
                         </Popover>
-                        
+
                         {/* Refresh Button */}
                         <Button
                             onClick={handleRefresh}
@@ -579,8 +579,8 @@ export default function ExecutiveDashboardPage() {
                             Your Assigned Companies
                         </div>
                         {selectedCompanyId && (
-                            <Button 
-                                variant="ghost" 
+                            <Button
+                                variant="ghost"
                                 size="sm"
                                 onClick={() => setSelectedCompanyId(null)}
                                 className="text-xs"
@@ -593,19 +593,18 @@ export default function ExecutiveDashboardPage() {
                 <CardContent>
                     <div className="space-y-3">
                         <p className="text-sm text-muted-foreground">
-                            {selectedCompanyId 
+                            {selectedCompanyId
                                 ? 'Showing data for selected company only. Click another company or "Clear Filter" to view all.'
                                 : 'Click any company to filter dashboard data. Showing all companies by default.'}
                         </p>
                         <div className="flex flex-wrap gap-2">
                             {/* All Companies Badge */}
-                            <Badge 
+                            <Badge
                                 variant={selectedCompanyId === null ? 'default' : 'outline'}
-                                className={`text-sm py-2 px-4 cursor-pointer transition-all hover:scale-105 ${
-                                    selectedCompanyId === null 
-                                        ? 'shadow-md' 
+                                className={`text-sm py-2 px-4 cursor-pointer transition-all hover:scale-105 ${selectedCompanyId === null
+                                        ? 'shadow-md'
                                         : 'hover:bg-secondary'
-                                }`}
+                                    }`}
                                 onClick={() => setSelectedCompanyId(null)}
                             >
                                 <Building2 className="h-3 w-3 mr-1.5" />
@@ -614,14 +613,13 @@ export default function ExecutiveDashboardPage() {
 
                             {/* Individual Company Badges */}
                             {companies.map((company) => (
-                                <Badge 
-                                    key={company.id} 
+                                <Badge
+                                    key={company.id}
                                     variant={selectedCompanyId === company.id ? 'default' : 'secondary'}
-                                    className={`text-sm py-2 px-4 cursor-pointer transition-all hover:scale-105 ${
-                                        selectedCompanyId === company.id 
-                                            ? 'shadow-md ring-2 ring-primary ring-offset-2' 
+                                    className={`text-sm py-2 px-4 cursor-pointer transition-all hover:scale-105 ${selectedCompanyId === company.id
+                                            ? 'shadow-md ring-2 ring-primary ring-offset-2'
                                             : 'hover:bg-primary/20'
-                                    }`}
+                                        }`}
                                     onClick={() => setSelectedCompanyId(company.id)}
                                 >
                                     {company.company_name}
@@ -781,18 +779,18 @@ export default function ExecutiveDashboardPage() {
                         <CardTitle className="flex items-center gap-2">
                             <TrendingUp className="h-5 w-5" />
                             Revenue Trends ({
-                                datePreset === 'custom' 
+                                datePreset === 'custom'
                                     ? customStartDate && customEndDate
                                         ? `${new Date(customStartDate).toLocaleDateString()} - ${new Date(customEndDate).toLocaleDateString()}`
                                         : 'Custom Range'
                                     : datePreset === 'all' ? 'All Time'
-                                    : datePreset === 'this_month' ? 'This Month'
-                                    : datePreset === 'last_month' ? 'Last Month'
-                                    : datePreset === 'last_3_months' ? 'Last 3 Months'
-                                    : datePreset === 'last_6_months' ? 'Last 6 Months'
-                                    : datePreset === 'this_year' ? 'This Year'
-                                    : datePreset === 'last_year' ? 'Last Year'
-                                    : 'Last 30 Days'
+                                        : datePreset === 'this_month' ? 'This Month'
+                                            : datePreset === 'last_month' ? 'Last Month'
+                                                : datePreset === 'last_3_months' ? 'Last 3 Months'
+                                                    : datePreset === 'last_6_months' ? 'Last 6 Months'
+                                                        : datePreset === 'this_year' ? 'This Year'
+                                                            : datePreset === 'last_year' ? 'Last Year'
+                                                                : 'Last 30 Days'
                             })
                         </CardTitle>
                     </CardHeader>
@@ -812,8 +810,8 @@ export default function ExecutiveDashboardPage() {
                                             </linearGradient>
                                         </defs>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} className="stroke-muted" />
-                                        <XAxis 
-                                            dataKey="date" 
+                                        <XAxis
+                                            dataKey="date"
                                             className="text-[10px] md:text-xs"
                                             tick={{ fill: 'hsl(var(--muted-foreground))' }}
                                             tickFormatter={(value) => {
@@ -822,7 +820,7 @@ export default function ExecutiveDashboardPage() {
                                             }}
                                             minTickGap={30}
                                         />
-                                        <YAxis 
+                                        <YAxis
                                             className="text-[10px] md:text-xs"
                                             tick={{ fill: 'hsl(var(--muted-foreground))' }}
                                             tickFormatter={(value) => {
@@ -832,20 +830,20 @@ export default function ExecutiveDashboardPage() {
                                             }}
                                             width={45}
                                         />
-                                        <Tooltip 
+                                        <Tooltip
                                             formatter={(value: any) => [`₱${value.toLocaleString()}`, 'Revenue']}
                                             labelFormatter={(label) => new Date(label).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
-                                            contentStyle={{ 
+                                            contentStyle={{
                                                 backgroundColor: 'hsl(var(--background))',
                                                 border: '1px solid hsl(var(--border))',
                                                 borderRadius: '8px',
                                                 fontSize: '12px'
                                             }}
                                         />
-                                        <Area 
-                                            type="monotone" 
-                                            dataKey="revenue" 
-                                            stroke="hsl(var(--primary))" 
+                                        <Area
+                                            type="monotone"
+                                            dataKey="revenue"
+                                            stroke="hsl(var(--primary))"
                                             fillOpacity={1}
                                             fill="url(#colorRevenue)"
                                             strokeWidth={2}
@@ -871,8 +869,8 @@ export default function ExecutiveDashboardPage() {
                     </CardTitle>
                     <div className="flex items-center gap-2">
                         {selectedBrandFilter && (
-                            <Button 
-                                variant="ghost" 
+                            <Button
+                                variant="ghost"
                                 size="sm"
                                 onClick={() => setSelectedBrandFilter(null)}
                                 className="h-8 text-xs text-muted-foreground hover:text-foreground"
@@ -895,7 +893,7 @@ export default function ExecutiveDashboardPage() {
                         </Select>
                     </div>
                 </CardHeader>
-                
+
                 <CardContent className="p-0">
                     {brandPerformanceLoading ? (
                         <div className="flex justify-center py-20">
@@ -921,7 +919,7 @@ export default function ExecutiveDashboardPage() {
                                                     'CHILLAX': 'bg-orange-500',
                                                     'AMZ': 'bg-purple-500'
                                                 };
-                                                
+
                                                 let grandTotalQty = 0;
                                                 let grandTotalAmount = 0;
 
@@ -985,7 +983,7 @@ export default function ExecutiveDashboardPage() {
 
                                 <div className="w-full h-[350px] relative">
                                     {(() => {
-                                        const pieChartData = detailedBrandData.flatMap(brand => 
+                                        const pieChartData = detailedBrandData.flatMap(brand =>
                                             brand.types.map((type: any) => ({
                                                 name: type.pieLabel,
                                                 value: type.qty,
@@ -1020,7 +1018,7 @@ export default function ExecutiveDashboardPage() {
                                                                     const data = payload[0].payload;
                                                                     const total = pieChartData.reduce((sum, item) => sum + item.value, 0);
                                                                     const percentage = ((data.value / total) * 100).toFixed(1);
-                                                                    
+
                                                                     return (
                                                                         <div className="bg-background border rounded-lg p-3 shadow-lg">
                                                                             <p className="font-bold text-sm mb-1">{data.name}</p>
@@ -1047,11 +1045,11 @@ export default function ExecutiveDashboardPage() {
                                         );
                                     })()}
                                 </div>
-                                
+
                                 {/* Custom Legend Below Chart */}
                                 <div className="w-full mt-4 grid grid-cols-2 gap-x-4 gap-y-2 max-h-[200px] overflow-y-auto px-2">
                                     {(() => {
-                                        const pieChartData = detailedBrandData.flatMap(brand => 
+                                        const pieChartData = detailedBrandData.flatMap(brand =>
                                             brand.types.map((type: any) => ({
                                                 name: type.pieLabel,
                                                 value: type.qty,
@@ -1060,13 +1058,13 @@ export default function ExecutiveDashboardPage() {
                                             }))
                                         );
                                         const total = pieChartData.reduce((sum, item) => sum + item.value, 0);
-                                        
+
                                         return pieChartData.map((item, index) => {
                                             const percentage = ((item.value / total) * 100).toFixed(0);
                                             return (
                                                 <div key={index} className="flex items-center gap-2 text-xs">
-                                                    <div 
-                                                        className="w-3 h-3 rounded-sm flex-shrink-0" 
+                                                    <div
+                                                        className="w-3 h-3 rounded-sm flex-shrink-0"
                                                         style={{ backgroundColor: item.color }}
                                                     />
                                                     <div className="flex-1 min-w-0">
@@ -1115,8 +1113,8 @@ export default function ExecutiveDashboardPage() {
                                         margin={{ top: 10, right: 5, left: 5, bottom: 70 }}
                                     >
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--muted))" />
-                                        <XAxis 
-                                            dataKey="variantName" 
+                                        <XAxis
+                                            dataKey="variantName"
                                             axisLine={false}
                                             tickLine={false}
                                             tick={(props) => {
@@ -1125,7 +1123,7 @@ export default function ExecutiveDashboardPage() {
                                                     .sort((a, b) => b.totalQuantity - a.totalQuantity)
                                                     .slice(0, window.innerWidth < 768 ? 10 : 15)
                                                     .find(d => d.variantName === payload.value);
-                                                
+
                                                 return (
                                                     <g transform={`translate(${x},${y})`}>
                                                         <text
@@ -1146,24 +1144,24 @@ export default function ExecutiveDashboardPage() {
                                             height={70}
                                             interval={0}
                                         />
-                                        <YAxis 
+                                        <YAxis
                                             axisLine={false}
                                             tickLine={false}
                                             tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 9 }}
                                             width={25}
                                         />
-                                        <Tooltip 
+                                        <Tooltip
                                             cursor={{ fill: 'hsl(var(--muted)/0.3)' }}
-                                            contentStyle={{ 
-                                                backgroundColor: 'hsl(var(--background))', 
+                                            contentStyle={{
+                                                backgroundColor: 'hsl(var(--background))',
                                                 border: '1px solid hsl(var(--border))',
                                                 borderRadius: '8px',
                                                 fontSize: '11px'
                                             }}
                                         />
-                                        <Bar 
-                                            dataKey="totalQuantity" 
-                                            fill="hsl(var(--primary))" 
+                                        <Bar
+                                            dataKey="totalQuantity"
+                                            fill="hsl(var(--primary))"
                                             barSize={32}
                                             radius={[4, 4, 0, 0]}
                                             opacity={0.85}
@@ -1282,12 +1280,11 @@ export default function ExecutiveDashboardPage() {
                             <div className="space-y-4">
                                 {topPerformers.map((performer, index) => (
                                     <div key={performer.agentId} className="flex items-center gap-3">
-                                        <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${
-                                            index === 0 ? 'bg-yellow-100 text-yellow-700' :
-                                            index === 1 ? 'bg-gray-100 text-gray-700' :
-                                            index === 2 ? 'bg-orange-100 text-orange-700' :
-                                            'bg-muted text-muted-foreground'
-                                        }`}>
+                                        <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${index === 0 ? 'bg-yellow-100 text-yellow-700' :
+                                                index === 1 ? 'bg-gray-100 text-gray-700' :
+                                                    index === 2 ? 'bg-orange-100 text-orange-700' :
+                                                        'bg-muted text-muted-foreground'
+                                            }`}>
                                             {index + 1}
                                         </div>
                                         <div className="flex-1">
@@ -1361,7 +1358,7 @@ export default function ExecutiveDashboardPage() {
             <Card className="bg-muted/50 border-muted">
                 <CardContent className="pt-6">
                     <p className="text-sm text-muted-foreground text-center">
-                        <strong>Read-Only Access:</strong> This dashboard provides view-only access to data. 
+                        <strong>Read-Only Access:</strong> This dashboard provides view-only access to data.
                         You cannot make changes or perform actions on behalf of these companies.
                     </p>
                 </CardContent>
