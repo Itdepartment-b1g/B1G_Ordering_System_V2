@@ -21,7 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { formatPhoneNumber } from '@/lib/utils';
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user, impersonatedCompany } = useAuth();
   const { toast } = useToast();
 
   const [saving, setSaving] = useState(false);
@@ -51,6 +51,10 @@ export default function ProfilePage() {
     company_name: string;
     company_email: string;
   } | null>(null);
+  const [executiveCompanies, setExecutiveCompanies] = useState<{
+    company_name: string;
+    company_email: string;
+  }[]>([]);
 
   useEffect(() => {
     // When the authenticated user object changes (kept in sync by AuthContext
@@ -80,11 +84,33 @@ export default function ProfilePage() {
   }, [user]);
 
   useEffect(() => {
-    if (user?.company_id) {
+    if (user?.role === 'executive') {
+      fetchExecutiveCompanies();
+    } else if (user?.company_id) {
       fetchCompanyInfo();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.company_id]);
+  }, [user?.company_id, user?.role, user?.id]);
+
+  const fetchExecutiveCompanies = async () => {
+    try {
+      if (!user?.id) return;
+
+      const { data, error } = await supabase
+        .from('executive_company_assignments')
+        .select(`
+            company:companies(company_name, company_email)
+        `)
+        .eq('executive_id', user.id);
+
+      if (error) throw error;
+
+      const companies = data?.map((d: any) => d.company).filter(Boolean) || [];
+      setExecutiveCompanies(companies);
+    } catch (error) {
+      console.error('Error fetching executive companies:', error);
+    }
+  };
 
   const fetchCompanyInfo = async () => {
     try {
@@ -204,49 +230,47 @@ export default function ProfilePage() {
             </div>
             <div className="text-center">
               <p className="font-semibold text-base md:text-lg">{profile.full_name}</p>
-              <Badge variant="secondary" className="mt-2 text-xs">
-                {(() => {
-                  const role = user?.role || profile.role;
-                  switch (role) {
-                    case 'system_administrator':
-                      return 'SYSTEM ADMINISTRATOR';
-                    case 'super_admin':
-                      return 'SUPER ADMIN';
-                    case 'admin':
-                      return 'ADMIN';
-                    case 'finance':
-                      return 'FINANCE';
-                    case 'manager':
-                      return 'MANAGER';
-                    case 'team_leader':
-                      return 'TEAM LEADER';
-                    case 'mobile_sales':
-                      return 'SALES AGENT';
-                    default:
-                      return 'SALES AGENT';
-                  }
-                })()}
+              <Badge variant="secondary" className={`mt-2 text-xs font-bold uppercase tracking-wider ${impersonatedCompany ? 'text-primary' : 'text-muted-foreground'}`}>
+                {impersonatedCompany ? 'Live View Active' : (user?.role?.replace('_', ' ') || 'User')}
               </Badge>
             </div>
 
             {/* Company Information */}
-            {companyInfo && (
+            {(companyInfo || executiveCompanies.length > 0) && (
               <div className="pt-4 border-t space-y-3">
-                <div className="flex items-center gap-2 text-sm font-semibold">
+                <div className="flex items-center gap-2 text-sm font-semibold mb-3">
                   <Building2 className="h-4 w-4 text-primary" />
-                  <span>Company</span>
+                  <span>{executiveCompanies.length > 0 ? 'Assigned Companies' : 'Company'}</span>
                 </div>
-                <div className="space-y-2 pl-6">
-                  <div className="text-sm">
-                    <p className="font-medium">{companyInfo.company_name}</p>
+                {executiveCompanies.length > 0 ? (
+                  <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
+                    {executiveCompanies.map((comp, idx) => (
+                      <div key={idx} className="space-y-1 pl-6 pb-3 border-b border-border/50 last:border-0 last:pb-0">
+                        <div className="text-sm">
+                          <p className="font-medium">{comp.company_name}</p>
+                        </div>
+                        {comp.company_email && (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Mail className="h-3 w-3" />
+                            <span className="truncate">{comp.company_email}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                  {companyInfo.company_email && (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Mail className="h-3 w-3" />
-                      <span className="truncate">{companyInfo.company_email}</span>
+                ) : companyInfo && (
+                  <div className="space-y-2 pl-6">
+                    <div className="text-sm">
+                      <p className="font-medium">{companyInfo.company_name}</p>
                     </div>
-                  )}
-                </div>
+                    {companyInfo.company_email && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Mail className="h-3 w-3" />
+                        <span className="truncate">{companyInfo.company_email}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
