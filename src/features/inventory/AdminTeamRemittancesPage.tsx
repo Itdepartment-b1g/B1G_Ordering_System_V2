@@ -16,7 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
 // Orders with order_date before this are v1 imports; exclude from team remittance detail.
-const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-18';
+const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
 
 interface RemittanceLog {
     id: string;

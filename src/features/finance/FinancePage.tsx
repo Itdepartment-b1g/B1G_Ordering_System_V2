@@ -26,8 +26,10 @@ import {
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
+import { useAuth } from '@/features/auth';
 
 export default function FinancePage() {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [totalExpenses, setTotalExpenses] = useState(0);
@@ -48,7 +50,7 @@ export default function FinancePage() {
     });
 
     return () => unsubscribe(channel);
-  }, []);
+  }, [user?.id]);
 
   const loadDepositSummaries = async (deposits: any[]) => {
     if (!deposits || deposits.length === 0) return {};
@@ -309,7 +311,7 @@ export default function FinancePage() {
       setRecentTransactions(sortedActivities.slice(0, pageSize));
 
       // Recent cash deposits, using split-payment logic (cash + cheque portions only)
-      const { data: depositsData, error: depositsError } = await supabase
+      let depositsQuery = supabase
         .from('cash_deposits')
         .select(`
           id,
@@ -322,6 +324,10 @@ export default function FinancePage() {
         `)
         .order('deposit_date', { ascending: false })
         .limit(7);
+      if (user?.company_id) {
+        depositsQuery = depositsQuery.eq('company_id', user.company_id);
+      }
+      const { data: depositsData, error: depositsError } = await depositsQuery;
 
       if (depositsError) {
         console.error('Error fetching recent cash deposits for finance view', depositsError);
@@ -331,18 +337,14 @@ export default function FinancePage() {
         const mapped = (depositsData || [])
           .map((d: any) => {
             const summary = summaries[d.id];
-            // If there are no orders currently linked to this deposit, treat it
-            // as having no cash/cheque amount (e.g. legacy/v1 imports we unlinked).
-            if (!summary) {
+            const effectiveAmount = summary
+              ? summary.cashPortion + summary.chequePortion
+              : 0;
+            // Include deposits even with 0 amount if they have a slip (for verification visibility)
+            const hasSlip = !!d.deposit_slip_url;
+            if (effectiveAmount <= 0 && !hasSlip) {
               return null;
             }
-
-            const effectiveAmount = summary.cashPortion + summary.chequePortion;
-            if (effectiveAmount <= 0) {
-              // Skip deposits that have no cash/cheque portion
-              return null;
-            }
-
             return {
               id: d.id,
               agentName: d.agent?.full_name || 'Unknown',
