@@ -231,9 +231,10 @@ export default function OrdersPage() {
 
   // Map legacy status + stage to a clearer label for display
   const getStatusLabel = (order: Order) => {
-    if (order.stage === 'finance_pending' || order.status === 'pending') return 'Pending Finance Review';
-    if (order.stage === 'admin_approved' || order.status === 'approved') return 'Approved';
-    if (order.stage === 'admin_rejected' || order.status === 'rejected') return 'Rejected';
+    // status is canonical: if status='pending', treat as pending even if stage is stale (e.g. after manual DB un-reject)
+    if (order.status === 'pending' || order.stage === 'finance_pending') return 'Pending Finance Review';
+    if (order.status === 'approved' || order.stage === 'admin_approved') return 'Approved';
+    if (order.status === 'rejected' || order.stage === 'admin_rejected') return 'Rejected';
     return order.status;
   };
 
@@ -377,7 +378,8 @@ export default function OrdersPage() {
       } else if (status === 'approved') {
         filtered = filtered.filter(o => o.status === 'approved' || o.stage === 'admin_approved');
       } else if (status === 'rejected') {
-        filtered = filtered.filter(o => o.status === 'rejected' || o.stage === 'admin_rejected');
+        // Use status as canonical: only truly rejected orders (status='rejected'). Stage can be stale after manual DB edits.
+        filtered = filtered.filter(o => o.status === 'rejected');
       }
     }
     if (selectedPaymentMethod && selectedPaymentMethod !== "all") {
