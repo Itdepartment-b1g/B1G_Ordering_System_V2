@@ -2103,6 +2103,8 @@ export default function OrdersPage() {
                             setViewDialogOpen(false);
                             handleOpenReject(viewingOrder);
                           }}
+                          disabled={needsDeposit || needsBankDetails}
+                          title={needsDeposit ? 'Cannot deny: Order awaiting remittance from agent to leader' : needsBankDetails ? 'Cannot deny: Order awaiting deposit slip from team leader' : undefined}
                         >
                           <XCircle className="h-4 w-4 mr-2" />
                           Finance Deny
