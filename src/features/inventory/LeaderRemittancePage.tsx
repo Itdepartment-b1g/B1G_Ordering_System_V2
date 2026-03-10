@@ -18,7 +18,7 @@ import { format } from 'date-fns';
 import { canLeadTeam } from '@/lib/roleUtils';
 
 // Orders with order_date before this are v1 imports; exclude from team remittance list/detail.
-const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-18';
+const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
 
 interface RemittanceLog {
   id: string;
