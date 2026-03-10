@@ -1,11 +1,10 @@
 -- ============================================================================
--- REJECT CLIENT ORDER FUNCTION
+-- BLOCK FINANCE FROM REJECTING ORDERS AWAITING REMITTANCE OR DEPOSIT SLIP
 -- ============================================================================
--- This function handles the rejection of an order by an admin or finance user.
--- 1. For CASH/CHEQUE orders: blocks rejection when awaiting remittance or deposit slip
--- 2. Updates order status and stage
--- 3. Records who rejected the order and when
--- 4. Stores the rejection reason
+-- For CASH/CHEQUE orders, finance cannot reject when:
+-- 1. Awaiting remittance: order has no deposit_id (agent hasn't remitted to leader yet)
+-- 2. Awaiting deposit slip: deposit exists but has placeholder bank (Cash/Cheque Remittance)
+--    or no deposit_slip_url (leader hasn't recorded the actual deposit yet)
 -- ============================================================================
 
 DROP FUNCTION IF EXISTS reject_client_order(UUID, UUID, TEXT) CASCADE;
@@ -47,6 +46,7 @@ BEGIN
 
   -- 3. For CASH/CHEQUE orders: block rejection if awaiting remittance or deposit slip
   IF v_has_cash_or_cheque THEN
+    -- Awaiting remittance: no deposit_id yet
     IF v_order.deposit_id IS NULL THEN
       RETURN json_build_object(
         'success', false,
@@ -54,6 +54,7 @@ BEGIN
       );
     END IF;
 
+    -- Awaiting deposit slip: deposit has placeholder bank or no slip
     SELECT bank_account, deposit_slip_url INTO v_deposit
     FROM cash_deposits
     WHERE id = v_order.deposit_id;
@@ -95,3 +96,6 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION reject_client_order(UUID, UUID, TEXT) TO authenticated;
+
+COMMENT ON FUNCTION reject_client_order(UUID, UUID, TEXT) IS
+  'Rejects a client order. For CASH/CHEQUE orders, blocks rejection when awaiting remittance or awaiting deposit slip.';

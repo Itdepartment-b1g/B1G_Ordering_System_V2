@@ -801,7 +801,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         }
 
         if (!data || !data.success) {
-          throw new Error(data?.error || 'Failed to reject order');
+          throw new Error(data?.message || data?.error || 'Failed to reject order');
         }
 
         console.log('✅ Order rejected:', data);
