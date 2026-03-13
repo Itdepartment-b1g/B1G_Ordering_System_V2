@@ -20,6 +20,7 @@ import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { ReturnInventoryDialog } from './components/ReturnInventoryDialog';
 import { ReturnToMainDialog } from './components/ReturnToMainDialog';
+import MyReturnRequestsSection from './components/MyReturnRequestsSection';
 import type { RemittanceOrder, BankOrderNote } from './types';
 
 const LOW_STOCK_THRESHOLD = 10;
@@ -917,6 +918,9 @@ export default function MyInventory() {
           </div>
         </CardContent>
       </Card>
+
+      {/* My Return Requests (mobile sales only) */}
+      {user?.role !== 'team_leader' && <MyReturnRequestsSection />}
 
       {/* Remit Inventory Dialog */}
       <Dialog open={remitDialogOpen} onOpenChange={setRemitDialogOpen}>

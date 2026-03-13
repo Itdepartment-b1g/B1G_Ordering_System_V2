@@ -35,6 +35,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { canLeadTeam } from '@/lib/roleUtils';
 import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
+import ReturnRequestsSection from './components/ReturnRequestsSection';
 
 export default function LeaderInventoryPage() {
   const { user } = useAuth();
@@ -1440,6 +1441,9 @@ export default function LeaderInventoryPage() {
 
       {/* Incoming TL Stock Requests Section */}
       {user.role === 'team_leader' && <IncomingTLRequestsSection />}
+
+      {/* Pending Return Requests (mobile sales -> team leader or manager) */}
+      {canLeadTeam(user.role) && <ReturnRequestsSection />}
 
       {/* Team Members Inventory Section */}
       <Card>

@@ -217,8 +217,8 @@ export function ReturnInventoryDialog({
         quantity: item.quantity
       }));
 
-      // Call return inventory function
-      const { data, error } = await supabase.rpc('return_inventory_to_leader', {
+      // Submit return request (pending team leader approval)
+      const { data, error } = await supabase.rpc('submit_return_inventory_request', {
         p_agent_id: user!.id,
         p_receiver_id: leaderId,
         p_return_type: returnMode,
@@ -235,12 +235,12 @@ export function ReturnInventoryDialog({
       }
 
       if (data && !data.success) {
-        throw new Error(data.message || 'Failed to return inventory');
+        throw new Error(data.message || 'Failed to submit return request');
       }
 
       toast({
-        title: 'Success!',
-        description: `Successfully returned ${data.total_quantity} units (${data.items_returned} items) to ${leaderName || 'your leader'}.`,
+        title: 'Request Submitted!',
+        description: `Return request for ${data.total_quantity} units (${data.items_returned} items) sent to ${leaderName || 'your leader'}. Inventory will transfer once approved.`,
         variant: 'default'
       });
 
@@ -275,10 +275,10 @@ export function ReturnInventoryDialog({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <PackageMinus className="h-5 w-5" />
-              Return Inventory
+              Submit Return Request
             </DialogTitle>
             <DialogDescription>
-              Return inventory items back to {leaderName || 'your leader'}. This action will transfer the selected items immediately.
+              Request to return inventory to {leaderName || 'your leader'}. Your team leader must approve before items are transferred.
             </DialogDescription>
           </DialogHeader>
 
@@ -446,10 +446,10 @@ export function ReturnInventoryDialog({
             </div>
 
             {/* Warning */}
-            <Alert variant="destructive">
+            <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                <strong>Warning:</strong> This action will immediately transfer the selected inventory to {leaderName || 'your leader'}. This cannot be undone.
+                Your return request will be sent to {leaderName || 'your leader'} for approval. Inventory stays with you until approved.
               </AlertDescription>
             </Alert>
           </div>
@@ -462,10 +462,10 @@ export function ReturnInventoryDialog({
               {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Returning...
+                  Submitting...
                 </>
               ) : (
-                'Return Inventory'
+                'Submit Return Request'
               )}
             </Button>
           </DialogFooter>
