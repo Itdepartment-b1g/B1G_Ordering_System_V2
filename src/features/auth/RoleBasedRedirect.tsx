@@ -36,6 +36,8 @@ export function RoleBasedRedirect() {
       return <Navigate to="/super-admin-dashboard" replace />;
     case 'executive':
       return <Navigate to="/executive-dashboard" replace />;
+    case 'warehouse':
+      return <Navigate to="/inventory/board" replace />;
     default:
       return <Navigate to="/dashboard" replace />;
   }

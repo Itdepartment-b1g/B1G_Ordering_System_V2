@@ -248,7 +248,7 @@ export const addOrUpdateInventory = async (params: AddInventoryParams): Promise<
     if (!brand) {
         const { data: newBrand } = await supabase
             .from('brands')
-            .insert({ name: brandName, description: `${brandName} products`, company_id: companyId } as any)
+            .insert({ name: brandName, description: `${brandName} products`, company_id: companyId, is_active: true } as any)
             .select('id')
             .maybeSingle();
         brand = newBrand;

@@ -190,6 +190,29 @@ const executiveMenuItems: MenuItem[] = [
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
+const warehouseMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/inventory/board', icon: LayoutDashboard },
+  {
+    title: 'Procurement',
+    url: '/purchase-order-management',
+    icon: ClipboardList,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
+      { title: 'Brands & Variants', url: '/brands', icon: Tag },
+      { title: 'Variant Types', url: '/variant-types', icon: Tag },
+    ],
+  },
+  {
+    title: 'Inventory',
+    url: '/inventory',
+    icon: Package,
+    hasSubmenu: true,
+    submenu: [{ title: 'Main Inventory', url: '/inventory/main', icon: Package }],
+  },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
 const managerMenuItems: MenuItem[] = [
   { title: 'Manager Dashboard', url: '/manager-dashboard', icon: LayoutDashboard },
   { title: 'My Team', url: '/manager-teams', icon: Users },
@@ -354,6 +377,8 @@ export function AppSidebar() {
       baseMenuItems = systemAdminMenuItems;
     } else if (user?.role === 'executive') {
       baseMenuItems = executiveMenuItems;
+    } else if (user?.role === 'warehouse') {
+      baseMenuItems = warehouseMenuItems;
     } else if (user?.role === 'super_admin') {
       baseMenuItems = superAdminMenuItems;
     } else if (user?.role === 'admin') {

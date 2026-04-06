@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -54,10 +55,20 @@ interface CreatePurchaseOrderDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     suppliers: Supplier[];
-    availableVariants: BrandVariant[];
-    brands: { id: string; name: string }[];
     user: any;
-    onCreateOrder: (orderData: any) => Promise<{ success: boolean; error?: string }>;
+    /** When set, user can choose internal transfer from this hub company catalog. */
+    linkedWarehouseCompanyId: string | null;
+    onCreateOrder: (orderData: {
+        supplier_id: string | null;
+        fulfillment_type: 'supplier' | 'warehouse_transfer';
+        warehouse_company_id?: string | null;
+        order_date: string;
+        expected_delivery_date: string;
+        items: Array<{ variant_id: string; quantity: number; unit_price: number }>;
+        tax_rate: number;
+        discount: number;
+        notes: string;
+    }) => Promise<{ success: boolean; error?: string }>;
     refreshData: () => void;
 }
 
@@ -65,13 +76,22 @@ export function CreatePurchaseOrderDialog({
     open,
     onOpenChange,
     suppliers,
-    availableVariants,
-    brands,
     user,
+    linkedWarehouseCompanyId,
     onCreateOrder,
     refreshData
 }: CreatePurchaseOrderDialogProps) {
     const { toast } = useToast();
+
+    const [fulfillmentMode, setFulfillmentMode] = useState<'supplier' | 'warehouse_transfer'>('supplier');
+    const catalogCompanyId =
+        fulfillmentMode === 'warehouse_transfer' && linkedWarehouseCompanyId
+            ? linkedWarehouseCompanyId
+            : user?.company_id ?? null;
+
+    const [availableVariants, setAvailableVariants] = useState<BrandVariant[]>([]);
+    const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
+    const [catalogLoading, setCatalogLoading] = useState(false);
 
     // Form State
     const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
@@ -97,20 +117,82 @@ export function CreatePurchaseOrderDialog({
     const [variantTypes, setVariantTypes] = useState<{ id: string; name: string; display_name?: string }[]>([]);
 
     useEffect(() => {
-        if (open && user?.company_id) {
-            supabase
-                .from('variant_types')
-                .select('id, name, display_name, is_active, sort_order')
-                .eq('company_id', user.company_id)
-                .eq('is_active', true)
-                .order('sort_order', { ascending: true })
-                .then(({ data }) => setVariantTypes((data as any) || []));
+        if (open && !linkedWarehouseCompanyId) {
+            setFulfillmentMode('supplier');
         }
-    }, [open, user?.company_id]);
+    }, [open, linkedWarehouseCompanyId]);
 
-    // Initialize Supplier
     useEffect(() => {
-        if (open && !selectedSupplierId) {
+        if (!open || !catalogCompanyId) {
+            setVariantTypes([]);
+            return;
+        }
+        supabase
+            .from('variant_types')
+            .select('id, name, display_name, is_active, sort_order')
+            .eq('company_id', catalogCompanyId)
+            .eq('is_active', true)
+            .order('sort_order', { ascending: true })
+            .then(({ data }) => setVariantTypes((data as any) || []));
+    }, [open, catalogCompanyId]);
+
+    useEffect(() => {
+        if (!open || !catalogCompanyId) {
+            setAvailableVariants([]);
+            setBrands([]);
+            return;
+        }
+        let cancelled = false;
+        setCatalogLoading(true);
+        (async () => {
+            try {
+                const [{ data: vData, error: vErr }, { data: bData, error: bErr }] = await Promise.all([
+                    supabase
+                        .from('variants')
+                        .select(`
+              id,
+              name,
+              variant_type,
+              brands (
+                id,
+                name
+              )
+            `)
+                        .eq('company_id', catalogCompanyId)
+                        .eq('is_active', true)
+                        .order('name'),
+                    supabase.from('brands').select('id, name').eq('company_id', catalogCompanyId).eq('is_active', true).order('name'),
+                ]);
+                if (cancelled) return;
+                if (vErr) throw vErr;
+                if (bErr) throw bErr;
+                const formattedVariants: BrandVariant[] = (vData || []).map((v: any) => ({
+                    id: v.id,
+                    name: v.name,
+                    variant_type: String(v.variant_type || 'flavor').toLowerCase() as 'flavor' | 'battery' | 'posm',
+                    brand_id: v.brands?.id || '',
+                    brand_name: v.brands?.name || 'Unknown',
+                }));
+                setAvailableVariants(formattedVariants);
+                setBrands(bData || []);
+            } catch (e) {
+                console.error(e);
+                if (!cancelled) {
+                    setAvailableVariants([]);
+                    setBrands([]);
+                }
+            } finally {
+                if (!cancelled) setCatalogLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [open, catalogCompanyId]);
+
+    // Initialize Supplier (supplier mode only)
+    useEffect(() => {
+        if (open && fulfillmentMode === 'supplier' && !selectedSupplierId) {
             const defaultSupplier = suppliers.find(s => s.company_name === 'B1G Corporation');
             if (defaultSupplier) {
                 setSelectedSupplierId(defaultSupplier.id);
@@ -118,7 +200,7 @@ export function CreatePurchaseOrderDialog({
                 setSelectedSupplierId(suppliers[0].id);
             }
         }
-    }, [open, suppliers, selectedSupplierId]);
+    }, [open, suppliers, selectedSupplierId, fulfillmentMode]);
 
     // Calculations
     const subtotal = useMemo(() => items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0), [items]);
@@ -241,6 +323,18 @@ export function CreatePurchaseOrderDialog({
     };
 
     const handleSubmit = async () => {
+        if (!catalogCompanyId) {
+            toast({ title: 'Error', description: 'Company catalog could not be loaded', variant: 'destructive' });
+            return;
+        }
+        if (fulfillmentMode === 'supplier' && !selectedSupplierId) {
+            toast({ title: 'Error', description: 'Please select a supplier', variant: 'destructive' });
+            return;
+        }
+        if (fulfillmentMode === 'warehouse_transfer' && !linkedWarehouseCompanyId) {
+            toast({ title: 'Error', description: 'No warehouse is linked to your company', variant: 'destructive' });
+            return;
+        }
         if (items.length === 0) {
             toast({ title: 'Error', description: 'Please add at least one item', variant: 'destructive' });
             return;
@@ -253,9 +347,9 @@ export function CreatePurchaseOrderDialog({
         setIsSubmitting(true);
 
         try {
-            const itemsPayload: any[] = [];
+            const itemsPayload: Array<{ variant_id: string; quantity: number; unit_price: number }> = [];
 
-            // Process items: create brands/variants if needed
+            // Process items: create brands/variants if needed (always under catalog company — hub or tenant)
             for (const item of items) {
                 if (item.quantity <= 0) {
                     throw new Error(`Item ${item.variantName || 'Unknown'} must have quantity > 0`);
@@ -276,7 +370,7 @@ export function CreatePurchaseOrderDialog({
                     const { data: existingBrand } = await supabase
                         .from('brands')
                         .select('id')
-                        .eq('company_id', user.company_id)
+                        .eq('company_id', catalogCompanyId)
                         .ilike('name', item.brandName.trim())
                         .maybeSingle();
 
@@ -285,7 +379,7 @@ export function CreatePurchaseOrderDialog({
                     } else {
                         const { data: newBrand, error: brandErr } = await supabase
                             .from('brands')
-                            .insert({ name: item.brandName.trim(), company_id: user.company_id })
+                            .insert({ name: item.brandName.trim(), company_id: catalogCompanyId })
                             .select()
                             .single();
                         if (brandErr) throw brandErr;
@@ -318,7 +412,7 @@ export function CreatePurchaseOrderDialog({
                                 brand_id: finalBrandId,
                                 variant_type: item.variantType,
                                 variant_type_id: vt.id,
-                                company_id: user.company_id
+                                company_id: catalogCompanyId
                             })
                             .select()
                             .single();
@@ -336,7 +430,9 @@ export function CreatePurchaseOrderDialog({
 
             // 3. Create Order
             const { success, error } = await onCreateOrder({
-                supplier_id: selectedSupplierId,
+                fulfillment_type: fulfillmentMode,
+                warehouse_company_id: fulfillmentMode === 'warehouse_transfer' ? linkedWarehouseCompanyId : null,
+                supplier_id: fulfillmentMode === 'supplier' ? selectedSupplierId : null,
                 order_date: orderDate,
                 expected_delivery_date: expectedDelivery,
                 items: itemsPayload,
@@ -371,6 +467,34 @@ export function CreatePurchaseOrderDialog({
                     <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
                         {/* Left Panel: Settings */}
                         <div className="w-full md:w-80 border-r bg-muted/10 p-4 overflow-y-auto space-y-4">
+                            {linkedWarehouseCompanyId && (
+                                <div className="space-y-2">
+                                    <Label>Fulfillment</Label>
+                                    <RadioGroup
+                                        value={fulfillmentMode}
+                                        onValueChange={(v) => setFulfillmentMode(v as 'supplier' | 'warehouse_transfer')}
+                                        className="space-y-2"
+                                    >
+                                        <div className="flex items-center space-x-2 rounded-md border bg-background p-2">
+                                            <RadioGroupItem value="supplier" id="po-supplier" />
+                                            <Label htmlFor="po-supplier" className="font-normal cursor-pointer flex-1">
+                                                Order from supplier
+                                            </Label>
+                                        </div>
+                                        <div className="flex items-center space-x-2 rounded-md border bg-background p-2">
+                                            <RadioGroupItem value="warehouse_transfer" id="po-warehouse" />
+                                            <Label htmlFor="po-warehouse" className="font-normal cursor-pointer flex-1">
+                                                Internal transfer (warehouse hub)
+                                            </Label>
+                                        </div>
+                                    </RadioGroup>
+                                    {fulfillmentMode === 'warehouse_transfer' && (
+                                        <p className="text-xs text-muted-foreground">
+                                            Line items use the hub catalog. A warehouse user must approve before stock moves to your company.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
                             <div className="space-y-2">
                                 <Label>Order Date</Label>
                                 <Input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)} />
@@ -379,20 +503,22 @@ export function CreatePurchaseOrderDialog({
                                 <Label>Expected Delivery</Label>
                                 <Input type="date" value={expectedDelivery} onChange={e => setExpectedDelivery(e.target.value)} />
                             </div>
-                            <div className="space-y-2">
-                                <Label>Supplier</Label>
-                                <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
-                                    <SelectTrigger><SelectValue placeholder="Select Supplier" /></SelectTrigger>
-                                    <SelectContent>
-                                        {suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                                {selectedSupplierId && suppliers.find(s => s.id === selectedSupplierId) && (
-                                    <div className="text-xs text-muted-foreground mt-1">
-                                        {suppliers.find(s => s.id === selectedSupplierId)?.address}
-                                    </div>
-                                )}
-                            </div>
+                            {fulfillmentMode === 'supplier' && (
+                                <div className="space-y-2">
+                                    <Label>Supplier</Label>
+                                    <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
+                                        <SelectTrigger><SelectValue placeholder="Select Supplier" /></SelectTrigger>
+                                        <SelectContent>
+                                            {suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                    {selectedSupplierId && suppliers.find(s => s.id === selectedSupplierId) && (
+                                        <div className="text-xs text-muted-foreground mt-1">
+                                            {suppliers.find(s => s.id === selectedSupplierId)?.address}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             <div className="pt-4 border-t space-y-4">
                                 <h3 className="font-semibold text-sm">Pricing & Notes</h3>
@@ -442,6 +568,9 @@ export function CreatePurchaseOrderDialog({
                                 )}
                             </div>
 
+                            {catalogLoading && (
+                                <div className="px-4 py-2 text-xs text-muted-foreground border-b">Loading catalog…</div>
+                            )}
                             <div className="flex-1 overflow-auto">
                                 <Table>
                                     <TableHeader className="bg-muted/50 sticky top-0 z-10">
@@ -575,7 +704,7 @@ export function CreatePurchaseOrderDialog({
 
                             <div className="p-4 border-t bg-muted/20 flex justify-end gap-2">
                                 <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                                <Button onClick={handleSubmit} disabled={isSubmitting}>
+                                <Button onClick={handleSubmit} disabled={isSubmitting || catalogLoading || !catalogCompanyId}>
                                     {isSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
                                     Create Purchase Order
                                 </Button>

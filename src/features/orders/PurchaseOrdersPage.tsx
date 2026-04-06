@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2 } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
 import { CreatePurchaseOrderDialog } from './components/CreatePurchaseOrderDialog';
@@ -27,17 +27,18 @@ import {
 } from "@/components/ui/alert-dialog";
 
 
-interface BrandVariant {
-  id: string;
-  name: string;
-  variant_type: 'flavor' | 'battery' | 'posm';
-  brand_id: string;
-  brand_name: string;
-}
-
 export default function PurchaseOrdersPage() {
   const { user } = useAuth();
-  const { purchaseOrders, suppliers, loading, createPurchaseOrder, approvePurchaseOrder, rejectPurchaseOrder, fetchPurchaseOrders } = usePurchaseOrders();
+  const {
+    purchaseOrders,
+    suppliers,
+    linkedWarehouseCompanyId,
+    loading,
+    createPurchaseOrder,
+    approvePurchaseOrder,
+    rejectPurchaseOrder,
+    fetchPurchaseOrders,
+  } = usePurchaseOrders();
   const [searchQuery, setSearchQuery] = useState('');
   // Form states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -84,15 +85,7 @@ export default function PurchaseOrdersPage() {
     fetchCompanyInfo();
   }, [user?.company_id]);
 
-
-
-  // Available brands and variants for selection
-  const [availableVariants, setAvailableVariants] = useState<BrandVariant[]>([]);
-  const [loadingVariants, setLoadingVariants] = useState(false);
-
-  // Brands for selection
-  const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
-  const [loadingBrands, setLoadingBrands] = useState(false);
+  const [viewBuyerCompanyName, setViewBuyerCompanyName] = useState<string | null>(null);
 
 
 
@@ -100,63 +93,34 @@ export default function PurchaseOrdersPage() {
 
 
 
-  // Fetch available variants for selection
   useEffect(() => {
-    const fetchVariants = async () => {
-      setLoadingVariants(true);
-      try {
-        const { data, error } = await supabase
-          .from('variants')
-          .select(`
-            id,
-            name,
-            variant_type,
-            brands (
-              id,
-              name
-            )
-          `)
-          .eq('is_active', true)
-          .order('name');
-
-        if (error) throw error;
-
-        const formattedVariants: BrandVariant[] = (data || []).map((v: any) => ({
-          id: v.id,
-          name: v.name,
-          variant_type: v.variant_type.toLowerCase() as 'flavor' | 'battery' | 'posm',
-          brand_id: v.brands?.id || '',
-          brand_name: v.brands?.name || 'Unknown',
-        }));
-
-        setAvailableVariants(formattedVariants);
-      } catch (error) {
-        console.error('Error fetching variants:', error);
-      } finally {
-        setLoadingVariants(false);
-      }
+    if (!orderToView?.company_id) {
+      setViewBuyerCompanyName(null);
+      return;
+    }
+    const buyerId =
+      user?.role === 'warehouse' ? orderToView.company_id : user?.company_id;
+    if (!buyerId) {
+      setViewBuyerCompanyName(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('companies')
+        .select('company_name')
+        .eq('id', buyerId)
+        .single();
+      if (!cancelled && !error) setViewBuyerCompanyName(data?.company_name ?? null);
+    })();
+    return () => {
+      cancelled = true;
     };
+  }, [orderToView?.company_id, orderToView?.id, user?.role, user?.company_id]);
 
-    const fetchBrands = async () => {
-      try {
-        setLoadingBrands(true);
-        const { data, error } = await supabase
-          .from('brands')
-          .select('id, name')
-          .eq('is_active', true)
-          .order('name');
-        if (error) throw error;
-        setBrands(data || []);
-      } catch (err) {
-        console.error('Error fetching brands:', err);
-      } finally {
-        setLoadingBrands(false);
-      }
-    };
-
-    fetchVariants();
-    fetchBrands();
-  }, []);
+  const canApproveOrder = (order: { status: string; fulfillment_type?: string }) =>
+    order.status === 'pending' &&
+    (order.fulfillment_type !== 'warehouse_transfer' || user?.role === 'warehouse');
 
   const handleApproveOrder = async () => {
     if (!orderToApprove) return;
@@ -209,10 +173,15 @@ export default function PurchaseOrdersPage() {
 
   const { toast } = useToast();
 
-  const filteredOrders = purchaseOrders.filter(order =>
-    order.po_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    order.supplier.company_name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredOrders = purchaseOrders.filter((order) => {
+    const q = searchQuery.toLowerCase();
+    const typeLabel = order.fulfillment_type === 'warehouse_transfer' ? 'internal warehouse' : 'supplier';
+    return (
+      order.po_number.toLowerCase().includes(q) ||
+      (order.supplier?.company_name || '').toLowerCase().includes(q) ||
+      typeLabel.includes(q)
+    );
+  });
 
   // Pagination: 10 purchase orders per page
   const PO_PER_PAGE = 10;
@@ -236,22 +205,29 @@ export default function PurchaseOrdersPage() {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Purchase Orders</h1>
-          <p className="text-muted-foreground">Create and manage your purchase orders</p>
+          <p className="text-muted-foreground">
+            {user?.role === 'warehouse'
+              ? 'Pending internal transfers from your assigned client companies'
+              : 'Create and manage your purchase orders'}
+          </p>
         </div>
-        <Button className="w-full md:w-auto" onClick={() => setCreateDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create PO
-        </Button>
-        <CreatePurchaseOrderDialog
-          open={createDialogOpen}
-          onOpenChange={setCreateDialogOpen}
-          suppliers={suppliers}
-          availableVariants={availableVariants}
-          brands={brands}
-          user={user}
-          onCreateOrder={createPurchaseOrder}
-          refreshData={fetchPurchaseOrders}
-        />
+        {user?.role !== 'warehouse' && (
+          <Button className="w-full md:w-auto" onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Create PO
+          </Button>
+        )}
+        {user?.role !== 'warehouse' && (
+          <CreatePurchaseOrderDialog
+            open={createDialogOpen}
+            onOpenChange={setCreateDialogOpen}
+            suppliers={suppliers}
+            linkedWarehouseCompanyId={linkedWarehouseCompanyId}
+            user={user}
+            onCreateOrder={createPurchaseOrder}
+            refreshData={fetchPurchaseOrders}
+          />
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
@@ -323,8 +299,14 @@ export default function PurchaseOrdersPage() {
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div>
-                    <div className="text-xs text-muted-foreground">Seller</div>
-                    <div className="truncate">{order.supplier.company_name}</div>
+                    <div className="text-xs text-muted-foreground">Type</div>
+                    <Badge variant="outline" className="mt-0.5">
+                      {order.fulfillment_type === 'warehouse_transfer' ? 'Internal' : 'Supplier'}
+                    </Badge>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Seller / source</div>
+                    <div className="truncate">{order.supplier?.company_name ?? '—'}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-xs text-muted-foreground">Order Date</div>
@@ -338,15 +320,17 @@ export default function PurchaseOrdersPage() {
                     <div className="text-xs text-muted-foreground">Items</div>
                     <div>{order.items.length}</div>
                   </div>
+                  <div aria-hidden />
                   <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
                     <span>Amount</span>
                     <span>₱{order.total_amount.toLocaleString()}</span>
                   </div>
                 </div>
                 <div className="mt-3 flex justify-end gap-2">
-                  {order.status === 'pending' && (
+                  {canApproveOrder(order) && (
                     <Button variant="default" size="sm" onClick={() => handleOpenApproveDialog(order)} disabled={approvingOrderId === order.id}>
-                      <Check className="h-4 w-4 mr-1" /> Approve
+                      <Check className="h-4 w-4 mr-1" />
+                      {order.fulfillment_type === 'warehouse_transfer' ? 'Approve transfer' : 'Approve'}
                     </Button>
                   )}
                   {order.status === 'pending' && (
@@ -368,6 +352,7 @@ export default function PurchaseOrdersPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>PO Number</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Seller</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Expected Delivery</TableHead>
@@ -380,7 +365,7 @@ export default function PurchaseOrdersPage() {
               <TableBody>
                 {paginatedOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-6">
+                    <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-6">
                       No purchase orders found.
                     </TableCell>
                   </TableRow>
@@ -389,9 +374,14 @@ export default function PurchaseOrdersPage() {
                     <TableRow key={order.id}>
                       <TableCell className="font-mono font-medium">{order.po_number}</TableCell>
                       <TableCell>
+                        <Badge variant="outline">
+                          {order.fulfillment_type === 'warehouse_transfer' ? 'Internal' : 'Supplier'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
                         <div>
-                          <p className="font-medium">{order.supplier.company_name}</p>
-                          <p className="text-xs text-muted-foreground">{order.supplier.contact_person}</p>
+                          <p className="font-medium">{order.supplier?.company_name ?? '—'}</p>
+                          <p className="text-xs text-muted-foreground">{order.supplier?.contact_person ?? ''}</p>
                         </div>
                       </TableCell>
                       <TableCell>{new Date(order.order_date).toLocaleDateString()}</TableCell>
@@ -415,7 +405,7 @@ export default function PurchaseOrdersPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {order.status === 'pending' && (
+                          {canApproveOrder(order) && (
                             <Button
                               variant="default"
                               size="sm"
@@ -427,7 +417,9 @@ export default function PurchaseOrdersPage() {
                               ) : (
                                 <Check className="h-4 w-4 mr-1" />
                               )}
-                              Approve & Add to Inventory
+                              {order.fulfillment_type === 'warehouse_transfer'
+                                ? 'Approve transfer'
+                                : 'Approve & Add to Inventory'}
                             </Button>
                           )}
                           {order.status === 'pending' && (
@@ -506,7 +498,11 @@ export default function PurchaseOrdersPage() {
                 <div className="space-y-4 py-4">
                   <p>Are you sure you want to approve <strong>{orderToApprove.po_number}</strong>?</p>
                   <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
-                    <p className="font-semibold text-sm">This will add the following items to your Main Inventory:</p>
+                    <p className="font-semibold text-sm">
+                      {orderToApprove.fulfillment_type === 'warehouse_transfer'
+                        ? 'Stock will move from the warehouse hub to the requesting company:'
+                        : 'This will add the following items to your Main Inventory:'}
+                    </p>
                     <div className="space-y-2">
                       {orderToApprove.items.map((item: any, index: number) => (
                         <div key={index} className="flex items-center justify-between text-sm bg-background p-2 rounded">
@@ -523,16 +519,22 @@ export default function PurchaseOrdersPage() {
                                     'bg-purple-100 text-purple-700'
                               }
                             >
-                              {item.variant_type.toUpperCase()}
+                              {String(item.variant_type).toUpperCase()}
                             </Badge>
                           </div>
-                          <span className="font-semibold">+{item.quantity} units</span>
+                          <span className="font-semibold">
+                            {orderToApprove.fulfillment_type === 'warehouse_transfer'
+                              ? `${item.quantity} units`
+                              : `+${item.quantity} units`}
+                          </span>
                         </div>
                       ))}
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    The quantities will be added to existing stock or new items will be created if they don't exist.
+                    {orderToApprove.fulfillment_type === 'warehouse_transfer'
+                      ? 'Hub inventory must cover these quantities. This cannot be undone.'
+                      : 'The quantities will be added to existing stock or new items will be created if they don\'t exist.'}
                   </p>
                 </div>
               )}
@@ -542,7 +544,9 @@ export default function PurchaseOrdersPage() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleApproveOrder}>
               <Check className="h-4 w-4 mr-2" />
-              Approve & Add to Inventory
+              {orderToApprove?.fulfillment_type === 'warehouse_transfer'
+                ? 'Approve transfer'
+                : 'Approve & Add to Inventory'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -624,7 +628,7 @@ export default function PurchaseOrdersPage() {
                       <AccordionContent>
                         <div className="space-y-2 text-sm pt-4">
                           <div>
-                            <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
+                            <p className="font-medium">{(viewBuyerCompanyName ?? companyInfo?.company_name) || 'N/A'}</p>
                             <p className="text-muted-foreground text-xs">{user?.address || 'N/A'}</p>
                           </div>
                           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -803,7 +807,7 @@ export default function PurchaseOrdersPage() {
                     <div className="space-y-2">
                       <h4 className="font-semibold text-lg">Buyer Information</h4>
                       <div className="bg-muted p-4 rounded-lg space-y-1">
-                        <p className="font-medium">{companyInfo?.company_name || 'N/A'}</p>
+                        <p className="font-medium">{(viewBuyerCompanyName ?? companyInfo?.company_name) || 'N/A'}</p>
                         <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
                         <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
                         <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>

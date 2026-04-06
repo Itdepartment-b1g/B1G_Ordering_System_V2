@@ -22,8 +22,11 @@ export interface Supplier {
 export interface PurchaseOrder {
     id: string;
     po_number: string;
-    supplier_id: string;
-    supplier: Supplier;
+    company_id?: string;
+    supplier_id: string | null;
+    fulfillment_type?: 'supplier' | 'warehouse_transfer';
+    warehouse_company_id?: string | null;
+    supplier: Supplier | null;
     order_date: string;
     expected_delivery_date: string;
     subtotal: number;

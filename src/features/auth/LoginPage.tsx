@@ -28,6 +28,8 @@ export default function LoginPage() {
         navigate('/super-admin-dashboard', { replace: true });
       } else if (user.role === 'executive') {
         navigate('/executive-dashboard', { replace: true });
+      } else if (user.role === 'warehouse') {
+        navigate('/inventory/board', { replace: true });
       } else {
         navigate('/dashboard', { replace: true });
       }

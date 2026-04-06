@@ -5,9 +5,20 @@ import { useToast } from '@/hooks/use-toast';
 import type { PurchaseOrder, PurchaseOrderItem, Supplier } from './types';
 import { PurchaseOrderContext } from './hooks';
 
+const WAREHOUSE_PLACEHOLDER_SUPPLIER: Supplier = {
+  id: '',
+  company_name: 'Warehouse (internal transfer)',
+  contact_person: '—',
+  email: '—',
+  phone: '—',
+  address: '—',
+  status: 'active',
+};
+
 export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [linkedWarehouseCompanyId, setLinkedWarehouseCompanyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
   const { toast } = useToast();
@@ -17,11 +28,10 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     try {
       if (showLoading) setLoading(true);
 
-      // Fetch purchase orders with supplier info
-      const { data: orders, error: ordersError } = await supabase
+      let poQuery = supabase
         .from('purchase_orders')
         .select(`
-          id, created_at, supplier_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
+          id, created_at, supplier_id, fulfillment_type, warehouse_company_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
           suppliers (
             id,
             company_name,
@@ -31,8 +41,15 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             address,
             status
           )
-        `)
-        .order('created_at', { ascending: false });
+        `);
+
+      if (user?.role === 'warehouse' && user.company_id) {
+        poQuery = poQuery
+          .eq('fulfillment_type', 'warehouse_transfer')
+          .eq('warehouse_company_id', user.company_id);
+      }
+
+      const { data: orders, error: ordersError } = await poQuery.order('created_at', { ascending: false });
 
       if (ordersError) throw ordersError;
 
@@ -60,9 +77,12 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
           if (itemsError) {
             console.error('Error fetching items for order:', order.id, itemsError);
+            const rawSup = Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers;
+            const supplier =
+              order.fulfillment_type === 'warehouse_transfer' ? WAREHOUSE_PLACEHOLDER_SUPPLIER : rawSup;
             return {
               ...order,
-              supplier: Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers,
+              supplier,
               items: [],
             };
           }
@@ -78,9 +98,13 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             total_price: parseFloat(item.total_price),
           }));
 
+          const rawSup = Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers;
+          const supplier =
+            order.fulfillment_type === 'warehouse_transfer' ? WAREHOUSE_PLACEHOLDER_SUPPLIER : rawSup;
+
           return {
             ...order,
-            supplier: Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers,
+            supplier,
             subtotal: parseFloat(order.subtotal),
             tax_rate: parseFloat(order.tax_rate),
             tax_amount: parseFloat(order.tax_amount),
@@ -107,6 +131,11 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
   // Fetch all suppliers
   const fetchSuppliers = async () => {
     try {
+      if (user?.role === 'warehouse') {
+        setSuppliers([]);
+        return;
+      }
+
       if (!user?.company_id) {
         console.warn('No company_id available to fetch suppliers');
         return;
@@ -134,7 +163,9 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
   // Create a new purchase order
   const createPurchaseOrder = async (orderData: {
-    supplier_id: string;
+    supplier_id: string | null;
+    fulfillment_type: 'supplier' | 'warehouse_transfer';
+    warehouse_company_id?: string | null;
     order_date: string;
     expected_delivery_date: string;
     items: Array<{
@@ -158,6 +189,13 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
         if (!user.company_id) {
           return { success: false, error: 'User company information not found' };
+        }
+
+        if (orderData.fulfillment_type === 'supplier' && !orderData.supplier_id) {
+          return { success: false, error: 'Supplier is required' };
+        }
+        if (orderData.fulfillment_type === 'warehouse_transfer' && !orderData.warehouse_company_id) {
+          return { success: false, error: 'Warehouse hub is not configured for this company' };
         }
 
         // Calculate totals
@@ -203,7 +241,12 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           .insert({
             company_id: user.company_id,
             po_number: poNumber,
-            supplier_id: orderData.supplier_id,
+            fulfillment_type: orderData.fulfillment_type,
+            warehouse_company_id:
+              orderData.fulfillment_type === 'warehouse_transfer'
+                ? orderData.warehouse_company_id
+                : null,
+            supplier_id: orderData.fulfillment_type === 'supplier' ? orderData.supplier_id : null,
             order_date: orderData.order_date,
             expected_delivery_date: orderData.expected_delivery_date,
             subtotal,
@@ -272,13 +315,25 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       console.log('[PO Approval] Starting approval for PO:', poId, 'by user:', user.id);
 
-      // Call the database function
-      const { data, error } = await supabase.rpc('approve_purchase_order', {
+      const { data: poRow, error: poRowErr } = await supabase
+        .from('purchase_orders')
+        .select('fulfillment_type')
+        .eq('id', poId)
+        .single();
+
+      if (poRowErr) throw poRowErr;
+
+      const rpcName =
+        poRow?.fulfillment_type === 'warehouse_transfer'
+          ? 'approve_warehouse_transfer_po'
+          : 'approve_purchase_order';
+
+      const { data, error } = await supabase.rpc(rpcName, {
         po_id: poId,
         approver_id: user.id,
       });
 
-      console.log('[PO Approval] RPC response:', { data, error });
+      console.log('[PO Approval] RPC response:', { data, error, rpcName });
 
       if (error) {
         console.error('[PO Approval] RPC error:', error);
@@ -299,7 +354,10 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       toast({
         title: 'Purchase Order Approved',
-        description: `${data.po_number} has been approved and added to inventory`,
+        description:
+          rpcName === 'approve_warehouse_transfer_po'
+            ? `${data.po_number} approved — stock moved from warehouse to client company`
+            : `${data.po_number} has been approved and added to inventory`,
         duration: 5000,
       });
 
@@ -328,7 +386,8 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase
         .from('purchase_orders')
         .update({ status: 'rejected', approved_by: null, approved_at: null })
-        .eq('id', poId);
+        .eq('id', poId)
+        .eq('status', 'pending');
 
       if (error) throw error;
 
@@ -340,6 +399,45 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       return { success: false, error: error.message };
     }
   };
+
+  // Resolve linked warehouse hub for admin / super_admin (client company PO creation)
+  useEffect(() => {
+    if (!user?.company_id || !['super_admin', 'admin'].includes(user.role)) {
+      setLinkedWarehouseCompanyId(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const { data: row, error } = await supabase
+        .from('warehouse_company_assignments')
+        .select('warehouse_user_id')
+        .eq('client_company_id', user.company_id)
+        .maybeSingle();
+
+      if (cancelled || error || !row?.warehouse_user_id) {
+        if (!cancelled) setLinkedWarehouseCompanyId(null);
+        return;
+      }
+
+      const { data: whProfile, error: pErr } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('id', row.warehouse_user_id)
+        .single();
+
+      if (cancelled) return;
+      if (pErr || !whProfile?.company_id) {
+        setLinkedWarehouseCompanyId(null);
+        return;
+      }
+      setLinkedWarehouseCompanyId(whProfile.company_id);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.company_id, user?.role]);
 
   // Real-time subscriptions
   useEffect(() => {
@@ -378,13 +476,14 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       poSubscription.unsubscribe();
       poItemsSubscription.unsubscribe();
     };
-  }, [user]);
+  }, [user?.id, user?.role, user?.company_id]);
 
   return (
     <PurchaseOrderContext.Provider
       value={{
         purchaseOrders,
         suppliers,
+        linkedWarehouseCompanyId,
         loading,
         fetchPurchaseOrders,
         fetchSuppliers,

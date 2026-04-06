@@ -1,7 +1,9 @@
 import { useAuth } from '@/features/auth';
 import { ExecutiveAccountsTab } from './ExecutiveAccountsTab';
-import { ShieldCheck } from 'lucide-react';
+import { WarehouseAccountsTab } from './WarehouseAccountsTab';
+import { ShieldCheck, Users, Warehouse } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function SystemAdminPage() {
     const { user } = useAuth();
@@ -19,7 +21,24 @@ export default function SystemAdminPage() {
 
     return (
         <div className="container mx-auto p-4 md:p-8">
-            <ExecutiveAccountsTab />
+            <Tabs defaultValue="executive" className="space-y-6">
+                <TabsList className="grid w-full max-w-md grid-cols-2">
+                    <TabsTrigger value="executive" className="gap-2">
+                        <Users className="h-4 w-4" />
+                        Executive accounts
+                    </TabsTrigger>
+                    <TabsTrigger value="warehouse" className="gap-2">
+                        <Warehouse className="h-4 w-4" />
+                        Warehouse accounts
+                    </TabsTrigger>
+                </TabsList>
+                <TabsContent value="executive" className="mt-0">
+                    <ExecutiveAccountsTab />
+                </TabsContent>
+                <TabsContent value="warehouse" className="mt-0">
+                    <WarehouseAccountsTab />
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }

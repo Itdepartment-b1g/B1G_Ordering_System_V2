@@ -149,6 +149,31 @@ const superAdminMenuItems: MenuItem[] = [
   ]},
 ];
 
+const warehouseMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/inventory/board', description: 'Brand columns with pods, devices, and stock at a glance.' },
+  {
+    title: 'Procurement',
+    url: '/purchase-order-management',
+    description: 'Internal PO inbox and catalog for your warehouse company.',
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Purchase Orders', url: '/purchase-orders', description: 'Review and approve or reject warehouse transfer POs.' },
+      { title: 'Brands & Variants', url: '/brands', description: 'Maintain SKUs for your warehouse company inventory.' },
+      { title: 'Variant Types', url: '/variant-types', description: 'Configure variant categories for new products.' },
+    ],
+  },
+  {
+    title: 'Inventory',
+    url: '/inventory',
+    description: 'Main inventory for your warehouse company.',
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Main Inventory', url: '/inventory/main', description: 'Stock levels for your warehouse company.' },
+    ],
+  },
+  { title: 'Profile', url: '/profile', description: 'Warehouse user profile and settings.' },
+];
+
 export function getMenuItemsForRole(role: string | undefined): MenuItem[] {
   if (!role) return agentMenuItems; // Default fallback
 
@@ -157,6 +182,8 @@ export function getMenuItemsForRole(role: string | undefined): MenuItem[] {
       return systemAdminMenuItems;
     case 'super_admin':
       return superAdminMenuItems;
+    case 'warehouse':
+      return warehouseMenuItems;
     case 'admin':
       return adminMenuItems;
     case 'manager':

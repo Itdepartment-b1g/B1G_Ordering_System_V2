@@ -1,14 +1,22 @@
 // B1G Ordering System - Database Types
 // Auto-generated TypeScript types for Supabase tables
 
-export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent' | 'executive';
+export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent' | 'executive' | 'warehouse';
 export type UserStatus = 'active' | 'inactive';
 export type VariantType = 'flavor' | 'battery' | 'posm';
 export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
 export type AgentInventoryStatus = 'available' | 'low' | 'none';
 export type OrderStatus = 'pending' | 'approved' | 'rejected';
 export type PurchaseOrderStatus = 'pending' | 'approved' | 'rejected' | 'delivered';
-export type TransactionType = 'purchase_order_received' | 'allocated_to_agent' | 'order_fulfilled' | 'adjustment' | 'return';
+export type TransactionType =
+  | 'purchase_order_received'
+  | 'allocated_to_agent'
+  | 'order_fulfilled'
+  | 'adjustment'
+  | 'return'
+  | 'return_to_main'
+  | 'warehouse_transfer_out'
+  | 'warehouse_transfer_in';
 export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
 export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
 export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';
@@ -115,6 +123,16 @@ export interface ExecutiveCompanyAssignment {
   assigner?: Profile;
 }
 
+export interface WarehouseCompanyAssignment {
+  id: string;
+  warehouse_user_id: string;
+  client_company_id: string;
+  assigned_by?: string;
+  created_at: string;
+  updated_at: string;
+  company?: Company;
+}
+
 export interface Brand {
   id: string;
   company_id: string;
@@ -188,11 +206,15 @@ export interface Supplier {
   updated_at: string;
 }
 
+export type PurchaseOrderFulfillmentType = 'supplier' | 'warehouse_transfer';
+
 export interface PurchaseOrder {
   id: string;
   company_id: string;
   po_number: string;
-  supplier_id: string;
+  supplier_id: string | null;
+  fulfillment_type?: PurchaseOrderFulfillmentType;
+  warehouse_company_id?: string | null;
   order_date: string;
   expected_delivery_date?: string;
   subtotal: number;
@@ -807,6 +829,10 @@ export interface Database {
         Returns: string;
       };
       approve_purchase_order: {
+        Args: { po_id: string; approver_id: string };
+        Returns: FunctionResponse;
+      };
+      approve_warehouse_transfer_po: {
         Args: { po_id: string; approver_id: string };
         Returns: FunctionResponse;
       };

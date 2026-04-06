@@ -40,6 +40,20 @@ export function usePermissions() {
       return executiveRoutes.includes(route);
     }
 
+    if (user?.role === 'warehouse') {
+      const warehouseRoutes = [
+        '/purchase-order-management',
+        '/purchase-orders',
+        '/brands',
+        '/variant-types',
+        '/inventory',
+        '/inventory/board',
+        '/inventory/main',
+        '/profile',
+      ];
+      return warehouseRoutes.includes(route);
+    }
+
     // For other roles, you can add specific route checks here
     // Restrict /orders to admin and finance roles
     if (route === '/orders') {
@@ -71,6 +85,7 @@ export function usePermissions() {
     isSuperAdmin: user?.role === 'super_admin',
     isSystemAdmin: user?.role === 'system_administrator',
     isExecutive: user?.role === 'executive',
+    isWarehouse: user?.role === 'warehouse',
   };
 }
 

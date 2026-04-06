@@ -154,12 +154,14 @@ export default function VariantTypesPage() {
     setSubmitting(true);
     try {
       // Check if name already exists
-      const { data: existing } = await supabase
+      const { data: existing, error: existingErr } = await supabase
         .from('variant_types')
         .select('id')
         .eq('company_id', user.company_id)
         .eq('name', formData.name.trim().toLowerCase())
-        .single();
+        .maybeSingle();
+
+      if (existingErr) throw existingErr;
 
       if (existing) {
         toast({
