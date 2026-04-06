@@ -14,6 +14,8 @@ export interface Variant {
   dspPrice?: number;
   rspPrice?: number;
   status: 'in-stock' | 'low-stock' | 'out-of-stock';
+  /** Present when this row is backed by `main_inventory` (used for warehouse remove-stock). */
+  mainInventoryId?: string;
 }
 
 export interface Brand {
@@ -38,7 +40,8 @@ interface InventoryContextType {
     unitPrice: number
   ) => Promise<void>;
   updateBrandName: (brandId: string, newName: string) => Promise<void>;
-  updateVariant: (variantId: string, name: string, stock: number, price: number, sellingPrice?: number, dspPrice?: number, rspPrice?: number, skipRefresh?: boolean) => Promise<void>;
+  /** When `stockOnly` is true, only `main_inventory.stock` is updated; price columns are left unchanged (warehouse role). */
+  updateVariant: (variantId: string, name: string, stock: number, price: number, sellingPrice?: number, dspPrice?: number, rspPrice?: number, skipRefresh?: boolean, stockOnly?: boolean) => Promise<void>;
   setBrands: (brands: Brand[]) => void;
   refreshInventory: () => Promise<void>;
 }
@@ -69,6 +72,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
         created_at,
         is_active,
         main_inventory (
+          id,
           stock,
           allocated_stock,
           unit_price,
@@ -80,7 +84,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
       )
     `)
     .eq('company_id', companyId)
-    .eq('is_active', true)
+    .or('is_active.eq.true,is_active.is.null')
     .order('name');
 
   if (error) throw error;
@@ -104,6 +108,7 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
           dspPrice: inventory.dsp_price ?? 0,
           rspPrice: inventory.rsp_price ?? 0,
           status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
+          mainInventoryId: inventory.id,
         };
       })
       .filter(Boolean) as Variant[];
@@ -134,6 +139,20 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
   return transformedBrands.filter(b => b.allVariants.length > 0);
 };
 
+/**
+ * Maps do not round-trip through JSON (e.g. persisted React Query cache). Rebuild from `allVariants`
+ * so `variantsByType` stays correct after hard refresh / localStorage restore.
+ */
+function rebuildVariantsByType(allVariants: Variant[]): Map<string, Variant[]> {
+  const m = new Map<string, Variant[]>();
+  for (const variant of allVariants) {
+    const type = variant.variantType;
+    if (!m.has(type)) m.set(type, []);
+    m.get(type)!.push(variant);
+  }
+  return m;
+}
+
 export function InventoryProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const { user } = useContext(AuthContext) || {};
@@ -142,6 +161,11 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     queryKey: ['inventory', user?.company_id],
     queryFn: () => fetchInventory(user?.company_id),
     enabled: !!user?.company_id,
+    select: (data) =>
+      data.map((b) => ({
+        ...b,
+        variantsByType: rebuildVariantsByType(b.allVariants),
+      })),
   });
 
   // Real-time
@@ -162,10 +186,10 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   }, [user, qc]);
 
   const addUpdateMutation = useMutation({
-    mutationFn: async ({ brandName, variantName, variantType, quantity, unitPrice }: any) => {
-      let { data: brand } = await supabase.from('brands').select('id').eq('name', brandName).maybeSingle();
+    mutationFn: async ({ brandName, variantName, variantType, quantity, unitPrice, companyId }: { brandName: string; variantName: string; variantType: 'flavor' | 'battery' | 'posm'; quantity: number; unitPrice: number; companyId: string }) => {
+      let { data: brand } = await supabase.from('brands').select('id').eq('name', brandName).eq('company_id', companyId).maybeSingle();
       if (!brand) {
-        const { data: newBrand } = await supabase.from('brands').insert({ name: brandName, description: `${brandName} products` } as any).select('id').maybeSingle();
+        const { data: newBrand } = await supabase.from('brands').insert({ name: brandName, description: `${brandName} products`, company_id: companyId, is_active: true } as any).select('id').maybeSingle();
         brand = newBrand;
       }
       if (!brand) return;
@@ -173,16 +197,22 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       let { data: variant } = await supabase.from('variants').select('id').eq('brand_id', brand.id).eq('name', variantName).eq('variant_type', variantType).maybeSingle();
       if (!variant) {
         const sku = `${brandName.toUpperCase()}-${variantType === 'flavor' ? 'F' : variantType === 'battery' ? 'B' : 'P'}-${variantName.toUpperCase().replace(/\s+/g, '')}`;
-        const { data: newVariant } = await supabase.from('variants').insert({ brand_id: brand.id, name: variantName, variant_type: variantType, sku } as any).select('id').maybeSingle();
+        const { data: newVariant } = await supabase.from('variants').insert({ brand_id: brand.id, name: variantName, variant_type: variantType, sku, company_id: companyId } as any).select('id').maybeSingle();
         variant = newVariant;
       }
       if (!variant) return;
 
-      const { data: inventory } = await supabase.from('main_inventory').select('stock').eq('variant_id', variant.id).maybeSingle();
+      const { data: inventory } = await supabase.from('main_inventory').select('stock').eq('variant_id', variant.id).eq('company_id', companyId).maybeSingle();
       if (inventory) {
-        await supabase.from('main_inventory').update({ stock: (inventory.stock as number) + quantity, unit_price: unitPrice } as any).eq('variant_id', variant.id);
+        await supabase.from('main_inventory').update({ stock: (inventory.stock as number) + quantity, unit_price: unitPrice } as any).eq('variant_id', variant.id).eq('company_id', companyId);
       } else {
-        await supabase.from('main_inventory').insert({ variant_id: variant.id, stock: quantity, unit_price: unitPrice, reorder_level: variantType === 'flavor' ? 50 : variantType === 'battery' ? 30 : 20 } as any);
+        await supabase.from('main_inventory').insert({
+          variant_id: variant.id,
+          company_id: companyId,
+          stock: quantity,
+          unit_price: unitPrice,
+          reorder_level: variantType === 'flavor' ? 50 : variantType === 'battery' ? 30 : 20
+        } as any);
       }
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['inventory'] })
@@ -197,43 +227,77 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   });
 
   const updateVariantMutation = useMutation({
-    mutationFn: async ({ variantId, name, stock, price, sellingPrice, dspPrice, rspPrice }: any) => {
+    mutationFn: async ({ variantId, name, stock, price, sellingPrice, dspPrice, rspPrice, companyId, stockOnly }: { variantId: string; name: string; stock: number; price: number; sellingPrice?: number; dspPrice?: number; rspPrice?: number; companyId?: string; stockOnly?: boolean }) => {
       await supabase.from('variants').update({ name } as any).eq('id', variantId);
-      const { data: existingInventory } = await supabase.from('main_inventory').select('id').eq('variant_id', variantId).maybeSingle();
+      const invSelect = () => supabase.from('main_inventory').select('id').eq('variant_id', variantId);
+      const { data: existingInventory } = companyId
+        ? await invSelect().eq('company_id', companyId).maybeSingle()
+        : await invSelect().maybeSingle();
 
       if (existingInventory) {
-        await supabase.from('main_inventory').update({
-          stock,
-          unit_price: price,
-          ...(sellingPrice !== undefined ? { selling_price: sellingPrice } : {}),
-          ...(dspPrice !== undefined ? { dsp_price: dspPrice } : {}),
-          ...(rspPrice !== undefined ? { rsp_price: rspPrice } : {})
-        } as any).eq('variant_id', variantId);
+        if (stockOnly) {
+          await supabase.from('main_inventory').update({ stock } as any).eq('variant_id', variantId);
+        } else {
+          await supabase.from('main_inventory').update({
+            stock,
+            unit_price: price,
+            ...(sellingPrice !== undefined ? { selling_price: sellingPrice } : {}),
+            ...(dspPrice !== undefined ? { dsp_price: dspPrice } : {}),
+            ...(rspPrice !== undefined ? { rsp_price: rspPrice } : {})
+          } as any).eq('variant_id', variantId);
+        }
       } else {
-        await supabase.from('main_inventory').insert({
-          variant_id: variantId,
-          stock,
-          unit_price: price,
-          selling_price: sellingPrice ?? 0,
-          dsp_price: dspPrice ?? 0,
-          rsp_price: rspPrice ?? 0,
-          reorder_level: 50
-        } as any);
+        if (!companyId) throw new Error('companyId required to create main_inventory row');
+        if (stockOnly) {
+          await supabase.from('main_inventory').insert({
+            variant_id: variantId,
+            company_id: companyId,
+            stock,
+            unit_price: 0,
+            selling_price: 0,
+            dsp_price: 0,
+            rsp_price: 0,
+            reorder_level: 50
+          } as any);
+        } else {
+          await supabase.from('main_inventory').insert({
+            variant_id: variantId,
+            company_id: companyId,
+            stock,
+            unit_price: price,
+            selling_price: sellingPrice ?? 0,
+            dsp_price: dspPrice ?? 0,
+            rsp_price: rspPrice ?? 0,
+            reorder_level: 50
+          } as any);
+        }
       }
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['inventory'] })
   });
 
-  const addOrUpdateInventory = async (brandName: string, variantName: string, variantType: 'flavor' | 'battery', quantity: number, unitPrice: number) => {
-    await addUpdateMutation.mutateAsync({ brandName, variantName, variantType, quantity, unitPrice });
+  const addOrUpdateInventory = async (brandName: string, variantName: string, variantType: 'flavor' | 'battery' | 'posm', quantity: number, unitPrice: number) => {
+    const companyId = user?.company_id;
+    if (!companyId) throw new Error('Missing company');
+    await addUpdateMutation.mutateAsync({ brandName, variantName, variantType, quantity, unitPrice, companyId });
   };
 
   const updateBrandName = async (brandId: string, newName: string) => {
     await updateBrandMutation.mutateAsync({ brandId, newName });
   };
 
-  const updateVariant = async (variantId: string, name: string, stock: number, price: number, sellingPrice?: number, dspPrice?: number, rspPrice?: number, skipRefresh?: boolean) => {
-    await updateVariantMutation.mutateAsync({ variantId, name, stock, price, sellingPrice, dspPrice, rspPrice });
+  const updateVariant = async (variantId: string, name: string, stock: number, price: number, sellingPrice?: number, dspPrice?: number, rspPrice?: number, skipRefresh?: boolean, stockOnly?: boolean) => {
+    await updateVariantMutation.mutateAsync({
+      variantId,
+      name,
+      stock,
+      price,
+      sellingPrice,
+      dspPrice,
+      rspPrice,
+      companyId: user?.company_id,
+      stockOnly
+    });
   };
 
   return (

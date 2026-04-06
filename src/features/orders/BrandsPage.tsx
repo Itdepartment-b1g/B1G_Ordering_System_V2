@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +53,11 @@ interface VariantType {
 
 export default function BrandsPage() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
+  /** Keeps Main Inventory "Add stock" variant picker in sync after catalog changes. */
+  const invalidateWarehouseInventoryCatalog = () => {
+    void queryClient.invalidateQueries({ queryKey: ['warehouse-inventory-catalog'] });
+  };
   const [brands, setBrands] = useState<Brand[]>([]);
   const [variants, setVariants] = useState<Variant[]>([]);
   const [variantTypes, setVariantTypes] = useState<VariantType[]>([]);
@@ -208,19 +214,46 @@ export default function BrandsPage() {
 
     setSubmitting(true);
     try {
-      const { error } = await supabase
+      const nameTrim = brandForm.name.trim();
+      const description = brandForm.description.trim() || null;
+
+      const { data: existing, error: findErr } = await supabase
         .from('brands')
-        .insert({
+        .select('id, is_active')
+        .eq('company_id', user.company_id)
+        .eq('name', nameTrim)
+        .maybeSingle();
+      if (findErr) throw findErr;
+
+      if (existing) {
+        if (existing.is_active === true) {
+          toast({
+            title: 'Error',
+            description: `A brand named "${nameTrim}" already exists.`,
+            variant: 'destructive',
+          });
+          return;
+        }
+        const { error } = await supabase
+          .from('brands')
+          .update({ is_active: true, description })
+          .eq('id', existing.id);
+        if (error) throw error;
+        toast({ title: 'Success', description: 'Brand restored successfully' });
+      } else {
+        const { error } = await supabase.from('brands').insert({
           company_id: user.company_id,
-          name: brandForm.name.trim(),
-          description: brandForm.description.trim() || null
+          name: nameTrim,
+          description,
+          is_active: true,
         });
+        if (error) throw error;
+        toast({ title: 'Success', description: 'Brand created successfully' });
+      }
 
-      if (error) throw error;
-
-      toast({ title: 'Success', description: 'Brand created successfully' });
       setBrandForm({ name: '', description: '' });
       setCreateBrandDialogOpen(false);
+      invalidateWarehouseInventoryCatalog();
       await fetchData();
     } catch (error: any) {
       console.error('Error creating brand:', error);
@@ -257,6 +290,7 @@ export default function BrandsPage() {
       setEditBrandDialogOpen(false);
       setEditingBrand(null);
       setBrandForm({ name: '', description: '' });
+      invalidateWarehouseInventoryCatalog();
       await fetchData();
     } catch (error: any) {
       console.error('Error updating brand:', error);
@@ -289,6 +323,7 @@ export default function BrandsPage() {
       if (selectedBrand === deletingBrand.id) {
         setSelectedBrand('');
       }
+      invalidateWarehouseInventoryCatalog();
       await fetchData();
     } catch (error: any) {
       console.error('Error deleting brand:', error);
@@ -348,6 +383,7 @@ export default function BrandsPage() {
       const defaultType = variantTypes.length > 0 ? variantTypes[0].name : '';
       setVariantForm({ name: '', variant_type: defaultType, description: '', sku: '', brand_id: '' });
       setCreateVariantDialogOpen(false);
+      invalidateWarehouseInventoryCatalog();
       await fetchData();
     } catch (error: any) {
       console.error('Error creating variant:', error);
@@ -402,6 +438,7 @@ export default function BrandsPage() {
       setEditingVariant(null);
       const defaultType = variantTypes.length > 0 ? variantTypes[0].name : '';
       setVariantForm({ name: '', variant_type: defaultType, description: '', sku: '', brand_id: '' });
+      invalidateWarehouseInventoryCatalog();
       await fetchData();
     } catch (error: any) {
       console.error('Error updating variant:', error);
@@ -431,6 +468,7 @@ export default function BrandsPage() {
       toast({ title: 'Success', description: 'Variant deleted successfully' });
       setDeleteVariantDialogOpen(false);
       setDeletingVariant(null);
+      invalidateWarehouseInventoryCatalog();
       await fetchData();
     } catch (error: any) {
       console.error('Error deleting variant:', error);

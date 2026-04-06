@@ -14,7 +14,7 @@ import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOr
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import { MainInventoryPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import { MainInventoryPage, WarehouseInventoryDashboardPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
 import AdminTLRequestsPage from "@/features/inventory/AdminTLRequestsPage";
 import { ClientsPage, MyClientsPage, MyTeamsPage, PendingClientsPage } from "@/features/clients";
@@ -68,6 +68,14 @@ const App = () => (
                     <Route path="/team-management" element={<ProtectedRoute><TeamManagementPage /></ProtectedRoute>} />
                     <Route path="/inventory" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/main" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
+                    <Route
+                      path="/inventory/board"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseInventoryDashboardPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/inventory/allocations" element={<ProtectedRoute><StockAllocationsPage /></ProtectedRoute>} />
                     <Route path="/inventory/remitted-stocks" element={<ProtectedRoute><RemittedStocksPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-team-remittances" element={<ProtectedRoute><AdminTeamRemittancesPage /></ProtectedRoute>} />

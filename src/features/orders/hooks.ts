@@ -4,11 +4,15 @@ import type { PurchaseOrder, Supplier } from './types';
 export interface PurchaseOrderContextType {
     purchaseOrders: PurchaseOrder[];
     suppliers: Supplier[];
+    /** Hub company id when the tenant has a warehouse assignment (internal PO target). */
+    linkedWarehouseCompanyId: string | null;
     loading: boolean;
     fetchPurchaseOrders: () => Promise<void>;
     fetchSuppliers: () => Promise<void>;
     createPurchaseOrder: (orderData: {
-        supplier_id: string;
+        supplier_id: string | null;
+        fulfillment_type: 'supplier' | 'warehouse_transfer';
+        warehouse_company_id?: string | null;
         order_date: string;
         expected_delivery_date: string;
         items: Array<{

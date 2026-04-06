@@ -136,6 +136,7 @@ export default function ExecutiveDashboardPage() {
             setShowCustomPicker(true);
         } else {
             setShowCustomPicker(false);
+
         }
     };
 
@@ -154,7 +155,7 @@ export default function ExecutiveDashboardPage() {
     };
 
     const { data: companiesData, isLoading: companiesLoading, refetch: refetchCompanies } = useExecutiveCompanies();
-
+ 
     // 🔴 LIVE TRACKING: Auto-refresh when orders/sales happen in assigned companies
     const companyIds = companiesData?.companyIds || [];
     useExecutiveRealtime(companyIds);
