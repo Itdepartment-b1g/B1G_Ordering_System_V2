@@ -66,6 +66,8 @@ export interface ReturnItem {
     maxQuantity: number;
 }
 
+export type ReturnRequestStatus = 'pending' | 'approved' | 'rejected';
+
 export interface InventoryReturn {
     id: string;
     companyId: string;
@@ -79,4 +81,9 @@ export interface InventoryReturn {
     signaturePath?: string;
     items: ReturnItem[];
     createdAt: string;
+    status?: ReturnRequestStatus;
+    processedBy?: string;
+    processedAt?: string;
+    acknowledged?: boolean;
+    rejectionReason?: string;
 }

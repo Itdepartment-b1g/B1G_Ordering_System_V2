@@ -35,6 +35,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { canLeadTeam } from '@/lib/roleUtils';
 import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
+import ReturnRequestsSection from './components/ReturnRequestsSection';
 
 export default function LeaderInventoryPage() {
   const { user } = useAuth();
@@ -373,9 +374,8 @@ export default function LeaderInventoryPage() {
               id,
               stock,
               allocated_price,
-            dsp_price,
-            rsp_price,
-          variants!inner(
+              rsp_price,
+              variants!inner(
                 id,
             name,
             variant_type,
@@ -401,16 +401,23 @@ export default function LeaderInventoryPage() {
             };
           }
 
-          const processedItems = (memberInventory || []).map((item: any) => ({
-            id: item.id,
-            variantId: item.variants.id,
-            variantName: item.variants.name,
-            variantType: item.variants.variant_type,
-            brandName: item.variants.brands.name,
-            stock: item.stock,
-            allocatedPrice: item.allocated_price,
-            totalValue: item.stock * item.allocated_price
-          }));
+          const processedItems = (memberInventory || []).map((item: any) => {
+            const allocated = item.allocated_price ?? 0;
+            const rsp = item.rsp_price ?? 0;
+            const unitPrice = allocated || rsp;
+            return {
+              id: item.id,
+              variantId: item.variants.id,
+              variantName: item.variants.name,
+              variantType: item.variants.variant_type,
+              brandName: item.variants.brands.name,
+              stock: item.stock,
+              allocatedPrice: allocated,
+              rspPrice: rsp,
+              unitPrice,
+              totalValue: item.stock * unitPrice
+            };
+          });
 
           const totalStock = processedItems.reduce((sum, item) => sum + item.stock, 0);
           const totalValue = processedItems.reduce((sum, item) => sum + item.totalValue, 0);
@@ -1441,6 +1448,9 @@ export default function LeaderInventoryPage() {
       {/* Incoming TL Stock Requests Section */}
       {user.role === 'team_leader' && <IncomingTLRequestsSection />}
 
+      {/* Pending Return Requests (mobile sales -> team leader or manager) */}
+      {canLeadTeam(user.role) && <ReturnRequestsSection />}
+
       {/* Team Members Inventory Section */}
       <Card>
         <CardHeader className="p-4 md:p-6">
@@ -1643,7 +1653,7 @@ export default function LeaderInventoryPage() {
                           {member.totalStock.toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right font-semibold">
-                          ₱{member.totalValue.toFixed(2)}
+                          ₱{member.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell className="text-right">
                           <Badge variant="secondary">
@@ -1726,7 +1736,7 @@ export default function LeaderInventoryPage() {
                         </div>
                         <div className="text-center">
                           <div className="text-2xl font-bold text-green-600">
-                            ₱{member.totalValue.toFixed(2)}
+                            ₱{member.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
                           <div className="text-xs text-muted-foreground">Total Value</div>
                         </div>
@@ -1823,7 +1833,7 @@ export default function LeaderInventoryPage() {
                         <div className="text-[10px] text-muted-foreground">Stock</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-lg font-bold">₱{(selectedMember.totalValue / 1000).toFixed(0)}k</div>
+                        <div className="text-lg font-bold">₱{(selectedMember.totalValue / 1000).toLocaleString(undefined, { maximumFractionDigits: 0 })}k</div>
                         <div className="text-[10px] text-muted-foreground">Value</div>
                       </div>
                       <div className="text-center">
@@ -1849,18 +1859,26 @@ export default function LeaderInventoryPage() {
                           </div>
 
                           {/* Details Grid */}
-                          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
                             <div>
                               <div className="text-muted-foreground text-[10px]">Stock</div>
                               <div className="font-semibold">{item.stock.toLocaleString()}</div>
                             </div>
-                            <div>
-                              <div className="text-muted-foreground text-[10px]">Price</div>
-                              <div className="font-semibold">₱{item.allocatedPrice.toFixed(2)}</div>
-                            </div>
+                            {(item.allocatedPrice ?? 0) > 0 && (
+                              <div>
+                                <div className="text-muted-foreground text-[10px]">Allocated</div>
+                                <div className="font-semibold">₱{(item.allocatedPrice ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              </div>
+                            )}
+                            {(item.rspPrice ?? 0) > 0 && (
+                              <div>
+                                <div className="text-muted-foreground text-[10px]">RSP</div>
+                                <div className="font-semibold">₱{(item.rspPrice ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              </div>
+                            )}
                             <div>
                               <div className="text-muted-foreground text-[10px]">Value</div>
-                              <div className="font-semibold text-primary">₱{item.totalValue.toFixed(2)}</div>
+                              <div className="font-semibold text-primary">₱{item.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                             </div>
                           </div>
                         </div>
@@ -1896,7 +1914,7 @@ export default function LeaderInventoryPage() {
                     <div className="text-sm text-muted-foreground">Total Stock</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold">₱{selectedMember.totalValue.toFixed(2)}</div>
+                    <div className="text-2xl font-bold">₱{selectedMember.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div className="text-sm text-muted-foreground">Total Value</div>
                   </div>
                   <div className="text-center">
@@ -1914,7 +1932,8 @@ export default function LeaderInventoryPage() {
                         <TableHead>Variant</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead className="text-right">Stock</TableHead>
-                        <TableHead className="text-right">Price</TableHead>
+                        <TableHead className="text-right">Allocated</TableHead>
+                        <TableHead className="text-right">RSP</TableHead>
                         <TableHead className="text-right">Value</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1929,9 +1948,14 @@ export default function LeaderInventoryPage() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">{item.stock.toLocaleString()}</TableCell>
-                          <TableCell className="text-right">₱{item.allocatedPrice.toFixed(2)}</TableCell>
+                          <TableCell className="text-right">
+                            {(item.allocatedPrice ?? 0) > 0 ? `₱${(item.allocatedPrice ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {(item.rspPrice ?? 0) > 0 ? `₱${(item.rspPrice ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                          </TableCell>
                           <TableCell className="text-right font-semibold">
-                            ₱{item.totalValue.toFixed(2)}
+                            ₱{item.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </TableCell>
                         </TableRow>
                       ))}

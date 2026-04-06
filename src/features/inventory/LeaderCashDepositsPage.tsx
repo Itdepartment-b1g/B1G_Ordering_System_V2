@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -31,10 +31,13 @@ import {
   Calendar,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   User,
   Upload,
   Receipt,
   Printer,
+  Clock,
+  Search,
 } from 'lucide-react';
 
 // Interfaces
@@ -50,6 +53,7 @@ interface CashDeposit {
   depositSlipUrl?: string;
   depositType?: 'CASH' | 'CHEQUE';
   notes?: string | null;
+  createdAt?: string;
 }
 
 interface DepositOrderBreakdown {
@@ -116,7 +120,7 @@ const checkDepositRecorded = (depositId: string, deposits: CashDeposit[]): boole
 };
 
 // Orders with order_date before this are v1 imports; exclude from cash deposit views and totals.
-const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-18';
+const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
 
 export default function LeaderCashDepositsPage() {
   const { user } = useAuth();
@@ -144,6 +148,13 @@ export default function LeaderCashDepositsPage() {
   const [expandedDays, setExpandedDays] = useState<string[]>([]);
   const [expandedAgents, setExpandedAgents] = useState<string[]>([]);
 
+  // Verified Deposit History filters
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [historyDateFrom, setHistoryDateFrom] = useState('');
+  const [historyDateTo, setHistoryDateTo] = useState('');
+  const [historyPage, setHistoryPage] = useState(1);
+  const HISTORY_PAGE_SIZE = 10;
+
   // Deposit Modal State
   const [depositTypeSelectionOpen, setDepositTypeSelectionOpen] = useState(false);
   const [depositDialogOpen, setDepositDialogOpen] = useState(false);
@@ -162,6 +173,12 @@ export default function LeaderCashDepositsPage() {
   const [selectedDepositToView, setSelectedDepositToView] = useState<CashDeposit | null>(null);
   const [depositOrders, setDepositOrders] = useState<DepositOrderBreakdown[]>([]);
   const [loadingDepositOrders, setLoadingDepositOrders] = useState(false);
+
+  // Day Deposits Trail Modal State (shows all deposits for a day as a timeline)
+  const [viewDayTrailOpen, setViewDayTrailOpen] = useState(false);
+  const [dayTrailDeposits, setDayTrailDeposits] = useState<CashDeposit[]>([]);
+  const [dayTrailOrders, setDayTrailOrders] = useState<Record<string, DepositOrderBreakdown[]>>({});
+  const [loadingDayTrailOrders, setLoadingDayTrailOrders] = useState(false);
 
   // Order Details Modal State
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
@@ -186,6 +203,49 @@ export default function LeaderCashDepositsPage() {
 
   const isFinanceOnly = user?.role === 'finance';
 
+  // Verified Deposit History: filtered + paginated
+  const { filteredHistoryDeposits, historyTotalPages, filteredHistoryTotal } = useMemo(() => {
+    const q = historySearchQuery.trim().toLowerCase();
+    const filtered = depositHistory.filter((d) => {
+      if (q) {
+        const matchAgent = d.agentName?.toLowerCase().includes(q);
+        const matchBank = d.bankAccount?.toLowerCase().includes(q);
+        const matchRef = (d.referenceNumber || '').toLowerCase().includes(q);
+        const matchNotes = (d.notes || '').toLowerCase().includes(q);
+        if (!matchAgent && !matchBank && !matchRef && !matchNotes) return false;
+      }
+      if (historyDateFrom && d.depositDate < historyDateFrom) return false;
+      if (historyDateTo && d.depositDate > historyDateTo) return false;
+      return true;
+    });
+    const totalPages = Math.max(1, Math.ceil(filtered.length / HISTORY_PAGE_SIZE));
+    const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
+    const paginated = filtered.slice(start, start + HISTORY_PAGE_SIZE);
+    return {
+      filteredHistoryDeposits: paginated,
+      historyTotalPages: totalPages,
+      filteredHistoryTotal: filtered.length,
+    };
+  }, [depositHistory, historySearchQuery, historyDateFrom, historyDateTo, historyPage]);
+
+  // Reset page when filters change and current page would be empty
+  useEffect(() => {
+    const q = historySearchQuery.trim().toLowerCase();
+    const filtered = depositHistory.filter((d) => {
+      if (q) {
+        const matchAgent = d.agentName?.toLowerCase().includes(q);
+        const matchBank = d.bankAccount?.toLowerCase().includes(q);
+        const matchRef = (d.referenceNumber || '').toLowerCase().includes(q);
+        const matchNotes = (d.notes || '').toLowerCase().includes(q);
+        if (!matchAgent && !matchBank && !matchRef && !matchNotes) return false;
+      }
+      if (historyDateFrom && d.depositDate < historyDateFrom) return false;
+      if (historyDateTo && d.depositDate > historyDateTo) return false;
+      return true;
+    });
+    const totalPages = Math.max(1, Math.ceil(filtered.length / HISTORY_PAGE_SIZE));
+    if (historyPage > totalPages) setHistoryPage(1);
+  }, [depositHistory, historySearchQuery, historyDateFrom, historyDateTo, historyPage]);
 
   // Initial Fetch & Realtime
   useEffect(() => {
@@ -204,9 +264,18 @@ export default function LeaderCashDepositsPage() {
       }, 300);
     };
 
-    // Subscribe to cash_deposits changes
-    const depositsChannel = supabase
-      .channel(`cash-deposits-changes-${user.id}`)
+    // Subscribe to remittances_log and cash_deposits (both affect the cash deposits view)
+    const remittancesChannel = supabase
+      .channel(`remittances-cash-deposits-${user.id}`)
+      .on(
+        'postgres_changes' as any,
+        {
+          event: '*',
+          schema: 'public',
+          table: 'remittances_log',
+        },
+        () => debouncedRefresh()
+      )
       .on(
         'postgres_changes' as any,
         {
@@ -214,22 +283,19 @@ export default function LeaderCashDepositsPage() {
           schema: 'public',
           table: 'cash_deposits',
         },
-        (payload) => {
-          console.log('🔔 Cash deposit change detected:', payload.eventType, payload);
-          debouncedRefresh();
-        }
+        () => debouncedRefresh()
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('✅ Real-time subscription active for cash_deposits');
+          console.log('✅ Real-time subscription active for remittances + cash_deposits');
         } else if (status === 'CHANNEL_ERROR') {
-          console.error('❌ Real-time subscription error for cash_deposits');
+          console.error('❌ Real-time subscription error');
         }
       });
 
     return () => {
       if (updateTimer) clearTimeout(updateTimer);
-      supabase.removeChannel(depositsChannel);
+      supabase.removeChannel(remittancesChannel);
     };
   }, [user?.id, user?.role]);
 
@@ -318,63 +384,111 @@ export default function LeaderCashDepositsPage() {
 
   const fetchDepositHistory = async () => {
     try {
-      let query = supabase
-        .from('cash_deposits')
-        .select(`
-          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, deposit_type, notes,
-          agent:profiles!cash_deposits_agent_id_fkey(full_name)
-        `)
-        .order('created_at', { ascending: false });
+      // 1. Fetch from remittances_log (source of truth) - only remittances with cash/cheque orders go to cash deposits
+      // Display all cash deposits starting from Feb 16, 2026
+      let remittanceQuery = supabase
+        .from('remittances_log')
+        .select('id, company_id, agent_id, leader_id, remittance_date, order_ids')
+        .gte('remittance_date', V1_IMPORT_ORDER_DATE_CUTOFF)
+        .order('remittance_date', { ascending: false });
 
-      // Apply Team Filtering for Managers and Team Leaders
+      if (['finance', 'admin', 'super_admin'].includes(user?.role || '') && user?.company_id) {
+        remittanceQuery = remittanceQuery.eq('company_id', user.company_id);
+      }
+
       if (['manager', 'team_leader'].includes(user?.role || '')) {
         if (!user?.company_id) return;
-
-        // Fetch Team Hierarchy
         const { data: relationships, error: relError } = await supabase
           .from('leader_teams')
           .select('agent_id, leader_id')
           .eq('company_id', user.company_id);
-
         if (relError) throw relError;
 
-        // Determine Team Members (Direct + Indirect for Managers)
-        const directReports = (relationships || [])
-          .filter(r => r.leader_id === user?.id)
-          .map(r => r.agent_id);
-
+        const directReports = (relationships || []).filter(r => r.leader_id === user?.id).map(r => r.agent_id);
         let allTeamIds = directReports;
-
         if (user?.role === 'manager') {
-          const secondLevelReports = (relationships || [])
-            .filter(r => directReports.includes(r.leader_id))
-            .map(r => r.agent_id);
-          allTeamIds = Array.from(new Set([...directReports, ...secondLevelReports]));
+          const secondLevel = (relationships || []).filter(r => directReports.includes(r.leader_id)).map(r => r.agent_id);
+          allTeamIds = Array.from(new Set([...directReports, ...secondLevel]));
         }
-
-        // Include team leader's own deposits (when they create orders themselves)
-        // For team_leader role, add their own ID to the list
         if (user?.role === 'team_leader' && user?.id) {
           allTeamIds = Array.from(new Set([...allTeamIds, user.id]));
         }
-
-        // If no team members, return empty or handle gracefully
-        if (allTeamIds.length > 0) {
-          query = query.in('agent_id', allTeamIds);
-        } else {
-          // If no team, filter to empty list (impossible ID)
-          // Or just let it return their own if they have any, but 'agent_id' usually refers to the depositor.
-          // A safe way to return nothing is .in('id', []) but clearer is to just set empty.
+        if (allTeamIds.length === 0) {
           setPendingDeposits([]);
           setDepositHistory([]);
           return;
         }
+        remittanceQuery = remittanceQuery.in('agent_id', allTeamIds);
       }
 
-      const { data, error } = await query;
+      const { data: remittanceRows, error: remErr } = await remittanceQuery;
+      if (remErr) throw remErr;
+
+      const allOrderIds = Array.from(new Set((remittanceRows || []).flatMap((r: any) => r.order_ids || [])));
+      if (allOrderIds.length === 0) {
+        setPendingDeposits([]);
+        setDepositHistory([]);
+        setPendingDailyGroups([]);
+        return;
+      }
+
+      // 2. Fetch orders and filter to only those with cash or cheque (exclude bank transfer only)
+      const { data: ordersData, error: ordErr } = await supabase
+        .from('client_orders')
+        .select('id, deposit_id, order_date, total_amount, payment_method, payment_mode, payment_splits')
+        .in('id', allOrderIds);
+
+      if (ordErr) throw ordErr;
+
+      const orderIdsWithCashOrCheque: string[] = [];
+      (ordersData || []).forEach((order: any) => {
+        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+        const paymentMethod = order.payment_method as string | null;
+        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+        let cashPortion = 0;
+        let chequePortion = 0;
+        if (paymentMode === 'SPLIT') {
+          splits.forEach((s: any) => {
+            if (s.method === 'CASH') cashPortion += s.amount || 0;
+            else if (s.method === 'CHEQUE') chequePortion += s.amount || 0;
+            // Bank transfer and GCash are excluded - they do not go into cash deposits
+          });
+        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+          const amt = order.total_amount || 0;
+          if (paymentMethod === 'CASH') cashPortion = amt;
+          else chequePortion = amt;
+        }
+        if (cashPortion > 0 || chequePortion > 0) {
+          orderIdsWithCashOrCheque.push(order.id);
+        }
+      });
+
+      const depositIdsFromRemittances = Array.from(new Set(
+        (ordersData || [])
+          .filter((o: any) => orderIdsWithCashOrCheque.includes(o.id) && o.deposit_id)
+          .map((o: any) => o.deposit_id as string)
+      ));
+
+      if (depositIdsFromRemittances.length === 0) {
+        setPendingDeposits([]);
+        setDepositHistory([]);
+        setPendingDailyGroups([]);
+        return;
+      }
+
+      // 3. Fetch cash_deposits for those deposit_ids (slip, bank account, status, etc.)
+      const { data: depositsData, error } = await supabase
+        .from('cash_deposits')
+        .select(`
+          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, deposit_type, notes, created_at,
+          agent:profiles!cash_deposits_agent_id_fkey(full_name)
+        `)
+        .in('id', depositIdsFromRemittances)
+        .order('created_at', { ascending: false });
+
       if (error) throw error;
 
-      const deposits = (data || []).map((d: any) => ({
+      const deposits = (depositsData || []).map((d: any) => ({
         id: d.id,
         depositDate: d.deposit_date,
         amount: d.amount,
@@ -386,6 +500,7 @@ export default function LeaderCashDepositsPage() {
         depositSlipUrl: d.deposit_slip_url,
         depositType: d.deposit_type as 'CASH' | 'CHEQUE' | null,
         notes: d.notes || null,
+        createdAt: d.created_at || undefined,
       }));
 
       // Pre-load summaries for all deposits so we can show correct cash/cheque-only amounts
@@ -461,9 +576,8 @@ export default function LeaderCashDepositsPage() {
 
           if (ordersError) throw ordersError;
 
-          const nonV1Orders = (ordersData || []).filter(
-            (o: any) => o.order_date && o.order_date >= V1_IMPORT_ORDER_DATE_CUTOFF
-          );
+          // Use all linked orders for day details count (include v1 so we show real agent/order numbers)
+          const ordersForDayDetails = ordersData || [];
 
           // Map each deposit to its date key
           const depositIdToDateKey: Record<string, string> = {};
@@ -475,7 +589,7 @@ export default function LeaderCashDepositsPage() {
 
           const dayAgentMaps: Record<string, Record<string, DailyAgentGroup>> = {};
 
-          nonV1Orders.forEach((order: any) => {
+          ordersForDayDetails.forEach((order: any) => {
             const depositId = order.deposit_id as string | null;
             if (!depositId) return;
 
@@ -521,10 +635,7 @@ export default function LeaderCashDepositsPage() {
             }
 
             const remittedAmount = cashPortion + chequePortion;
-            if (remittedAmount <= 0) {
-              // Skip pure non-cash orders for this view
-              return;
-            }
+            if (remittedAmount <= 0) return; // Exclude bank-transfer-only orders from cash deposits view
 
             const totalQuantity = (order.items || []).reduce(
               (sum: number, item: any) => sum + (item.quantity || 0),
@@ -949,36 +1060,104 @@ export default function LeaderCashDepositsPage() {
   };
 
   const handleViewDepositProof = (dateKey: string) => {
-    const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
-    if (!group) return;
-
-    // 1. Prefer a verified deposit for this date (historical, already confirmed)
-    const verifiedForDay = depositHistory.filter(
-      d => format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey
-    );
-    let target = verifiedForDay[0];
-
-    // 2. If none are verified yet, fall back to a pending_verification deposit
-    //    that already has a recorded slip so the leader can review what was submitted.
-    if (!target) {
-      const pendingWithSlip = pendingDeposits.filter(
+    // Collect all recorded deposits for this day (pending + verified), sorted oldest first
+    const allForDay = [
+      ...pendingDeposits.filter(
         d =>
           format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey &&
-          !!d.depositSlipUrl
-      );
-      target = pendingWithSlip[0];
-    }
+          checkDepositRecorded(d.id, pendingDeposits)
+      ),
+      ...depositHistory.filter(
+        d => format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey
+      ),
+    ].sort((a, b) => {
+      const ta = a.createdAt ?? a.depositDate;
+      const tb = b.createdAt ?? b.depositDate;
+      return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
 
-    if (!target) {
+    if (!allForDay.length) {
       toast({
         title: 'No Deposit Found',
-        description: 'No deposit with a recorded slip was found for this date.',
+        description: 'No deposit with recorded details was found for this date.',
         variant: 'destructive',
       });
       return;
     }
 
-    openViewDeposit(target);
+    // Open the day trail modal with all deposits
+    setDayTrailDeposits(allForDay);
+    setDayTrailOrders({});
+    setViewDayTrailOpen(true);
+
+    // Fetch orders for all those deposits in one go, grouped by deposit_id
+    (async () => {
+      try {
+        setLoadingDayTrailOrders(true);
+        const allIds = allForDay.map(d => d.id);
+        const { data, error } = await supabase
+          .from('client_orders')
+          .select(`
+            id, order_number, total_amount, payment_method, payment_mode, payment_splits, deposit_id, clients(name)
+          `)
+          .in('deposit_id', allIds);
+
+        if (error) throw error;
+
+        const grouped: Record<string, DepositOrderBreakdown[]> = {};
+        allIds.forEach(id => { grouped[id] = []; });
+
+        (data || []).forEach((order: any) => {
+          const depositId = order.deposit_id as string;
+          if (!depositId || !grouped[depositId]) return;
+
+          const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+          const paymentMethod = order.payment_method as string | null;
+          const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+          let cashPortion = 0;
+          let chequePortion = 0;
+          let nonCashPortion = 0;
+          const nonCashLabels: string[] = [];
+
+          if (paymentMode === 'SPLIT') {
+            splits.forEach((s: any) => {
+              const amt = s.amount || 0;
+              if (s.method === 'CASH') cashPortion += amt;
+              else if (s.method === 'CHEQUE') chequePortion += amt;
+              else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+                nonCashPortion += amt;
+                const lbl = s.method === 'BANK_TRANSFER' ? (s.bank || 'Bank Transfer') : 'GCash';
+                if (!nonCashLabels.includes(lbl)) nonCashLabels.push(lbl);
+              }
+            });
+          } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+            const amt = order.total_amount || 0;
+            if (paymentMethod === 'CASH') cashPortion = amt;
+            else chequePortion = amt;
+          }
+
+          const remittedAmount = cashPortion + chequePortion;
+          grouped[depositId].push({
+            orderId: order.id,
+            orderNumber: order.order_number,
+            clientName: order.clients?.name || 'Unknown',
+            remittedAmount,
+            fullOrderTotal: order.total_amount || remittedAmount,
+            cashPortion,
+            chequePortion,
+            nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
+            nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
+          });
+        });
+
+        setDayTrailOrders(grouped);
+      } catch (err) {
+        console.error('Error fetching day trail orders', err);
+      } finally {
+        setLoadingDayTrailOrders(false);
+      }
+    })();
   };
 
   const handleToggleDay = (group: DailyDepositGroup) => {
@@ -1011,13 +1190,12 @@ export default function LeaderCashDepositsPage() {
 
         if (error) throw error;
 
-        const nonV1Orders = (data || []).filter(
-          (o: any) => o.order_date && o.order_date >= V1_IMPORT_ORDER_DATE_CUTOFF
-        );
+        // Use all linked orders for count (include v1 so we show real agent/order numbers)
+        const ordersForDayDetails = data || [];
 
         const agentMap: Record<string, DailyAgentGroup> = {};
 
-        nonV1Orders.forEach((order: any) => {
+        ordersForDayDetails.forEach((order: any) => {
           const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
           const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
           const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
@@ -1057,10 +1235,7 @@ export default function LeaderCashDepositsPage() {
           }
 
           const remittedAmount = cashPortion + chequePortion;
-          if (remittedAmount <= 0) {
-            // Skip pure non-cash orders for this view
-            return;
-          }
+          if (remittedAmount <= 0) return; // Exclude bank-transfer-only orders from cash deposits view
 
           const totalQuantity = (order.items || []).reduce((sum: number, item: any) => sum + (item.quantity || 0), 0);
           const agentId = order.agent_id as string;
@@ -1558,7 +1733,12 @@ export default function LeaderCashDepositsPage() {
                                           </TableCell>
                                           <TableCell className="text-right">
                                             <div className="flex flex-col items-end gap-1">
-                                              <span className="font-semibold">₱{order.remittedAmount.toLocaleString()}</span>
+                                              <span className="font-semibold">
+                                                ₱{(order.remittedAmount > 0 ? order.remittedAmount : order.fullOrderTotal).toLocaleString()}
+                                                {order.remittedAmount === 0 && order.fullOrderTotal > 0 && (
+                                                  <span className="text-muted-foreground font-normal text-xs ml-1">(non-cash)</span>
+                                                )}
+                                              </span>
                                               {order.depositRecorded && (
                                                 <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
                                                   Deposit Recorded
@@ -1633,6 +1813,11 @@ export default function LeaderCashDepositsPage() {
                                   <p className="text-xs text-blue-500">Amount</p>
                                   <p className="font-bold text-blue-700">
                                     ₱{recordedAmount.toLocaleString()}
+                                    {recordedAmount === 0 && recordedOrders.some(o => o.fullOrderTotal > 0) && (
+                                      <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                                        (non-cash orders)
+                                      </span>
+                                    )}
                                   </p>
                                 </div>
                               </div>
@@ -1684,9 +1869,73 @@ export default function LeaderCashDepositsPage() {
             <p className="text-muted-foreground text-xs md:text-sm">No verified deposits yet.</p>
           ) : (
             <>
+              {/* Search, date filter, pagination */}
+              <div className="flex flex-col gap-3 mb-4">
+                <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search by agent, bank, ref #, or notes..."
+                      value={historySearchQuery}
+                      onChange={(e) => { setHistorySearchQuery(e.target.value); setHistoryPage(1); }}
+                      className="pl-8 h-9"
+                    />
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-xs text-muted-foreground whitespace-nowrap">From</Label>
+                      <Input
+                        type="date"
+                        value={historyDateFrom}
+                        onChange={(e) => { setHistoryDateFrom(e.target.value); setHistoryPage(1); }}
+                        className="h-9 w-[130px]"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-xs text-muted-foreground whitespace-nowrap">To</Label>
+                      <Input
+                        type="date"
+                        value={historyDateTo}
+                        onChange={(e) => { setHistoryDateTo(e.target.value); setHistoryPage(1); }}
+                        className="h-9 w-[130px]"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Showing {filteredHistoryDeposits.length} of {filteredHistoryTotal}</span>
+                  {historyTotalPages > 1 && (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2"
+                        onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                        disabled={historyPage <= 1}
+                      >
+                        <ChevronLeft className="h-3 w-3" />
+                      </Button>
+                      <span className="px-2">Page {historyPage} of {historyTotalPages}</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2"
+                        onClick={() => setHistoryPage((p) => Math.min(historyTotalPages, p + 1))}
+                        disabled={historyPage >= historyTotalPages}
+                      >
+                        <ChevronRight className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {filteredHistoryTotal === 0 ? (
+                <p className="text-muted-foreground text-xs md:text-sm">No deposits match your search or date filter.</p>
+              ) : (
+              <>
               {/* Mobile Card View */}
               <div className="md:hidden space-y-3">
-                {depositHistory.map((deposit) => (
+                {filteredHistoryDeposits.map((deposit) => (
                   <div key={deposit.id} className="border rounded-lg p-3 space-y-2">
                     <div className="flex justify-between items-start">
                       <div>
@@ -1753,7 +2002,7 @@ export default function LeaderCashDepositsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {depositHistory.map((deposit) => {
+                {filteredHistoryDeposits.map((deposit) => {
                   const displayType = getEffectiveDepositType(deposit);
                   const displayAmount = getEffectiveDepositAmount(deposit);
 
@@ -1797,6 +2046,8 @@ export default function LeaderCashDepositsPage() {
               </TableBody>
             </Table>
               </div>
+              </>
+              )}
             </>
           )}
         </CardContent>
@@ -2673,6 +2924,260 @@ export default function LeaderCashDepositsPage() {
           </DialogContent>
         </Dialog>
       )}
+      {/* Day Deposits Trail Modal */}
+      {isMobile ? (
+        <Sheet open={viewDayTrailOpen} onOpenChange={setViewDayTrailOpen}>
+          <SheetContent side="bottom" className="h-[90vh] p-0">
+            <ScrollArea className="h-full">
+              <div className="p-5 space-y-4">
+                <SheetHeader>
+                  <SheetTitle className="text-base flex items-center gap-2">
+                    <Receipt className="h-4 w-4" />
+                    Deposit Trail
+                  </SheetTitle>
+                  <SheetDescription className="text-xs">All deposits recorded for this day</SheetDescription>
+                </SheetHeader>
+
+                {loadingDayTrailOrders && (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+
+                {!loadingDayTrailOrders && dayTrailDeposits.map((deposit, idx) => {
+                  const orders = dayTrailOrders[deposit.id] || [];
+                  const totalAmt = orders.reduce((s, o) => s + o.remittedAmount, 0);
+                  const displayType = getEffectiveDepositType(deposit);
+                  return (
+                    <div key={deposit.id} className="border rounded-lg overflow-hidden">
+                      {/* Deposit header */}
+                      <div className="bg-muted/50 px-3 py-2 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-muted-foreground">Deposit #{idx + 1}</span>
+                          <Badge variant="outline" className={`${getDepositTypeBadgeClass(displayType)} h-5 text-[10px]`}>
+                            {displayType === 'CHEQUE' ? <CreditCard className="h-2 w-2 mr-1" /> : <BanknoteIcon className="h-2 w-2 mr-1" />}
+                            {displayType}
+                          </Badge>
+                          {deposit.status === 'verified' ? (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 h-5 text-[10px]">
+                              <CheckCircle2 className="h-2 w-2 mr-1" />Verified
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 h-5 text-[10px]">
+                              <AlertCircle className="h-2 w-2 mr-1" />Pending
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="text-sm font-bold">₱{totalAmt.toLocaleString()}</span>
+                      </div>
+
+                      <div className="p-3 space-y-2 text-xs">
+                        {/* Timestamp */}
+                        {deposit.createdAt && (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <Clock className="h-3 w-3 shrink-0" />
+                            <span>{format(new Date(deposit.createdAt), 'MMM dd, yyyy • h:mm a')}</span>
+                          </div>
+                        )}
+                        {/* Bank */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">Bank</span>
+                          <span className="font-medium truncate ml-2">{deposit.bankAccount}</span>
+                        </div>
+                        {/* Reference */}
+                        {deposit.referenceNumber && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Reference</span>
+                            <span className="font-mono text-[10px]">{deposit.referenceNumber}</span>
+                          </div>
+                        )}
+                        {/* Notes */}
+                        {deposit.notes && (
+                          <div className="flex items-start gap-2">
+                            <span className="text-muted-foreground shrink-0">Notes</span>
+                            <span className="text-right">{deposit.notes}</span>
+                          </div>
+                        )}
+
+                        {/* Orders */}
+                        {orders.length > 0 && (
+                          <div className="mt-1 border rounded-md overflow-hidden">
+                            <div className="bg-muted/30 px-2 py-1 text-[10px] font-semibold text-muted-foreground">
+                              Orders ({orders.length})
+                            </div>
+                            {orders.map(o => (
+                              <div key={o.orderId} className="flex items-center justify-between px-2 py-1 border-t text-[11px]">
+                                <span className="font-mono text-muted-foreground">{o.orderNumber}</span>
+                                <span className="font-semibold">₱{o.remittedAmount.toLocaleString()}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Deposit Slip */}
+                        {deposit.depositSlipUrl && (
+                          <div className="mt-1 border rounded-md overflow-hidden">
+                            <img
+                              src={deposit.depositSlipUrl}
+                              alt="Deposit Slip"
+                              className="w-full h-auto object-contain max-h-[200px]"
+                            />
+                            <div className="text-center py-1">
+                              <a href={deposit.depositSlipUrl} target="_blank" rel="noopener noreferrer"
+                                className="text-[10px] text-blue-600 hover:underline">
+                                View Full Image
+                              </a>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="sticky bottom-0 bg-background pt-3 pb-2 border-t">
+                  <Button variant="outline" onClick={() => setViewDayTrailOpen(false)} className="w-full h-10 text-xs">
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Dialog open={viewDayTrailOpen} onOpenChange={setViewDayTrailOpen}>
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Receipt className="h-4 w-4" />
+                Deposit Trail
+              </DialogTitle>
+              <DialogDescription>All deposits recorded for this day, in order of creation.</DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              {loadingDayTrailOrders && (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              )}
+
+              {!loadingDayTrailOrders && dayTrailDeposits.map((deposit, idx) => {
+                const orders = dayTrailOrders[deposit.id] || [];
+                const totalAmt = orders.reduce((s, o) => s + o.remittedAmount, 0);
+                const displayType = getEffectiveDepositType(deposit);
+                return (
+                  <div key={deposit.id} className="border rounded-lg overflow-hidden">
+                    {/* Deposit header bar */}
+                    <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-muted-foreground">Deposit #{idx + 1}</span>
+                        <Badge variant="outline" className={`${getDepositTypeBadgeClass(displayType)} text-xs`}>
+                          {displayType === 'CHEQUE' ? <CreditCard className="h-3 w-3 mr-1" /> : <BanknoteIcon className="h-3 w-3 mr-1" />}
+                          {displayType}
+                        </Badge>
+                        {deposit.status === 'verified' ? (
+                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
+                            <CheckCircle2 className="h-3 w-3 mr-1" />Verified
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+                            <AlertCircle className="h-3 w-3 mr-1" />Pending
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-base font-bold">₱{totalAmt.toLocaleString()}</span>
+                    </div>
+
+                    <div className="p-4 space-y-3 text-sm">
+                      {/* Timestamp */}
+                      {deposit.createdAt && (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Clock className="h-3.5 w-3.5 shrink-0" />
+                          <span className="text-xs">{format(new Date(deposit.createdAt), 'MMMM dd, yyyy • h:mm a')}</span>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-3 gap-1 text-sm">
+                        <span className="text-muted-foreground">Bank</span>
+                        <span className="col-span-2 font-medium truncate">{deposit.bankAccount}</span>
+                      </div>
+                      {deposit.referenceNumber && (
+                        <div className="grid grid-cols-3 gap-1 text-sm">
+                          <span className="text-muted-foreground">Reference</span>
+                          <span className="col-span-2 font-mono text-xs">{deposit.referenceNumber}</span>
+                        </div>
+                      )}
+                      {deposit.notes && (
+                        <div className="grid grid-cols-3 gap-1 text-sm">
+                          <span className="text-muted-foreground">Notes</span>
+                          <span className="col-span-2">{deposit.notes}</span>
+                        </div>
+                      )}
+
+                      {/* Orders */}
+                      {orders.length > 0 && (
+                        <div className="border rounded-md overflow-hidden">
+                          <div className="bg-muted/30 px-3 py-1.5 text-xs font-semibold text-muted-foreground">
+                            Orders ({orders.length})
+                          </div>
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/10">
+                                <TableHead className="text-xs py-1.5">Order #</TableHead>
+                                <TableHead className="text-xs py-1.5">Client</TableHead>
+                                <TableHead className="text-right text-xs py-1.5">Amount</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {orders.map(o => (
+                                <TableRow key={o.orderId}>
+                                  <TableCell className="font-mono text-xs py-1.5">{o.orderNumber}</TableCell>
+                                  <TableCell className="text-xs py-1.5">{o.clientName}</TableCell>
+                                  <TableCell className="text-right font-medium text-xs py-1.5">₱{o.remittedAmount.toLocaleString()}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      )}
+
+                      {/* Deposit Slip */}
+                      {deposit.depositSlipUrl && (
+                        <div className="border rounded-md overflow-hidden">
+                          <div className="bg-muted/30 px-3 py-1.5 text-xs font-semibold text-muted-foreground">
+                            Deposit Slip
+                          </div>
+                          <div className="flex justify-center bg-gray-50 p-2">
+                            <img
+                              src={deposit.depositSlipUrl}
+                              alt="Deposit Slip"
+                              className="w-full h-auto object-contain max-h-[220px]"
+                            />
+                          </div>
+                          <div className="text-center py-1.5">
+                            <a href={deposit.depositSlipUrl} target="_blank" rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline">
+                              View Full Image
+                            </a>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setViewDayTrailOpen(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
       {/* Order Details Modal */}
       <Dialog open={orderDialogOpen} onOpenChange={setOrderDialogOpen}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
