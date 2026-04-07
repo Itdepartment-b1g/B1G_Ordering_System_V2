@@ -2295,7 +2295,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {isMobileSales && event.taskData.status !== 'completed' && (
+                                {/* {isMobileSales && event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2304,7 +2304,7 @@ export default function CalendarPage() {
                                   >
                                     <CheckCircle className="h-2 w-2" />
                                   </Button>
-                                )}
+                                )} */}
                                 {event.taskData.status === 'completed' && (
                                   <div className="text-xs text-green-600 font-medium">
                                     ✓ Done
@@ -2363,7 +2363,7 @@ export default function CalendarPage() {
                             <div className="text-xs opacity-75">{event.startTime}</div>
                             {event.type === 'task' && event.taskData && (
                               <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                {isMobileSales && event.taskData.status !== 'completed' && (
+                                {/* {isMobileSales && event.taskData.status !== 'completed' && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2372,7 +2372,7 @@ export default function CalendarPage() {
                                   >
                                     <CheckCircle className="h-2 w-2" />
                                   </Button>
-                                )}
+                                )} */}
                                 {event.taskData.status === 'completed' && (
                                   <div className="text-xs text-green-600 font-medium">
                                     ✓ Done
@@ -2518,7 +2518,7 @@ export default function CalendarPage() {
                                   <div className="text-xs opacity-75">{event.startTime} - {event.endTime}</div>
                                   {event.type === 'task' && event.taskData && (
                                     <div className="flex space-x-1" onClick={(e) => e.stopPropagation()}>
-                                      {isMobileSales && event.taskData.status !== 'completed' && (
+                                      {/* {isMobileSales && event.taskData.status !== 'completed' && (
                                         <Button
                                           variant="outline"
                                           size="sm"
@@ -2527,7 +2527,7 @@ export default function CalendarPage() {
                                         >
                                           <CheckCircle className="h-2 w-2" />
                                         </Button>
-                                      )}
+                                      )} */}
                                     </div>
                                   )}
                                 </div>
@@ -3179,7 +3179,7 @@ export default function CalendarPage() {
                           )}
 
                         {/* Complete Button - only for mobile sales (assignee); team leaders/managers cannot mark tasks completed */}
-                        {isMobileSales && selectedEvent.type === 'task' && selectedEvent.taskData?.status !== 'completed' && (
+                        {/* {isMobileSales && selectedEvent.type === 'task' && selectedEvent.taskData?.status !== 'completed' && (
                           <Button
                             variant={selectedEvent.taskData?.client_id ? "outline" : "default"} // Demote if "Record Visit" is primary
                             className={`w-full ${!selectedEvent.taskData?.client_id ? 'bg-blue-600 hover:bg-blue-700 text-white' : ''}`}
@@ -3188,7 +3188,7 @@ export default function CalendarPage() {
                             <CheckCircle className="h-4 w-4 mr-2" />
                             Mark as Completed
                           </Button>
-                        )}
+                        )} */}
 
                         {/* Secondary Actions */}
                         <div className="grid grid-cols-2 gap-2 mt-2">
