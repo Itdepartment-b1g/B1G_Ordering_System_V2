@@ -325,19 +325,6 @@ export default function SuperAdminDashboardPage() {
             </p>
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Value (Pending + Approved)</CardTitle>
-            <DollarSign className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">₱{stats.totalCombinedRevenue.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">
-              For year {selectedYear}
-            </p>
-          </CardContent>
-        </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
@@ -347,6 +334,18 @@ export default function SuperAdminDashboardPage() {
             <div className="text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
               From approved orders
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Value (Pending + Approved)</CardTitle>
+            <DollarSign className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">₱{stats.totalCombinedRevenue.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">
+              For year {selectedYear}
             </p>
           </CardContent>
         </Card>
@@ -384,11 +383,37 @@ export default function SuperAdminDashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip 
-                    formatter={(value: number, name: string) => [
-                      `₱${value.toLocaleString()}`, 
-                      name === 'approvedRevenue' ? 'Approved' : 'Pending'
-                    ]} 
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload || payload.length === 0) return null;
+                      const approved = payload.find(p => p.dataKey === 'approvedRevenue')?.value as number || 0;
+                      const pending = payload.find(p => p.dataKey === 'pendingRevenue')?.value as number || 0;
+                      const total = approved + pending;
+                      return (
+                        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg">
+                          <p className="font-semibold text-sm mb-2">{label}</p>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full bg-blue-500"></span>
+                              <span className="text-gray-600 dark:text-gray-400">Approved:</span>
+                              <span className="font-medium">₱{approved.toLocaleString()}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full bg-orange-500"></span>
+                              <span className="text-gray-600 dark:text-gray-400">Pending:</span>
+                              <span className="font-medium">₱{pending.toLocaleString()}</span>
+                            </div>
+                            <div className="border-t border-gray-200 dark:border-gray-700 pt-1 mt-2">
+                              <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full bg-green-500"></span>
+                                <span className="text-gray-700 dark:text-gray-300 font-semibold">Total:</span>
+                                <span className="font-bold text-green-600 dark:text-green-400">₱{total.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }}
                   />
                   <Legend 
                     wrapperStyle={{ fontSize: '12px' }}
