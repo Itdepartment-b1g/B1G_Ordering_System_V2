@@ -147,6 +147,7 @@ export default function LeaderCashDepositsPage() {
   const [filterToDate, setFilterToDate] = useState('');
   const [expandedDays, setExpandedDays] = useState<string[]>([]);
   const [expandedAgents, setExpandedAgents] = useState<string[]>([]);
+  const [selectedAgents, setSelectedAgents] = useState<Record<string, string[]>>({}); // dateKey -> agentIds[]
 
   // Verified Deposit History filters
   const [historySearchQuery, setHistorySearchQuery] = useState('');
@@ -202,6 +203,78 @@ export default function LeaderCashDepositsPage() {
   }, []);
 
   const isFinanceOnly = user?.role === 'finance';
+
+  // Agent selection helpers
+  const toggleAgentSelection = (dateKey: string, agentId: string) => {
+    setSelectedAgents(prev => {
+      const currentSelected = prev[dateKey] || [];
+      const isSelected = currentSelected.includes(agentId);
+      
+      if (isSelected) {
+        return {
+          ...prev,
+          [dateKey]: currentSelected.filter(id => id !== agentId)
+        };
+      } else {
+        return {
+          ...prev,
+          [dateKey]: [...currentSelected, agentId]
+        };
+      }
+    });
+  };
+
+  const toggleAllAgentsForDay = (dateKey: string, agentIds: string[]) => {
+    setSelectedAgents(prev => {
+      const currentSelected = prev[dateKey] || [];
+      const allSelected = agentIds.every(id => currentSelected.includes(id));
+      
+      if (allSelected) {
+        return {
+          ...prev,
+          [dateKey]: []
+        };
+      } else {
+        return {
+          ...prev,
+          [dateKey]: agentIds
+        };
+      }
+    });
+  };
+
+  const getSelectedAgentsForDay = (dateKey: string): string[] => {
+    return selectedAgents[dateKey] || [];
+  };
+
+  const calculateSelectedTotals = (day: any, dateKey: string) => {
+    const selectedAgentIds = getSelectedAgentsForDay(dateKey);
+    
+    if (selectedAgentIds.length === 0) {
+      // No selection = show all awaiting orders
+      const allOrders = day.agents.flatMap((a: any) => a.orders);
+      const awaiting = allOrders.filter((o: any) => !o.depositRecorded);
+      return {
+        orders: awaiting.length,
+        quantity: awaiting.reduce((s: number, o: any) => s + o.totalQuantity, 0),
+        amount: awaiting.reduce((s: number, o: any) => s + o.remittedAmount, 0),
+        selectedCount: 0
+      };
+    }
+    
+    // Calculate only for selected agents
+    const selectedOrders = day.agents
+      .filter((a: any) => selectedAgentIds.includes(a.agentId))
+      .flatMap((a: any) => a.orders)
+      .filter((o: any) => !o.depositRecorded);
+    
+    return {
+      orders: selectedOrders.length,
+      quantity: selectedOrders.reduce((s: number, o: any) => s + o.totalQuantity, 0),
+      amount: selectedOrders.reduce((s: number, o: any) => s + o.remittedAmount, 0),
+      selectedCount: selectedAgentIds.length
+    };
+  };
 
   // Verified Deposit History: filtered + paginated
   const { filteredHistoryDeposits, historyTotalPages, filteredHistoryTotal } = useMemo(() => {
@@ -1032,18 +1105,36 @@ export default function LeaderCashDepositsPage() {
     if (isFinanceOnly) return;
     const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
     if (!group) return;
+    
+    // Get selected agents for this day
+    const selectedAgentIds = getSelectedAgentsForDay(dateKey);
+    const dayDetails = dayDetailsByDate[dateKey];
+    
     // Only include deposits that haven't had real bank details recorded yet (exclude already-recorded ones)
-    const depositsForDay = pendingDeposits.filter(
+    let depositsForDay = pendingDeposits.filter(
       d => group.depositIds.includes(d.id) && !checkDepositRecorded(d.id, pendingDeposits)
     );
+    
+    // If agents are selected, filter deposits to only those belonging to selected agents
+    if (selectedAgentIds.length > 0 && dayDetails) {
+      const selectedDepositIds = dayDetails.agents
+        .filter((a: any) => selectedAgentIds.includes(a.agentId))
+        .flatMap((a: any) => a.orders.map((o: any) => o.depositId));
+      
+      depositsForDay = depositsForDay.filter(d => selectedDepositIds.includes(d.id));
+    }
+    
     if (!depositsForDay.length) {
       toast({
         title: 'No Deposit Found',
-        description: 'There is no pending cash/cheque deposit for this day.',
+        description: selectedAgentIds.length > 0 
+          ? 'No pending deposits found for the selected agents.'
+          : 'There is no pending cash/cheque deposit for this day.',
         variant: 'destructive',
       });
       return;
     }
+    
     // Use the first deposit as the "base" for agent/date info, but aggregate all for amount/orders
     const base = depositsForDay[0];
     setSelectedPendingDeposit(base);
@@ -1664,13 +1755,16 @@ export default function LeaderCashDepositsPage() {
                       {/* Agents List */}
                       {day.agents.map((agent) => {
                         const agentKey = `${day.date}-${agent.agentId}`;
+                        const isSelected = getSelectedAgentsForDay(day.date).includes(agent.agentId);
+                        const hasPendingOrders = agent.orders.some((o: any) => !o.depositRecorded);
+                        
                         return (
                           <Collapsible
                             key={agentKey}
                             open={expandedAgents.includes(agentKey)}
                             onOpenChange={() => toggleAgent(agentKey)}
                           >
-                            <div className="border rounded-lg">
+                            <div className={`border rounded-lg ${isSelected ? 'border-green-400 bg-green-50/30' : ''}`}>
                               {/* Agent Header */}
                               <CollapsibleTrigger asChild>
                                 <div className="flex items-center justify-between p-3 hover:bg-muted/30 cursor-pointer transition-colors">
@@ -1680,6 +1774,19 @@ export default function LeaderCashDepositsPage() {
                                     ) : (
                                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
                                     )}
+                                    
+                                    {/* Checkbox - only show if agent has pending deposits and day is pending */}
+                                    {hasPendingOrders && day.depositStatus === 'pending' && !isFinanceOnly && (
+                                      <div onClick={(e) => e.stopPropagation()}>
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          onChange={() => toggleAgentSelection(day.date, agent.agentId)}
+                                          className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                                        />
+                                      </div>
+                                    )}
+                                    
                                     <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
                                       <User className="h-4 w-4 text-primary" />
                                     </div>
@@ -1687,6 +1794,9 @@ export default function LeaderCashDepositsPage() {
                                       <p className="font-medium">{agent.agentName}</p>
                                       <p className="text-xs text-muted-foreground">
                                         {agent.totalOrders} order(s)
+                                        {isSelected && (
+                                          <span className="ml-1 text-green-600 font-medium">• Selected</span>
+                                        )}
                                       </p>
                                     </div>
                                   </div>
@@ -1772,28 +1882,44 @@ export default function LeaderCashDepositsPage() {
                       {/* Day Summary & Actions */}
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-4 border-t">
                         <div className="flex-1 space-y-2">
-                          {/* Awaiting Deposit row */}
-                          {awaitingOrders.length > 0 && (
-                            <div className="bg-muted/50 rounded-lg p-3">
-                              <p className="text-xs font-medium text-muted-foreground mb-2">Awaiting Deposit</p>
-                              <div className="grid grid-cols-3 gap-4 text-center">
-                                <div>
-                                  <p className="text-xs text-muted-foreground">Orders</p>
-                                  <p className="font-bold">{awaitingOrderCount}</p>
-                                </div>
-                                <div>
-                                  <p className="text-xs text-muted-foreground">Quantity</p>
-                                  <p className="font-bold">{awaitingQty}</p>
-                                </div>
-                                <div>
-                                  <p className="text-xs text-muted-foreground">Amount</p>
-                                  <p className="font-bold text-green-600">
-                                    ₱{awaitingAmount.toLocaleString()}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          )}
+                          {/* Calculate selected totals */}
+                          {(() => {
+                            const totals = calculateSelectedTotals(day, day.date);
+                            const selectedAgentIds = getSelectedAgentsForDay(day.date);
+                            const hasSelection = selectedAgentIds.length > 0;
+                            
+                            return (
+                              <>
+                                {/* Awaiting Deposit row - shows based on selection */}
+                                {totals.orders > 0 && (
+                                  <div className={`rounded-lg p-3 ${hasSelection ? 'bg-green-50 border border-green-200' : 'bg-muted/50'}`}>
+                                    <p className="text-xs font-medium text-muted-foreground mb-2">
+                                      {hasSelection 
+                                        ? `Awaiting Deposit (${totals.selectedCount} agent${totals.selectedCount > 1 ? 's' : ''} selected)`
+                                        : 'Awaiting Deposit (All Agents)'
+                                      }
+                                    </p>
+                                    <div className="grid grid-cols-3 gap-4 text-center">
+                                      <div>
+                                        <p className="text-xs text-muted-foreground">Orders</p>
+                                        <p className="font-bold">{totals.orders}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground">Quantity</p>
+                                        <p className="font-bold">{totals.quantity}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground">Amount</p>
+                                        <p className={`font-bold ${hasSelection ? 'text-green-600' : ''}`}>
+                                          ₱{totals.amount.toLocaleString()}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                           {/* Deposit Recorded row */}
                           {recordedOrders.length > 0 && (
                             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
@@ -1825,15 +1951,55 @@ export default function LeaderCashDepositsPage() {
                           )}
                         </div>
 
-                        <div className="flex gap-2">
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          {/* Select All / Clear buttons */}
+                          {day.depositStatus === 'pending' && !isFinanceOnly && (
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => toggleAllAgentsForDay(
+                                  day.date, 
+                                  day.agents.filter((a: any) => a.orders.some((o: any) => !o.depositRecorded)).map((a: any) => a.agentId)
+                                )}
+                              >
+                                {(() => {
+                                  const pendingAgentIds = day.agents
+                                    .filter((a: any) => a.orders.some((o: any) => !o.depositRecorded))
+                                    .map((a: any) => a.agentId);
+                                  const allSelected = pendingAgentIds.length > 0 && pendingAgentIds.every((id: string) => getSelectedAgentsForDay(day.date).includes(id));
+                                  return allSelected ? 'Deselect All' : `Select All (${pendingAgentIds.length})`;
+                                })()}
+                              </Button>
+                              {getSelectedAgentsForDay(day.date).length > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setSelectedAgents(prev => ({ ...prev, [day.date]: [] }))}
+                                >
+                                  Clear
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                          
                           {day.depositStatus === 'pending' ? (
                             isFinanceOnly ? null : (
                               <Button
                                 className="gap-2 bg-green-600 hover:bg-green-700"
                                 onClick={() => handleOpenDayDeposit(day.date)}
+                                disabled={(() => {
+                                  const totals = calculateSelectedTotals(day, day.date);
+                                  return totals.orders === 0 && day.agents.some((a: any) => a.orders.some((o: any) => !o.depositRecorded));
+                                })()}
                               >
                                 <Upload className="h-4 w-4" />
                                 Record Deposit
+                                {getSelectedAgentsForDay(day.date).length > 0 && (
+                                  <span className="ml-1 text-xs bg-white/20 px-1.5 py-0.5 rounded">
+                                    {getSelectedAgentsForDay(day.date).length}
+                                  </span>
+                                )}
                               </Button>
                             )
                           ) : (

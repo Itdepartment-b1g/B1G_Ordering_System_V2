@@ -1,6 +1,6 @@
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Building2, Users, Package, DollarSign, TrendingUp, Activity } from 'lucide-react';
+import { Building2, Users, Package, DollarSign, TrendingUp, Activity, Clock } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
@@ -28,10 +28,16 @@ export default function SuperAdminDashboardPage() {
     totalAllocated: 0,
     totalAvailable: 0,
     totalRevenue: 0,
+    pendingRevenue: 0,
+    totalCombinedRevenue: 0,
   });
   const [recentUsers, setRecentUsers] = useState<Profile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [revenueData, setRevenueData] = useState<{ month: string; revenue: number }[]>([]);
+  const [revenueData, setRevenueData] = useState<{ 
+    month: string; 
+    approvedRevenue: number; 
+    pendingRevenue: number 
+  }[]>([]);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [availableYears, setAvailableYears] = useState<number[]>([]);
 
@@ -113,11 +119,12 @@ export default function SuperAdminDashboardPage() {
       const yearStartIso = yearStart.toISOString().split('T')[0];
       const yearEndIso = yearEnd.toISOString().split('T')[0];
 
-      // Fetch users, main inventory, and approved orders in parallel
+      // Fetch users, main inventory, and approved/pending orders in parallel
       const [
         { data: profiles, error: profilesError },
         { data: mainInventoryRows, error: inventoryError },
         { data: approvedOrders, error: ordersError },
+        { data: pendingOrders, error: pendingError },
         { data: monthlyOrders, error: monthlyError },
       ] = await Promise.all([
         supabase
@@ -133,13 +140,23 @@ export default function SuperAdminDashboardPage() {
           .from('client_orders')
           .select('total_amount')
           .eq('company_id', companyId)
-          .eq('stage', 'admin_approved'),
-        // Monthly revenue for bar chart (selected year)
+          .eq('status', 'approved')
+          .gte('order_date', yearStartIso)
+          .lte('order_date', yearEndIso),
+        // Total pending orders revenue for selected year
         supabase
           .from('client_orders')
-          .select('total_amount, order_date')
+          .select('total_amount')
           .eq('company_id', companyId)
-          .eq('stage', 'admin_approved')
+          .eq('status', 'pending')
+          .gte('order_date', yearStartIso)
+          .lte('order_date', yearEndIso),
+        // Monthly revenue for bar chart (selected year) - both approved and pending
+        supabase
+          .from('client_orders')
+          .select('total_amount, order_date, status')
+          .eq('company_id', companyId)
+          .in('status', ['approved', 'pending'])
           .gte('order_date', yearStartIso)
           .lte('order_date', yearEndIso),
       ]);
@@ -158,23 +175,34 @@ export default function SuperAdminDashboardPage() {
       }
       const totalAvailable = Math.max(0, totalStock - totalAllocated);
 
-      // Revenue: sum of total_amount from all approved (admin_approved) orders
+      // Revenue: sum of total_amount from all approved orders
       let totalRevenue = 0;
       if (!ordersError && approvedOrders?.length) {
         totalRevenue = approvedOrders.reduce((sum, o) => sum + (Number(o.total_amount) ?? 0), 0);
       }
 
+      // Pending Revenue: sum of total_amount from all pending orders
+      let pendingRevenue = 0;
+      if (!pendingError && pendingOrders?.length) {
+        pendingRevenue = pendingOrders.reduce((sum, o) => sum + (Number(o.total_amount) ?? 0), 0);
+      }
+
+      // Total Combined Revenue (Approved + Pending)
+      const totalCombinedRevenue = totalRevenue + pendingRevenue;
+
       // Build monthly revenue data for chart (last 12 months, sorted chronologically)
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       
       if (!monthlyError) {
-        // Initialize all 12 months with 0 revenue
-        const revenueByMonth: Record<string, number> = {};
+        // Initialize all 12 months with 0 revenue for both categories
+        const approvedByMonth: Record<string, number> = {};
+        const pendingByMonth: Record<string, number> = {};
         monthNames.forEach(month => {
-          revenueByMonth[month] = 0;
+          approvedByMonth[month] = 0;
+          pendingByMonth[month] = 0;
         });
 
-        // Add actual revenue data from orders (filter by selected year)
+        // Add actual revenue data from orders (filter by selected year and stage)
         if (monthlyOrders?.length) {
           monthlyOrders.forEach((o: any) => {
             const orderDate = new Date(o.order_date);
@@ -183,8 +211,12 @@ export default function SuperAdminDashboardPage() {
             // Only include orders from the selected year
             if (orderYear === selectedYear) {
               const month = orderDate.toLocaleString('default', { month: 'short' });
-              if (revenueByMonth.hasOwnProperty(month)) {
-                revenueByMonth[month] += Number(o.total_amount) || 0;
+              const amount = Number(o.total_amount) || 0;
+              
+              if (o.status === 'approved' && approvedByMonth.hasOwnProperty(month)) {
+                approvedByMonth[month] += amount;
+              } else if (o.status === 'pending' && pendingByMonth.hasOwnProperty(month)) {
+                pendingByMonth[month] += amount;
               }
             }
           });
@@ -193,7 +225,8 @@ export default function SuperAdminDashboardPage() {
         // Create chart data in chronological order (Jan to Dec)
         const chartData = monthNames.map(month => ({
           month,
-          revenue: revenueByMonth[month] || 0,
+          approvedRevenue: approvedByMonth[month] || 0,
+          pendingRevenue: pendingByMonth[month] || 0,
         }));
 
         console.log('📊 Revenue chart data:', chartData);
@@ -203,7 +236,8 @@ export default function SuperAdminDashboardPage() {
         // Still show all months with 0 revenue
         const chartData = monthNames.map(month => ({
           month,
-          revenue: 0,
+          approvedRevenue: 0,
+          pendingRevenue: 0,
         }));
         setRevenueData(chartData);
       }
@@ -216,6 +250,8 @@ export default function SuperAdminDashboardPage() {
         totalAllocated,
         totalAvailable,
         totalRevenue,
+        pendingRevenue,
+        totalCombinedRevenue,
       });
 
       setRecentUsers(recentProfiles);
@@ -267,34 +303,6 @@ export default function SuperAdminDashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Users</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalUsers}</div>
-            <p className="text-xs text-muted-foreground">
-              {stats.activeUsers} active users
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Users</CardTitle>
-            <Activity className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.activeUsers}</div>
-            <p className="text-xs text-muted-foreground">
-              {stats.totalUsers > 0
-                ? `${Math.round((stats.activeUsers / stats.totalUsers) * 100)}% of total`
-                : 'No users yet'}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Inventory</CardTitle>
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
@@ -305,7 +313,18 @@ export default function SuperAdminDashboardPage() {
             </p>
           </CardContent>
         </Card>
-
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Revenue from Pending Orders</CardTitle>
+            <Clock className="h-4 w-4 text-orange-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">₱{stats.pendingRevenue.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">
+              For year {selectedYear}
+            </p>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
@@ -315,6 +334,18 @@ export default function SuperAdminDashboardPage() {
             <div className="text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
               From approved orders
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Value (Pending + Approved)</CardTitle>
+            <DollarSign className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">₱{stats.totalCombinedRevenue.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">
+              For year {selectedYear}
             </p>
           </CardContent>
         </Card>
@@ -352,9 +383,44 @@ export default function SuperAdminDashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
-                  <Legend wrapperStyle={{ fontSize: '12px' }} />
-                  <Bar dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload || payload.length === 0) return null;
+                      const approved = payload.find(p => p.dataKey === 'approvedRevenue')?.value as number || 0;
+                      const pending = payload.find(p => p.dataKey === 'pendingRevenue')?.value as number || 0;
+                      const total = approved + pending;
+                      return (
+                        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg">
+                          <p className="font-semibold text-sm mb-2">{label}</p>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full bg-blue-500"></span>
+                              <span className="text-gray-600 dark:text-gray-400">Approved:</span>
+                              <span className="font-medium">₱{approved.toLocaleString()}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full bg-orange-500"></span>
+                              <span className="text-gray-600 dark:text-gray-400">Pending:</span>
+                              <span className="font-medium">₱{pending.toLocaleString()}</span>
+                            </div>
+                            <div className="border-t border-gray-200 dark:border-gray-700 pt-1 mt-2">
+                              <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full bg-green-500"></span>
+                                <span className="text-gray-700 dark:text-gray-300 font-semibold">Total:</span>
+                                <span className="font-bold text-green-600 dark:text-green-400">₱{total.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Legend 
+                    wrapperStyle={{ fontSize: '12px' }}
+                    formatter={(value: string) => value === 'approvedRevenue' ? 'Approved' : 'Pending'}
+                  />
+                  <Bar dataKey="approvedRevenue" fill="#3b82f6" name="approvedRevenue" /> {/* Blue */}
+                  <Bar dataKey="pendingRevenue" fill="#f97316" name="pendingRevenue" /> {/* Orange */}
                 </BarChart>
               </ResponsiveContainer>
             </div>
