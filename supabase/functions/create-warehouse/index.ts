@@ -211,6 +211,61 @@ serve(async (req) => {
             )
         }
 
+        // 3) Ensure a MAIN location exists and link this warehouse user to it
+        const { data: mainLocation, error: mainLocErr } = await supabaseClient
+            .from('warehouse_locations')
+            .select('id')
+            .eq('company_id', inventoryCompanyId)
+            .eq('is_main', true)
+            .maybeSingle()
+
+        if (mainLocErr) {
+            await supabaseClient.from('warehouse_company_assignments').delete().eq('warehouse_user_id', userId)
+            await supabaseClient.from('profiles').delete().eq('id', userId)
+            await supabaseClient.auth.admin.deleteUser(userId)
+            await supabaseClient.from('companies').delete().eq('id', inventoryCompanyId)
+            return new Response(
+                JSON.stringify({ error: `Failed to find main warehouse location: ${mainLocErr.message}` }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+            )
+        }
+
+        let mainLocationId = mainLocation?.id as string | undefined
+        if (!mainLocationId) {
+            const { data: createdLoc, error: createLocErr } = await supabaseClient
+                .from('warehouse_locations')
+                .insert({ company_id: inventoryCompanyId, name: 'Main Warehouse', is_main: true, created_by: user.id })
+                .select('id')
+                .single()
+
+            if (createLocErr || !createdLoc) {
+                await supabaseClient.from('warehouse_company_assignments').delete().eq('warehouse_user_id', userId)
+                await supabaseClient.from('profiles').delete().eq('id', userId)
+                await supabaseClient.auth.admin.deleteUser(userId)
+                await supabaseClient.from('companies').delete().eq('id', inventoryCompanyId)
+                return new Response(
+                    JSON.stringify({ error: `Failed to create main warehouse location: ${createLocErr?.message}` }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+                )
+            }
+            mainLocationId = createdLoc.id as string
+        }
+
+        const { error: linkErr } = await supabaseClient
+            .from('warehouse_location_users')
+            .insert({ location_id: mainLocationId, user_id: userId })
+
+        if (linkErr) {
+            await supabaseClient.from('warehouse_company_assignments').delete().eq('warehouse_user_id', userId)
+            await supabaseClient.from('profiles').delete().eq('id', userId)
+            await supabaseClient.auth.admin.deleteUser(userId)
+            await supabaseClient.from('companies').delete().eq('id', inventoryCompanyId)
+            return new Response(
+                JSON.stringify({ error: `Failed to link warehouse user to main location: ${linkErr.message}` }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+            )
+        }
+
         return new Response(
             JSON.stringify({
                 success: true,

@@ -2,21 +2,24 @@ import { useState, useEffect, ReactNode, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
-import { withTimeout } from '@/lib/networkUtils';
+import { isNetworkError, withTimeout } from '@/lib/networkUtils';
 import { getCachedProfile, setCachedProfile, isCacheStale, clearProfileCache } from '@/lib/profileCache';
 import { AuthContext } from './hooks';
 import type { User, LoginResult } from './types';
 import type { Company } from '@/types/database.types';
 import { Loader2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [impersonatedCompany, setImpersonatedCompany] = useState<Company | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
+  const qc = useQueryClient();
   const companyChannelRef = useRef<any>(null);
   const profileChannelRef = useRef<any>(null);
   const userRef = useRef<User | null>(null);
+  const profileRetryRef = useRef<Record<string, number>>({});
 
   // Handle global read-only mode for impersonation
   useEffect(() => {
@@ -105,6 +108,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
       if (session?.user) {
+        // Ensure role/location dependent caches don't persist across auth changes.
+        // (e.g. warehouse main vs sub membership, inventory source selection)
+        if (event === 'SIGNED_IN' || !userRef.current || userRef.current.id !== session.user.id) {
+          await qc.invalidateQueries({ queryKey: ['warehouse-location-membership'] });
+          await qc.invalidateQueries({ queryKey: ['inventory'] });
+        }
+
         // Only load profile for SIGNED_IN events or when user changes
         // Skip TOKEN_REFRESHED and other events if we already have the same user loaded
         if (event === 'SIGNED_IN' || !userRef.current || userRef.current.id !== session.user.id) {
@@ -121,6 +131,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         userRef.current = null;
         setIsLoading(false);
+        clearProfileCache();
+        await qc.invalidateQueries({ queryKey: ['warehouse-location-membership'] });
+        await qc.invalidateQueries({ queryKey: ['inventory'] });
         
         // Clean up real-time subscriptions
         if (companyChannelRef.current) {
@@ -250,7 +263,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(true);
 
       // Run profile query with a safety timeout so we never hang forever
-      // Reduced timeout to 5 seconds for faster fallback on slow connections
+      // Keep this long enough to survive cold starts / slow first request.
       const profilePromise = supabase
         .from('profiles')
         .select(`
@@ -262,7 +275,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const { data: profileData, error } = await withTimeout(
         profilePromise as unknown as Promise<{ data: any; error: any }>,
-        5000, // Reduced from 8000 to 5000 for faster recovery
+        15000,
         '[AuthContext] Profile fetch timed out'
       );
 
@@ -346,6 +359,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
     } catch (error) {
       console.error('❌ [AuthContext] Profile fetch exception:', error);
+
+      // If auth succeeded but profile fetch is slow/flaky, don't treat it as a login failure.
+      // Fall back to basic auth user (like the non-timeout error path) and retry in background.
+      const err = error as any;
+      if (isNetworkError(err) || String(err?.message || '').toLowerCase().includes('timed out')) {
+        const metadata = authUser?.user_metadata || {};
+        const basicUser: User = {
+          id: authUser.id,
+          email: authUser.email || '',
+          full_name: metadata.full_name || metadata.name || 'User',
+          role: metadata.role || 'mobile_sales',
+          status: 'active',
+          company_id: metadata.company_id,
+          phone: metadata.phone,
+          region: metadata.region,
+          city: metadata.city,
+          address: metadata.address,
+          country: metadata.country,
+          avatar_url: metadata.avatar_url,
+          created_at: authUser.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as User;
+
+        setUser(basicUser);
+        userRef.current = basicUser;
+        setCachedProfile(basicUser);
+
+        const key = String(authUser?.id || '');
+        const attempts = (profileRetryRef.current[key] ?? 0) + 1;
+        profileRetryRef.current[key] = attempts;
+        if (key && attempts <= 2) {
+          const delayMs = attempts === 1 ? 2000 : 5000;
+          setTimeout(() => {
+            void loadUserProfile(authUser);
+          }, delayMs);
+        }
+      }
+
       setIsLoading(false);
     }
   };

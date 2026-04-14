@@ -208,7 +208,10 @@ const warehouseMenuItems: MenuItem[] = [
     url: '/inventory',
     icon: Package,
     hasSubmenu: true,
-    submenu: [{ title: 'Main Inventory', url: '/inventory/main', icon: Package }],
+    submenu: [
+      { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', icon: Building2 },
+      { title: 'Main Inventory', url: '/inventory/main', icon: Package },
+    ],
   },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];

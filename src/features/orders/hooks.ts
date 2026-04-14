@@ -13,6 +13,7 @@ export interface PurchaseOrderContextType {
         supplier_id: string | null;
         fulfillment_type: 'supplier' | 'warehouse_transfer';
         warehouse_company_id?: string | null;
+        warehouse_location_id?: string | null;
         order_date: string;
         expected_delivery_date: string;
         items: Array<{

@@ -1,5 +1,6 @@
 export { default as MainInventoryPage } from './MainInventoryPage';
 export { default as WarehouseInventoryDashboardPage } from './WarehouseInventoryDashboardPage';
+export { default as SubWarehousesPage } from './SubWarehousesPage';
 export { default as StockAllocationsPage } from './StockAllocationsPage';
 export { default as LeaderInventoryPage } from './LeaderInventoryPage';
 export { default as MyInventoryPage } from './MyInventoryPage';

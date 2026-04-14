@@ -1,4 +1,6 @@
 import { useAuth } from '@/features/auth';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
 
 /**
  * Hook to check user permissions
@@ -7,11 +9,34 @@ import { useAuth } from '@/features/auth';
 export function usePermissions() {
   const { user, impersonatedCompany } = useAuth();
 
+  // If this tenant is linked to a warehouse hub, we lock the standard catalog
+  // (brands & variant management) so only the warehouse controls catalog changes.
+  const { data: hasWarehouseHubLink } = useQuery({
+    queryKey: ['has-warehouse-hub-link', user?.company_id],
+    enabled: !!user?.company_id && (user?.role === 'super_admin' || user?.role === 'admin'),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('warehouse_company_assignments')
+        .select('id')
+        .eq('client_company_id', user!.company_id)
+        .maybeSingle();
+      if (error) throw error;
+      return !!data;
+    },
+    staleTime: 1000 * 60, // 1 minute
+  });
+
+  const lockStandardCatalog = hasWarehouseHubLink === true;
+
   const checkPermission = (route: string): boolean => {
     // If impersonating, allow full navigation access to the tenant environment.
     // Read-only restrictions are enforced globally via CSS and checkFeature.
     if (impersonatedCompany) {
       return true;
+    }
+
+    if (lockStandardCatalog && (route === '/brands' || route === '/variant-types')) {
+      return false;
     }
 
     // Super Admin has full access to all routes
@@ -49,6 +74,7 @@ export function usePermissions() {
         '/inventory',
         '/inventory/board',
         '/inventory/main',
+        '/inventory/sub-warehouses',
         '/profile',
       ];
       return warehouseRoutes.includes(route);
