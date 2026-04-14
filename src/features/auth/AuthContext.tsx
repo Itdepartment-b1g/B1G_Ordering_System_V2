@@ -72,6 +72,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('🔐 [AuthContext] Initial getSession result:', session ? `user ${session.user.id}` : 'no session');
       
       if (session?.user) {
+        // Track the current auth user so we don't treat INITIAL_SESSION/TOKEN_REFRESHED
+        // as a "user switch" and accidentally clear caches on every refresh.
+        lastAuthUserIdRef.current = session.user.id;
+
         // If we have cached profile and it matches, refresh in background
         if (cachedProfile && cachedProfile.id === session.user.id && !isCacheStale()) {
           console.log('🔄 [AuthContext] Cache is fresh, refreshing in background');
@@ -118,24 +122,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
       if (session?.user) {
-        // If the authenticated user changes (common when testing multiple super_admin accounts),
-        // clear persisted UI caches so we don't restore stale navigation/permissions/data.
-        //
-        // IMPORTANT: Also clear in-memory cached profile so we don't "stick" to stale userRef
-        // (which can cause missing company_id and empty pages until manual storage clear).
-        const didAuthUserChange =
-          !lastAuthUserIdRef.current || lastAuthUserIdRef.current !== session.user.id;
-        if (event === 'SIGNED_IN' || didAuthUserChange) {
-          lastAuthUserIdRef.current = session.user.id;
+        // Only clear persisted caches on a TRUE account switch.
+        // On refresh Supabase often emits INITIAL_SESSION/TOKEN_REFRESHED; we must NOT wipe caches then.
+        const prevAuthId = lastAuthUserIdRef.current;
+        lastAuthUserIdRef.current = session.user.id;
+        const didAuthUserChange = !!prevAuthId && prevAuthId !== session.user.id;
+        if (event === 'SIGNED_IN' && didAuthUserChange) {
           clearPersistedUiCaches();
           clearProfileCache();
           userRef.current = null;
           profileRetryRef.current = {};
-          // Clear in-memory query cache only when switching users.
-          // For the same user, invalidations below are enough and avoids unnecessary blank states.
-          if (didAuthUserChange) {
-            qc.clear();
-          }
+          qc.clear();
         }
 
         // Ensure role/location dependent caches don't persist across auth changes.
@@ -292,8 +289,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // Set loading to true only if we're actually going to fetch
-      setIsLoading(true);
+      // Don't block the whole app UI if we already have some user rendered.
+      // This avoids getting "stuck on loading" during slow refresh-time profile fetches.
+      if (!userRef.current && !user) {
+        setIsLoading(true);
+      }
 
       // Run profile query with a safety timeout so we never hang forever
       // Keep this long enough to survive cold starts / slow first request.
@@ -308,7 +308,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const { data: profileData, error } = await withTimeout(
         profilePromise as unknown as Promise<{ data: any; error: any }>,
-        15000,
+        30000,
         '[AuthContext] Profile fetch timed out'
       );
 
@@ -337,14 +337,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.warn('⚠️ [AuthContext] Using basic auth user as fallback profile');
           setUser(basicUser);
           userRef.current = basicUser;
-        setCachedProfile(basicUser); // Cache fallback too
+        // Do NOT persist fallback to localStorage; it can be missing company_id/role and
+        // causes "logged in but no data" after refresh if it becomes the restored profile.
+
+        // Retry profile load in background (same pattern as the exception path).
+        const key = String(authUser?.id || '');
+        const attempts = (profileRetryRef.current[key] ?? 0) + 1;
+        profileRetryRef.current[key] = attempts;
+        if (key && attempts <= 2) {
+          const delayMs = attempts === 1 ? 2000 : 5000;
+          setTimeout(() => {
+            void loadUserProfile(authUser);
+          }, delayMs);
+        }
         setIsLoading(false);
         return;
       }
 
       if (!profileData) {
         console.warn('⚠️ [AuthContext] Profile not found');
+        // A valid auth session without a readable profile row will break the app (no company/role context).
+        // Force sign-out so the user can re-auth and we don't get stuck in a blank/partial UI.
+        setUser(null);
+        userRef.current = null;
         setIsLoading(false);
+        clearProfileCache();
+        try {
+          await supabase.auth.signOut();
+        } catch (e) {
+          console.warn('⚠️ [AuthContext] signOut after missing profile failed:', e);
+        }
+        toast({
+          title: 'Login error',
+          description: 'Profile record not found. Please log in again.',
+          variant: 'destructive',
+        });
         return;
       }
 
@@ -417,7 +444,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setUser(basicUser);
         userRef.current = basicUser;
-        setCachedProfile(basicUser);
+        // Do NOT persist fallback to localStorage; it can be missing company_id/role and
+        // causes "logged in but no data" after refresh.
 
         const key = String(authUser?.id || '');
         const attempts = (profileRetryRef.current[key] ?? 0) + 1;
@@ -454,38 +482,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'invalid_credentials' };
       }
 
-      if (data?.user?.id) {
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('company_id, role, status, companies(status)')
-          .eq('id', data.user.id)
-          .single();
-
-        if (profileError) {
-          console.error('Error fetching profile during login:', profileError);
-          setIsLoading(false);
-          return { success: false, error: 'invalid_credentials' };
-        }
-
-        if (profile) {
-          if (profile.status !== 'active') {
-            await supabase.auth.signOut();
-            setIsLoading(false);
-            return { success: false, error: 'account_restricted' };
-          }
-
-          if (profile.company_id && profile.role !== 'system_administrator') {
-            const companyStatus = (profile.companies as any)?.status;
-            if (companyStatus === 'inactive') {
-              await supabase.auth.signOut();
-              setIsLoading(false);
-              return { success: false, error: 'company_inactive' };
-            }
-          }
-        }
-      }
-
-      // Profile will be loaded by onAuthStateChange handler
+      void data;
+      // Profile will be loaded by onAuthStateChange handler.
+      // Avoid blocking login on a second profiles query (this was causing long "Signing in..." states).
       return { success: true };
     } catch (error) {
       console.error('Login exception:', error);
