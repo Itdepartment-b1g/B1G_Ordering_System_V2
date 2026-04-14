@@ -16,10 +16,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
   const qc = useQueryClient();
+  const lastAuthUserIdRef = useRef<string | null>(null);
   const companyChannelRef = useRef<any>(null);
   const profileChannelRef = useRef<any>(null);
   const userRef = useRef<User | null>(null);
   const profileRetryRef = useRef<Record<string, number>>({});
+
+  const clearPersistedUiCaches = () => {
+    try {
+      // React Query persisted cache (PersistQueryClientProvider)
+      window.localStorage.removeItem('VITE_APP_QUERY_CACHE');
+    } catch (e) {
+      console.warn('Unable to clear VITE_APP_QUERY_CACHE from localStorage:', e);
+    }
+  };
 
   // Handle global read-only mode for impersonation
   useEffect(() => {
@@ -108,6 +118,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log(`🔔 [AuthContext] Auth event: ${event}`, session ? `User: ${session.user.id}` : 'No session');
 
       if (session?.user) {
+        // If the authenticated user changes (common when testing multiple super_admin accounts),
+        // clear persisted UI caches so we don't restore stale navigation/permissions/data.
+        //
+        // IMPORTANT: Also clear in-memory cached profile so we don't "stick" to stale userRef
+        // (which can cause missing company_id and empty pages until manual storage clear).
+        const didAuthUserChange =
+          !lastAuthUserIdRef.current || lastAuthUserIdRef.current !== session.user.id;
+        if (event === 'SIGNED_IN' || didAuthUserChange) {
+          lastAuthUserIdRef.current = session.user.id;
+          clearPersistedUiCaches();
+          clearProfileCache();
+          userRef.current = null;
+          profileRetryRef.current = {};
+          // Clear in-memory query cache only when switching users.
+          // For the same user, invalidations below are enough and avoids unnecessary blank states.
+          if (didAuthUserChange) {
+            qc.clear();
+          }
+        }
+
         // Ensure role/location dependent caches don't persist across auth changes.
         // (e.g. warehouse main vs sub membership, inventory source selection)
         if (event === 'SIGNED_IN' || !userRef.current || userRef.current.id !== session.user.id) {
@@ -130,8 +160,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Clear user on explicit sign out
         setUser(null);
         userRef.current = null;
+        lastAuthUserIdRef.current = null;
         setIsLoading(false);
         clearProfileCache();
+        clearPersistedUiCaches();
+        qc.clear();
         await qc.invalidateQueries({ queryKey: ['warehouse-location-membership'] });
         await qc.invalidateQueries({ queryKey: ['inventory'] });
         
