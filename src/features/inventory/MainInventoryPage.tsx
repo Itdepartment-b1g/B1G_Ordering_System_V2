@@ -14,6 +14,7 @@ import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw,
 import { useToast } from '@/hooks/use-toast';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
+import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { InventoryImportExport } from './components/InventoryImportExport';
 import { format } from 'date-fns';
 
@@ -92,6 +93,8 @@ export default function MainInventoryPage() {
   const [viewSignatureUrl, setViewSignatureUrl] = useState<string | null>(null);
 
   const isWarehouse = user?.role === 'warehouse';
+  const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
+  const isMainWarehouseUser = membership.isMain;
 
   const [addStockDialogOpen, setAddStockDialogOpen] = useState(false);
   const [addBrandDialogOpen, setAddBrandDialogOpen] = useState(false);
@@ -210,7 +213,7 @@ export default function MainInventoryPage() {
 
   useEffect(() => {
     if (!addStockBrandId) {
-      setAddStockQuantities({});
+      setAddStockQuantities((prev) => (Object.keys(prev).length === 0 ? prev : {}));
       return;
     }
     const b = (warehouseCatalog as { id: string; variants?: CatalogVariantRow[] }[]).find((x) => x.id === addStockBrandId);
@@ -222,7 +225,15 @@ export default function MainInventoryPage() {
       const s = row && typeof row === 'object' && 'stock' in row ? (row as { stock?: number }).stock : 0;
       next[v.id] = typeof s === 'number' ? s : 0;
     }
-    setAddStockQuantities(next);
+    setAddStockQuantities((prev) => {
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (prevKeys.length !== nextKeys.length) return next;
+      for (const k of nextKeys) {
+        if (prev[k] !== next[k]) return next;
+      }
+      return prev;
+    });
   }, [addStockBrandId, warehouseCatalog]);
 
   const fetchReturnHistory = async () => {
@@ -791,6 +802,8 @@ export default function MainInventoryPage() {
   };
 
 
+  const isSubWarehouseUser = isWarehouse && !isMainWarehouseUser;
+
   // Calculate stats
   const totalBrands = brands.length;
   const totalVariants = brands.reduce((sum, brand) => sum + brand.flavors.length + brand.batteries.length + (brand.posms || []).length, 0);
@@ -815,7 +828,7 @@ export default function MainInventoryPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {isWarehouse && (
+          {isWarehouse && isMainWarehouseUser && (
             <>
               <Button onClick={() => setAddStockDialogOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -843,7 +856,7 @@ export default function MainInventoryPage() {
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className={`grid grid-cols-2 ${isSubWarehouseUser ? 'md:grid-cols-3' : 'md:grid-cols-5'} gap-4`}>
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
@@ -880,29 +893,33 @@ export default function MainInventoryPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-orange-600" />
-              <div>
-                <div className="text-2xl font-bold">{totalAllocatedStock.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Allocated Stock</div>
+        {!isSubWarehouseUser && (
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-orange-600" />
+                <div>
+                  <div className="text-2xl font-bold">{totalAllocatedStock.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">Allocated Stock</div>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-emerald-600" />
-              <div>
-                <div className="text-2xl font-bold">{totalAvailableStock.toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground">Available Stock</div>
+        {!isSubWarehouseUser && (
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-emerald-600" />
+                <div>
+                  <div className="text-2xl font-bold">{totalAvailableStock.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">Available Stock</div>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Search */}
@@ -990,18 +1007,18 @@ export default function MainInventoryPage() {
                       <Badge
                         variant={
                           getTotalStock(brand) === 0 ? 'destructive' :
-                            brand.allVariants.some((v: any) => {
+                            (!isWarehouse && brand.allVariants.some((v: any) => {
                               const sp = v.sellingPrice;
                               return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                            }) ? 'secondary' :
+                            })) ? 'secondary' :
                               brand.allVariants.some((v: any) => v.status === 'low-stock') ? 'secondary' : 'default'
                         }
                       >
                         {getTotalStock(brand) === 0 ? 'Out of Stock' :
-                          brand.allVariants.some((v: any) => {
+                          (!isWarehouse && brand.allVariants.some((v: any) => {
                             const sp = v.sellingPrice;
                             return sp === null || sp === undefined || (typeof sp === 'number' && Number.isNaN(sp));
-                          }) ? 'Missing Prices' :
+                          })) ? 'Missing Prices' :
                             brand.allVariants.some((v: any) => v.status === 'low-stock') ? 'Low Stock' : 'In Stock'}
                       </Badge>
                     </div>
@@ -1038,22 +1055,22 @@ export default function MainInventoryPage() {
                             <TableRow className="bg-blue-50/30">
                               <TableHead className="text-blue-800 text-center">Flavor Name</TableHead>
                               <TableHead className="text-blue-800 text-center">Total Stock</TableHead>
-                              <TableHead className="text-blue-800 text-center">Allocated</TableHead>
-                              <TableHead className="text-blue-800 text-center">Available</TableHead>
-                              <TableHead className="text-blue-800 text-center">Selling Price</TableHead>
-                              <TableHead className="text-blue-800 text-center">DSP</TableHead>
-                              <TableHead className="text-blue-800 text-center">RSP</TableHead>
+                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Available</TableHead>}
+                              {!isWarehouse && <TableHead className="text-blue-800 text-center">Selling Price</TableHead>}
+                              {!isWarehouse && <TableHead className="text-blue-800 text-center">DSP</TableHead>}
+                              {!isWarehouse && <TableHead className="text-blue-800 text-center">RSP</TableHead>}
                               <TableHead className="text-blue-800 text-center">Status</TableHead>
                               <TableHead className="text-blue-800 text-center">Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {brand.flavors.map((flavor) => {
-                              const allocated = getVariantAllocatedStock(flavor);
-                              const available = getVariantAvailableStock(flavor);
+                              const allocated = isSubWarehouseUser ? 0 : getVariantAllocatedStock(flavor);
+                              const available = isSubWarehouseUser ? flavor.stock : getVariantAvailableStock(flavor);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (flavor as any).sellingPrice;
-                              const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
+                              const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
                               return (
                                 <TableRow
                                   key={`flavor-${flavor.id}`}
@@ -1067,17 +1084,27 @@ export default function MainInventoryPage() {
                                     </div>
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{flavor.stock}</TableCell>
-                                  <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
-                                  <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (flavor as any).sellingPrice === 'number' ? `₱${(flavor as any).sellingPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (flavor as any).dspPrice === 'number' ? `₱${(flavor as any).dspPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (flavor as any).rspPrice === 'number' ? `₱${(flavor as any).rspPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
+                                  {!isSubWarehouseUser && (
+                                    <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
+                                  )}
+                                  {!isSubWarehouseUser && (
+                                    <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (flavor as any).sellingPrice === 'number' ? `₱${(flavor as any).sellingPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (flavor as any).dspPrice === 'number' ? `₱${(flavor as any).dspPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (flavor as any).rspPrice === 'number' ? `₱${(flavor as any).rspPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
                                   <TableCell className="text-center">
                                     <Badge
                                       variant={
@@ -1202,22 +1229,22 @@ export default function MainInventoryPage() {
                             <TableRow className="bg-green-50/30">
                               <TableHead className="text-green-800 text-center">Battery Name</TableHead>
                               <TableHead className="text-green-800 text-center">Total Stock</TableHead>
-                              <TableHead className="text-green-800 text-center">Allocated</TableHead>
-                              <TableHead className="text-green-800 text-center">Available</TableHead>
-                              <TableHead className="text-green-800 text-center">Selling Price</TableHead>
-                              <TableHead className="text-green-800 text-center">DSP</TableHead>
-                              <TableHead className="text-green-800 text-center">RSP</TableHead>
+                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Available</TableHead>}
+                              {!isWarehouse && <TableHead className="text-green-800 text-center">Selling Price</TableHead>}
+                              {!isWarehouse && <TableHead className="text-green-800 text-center">DSP</TableHead>}
+                              {!isWarehouse && <TableHead className="text-green-800 text-center">RSP</TableHead>}
                               <TableHead className="text-green-800 text-center">Status</TableHead>
                               <TableHead className="text-green-800 text-center">Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {brand.batteries.map((battery) => {
-                              const allocated = getVariantAllocatedStock(battery);
-                              const available = getVariantAvailableStock(battery);
+                              const allocated = isSubWarehouseUser ? 0 : getVariantAllocatedStock(battery);
+                              const available = isSubWarehouseUser ? battery.stock : getVariantAvailableStock(battery);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (battery as any).sellingPrice;
-                              const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
+                              const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
                               return (
                                 <TableRow
                                   key={`battery-${battery.id}`}
@@ -1231,17 +1258,27 @@ export default function MainInventoryPage() {
                                     </div>
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{battery.stock}</TableCell>
-                                  <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
-                                  <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (battery as any).sellingPrice === 'number' ? `₱${(battery as any).sellingPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (battery as any).dspPrice === 'number' ? `₱${(battery as any).dspPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (battery as any).rspPrice === 'number' ? `₱${(battery as any).rspPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
+                                  {!isSubWarehouseUser && (
+                                    <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
+                                  )}
+                                  {!isSubWarehouseUser && (
+                                    <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (battery as any).sellingPrice === 'number' ? `₱${(battery as any).sellingPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (battery as any).dspPrice === 'number' ? `₱${(battery as any).dspPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (battery as any).rspPrice === 'number' ? `₱${(battery as any).rspPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
                                   <TableCell className="text-center">
                                     <Badge
                                       variant={
@@ -1353,22 +1390,22 @@ export default function MainInventoryPage() {
                             <TableRow className="bg-purple-50/30">
                               <TableHead className="text-purple-800 text-center">POSM Name</TableHead>
                               <TableHead className="text-purple-800 text-center">Total Stock</TableHead>
-                              <TableHead className="text-purple-800 text-center">Allocated</TableHead>
-                              <TableHead className="text-purple-800 text-center">Available</TableHead>
-                              <TableHead className="text-purple-800 text-center">Selling Price</TableHead>
-                              <TableHead className="text-purple-800 text-center">DSP</TableHead>
-                              <TableHead className="text-purple-800 text-center">RSP</TableHead>
+                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Allocated</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Available</TableHead>}
+                              {!isWarehouse && <TableHead className="text-purple-800 text-center">Selling Price</TableHead>}
+                              {!isWarehouse && <TableHead className="text-purple-800 text-center">DSP</TableHead>}
+                              {!isWarehouse && <TableHead className="text-purple-800 text-center">RSP</TableHead>}
                               <TableHead className="text-purple-800 text-center">Status</TableHead>
                               <TableHead className="text-purple-800 text-center">Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {(brand as any).posms.map((posm: any) => {
-                              const allocated = getVariantAllocatedStock(posm);
-                              const available = getVariantAvailableStock(posm);
+                              const allocated = isSubWarehouseUser ? 0 : getVariantAllocatedStock(posm);
+                              const available = isSubWarehouseUser ? posm.stock : getVariantAvailableStock(posm);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (posm as any).sellingPrice;
-                              const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
+                              const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
                               return (
                                 <TableRow
                                   key={`posm-${posm.id}`}
@@ -1382,17 +1419,27 @@ export default function MainInventoryPage() {
                                     </div>
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{posm.stock}</TableCell>
-                                  <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
-                                  <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (posm as any).sellingPrice === 'number' ? `₱${(posm as any).sellingPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (posm as any).dspPrice === 'number' ? `₱${(posm as any).dspPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {typeof (posm as any).rspPrice === 'number' ? `₱${(posm as any).rspPrice.toFixed(2)}` : '-'}
-                                  </TableCell>
+                                  {!isSubWarehouseUser && (
+                                    <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
+                                  )}
+                                  {!isSubWarehouseUser && (
+                                    <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (posm as any).sellingPrice === 'number' ? `₱${(posm as any).sellingPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (posm as any).dspPrice === 'number' ? `₱${(posm as any).dspPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
+                                  {!isWarehouse && (
+                                    <TableCell className="text-center">
+                                      {typeof (posm as any).rspPrice === 'number' ? `₱${(posm as any).rspPrice.toFixed(2)}` : '-'}
+                                    </TableCell>
+                                  )}
                                   <TableCell className="text-center">
                                     <Badge
                                       variant={
@@ -1512,21 +1559,21 @@ export default function MainInventoryPage() {
                                 <TableRow className="bg-gray-50/30">
                                   <TableHead className="text-gray-800 text-center">Name</TableHead>
                                   <TableHead className="text-gray-800 text-center">Total Stock</TableHead>
-                                  <TableHead className="text-gray-800 text-center">Allocated</TableHead>
-                                  <TableHead className="text-gray-800 text-center">Available</TableHead>
-                                  <TableHead className="text-gray-800 text-center">Selling Price</TableHead>
-                                  <TableHead className="text-gray-800 text-center">DSP</TableHead>
-                                  <TableHead className="text-gray-800 text-center">RSP</TableHead>
+                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated</TableHead>}
+                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Available</TableHead>}
+                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">Selling Price</TableHead>}
+                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">DSP</TableHead>}
+                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">RSP</TableHead>}
                                   <TableHead className="text-gray-800 text-center">Status</TableHead>
                                   <TableHead className="text-gray-800 text-center">Actions</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
                                 {variants.map((variant) => {
-                                  const allocated = getVariantAllocatedStock(variant);
-                                  const available = getVariantAvailableStock(variant);
+                                  const allocated = isSubWarehouseUser ? 0 : getVariantAllocatedStock(variant);
+                                  const available = isSubWarehouseUser ? variant.stock : getVariantAvailableStock(variant);
                                   const sellingPriceRaw = (variant as any).sellingPrice;
-                                  const hasNoPrice = sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw));
+                                  const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
                                   
                                   return (
                                     <TableRow
@@ -1540,17 +1587,27 @@ export default function MainInventoryPage() {
                                         </div>
                                       </TableCell>
                                       <TableCell className="font-semibold text-center">{variant.stock}</TableCell>
-                                      <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
-                                      <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
-                                      <TableCell className="text-center">
-                                        {typeof (variant as any).sellingPrice === 'number' ? `₱${(variant as any).sellingPrice.toFixed(2)}` : '-'}
-                                      </TableCell>
-                                      <TableCell className="text-center">
-                                        {typeof (variant as any).dspPrice === 'number' ? `₱${(variant as any).dspPrice.toFixed(2)}` : '-'}
-                                      </TableCell>
-                                      <TableCell className="text-center">
-                                        {typeof (variant as any).rspPrice === 'number' ? `₱${(variant as any).rspPrice.toFixed(2)}` : '-'}
-                                      </TableCell>
+                                      {!isSubWarehouseUser && (
+                                        <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
+                                      )}
+                                      {!isSubWarehouseUser && (
+                                        <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
+                                      )}
+                                      {!isWarehouse && (
+                                        <TableCell className="text-center">
+                                          {typeof (variant as any).sellingPrice === 'number' ? `₱${(variant as any).sellingPrice.toFixed(2)}` : '-'}
+                                        </TableCell>
+                                      )}
+                                      {!isWarehouse && (
+                                        <TableCell className="text-center">
+                                          {typeof (variant as any).dspPrice === 'number' ? `₱${(variant as any).dspPrice.toFixed(2)}` : '-'}
+                                        </TableCell>
+                                      )}
+                                      {!isWarehouse && (
+                                        <TableCell className="text-center">
+                                          {typeof (variant as any).rspPrice === 'number' ? `₱${(variant as any).rspPrice.toFixed(2)}` : '-'}
+                                        </TableCell>
+                                      )}
                                       <TableCell className="text-center">
                                         <Badge
                                           variant={

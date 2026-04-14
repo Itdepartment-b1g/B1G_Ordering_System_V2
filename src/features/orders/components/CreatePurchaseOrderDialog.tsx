@@ -15,6 +15,7 @@ import { supabase } from '@/lib/supabase';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -49,6 +50,8 @@ interface NewPOItem {
     variantType: string;
     quantity: number;
     unitPrice: number;
+    /** Source warehouse location for this line (warehouse_transfer only). */
+    warehouseLocationId?: string;
 }
 
 interface CreatePurchaseOrderDialogProps {
@@ -62,9 +65,10 @@ interface CreatePurchaseOrderDialogProps {
         supplier_id: string | null;
         fulfillment_type: 'supplier' | 'warehouse_transfer';
         warehouse_company_id?: string | null;
+        warehouse_location_id?: string | null;
         order_date: string;
         expected_delivery_date: string;
-        items: Array<{ variant_id: string; quantity: number; unit_price: number }>;
+        items: Array<{ variant_id: string; quantity: number; unit_price: number; warehouse_location_id?: string | null }>;
         tax_rate: number;
         discount: number;
         notes: string;
@@ -83,7 +87,9 @@ export function CreatePurchaseOrderDialog({
 }: CreatePurchaseOrderDialogProps) {
     const { toast } = useToast();
 
-    const [fulfillmentMode, setFulfillmentMode] = useState<'supplier' | 'warehouse_transfer'>('supplier');
+    const [fulfillmentMode, setFulfillmentMode] = useState<'supplier' | 'warehouse_transfer'>(
+        linkedWarehouseCompanyId ? 'warehouse_transfer' : 'supplier'
+    );
     const catalogCompanyId =
         fulfillmentMode === 'warehouse_transfer' && linkedWarehouseCompanyId
             ? linkedWarehouseCompanyId
@@ -93,10 +99,16 @@ export function CreatePurchaseOrderDialog({
     const [brands, setBrands] = useState<Array<{ id: string; name: string }>>([]);
     const [catalogLoading, setCatalogLoading] = useState(false);
 
+    const [warehouseLocations, setWarehouseLocations] = useState<Array<{ id: string; name: string; is_main: boolean }>>([]);
+    const [selectedWarehouseLocationId, setSelectedWarehouseLocationId] = useState<string>('');
+    const [sourceMode, setSourceMode] = useState<'single' | 'multi'>('single');
+    const [activeWarehouseTabId, setActiveWarehouseTabId] = useState<string>('');
+
     // Form State
     const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
     const [expectedDelivery, setExpectedDelivery] = useState('');
     const [selectedSupplierId, setSelectedSupplierId] = useState('');
+    const [selectedSourceValue, setSelectedSourceValue] = useState<string>(''); // 'sup:<id>' | 'wh:<locationId>'
     const [taxRate, setTaxRate] = useState(0);
     const [discount, setDiscount] = useState(0);
     const [notes, setNotes] = useState('');
@@ -105,10 +117,27 @@ export function CreatePurchaseOrderDialog({
     // Items State
     const [items, setItems] = useState<NewPOItem[]>([]);
 
+    // Keep item-level location in sync with source mode and default selection.
+    useEffect(() => {
+        if (!open) return;
+        if (fulfillmentMode !== 'warehouse_transfer') return;
+        setItems(prev =>
+            prev.map(i => {
+                if (sourceMode === 'single') {
+                    return { ...i, warehouseLocationId: selectedWarehouseLocationId || i.warehouseLocationId };
+                }
+                // multi
+                if (!i.warehouseLocationId) {
+                    return { ...i, warehouseLocationId: selectedWarehouseLocationId || i.warehouseLocationId };
+                }
+                return i;
+            })
+        );
+    }, [open, fulfillmentMode, sourceMode, selectedWarehouseLocationId]);
+
     // Add Existing Dialog State
     const [addExistingOpen, setAddExistingOpen] = useState(false);
     const [selectedBrandForExisting, setSelectedBrandForExisting] = useState<string>('');
-    const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([]);
 
     // Clear All Confirmation State
     const [clearAllOpen, setClearAllOpen] = useState(false);
@@ -116,11 +145,49 @@ export function CreatePurchaseOrderDialog({
     // Variant Types for new item creation
     const [variantTypes, setVariantTypes] = useState<{ id: string; name: string; display_name?: string }[]>([]);
 
+    // When creating a warehouse transfer PO as a non-warehouse user, we should only allow selecting
+    // existing SKUs from the hub catalog (no creating new brands/variants from this dialog).
+    const readOnlyCatalogEdits = fulfillmentMode === 'warehouse_transfer' && user?.role !== 'warehouse';
+
     useEffect(() => {
         if (open && !linkedWarehouseCompanyId) {
             setFulfillmentMode('supplier');
         }
     }, [open, linkedWarehouseCompanyId]);
+
+    useEffect(() => {
+        if (!open || !linkedWarehouseCompanyId) {
+            setWarehouseLocations([]);
+            setSelectedWarehouseLocationId('');
+            setSourceMode('single');
+            setActiveWarehouseTabId('');
+            return;
+        }
+        supabase
+            .rpc('get_linked_warehouse_locations', {})
+            .then(({ data, error }) => {
+                if (error) {
+                    console.error('[CreatePO] get_linked_warehouse_locations error', error);
+                    setWarehouseLocations([]);
+                    setSelectedWarehouseLocationId('');
+                    return;
+                }
+                const rows = (data as any) || [];
+                setWarehouseLocations(rows);
+                // Default to main warehouse location if not selected yet.
+                if (!selectedWarehouseLocationId) {
+                    const main = rows.find((r: any) => r.is_main);
+                    setSelectedWarehouseLocationId(main?.id || rows[0]?.id || '');
+                }
+                // Default active tab (used in multi mode): main if present, otherwise first.
+                if (!activeWarehouseTabId) {
+                    const main = rows.find((r: any) => r.is_main);
+                    setActiveWarehouseTabId(main?.id || rows[0]?.id || '');
+                }
+            });
+    }, [open, linkedWarehouseCompanyId, selectedWarehouseLocationId, activeWarehouseTabId]);
+
+    // (location stock fetch for existing-variants dialog is defined below, after filteredVariantsForDialog)
 
     useEffect(() => {
         if (!open || !catalogCompanyId) {
@@ -202,6 +269,16 @@ export function CreatePurchaseOrderDialog({
         }
     }, [open, suppliers, selectedSupplierId, fulfillmentMode]);
 
+    // Keep unified source selector in sync with fulfillment mode + selection.
+    useEffect(() => {
+        if (!open) return;
+        if (fulfillmentMode === 'warehouse_transfer') {
+            if (selectedWarehouseLocationId) setSelectedSourceValue(`wh:${selectedWarehouseLocationId}`);
+            return;
+        }
+        if (selectedSupplierId) setSelectedSourceValue(`sup:${selectedSupplierId}`);
+    }, [open, fulfillmentMode, selectedSupplierId, selectedWarehouseLocationId]);
+
     // Calculations
     const subtotal = useMemo(() => items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0), [items]);
     const taxAmount = (subtotal * taxRate) / 100;
@@ -227,38 +304,31 @@ export function CreatePurchaseOrderDialog({
         setItems(items.filter(i => i.id !== id));
     };
 
-    // Toggle variant selection in the dialog
-    const toggleVariantSelection = (variantId: string) => {
-        setSelectedVariantIds(prev =>
-            prev.includes(variantId)
-                ? prev.filter(id => id !== variantId)
-                : [...prev, variantId]
-        );
-    };
+    const displayedItems = useMemo(() => {
+        if (fulfillmentMode !== 'warehouse_transfer' || sourceMode !== 'multi') return items;
+        return items.filter(i => i.warehouseLocationId === activeWarehouseTabId);
+    }, [items, fulfillmentMode, sourceMode, activeWarehouseTabId]);
 
-    // Get variants filtered by selected brand, excluding ones already in the order
-    const existingVariantIds = items.map(item => item.variantId).filter(id => id && id !== 'new');
-    const filteredVariantsForDialog = availableVariants.filter(
-        v => v.brand_id === selectedBrandForExisting && !existingVariantIds.includes(v.id)
-    );
+    const handleAddBrandVariants = () => {
+        if (!selectedBrandForExisting) return;
 
-    // Select all variants for the brand
-    const handleSelectAllVariants = () => {
-        const allIds = filteredVariantsForDialog.map(v => v.id);
-        setSelectedVariantIds(allIds);
-    };
+        const targetLocationId =
+            fulfillmentMode === 'warehouse_transfer'
+                ? (sourceMode === 'multi' ? activeWarehouseTabId : selectedWarehouseLocationId)
+                : '';
 
-    // Clear all variant selections
-    const handleClearVariantSelection = () => {
-        setSelectedVariantIds([]);
-    };
+        const variantsForBrand = availableVariants.filter((v) => v.brand_id === selectedBrandForExisting);
+        if (variantsForBrand.length === 0) {
+            toast({ title: 'No items', description: 'No variants found for this brand.', variant: 'destructive' });
+            return;
+        }
 
-    // Add selected variants to items list
-    const handleAddSelectedVariants = () => {
-        const newItems: NewPOItem[] = selectedVariantIds.map(variantId => {
-            const variant = availableVariants.find(v => v.id === variantId);
-            if (!variant) return null;
-            return {
+        const keyOf = (variantId: string, locId: string) => `${variantId}::${locId || ''}`;
+        const existingKeys = new Set(items.map((i) => keyOf(i.variantId, i.warehouseLocationId || '')));
+
+        const newItems: NewPOItem[] = variantsForBrand
+            .filter((v) => !existingKeys.has(keyOf(v.id, targetLocationId || '')))
+            .map((variant) => ({
                 id: crypto.randomUUID(),
                 brandId: variant.brand_id,
                 brandName: variant.brand_name,
@@ -267,13 +337,21 @@ export function CreatePurchaseOrderDialog({
                 variantType: variant.variant_type,
                 quantity: 0,
                 unitPrice: 0,
-            };
-        }).filter(Boolean) as NewPOItem[];
+                warehouseLocationId:
+                    fulfillmentMode === 'warehouse_transfer'
+                        ? (targetLocationId || undefined)
+                        : undefined,
+            }));
 
-        setItems(prev => [...prev, ...newItems]);
+        setItems((prev) => [...prev, ...newItems]);
         setAddExistingOpen(false);
         setSelectedBrandForExisting('');
-        setSelectedVariantIds([]);
+
+        const brandName = brands.find((b) => b.id === selectedBrandForExisting)?.name || 'brand';
+        toast({
+            title: 'Added',
+            description: `Added ${brandName} variants (qty = 0). Enter quantities to include them.`,
+        });
     };
 
     // Clear all items
@@ -335,6 +413,17 @@ export function CreatePurchaseOrderDialog({
             toast({ title: 'Error', description: 'No warehouse is linked to your company', variant: 'destructive' });
             return;
         }
+        if (fulfillmentMode === 'warehouse_transfer' && sourceMode === 'single' && !selectedWarehouseLocationId) {
+            toast({ title: 'Error', description: 'Please select a sub-warehouse', variant: 'destructive' });
+            return;
+        }
+        if (fulfillmentMode === 'warehouse_transfer' && sourceMode === 'multi') {
+            const missing = items.find(i => !i.warehouseLocationId);
+            if (missing) {
+                toast({ title: 'Error', description: 'Please select a warehouse for each item', variant: 'destructive' });
+                return;
+            }
+        }
         if (items.length === 0) {
             toast({ title: 'Error', description: 'Please add at least one item', variant: 'destructive' });
             return;
@@ -347,13 +436,12 @@ export function CreatePurchaseOrderDialog({
         setIsSubmitting(true);
 
         try {
-            const itemsPayload: Array<{ variant_id: string; quantity: number; unit_price: number }> = [];
+            const itemsPayload: Array<{ variant_id: string; quantity: number; unit_price: number; warehouse_location_id?: string | null }> = [];
 
             // Process items: create brands/variants if needed (always under catalog company — hub or tenant)
             for (const item of items) {
-                if (item.quantity <= 0) {
-                    throw new Error(`Item ${item.variantName || 'Unknown'} must have quantity > 0`);
-                }
+                // Allow qty=0 rows in UI (brand auto-populate). Skip them on submit.
+                if (!item.quantity || item.quantity <= 0) continue;
                 if (item.variantType !== 'posm' && item.unitPrice < 0) {
                     throw new Error(`Item ${item.variantName || 'Unknown'} must have price >= 0`);
                 }
@@ -424,14 +512,33 @@ export function CreatePurchaseOrderDialog({
                 itemsPayload.push({
                     variant_id: finalVariantId,
                     quantity: item.quantity,
-                    unit_price: item.unitPrice
+                    unit_price: item.unitPrice,
+                    warehouse_location_id:
+                        fulfillmentMode === 'warehouse_transfer'
+                            ? (sourceMode === 'single'
+                                ? (selectedWarehouseLocationId || null)
+                                : (item.warehouseLocationId || null))
+                            : null,
                 });
+            }
+
+            if (itemsPayload.length === 0) {
+                toast({
+                    title: 'Error',
+                    description: 'Please enter a quantity for at least one item.',
+                    variant: 'destructive',
+                });
+                return;
             }
 
             // 3. Create Order
             const { success, error } = await onCreateOrder({
                 fulfillment_type: fulfillmentMode,
                 warehouse_company_id: fulfillmentMode === 'warehouse_transfer' ? linkedWarehouseCompanyId : null,
+                warehouse_location_id:
+                    fulfillmentMode === 'warehouse_transfer' && sourceMode === 'single'
+                        ? selectedWarehouseLocationId
+                        : null,
                 supplier_id: fulfillmentMode === 'supplier' ? selectedSupplierId : null,
                 order_date: orderDate,
                 expected_delivery_date: expectedDelivery,
@@ -503,20 +610,109 @@ export function CreatePurchaseOrderDialog({
                                 <Label>Expected Delivery</Label>
                                 <Input type="date" value={expectedDelivery} onChange={e => setExpectedDelivery(e.target.value)} />
                             </div>
-                            {fulfillmentMode === 'supplier' && (
+                            {(fulfillmentMode !== 'warehouse_transfer' || sourceMode === 'single') && (
                                 <div className="space-y-2">
-                                    <Label>Supplier</Label>
-                                    <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
-                                        <SelectTrigger><SelectValue placeholder="Select Supplier" /></SelectTrigger>
-                                        <SelectContent>
-                                            {suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>)}
-                                        </SelectContent>
-                                    </Select>
-                                    {selectedSupplierId && suppliers.find(s => s.id === selectedSupplierId) && (
-                                        <div className="text-xs text-muted-foreground mt-1">
-                                            {suppliers.find(s => s.id === selectedSupplierId)?.address}
-                                        </div>
+                                    <Label>{linkedWarehouseCompanyId ? 'Dispatcher' : 'Supplier'}</Label>
+                                    {linkedWarehouseCompanyId ? (
+                                        <Select
+                                            value={selectedSourceValue}
+                                            onValueChange={(val) => {
+                                                setSelectedSourceValue(val);
+                                                if (val.startsWith('wh:')) {
+                                                    const locId = val.slice(3);
+                                                    setFulfillmentMode('warehouse_transfer');
+                                                    setSelectedWarehouseLocationId(locId);
+                                                    setSelectedSupplierId('');
+                                                    return;
+                                                }
+                                                if (val.startsWith('sup:')) {
+                                                    const supId = val.slice(4);
+                                                    setFulfillmentMode('supplier');
+                                                    setSelectedSupplierId(supId);
+                                                    return;
+                                                }
+                                            }}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Select source" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {fulfillmentMode === 'warehouse_transfer' ? (
+                                                    <>
+                                                        <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">Warehouse</div>
+                                                        {warehouseLocations.map((l) => (
+                                                            <SelectItem key={l.id} value={`wh:${l.id}`}>
+                                                                {l.name}
+                                                                {l.is_main ? ' (Main)' : ''}
+                                                            </SelectItem>
+                                                        ))}
+                                                        {warehouseLocations.length === 0 && (
+                                                            <div className="px-2 py-2 text-xs text-muted-foreground">
+                                                                No warehouse locations available.
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">Suppliers</div>
+                                                        {suppliers.map((s) => (
+                                                            <SelectItem key={s.id} value={`sup:${s.id}`}>
+                                                                {s.company_name}
+                                                            </SelectItem>
+                                                        ))}
+                                                        {suppliers.length === 0 && (
+                                                            <div className="px-2 py-2 text-xs text-muted-foreground">
+                                                                No suppliers available.
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </SelectContent>
+                                        </Select>
+                                    ) : (
+                                        <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Select Supplier" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {suppliers.map((s) => (
+                                                    <SelectItem key={s.id} value={s.id}>
+                                                        {s.company_name}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
                                     )}
+                                    {fulfillmentMode === 'supplier' &&
+                                        selectedSupplierId &&
+                                        suppliers.find((s) => s.id === selectedSupplierId) && (
+                                            <div className="text-xs text-muted-foreground mt-1">
+                                                {suppliers.find((s) => s.id === selectedSupplierId)?.address}
+                                            </div>
+                                        )}
+                                </div>
+                            )}
+
+                            {fulfillmentMode === 'warehouse_transfer' && (
+                                <div className="space-y-2">
+                                    <Label>Source mode</Label>
+                                    <RadioGroup
+                                        value={sourceMode}
+                                        onValueChange={(v) => setSourceMode(v as any)}
+                                        className="grid grid-cols-2 gap-3"
+                                    >
+                                        <label className={cn('flex items-center gap-2 rounded-md border bg-background p-3', sourceMode === 'single' && 'border-primary')}>
+                                            <RadioGroupItem value="single" />
+                                            <span className="text-sm font-medium">Single warehouse</span>
+                                        </label>
+                                        <label className={cn('flex items-center gap-2 rounded-md border bg-background p-3', sourceMode === 'multi' && 'border-primary')}>
+                                            <RadioGroupItem value="multi" />
+                                            <span className="text-sm font-medium">Multiple warehouses</span>
+                                        </label>
+                                    </RadioGroup>
+                                    <p className="text-xs text-muted-foreground">
+                                        Single keeps the current flow. Multiple lets you choose a warehouse per item.
+                                    </p>
                                 </div>
                             )}
 
@@ -548,28 +744,46 @@ export function CreatePurchaseOrderDialog({
                             <div className="flex items-center justify-between p-4 border-b">
                                 <h3 className="font-semibold">Order Items ({items.length})</h3>
                                 {items.length > 0 && (
-                                    <div className="flex gap-2">
-                                        <Button onClick={handleAddItem} variant="outline" size="sm">
-                                            <Plus className="h-4 w-4 mr-1" /> New
-                                        </Button>
-                                        <Button onClick={() => setAddExistingOpen(true)} variant="outline" size="sm">
-                                            <Package className="h-4 w-4 mr-1" /> Existing
-                                        </Button>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                            onClick={() => setClearAllOpen(true)}
-                                        >
-                                            <Trash2 className="h-4 w-4 mr-1" />
-                                            Clear
-                                        </Button>
-                                    </div>
+                                    <>
+                                        <div className="flex gap-2">
+                                            {!readOnlyCatalogEdits && (
+                                                <Button onClick={handleAddItem} variant="outline" size="sm">
+                                                    <Plus className="h-4 w-4 mr-1" /> New
+                                                </Button>
+                                            )}
+                                            <Button onClick={() => setAddExistingOpen(true)} variant="outline" size="sm">
+                                                <Package className="h-4 w-4 mr-1" /> Existing
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                onClick={() => setClearAllOpen(true)}
+                                            >
+                                                <Trash2 className="h-4 w-4 mr-1" />
+                                                Clear
+                                            </Button>
+                                        </div>
+                                    </>
                                 )}
                             </div>
 
                             {catalogLoading && (
                                 <div className="px-4 py-2 text-xs text-muted-foreground border-b">Loading catalog…</div>
+                            )}
+                            {fulfillmentMode === 'warehouse_transfer' && sourceMode === 'multi' && warehouseLocations.length > 0 && (
+                                <div className="border-b bg-muted/10 px-4 py-2">
+                                    <Tabs value={activeWarehouseTabId} onValueChange={setActiveWarehouseTabId}>
+                                        <TabsList className="w-full justify-start overflow-x-auto">
+                                            {warehouseLocations.map((l) => (
+                                                <TabsTrigger key={l.id} value={l.id} className="shrink-0">
+                                                    {l.name}
+                                                    {l.is_main ? ' (Main)' : ''}
+                                                </TabsTrigger>
+                                            ))}
+                                        </TabsList>
+                                    </Tabs>
+                                </div>
                             )}
                             <div className="flex-1 overflow-auto">
                                 <Table>
@@ -577,6 +791,9 @@ export function CreatePurchaseOrderDialog({
                                         <TableRow>
                                             <TableHead className="w-[180px]">Brand</TableHead>
                                             <TableHead className="w-[200px]">Variant/Item</TableHead>
+                                            {fulfillmentMode === 'warehouse_transfer' && sourceMode === 'multi' && (
+                                                <TableHead className="w-[180px]">Warehouse</TableHead>
+                                            )}
                                             <TableHead className="w-[100px]">Type</TableHead>
                                             <TableHead className="w-[100px]">Qty</TableHead>
                                             <TableHead className="w-[120px]">Price</TableHead>
@@ -585,9 +802,9 @@ export function CreatePurchaseOrderDialog({
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {items.length === 0 && (
+                                        {displayedItems.length === 0 && (
                                             <TableRow className="hover:bg-transparent">
-                                                <TableCell colSpan={7} className="h-[400px]">
+                                                <TableCell colSpan={fulfillmentMode === 'warehouse_transfer' && sourceMode === 'multi' ? 8 : 7} className="h-[400px]">
                                                     <div className="flex flex-col items-center justify-center h-full gap-6">
                                                         <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center">
                                                             <Package className="h-10 w-10 text-primary/60" />
@@ -595,14 +812,18 @@ export function CreatePurchaseOrderDialog({
                                                         <div className="text-center space-y-2">
                                                             <h4 className="font-semibold text-lg">No items added yet</h4>
                                                             <p className="text-sm text-muted-foreground max-w-[300px]">
-                                                                Start by adding a new item or select from existing products in your catalog.
+                                                                {readOnlyCatalogEdits
+                                                                    ? 'Select from existing products in the hub catalog.'
+                                                                    : 'Start by adding a new item or select from existing products in your catalog.'}
                                                             </p>
                                                         </div>
                                                         <div className="flex gap-4">
-                                                            <Button onClick={handleAddItem} variant="outline" size="lg" className="gap-2 h-12 px-6">
-                                                                <FileText className="h-5 w-5" />
-                                                                Add New Item
-                                                            </Button>
+                                                            {!readOnlyCatalogEdits && (
+                                                                <Button onClick={handleAddItem} variant="outline" size="lg" className="gap-2 h-12 px-6">
+                                                                    <FileText className="h-5 w-5" />
+                                                                    Add New Item
+                                                                </Button>
+                                                            )}
                                                             <Button onClick={() => setAddExistingOpen(true)} size="lg" className="gap-2 h-12 px-6">
                                                                 <Package className="h-5 w-5" />
                                                                 Add Existing
@@ -612,92 +833,184 @@ export function CreatePurchaseOrderDialog({
                                                 </TableCell>
                                             </TableRow>
                                         )}
-                                        {items.map((item, index) => (
-                                            <TableRow key={item.id}>
-                                                <TableCell>
-                                                    <Input
-                                                        value={item.brandName}
-                                                        onChange={(e) => updateItem(item.id, 'brandName', e.target.value)}
-                                                        onBlur={(e) => {
-                                                            const match = brands.find(b => b.name.toLowerCase() === e.target.value.toLowerCase());
-                                                            if (match) updateItem(item.id, 'brandId', match.id);
-                                                            else updateItem(item.id, 'brandId', 'new');
-                                                        }}
-                                                        placeholder="Brand..."
-                                                        className="h-8"
-                                                    />
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Input
-                                                        value={item.variantName}
-                                                        onChange={(e) => updateItem(item.id, 'variantName', e.target.value)}
-                                                        onBlur={(e) => {
-                                                            if (item.brandId && item.brandId !== 'new') {
-                                                                const match = availableVariants.find(v => v.brand_id === item.brandId && v.name.toLowerCase() === e.target.value.toLowerCase());
-                                                                if (match) updateItem(item.id, 'variantId', match.id);
-                                                                else updateItem(item.id, 'variantId', 'new');
-                                                            }
-                                                        }}
-                                                        placeholder="Item Name..."
-                                                        className="h-8"
-                                                        disabled={!item.brandName}
-                                                    />
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Select
-                                                        value={item.variantType}
-                                                        onValueChange={(val) => updateItem(item.id, 'variantType', val)}
-                                                        disabled={variantTypes.length === 0}
-                                                    >
-                                                        <SelectTrigger className="h-8">
-                                                            <SelectValue placeholder={variantTypes.length === 0 ? 'No types' : 'Select type'} />
-                                                        </SelectTrigger>
-                                                        <SelectContent>
-                                                            {variantTypes.length === 0 ? (
-                                                                <div className="px-2 py-2 text-xs text-muted-foreground">
-                                                                    No variant types configured.
-                                                                </div>
-                                                            ) : (
-                                                                variantTypes.map((vt) => (
-                                                                    <SelectItem key={vt.id} value={vt.name}>
-                                                                        {vt.display_name || vt.name}
-                                                                    </SelectItem>
-                                                                ))
-                                                            )}
-                                                        </SelectContent>
-                                                    </Select>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Input
-                                                        type="number"
-                                                        min="0"
-                                                        value={item.quantity === 0 ? '' : item.quantity}
-                                                        onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 0)}
-                                                        placeholder="0"
-                                                        className="h-8"
-                                                    />
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Input
-                                                        type="number"
-                                                        min="0"
-                                                        step="0.01"
-                                                        value={item.unitPrice === 0 ? '' : item.unitPrice}
-                                                        onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
-                                                        placeholder="0.00"
-                                                        className="h-8"
-                                                    />
-                                                </TableCell>
-                                                <TableCell className="text-right font-medium">
-                                                    ₱{(item.quantity * item.unitPrice).toLocaleString()}
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleRemoveItem(item.id)}>
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
-                                                </TableCell>
-                                            </TableRow>
-                                        ))}
+
+                                        {/* Multi-warehouse: consolidate by brand, warehouse is read-only */}
+                                        {fulfillmentMode === 'warehouse_transfer' && sourceMode === 'multi' ? (
+                                            (() => {
+                                                const byBrand = new Map<string, typeof displayedItems>();
+                                                for (const it of displayedItems) {
+                                                    const k = it.brandName || 'Unknown';
+                                                    if (!byBrand.has(k)) byBrand.set(k, []);
+                                                    byBrand.get(k)!.push(it);
+                                                }
+                                                const brandKeys = Array.from(byBrand.keys()).sort((a, b) => a.localeCompare(b));
+
+                                                const locationNameFor = (locId?: string) => {
+                                                    if (!locId) return '—';
+                                                    const loc = warehouseLocations.find((l) => l.id === locId);
+                                                    return loc ? `${loc.name}${loc.is_main ? ' (Main)' : ''}` : '—';
+                                                };
+
+                                                return brandKeys.flatMap((brand) => {
+                                                    const rows = byBrand.get(brand) || [];
+                                                    const typeOrder = (t: any) => {
+                                                        const v = String(t || '').toLowerCase();
+                                                        if (v === 'flavor') return 0;
+                                                        if (v === 'battery') return 1;
+                                                        if (v === 'posm') return 2;
+                                                        return 99;
+                                                    };
+                                                    rows.sort((a, b) => {
+                                                        const ta = typeOrder(a.variantType);
+                                                        const tb = typeOrder(b.variantType);
+                                                        if (ta !== tb) return ta - tb;
+                                                        return (a.variantName || '').localeCompare(b.variantName || '');
+                                                    });
+                                                    return [
+                                                        <TableRow key={`brand:${brand}`} className="bg-muted/30 hover:bg-muted/30">
+                                                            <TableCell className="font-semibold" colSpan={8}>
+                                                                {brand}
+                                                            </TableCell>
+                                                        </TableRow>,
+                                                        ...rows.map((item) => (
+                                                            <TableRow key={item.id}>
+                                                                <TableCell />
+                                                                <TableCell className="font-medium">{item.variantName}</TableCell>
+                                                                <TableCell className="text-xs">{locationNameFor(item.warehouseLocationId)}</TableCell>
+                                                                <TableCell>
+                                                                    <span className="inline-flex items-center rounded-md border px-2 py-1 text-xs capitalize">
+                                                                        {String(item.variantType || '').toLowerCase()}
+                                                                    </span>
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    <Input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        value={item.quantity === 0 ? '' : item.quantity}
+                                                                        onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 0)}
+                                                                        placeholder="0"
+                                                                        className="h-8"
+                                                                    />
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    <Input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        step="0.01"
+                                                                        value={item.unitPrice === 0 ? '' : item.unitPrice}
+                                                                        onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
+                                                                        placeholder="0.00"
+                                                                        className="h-8"
+                                                                    />
+                                                                </TableCell>
+                                                                <TableCell className="text-right font-medium">
+                                                                    ₱{(item.quantity * item.unitPrice).toLocaleString()}
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        className="h-8 w-8 text-destructive"
+                                                                        onClick={() => handleRemoveItem(item.id)}
+                                                                    >
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                    </Button>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        )),
+                                                    ];
+                                                });
+                                            })()
+                                        ) : (
+                                            // Default table (supplier or single-warehouse or editable)
+                                            displayedItems.map((item) => (
+                                                <TableRow key={item.id}>
+                                                    <TableCell>
+                                                        <Input
+                                                            value={item.brandName}
+                                                            onChange={(e) => updateItem(item.id, 'brandName', e.target.value)}
+                                                            onBlur={(e) => {
+                                                                const match = brands.find(b => b.name.toLowerCase() === e.target.value.toLowerCase());
+                                                                if (match) updateItem(item.id, 'brandId', match.id);
+                                                                else updateItem(item.id, 'brandId', 'new');
+                                                            }}
+                                                            placeholder="Brand..."
+                                                            className="h-8"
+                                                            disabled={readOnlyCatalogEdits}
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Input
+                                                            value={item.variantName}
+                                                            onChange={(e) => updateItem(item.id, 'variantName', e.target.value)}
+                                                            onBlur={(e) => {
+                                                                if (item.brandId && item.brandId !== 'new') {
+                                                                    const match = availableVariants.find(v => v.brand_id === item.brandId && v.name.toLowerCase() === e.target.value.toLowerCase());
+                                                                    if (match) updateItem(item.id, 'variantId', match.id);
+                                                                    else updateItem(item.id, 'variantId', 'new');
+                                                                }
+                                                            }}
+                                                            placeholder="Item Name..."
+                                                            className="h-8"
+                                                            disabled={readOnlyCatalogEdits || !item.brandName}
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Select
+                                                            value={item.variantType}
+                                                            onValueChange={(val) => updateItem(item.id, 'variantType', val)}
+                                                            disabled={readOnlyCatalogEdits || variantTypes.length === 0}
+                                                        >
+                                                            <SelectTrigger className="h-8">
+                                                                <SelectValue placeholder={variantTypes.length === 0 ? 'No types' : 'Select type'} />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {variantTypes.length === 0 ? (
+                                                                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                                                                        No variant types configured.
+                                                                    </div>
+                                                                ) : (
+                                                                    variantTypes.map((vt) => (
+                                                                        <SelectItem key={vt.id} value={vt.name}>
+                                                                            {vt.display_name || vt.name}
+                                                                        </SelectItem>
+                                                                    ))
+                                                                )}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Input
+                                                            type="number"
+                                                            min="0"
+                                                            value={item.quantity === 0 ? '' : item.quantity}
+                                                            onChange={(e) => updateItem(item.id, 'quantity', parseInt(e.target.value) || 0)}
+                                                            placeholder="0"
+                                                            className="h-8"
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            value={item.unitPrice === 0 ? '' : item.unitPrice}
+                                                            onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)}
+                                                            placeholder="0.00"
+                                                            className="h-8"
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell className="text-right font-medium">
+                                                        ₱{(item.quantity * item.unitPrice).toLocaleString()}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleRemoveItem(item.id)}>
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </Button>
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))
+                                        )}
                                     </TableBody>
                                 </Table>
                             </div>
@@ -728,7 +1041,6 @@ export function CreatePurchaseOrderDialog({
                                 value={selectedBrandForExisting}
                                 onValueChange={(val) => {
                                     setSelectedBrandForExisting(val);
-                                    setSelectedVariantIds([]);
                                 }}
                             >
                                 <SelectTrigger>
@@ -740,68 +1052,18 @@ export function CreatePurchaseOrderDialog({
                                     ))}
                                 </SelectContent>
                             </Select>
+                            <p className="text-xs text-muted-foreground">
+                                This will add all variants under the selected brand with quantity set to 0.
+                            </p>
                         </div>
-
-                        {/* Variant Selection (only show when brand is selected) */}
-                        {selectedBrandForExisting && (
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <Label>Select Variants ({selectedVariantIds.length} selected)</Label>
-                                    <div className="flex gap-2">
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={handleSelectAllVariants}
-                                        >
-                                            Select All
-                                        </Button>
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={handleClearVariantSelection}
-                                        >
-                                            Clear
-                                        </Button>
-                                    </div>
-                                </div>
-                                <ScrollArea className="h-[300px] border rounded-md p-3">
-                                    {filteredVariantsForDialog.length === 0 ? (
-                                        <p className="text-sm text-muted-foreground text-center py-8">
-                                            No variants found for this brand.
-                                        </p>
-                                    ) : (
-                                        <div className="space-y-2">
-                                            {filteredVariantsForDialog.map(variant => (
-                                                <div
-                                                    key={variant.id}
-                                                    className="flex items-center gap-3 p-2 rounded-md cursor-pointer"
-                                                    onClick={() => toggleVariantSelection(variant.id)}
-                                                >
-                                                    <Checkbox
-                                                        checked={selectedVariantIds.includes(variant.id)}
-                                                        onCheckedChange={() => toggleVariantSelection(variant.id)}
-                                                    />
-                                                    <div className="flex-1">
-                                                        <p className="font-medium text-sm">{variant.name}</p>
-                                                        <p className="text-xs text-muted-foreground capitalize">{variant.variant_type}</p>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </ScrollArea>
-                            </div>
-                        )}
                     </div>
                     <div className="flex justify-end gap-2 pt-4 border-t">
                         <Button variant="outline" onClick={() => setAddExistingOpen(false)}>Cancel</Button>
                         <Button
-                            onClick={handleAddSelectedVariants}
-                            disabled={selectedVariantIds.length === 0}
+                            onClick={handleAddBrandVariants}
+                            disabled={!selectedBrandForExisting}
                         >
-                            Add {selectedVariantIds.length} Item{selectedVariantIds.length !== 1 ? 's' : ''}
+                            Add brand
                         </Button>
                     </div>
                 </DialogContent>

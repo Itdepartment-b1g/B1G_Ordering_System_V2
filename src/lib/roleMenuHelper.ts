@@ -168,6 +168,7 @@ const warehouseMenuItems: MenuItem[] = [
     description: 'Main inventory for your warehouse company.',
     hasSubmenu: true,
     submenu: [
+      { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', description: 'Create sub-warehouses and allocate stock from main.' },
       { title: 'Main Inventory', url: '/inventory/main', description: 'Stock levels for your warehouse company.' },
     ],
   },

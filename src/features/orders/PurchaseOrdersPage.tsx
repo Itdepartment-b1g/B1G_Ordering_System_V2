@@ -15,6 +15,7 @@ import { usePurchaseOrders } from './hooks';
 import { CreatePurchaseOrderDialog } from './components/CreatePurchaseOrderDialog';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,10 +49,16 @@ export default function PurchaseOrdersPage() {
   const [orderToReject, setOrderToReject] = useState<any>(null);
   const [approvingOrderId, setApprovingOrderId] = useState<string | null>(null);
   const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
+  const [fulfillDialogOpen, setFulfillDialogOpen] = useState(false);
+  const [orderToFulfill, setOrderToFulfill] = useState<any>(null);
+  const [fulfillLocationId, setFulfillLocationId] = useState<string | null>(null);
+  const [fulfillLocationName, setFulfillLocationName] = useState<string | null>(null);
+  const [fulfillingOrderId, setFulfillingOrderId] = useState<string | null>(null);
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [orderToView, setOrderToView] = useState<any>(null);
+  const [transferLocationStatuses, setTransferLocationStatuses] = useState<Array<{ location_id: string; location_name: string; status: string }>>([]);
 
   // Company info for view dialog
   const [companyInfo, setCompanyInfo] = useState<{ company_name: string } | null>(null);
@@ -87,6 +94,143 @@ export default function PurchaseOrdersPage() {
 
   const [viewBuyerCompanyName, setViewBuyerCompanyName] = useState<string | null>(null);
 
+  const isWarehouse = user?.role === 'warehouse';
+  const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
+  const canFulfillAsSubWarehouse =
+    isWarehouse &&
+    membership.status === 'sub' &&
+    !!membership.locationId;
+  const canFulfillAsMainWarehouse =
+    isWarehouse &&
+    membership.status === 'main' &&
+    !!membership.locationId;
+
+  const canFulfillFromViewForLocation = (locationId: string, locationStatus: string) => {
+    if (!isWarehouse) return false;
+    if (!membership.locationId) return false;
+    if (String(locationId) !== String(membership.locationId)) return false;
+    if (locationStatus === 'fulfilled') return false;
+    return locationStatus === 'ready' || locationStatus === 'partial';
+  };
+
+  const shouldShowFulfillButtonInViewForLocation = (locationId: string) => {
+    if (!isWarehouse) return false;
+    if (!membership.locationId) return false;
+    // Only allow fulfilling your own location from the View modal.
+    return String(locationId) === String(membership.locationId) && (canFulfillAsMainWarehouse || canFulfillAsSubWarehouse);
+  };
+
+  const [approveStockByLocVar, setApproveStockByLocVar] = useState<Record<string, number>>({});
+  const [approveLocationNames, setApproveLocationNames] = useState<Record<string, string>>({});
+  const [loadingApproveStock, setLoadingApproveStock] = useState(false);
+  const locVarKey = (locId: string, variantId: string) => `${locId}::${variantId}`;
+  const shortId = (id: string) => (id && id.length > 10 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id);
+  const itemLocLabel = (item: any) => {
+    const raw = Array.isArray(item?.warehouse_location) ? item.warehouse_location[0] : item?.warehouse_location;
+    if (raw?.name) return `${raw.name}${raw.is_main ? ' (Main)' : ''}`;
+    const raw2 = Array.isArray(item?.warehouse_locations) ? item.warehouse_locations[0] : item?.warehouse_locations;
+    if (raw2?.name) return `${raw2.name}${raw2.is_main ? ' (Main)' : ''}`;
+    return null;
+  };
+  const resolveLocationLabel = (locId: string, locItems: any[]) => {
+    const fromMap = approveLocationNames[locId];
+    if (fromMap) return fromMap;
+    const fromItem = locItems.map(itemLocLabel).find(Boolean) as string | undefined;
+    if (fromItem) return fromItem;
+    if (locId && locId !== 'unknown') return `Warehouse ${shortId(locId)}`;
+    return 'Warehouse';
+  };
+
+  // Approve modal: preload stock availability (warehouse_transfer only).
+  useEffect(() => {
+    if (!approveDialogOpen || !orderToApprove || orderToApprove.fulfillment_type !== 'warehouse_transfer') {
+      setApproveStockByLocVar({});
+      setApproveLocationNames({});
+      setLoadingApproveStock(false);
+      return;
+    }
+    if (!user?.company_id) return;
+
+    const items = (orderToApprove.items || []) as any[];
+    const locationIds = Array.from(
+      new Set(
+        items
+          .map((i) => String(i.warehouse_location_id || orderToApprove.warehouse_location_id || ''))
+          .filter(Boolean)
+      )
+    );
+    const variantIds = Array.from(new Set(items.map((i) => String(i.variant_id || '')).filter(Boolean)));
+    if (locationIds.length === 0 || variantIds.length === 0) {
+      setApproveStockByLocVar({});
+      setApproveLocationNames({});
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingApproveStock(true);
+    (async () => {
+      const [{ data: locRows, error: locErr }, { data: invRows, error: invErr }, { data: mainInvRows, error: mainInvErr }] =
+        await Promise.all([
+        supabase
+          .from('warehouse_locations')
+          .select('id,name,is_main')
+          .eq('company_id', user.company_id)
+          .in('id', locationIds),
+        supabase
+          .from('warehouse_location_inventory')
+          .select('location_id,variant_id,stock')
+          .eq('company_id', user.company_id)
+          .in('location_id', locationIds)
+          .in('variant_id', variantIds),
+        // Main Warehouse "location" stock lives in main_inventory (available = stock - allocated_stock).
+        supabase
+          .from('main_inventory')
+          .select('variant_id,stock,allocated_stock')
+          .eq('company_id', user.company_id)
+          .in('variant_id', variantIds),
+      ]);
+      if (cancelled) return;
+      if (locErr) throw locErr;
+      if (invErr) throw invErr;
+      if (mainInvErr) throw mainInvErr;
+
+      const nameMap: Record<string, string> = {};
+      const mainLocIds: string[] = [];
+      for (const r of (locRows as any[]) || []) {
+        const id = String(r.id);
+        nameMap[id] = `${r.name}${r.is_main ? ' (Main)' : ''}`;
+        if (r.is_main) mainLocIds.push(id);
+      }
+      setApproveLocationNames(nameMap);
+
+      const stockMap: Record<string, number> = {};
+      for (const r of (invRows as any[]) || []) {
+        stockMap[locVarKey(String(r.location_id), String(r.variant_id))] = Number(r.stock || 0);
+      }
+
+      // Fill in "available" for main locations from main_inventory.
+      for (const r of (mainInvRows as any[]) || []) {
+        const variantId = String(r.variant_id);
+        const available = Math.max(0, Number(r.stock || 0) - Number(r.allocated_stock || 0));
+        for (const mainLocId of mainLocIds) {
+          stockMap[locVarKey(mainLocId, variantId)] = available;
+        }
+      }
+      setApproveStockByLocVar(stockMap);
+    })()
+      .catch((e) => {
+        console.warn('[Approve Preview] Failed to load stock', e);
+        setApproveStockByLocVar({});
+        setApproveLocationNames({});
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingApproveStock(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [approveDialogOpen, orderToApprove?.id, orderToApprove?.fulfillment_type, user?.company_id]);
 
 
 
@@ -118,9 +262,59 @@ export default function PurchaseOrdersPage() {
     };
   }, [orderToView?.company_id, orderToView?.id, user?.role, user?.company_id]);
 
+  // For warehouse_transfer POs: load per-location fulfillment statuses for progress view.
+  useEffect(() => {
+    if (!viewDialogOpen || !orderToView?.id) {
+      setTransferLocationStatuses([]);
+      return;
+    }
+    if (orderToView.fulfillment_type !== 'warehouse_transfer') {
+      setTransferLocationStatuses([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('warehouse_transfer_location_status')
+        .select(
+          `
+          warehouse_location_id,
+          status,
+          warehouse_locations:warehouse_location_id (
+            name
+          )
+        `
+        )
+        .eq('purchase_order_id', orderToView.id)
+        .order('created_at', { ascending: true });
+      if (cancelled) return;
+      if (error) {
+        console.warn('[PO View] Failed to load transfer location statuses', error);
+        setTransferLocationStatuses([]);
+        return;
+      }
+      const rows = (data as any[]) || [];
+      setTransferLocationStatuses(
+        rows.map((r) => ({
+          location_id: r.warehouse_location_id,
+          location_name: (Array.isArray(r.warehouse_locations) ? r.warehouse_locations[0]?.name : r.warehouse_locations?.name) || '—',
+          status: String(r.status || 'pending'),
+        }))
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [viewDialogOpen, orderToView?.id, orderToView?.fulfillment_type]);
+
   const canApproveOrder = (order: { status: string; fulfillment_type?: string }) =>
     order.status === 'pending' &&
     (order.fulfillment_type !== 'warehouse_transfer' || user?.role === 'warehouse');
+
+  const canFulfillOrder = (order: { status: string; fulfillment_type?: string }) =>
+    canFulfillAsSubWarehouse &&
+    order.fulfillment_type === 'warehouse_transfer' &&
+    (order.status === 'approved_for_fulfillment' || order.status === 'partially_fulfilled');
 
   const handleApproveOrder = async () => {
     if (!orderToApprove) return;
@@ -158,6 +352,48 @@ export default function PurchaseOrdersPage() {
     setRejectDialogOpen(true);
   };
 
+  const handleOpenFulfillDialog = (order: any) => {
+    setOrderToFulfill(order);
+    setFulfillLocationId(membership.locationId ?? null);
+    setFulfillLocationName(null);
+    setFulfillDialogOpen(true);
+  };
+
+  const handleOpenFulfillDialogForLocation = (order: any, locationId: string, locationName?: string | null) => {
+    setOrderToFulfill(order);
+    setFulfillLocationId(locationId);
+    setFulfillLocationName(locationName ?? null);
+    setFulfillDialogOpen(true);
+  };
+
+  const handleFulfillOrder = async () => {
+    const locId = fulfillLocationId ?? membership.locationId;
+    if (!orderToFulfill || !locId) return;
+    setFulfillingOrderId(orderToFulfill.id);
+    try {
+      const { data, error } = await supabase.rpc('fulfill_po_location', {
+        p_po_id: orderToFulfill.id,
+        p_location_id: locId,
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Fulfillment failed');
+
+      toast({
+        title: 'Fulfilled',
+        description: `${data.po_number} fulfilled for your warehouse location.`,
+      });
+      setFulfillDialogOpen(false);
+      setOrderToFulfill(null);
+      setFulfillLocationId(null);
+      setFulfillLocationName(null);
+      await fetchPurchaseOrders();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message || 'Failed to fulfill', variant: 'destructive' });
+    } finally {
+      setFulfillingOrderId(null);
+    }
+  };
+
   const handleRejectOrder = async () => {
     if (!orderToReject) return;
     setRejectingOrderId(orderToReject.id);
@@ -179,7 +415,8 @@ export default function PurchaseOrdersPage() {
     return (
       order.po_number.toLowerCase().includes(q) ||
       (order.supplier?.company_name || '').toLowerCase().includes(q) ||
-      typeLabel.includes(q)
+      typeLabel.includes(q) ||
+      (order.fulfillment_type === 'warehouse_transfer' && (order.warehouse_location?.name || '').toLowerCase().includes(q))
     );
   });
 
@@ -307,6 +544,11 @@ export default function PurchaseOrdersPage() {
                   <div>
                     <div className="text-xs text-muted-foreground">Seller / source</div>
                     <div className="truncate">{order.supplier?.company_name ?? '—'}</div>
+                    {order.fulfillment_type === 'warehouse_transfer' && (
+                      <div className="text-xs text-muted-foreground truncate">
+                        Requested: {order.warehouse_location?.name ?? '—'}
+                      </div>
+                    )}
                   </div>
                   <div className="text-right">
                     <div className="text-xs text-muted-foreground">Order Date</div>
@@ -331,6 +573,12 @@ export default function PurchaseOrdersPage() {
                     <Button variant="default" size="sm" onClick={() => handleOpenApproveDialog(order)} disabled={approvingOrderId === order.id}>
                       <Check className="h-4 w-4 mr-1" />
                       {order.fulfillment_type === 'warehouse_transfer' ? 'Approve transfer' : 'Approve'}
+                    </Button>
+                  )}
+                  {canFulfillOrder(order) && (
+                    <Button variant="default" size="sm" onClick={() => handleOpenFulfillDialog(order)} disabled={fulfillingOrderId === order.id}>
+                      <Package className="h-4 w-4 mr-1" />
+                      Fulfill
                     </Button>
                   )}
                   {order.status === 'pending' && (
@@ -382,6 +630,11 @@ export default function PurchaseOrdersPage() {
                         <div>
                           <p className="font-medium">{order.supplier?.company_name ?? '—'}</p>
                           <p className="text-xs text-muted-foreground">{order.supplier?.contact_person ?? ''}</p>
+                          {order.fulfillment_type === 'warehouse_transfer' && (
+                            <p className="text-xs text-muted-foreground">
+                              Requested: <span className="font-medium text-foreground/80">{order.warehouse_location?.name ?? '—'}</span>
+                            </p>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>{new Date(order.order_date).toLocaleDateString()}</TableCell>
@@ -420,6 +673,21 @@ export default function PurchaseOrdersPage() {
                               {order.fulfillment_type === 'warehouse_transfer'
                                 ? 'Approve transfer'
                                 : 'Approve & Add to Inventory'}
+                            </Button>
+                          )}
+                          {canFulfillOrder(order) && (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => handleOpenFulfillDialog(order)}
+                              disabled={fulfillingOrderId === order.id}
+                            >
+                              {fulfillingOrderId === order.id ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <Package className="h-4 w-4 mr-1" />
+                              )}
+                              Fulfill
                             </Button>
                           )}
                           {order.status === 'pending' && (
@@ -490,65 +758,197 @@ export default function PurchaseOrdersPage() {
 
       {/* Approve Order Dialog */}
       <AlertDialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Approve Purchase Order</AlertDialogTitle>
-            <AlertDialogDescription>
-              {orderToApprove && (
-                <div className="space-y-4 py-4">
-                  <p>Are you sure you want to approve <strong>{orderToApprove.po_number}</strong>?</p>
-                  <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
-                    <p className="font-semibold text-sm">
-                      {orderToApprove.fulfillment_type === 'warehouse_transfer'
-                        ? 'Stock will move from the warehouse hub to the requesting company:'
-                        : 'This will add the following items to your Main Inventory:'}
-                    </p>
-                    <div className="space-y-2">
-                      {orderToApprove.items.map((item: any, index: number) => (
-                        <div key={index} className="flex items-center justify-between text-sm bg-background p-2 rounded">
-                          <div className="flex items-center gap-2">
-                            <Package className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-medium">{item.brand_name}</span>
-                            <span className="text-muted-foreground">-</span>
-                            <span>{item.variant_name}</span>
-                            <Badge
-                              variant="secondary"
-                              className={
-                                item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                  item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                    'bg-purple-100 text-purple-700'
-                              }
-                            >
-                              {String(item.variant_type).toUpperCase()}
-                            </Badge>
-                          </div>
-                          <span className="font-semibold">
-                            {orderToApprove.fulfillment_type === 'warehouse_transfer'
-                              ? `${item.quantity} units`
-                              : `+${item.quantity} units`}
-                          </span>
+        <AlertDialogContent className="w-[calc(100vw-1.5rem)] sm:w-full sm:max-w-2xl h-[85vh] max-h-[85vh] p-0 flex flex-col">
+          <div className="p-6 pb-3">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Approve Purchase Order</AlertDialogTitle>
+              <AlertDialogDescription>
+                {orderToApprove
+                  ? `Are you sure you want to approve ${orderToApprove.po_number}?`
+                  : 'Select a purchase order to approve.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+          </div>
+
+          <ScrollArea type="always" scrollHideDelay={0} className="flex-1 min-h-0 px-6">
+            {orderToApprove && (
+              <div className="space-y-4 pb-4">
+                <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
+                <p className="font-semibold text-sm">
+                  {orderToApprove.fulfillment_type === 'warehouse_transfer'
+                    ? 'Stock will move from the warehouse sub-warehouse to the requesting company:'
+                    : 'This will add the following items to your Main Inventory:'}
+                </p>
+                {orderToApprove.fulfillment_type !== 'warehouse_transfer' ? (
+                  <div className="space-y-2">
+                    {orderToApprove.items.map((item: any, index: number) => (
+                      <div key={index} className="flex items-center justify-between text-sm bg-background p-2 rounded">
+                        <div className="flex items-center gap-2">
+                          <Package className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">{item.brand_name}</span>
+                          <span className="text-muted-foreground">-</span>
+                          <span>{item.variant_name}</span>
+                          <Badge
+                            variant="secondary"
+                            className={
+                              item.variant_type === 'flavor'
+                                ? 'bg-blue-100 text-blue-700'
+                                : item.variant_type === 'battery'
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-purple-100 text-purple-700'
+                            }
+                          >
+                            {String(item.variant_type).toUpperCase()}
+                          </Badge>
                         </div>
-                      ))}
-                    </div>
+                        <span className="font-semibold">{`+${item.quantity} units`}</span>
+                      </div>
+                    ))}
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    {orderToApprove.fulfillment_type === 'warehouse_transfer'
-                      ? 'Hub inventory must cover these quantities. This cannot be undone.'
-                      : 'The quantities will be added to existing stock or new items will be created if they don\'t exist.'}
-                  </p>
-                </div>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleApproveOrder}>
-              <Check className="h-4 w-4 mr-2" />
-              {orderToApprove?.fulfillment_type === 'warehouse_transfer'
-                ? 'Approve transfer'
-                : 'Approve & Add to Inventory'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
+                ) : (
+                  <div className="space-y-3">
+                    {loadingApproveStock && (
+                      <div className="text-xs text-muted-foreground flex items-center gap-2">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Checking stock per warehouse...
+                      </div>
+                    )}
+                    {(() => {
+                      const items = (orderToApprove.items || []) as any[];
+                      const byLoc: Record<string, any[]> = {};
+                      for (const it of items) {
+                        const locId = String(it.warehouse_location_id || orderToApprove.warehouse_location_id || '');
+                        if (!locId) continue;
+                        (byLoc[locId] ||= []).push(it);
+                      }
+                      const locIds = Object.keys(byLoc);
+                      const sortedLocIds = locIds.sort((a, b) => (approveLocationNames[a] || a).localeCompare(approveLocationNames[b] || b));
+
+                      return (
+                        <Accordion type="multiple" className="w-full">
+                          {sortedLocIds.map((locId) => {
+                            const locItems = byLoc[locId] || [];
+                            // group by brand
+                            const byBrand: Record<string, any[]> = {};
+                            for (const it of locItems) (byBrand[String(it.brand_name || 'Unknown')] ||= []).push(it);
+                            const brandNames = Object.keys(byBrand).sort((a, b) => a.localeCompare(b));
+
+                            // shortage check
+                            let shortageCount = 0;
+                            for (const it of locItems) {
+                              const variantId = String(it.variant_id || '');
+                              const req = Number(it.quantity || 0);
+                              const avail = approveStockByLocVar[locVarKey(locId, variantId)] ?? 0;
+                              if (variantId && req > avail) shortageCount += 1;
+                            }
+
+                            return (
+                              <AccordionItem key={locId} value={locId} className="border rounded-md px-3 bg-background">
+                                <AccordionTrigger className="hover:no-underline">
+                                  <div className="flex items-center justify-between w-full pr-3">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-semibold text-sm">
+                                        {resolveLocationLabel(locId, locItems)}
+                                      </span>
+                                      <Badge variant="secondary" className="text-xs">
+                                        {locItems.length} items
+                                      </Badge>
+                                      {shortageCount > 0 && (
+                                        <Badge variant="destructive" className="text-xs">
+                                          {shortageCount} shortage
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </div>
+                                </AccordionTrigger>
+                                <AccordionContent>
+                                  <div className="space-y-3 pt-2 pb-1">
+                                    {brandNames.map((brand) => {
+                                      const brandItems = (byBrand[brand] || []).slice().sort((a, b) => {
+                                        const ta = String(a.variant_type || '');
+                                        const tb = String(b.variant_type || '');
+                                        if (ta !== tb) return ta.localeCompare(tb);
+                                        return String(a.variant_name || '').localeCompare(String(b.variant_name || ''));
+                                      });
+                                      return (
+                                        <div key={brand} className="border rounded-md">
+                                          <div className="px-3 py-2 bg-muted/40 flex items-center justify-between">
+                                            <span className="font-semibold text-sm">{brand}</span>
+                                            <span className="text-xs text-muted-foreground">
+                                              {brandItems.reduce((sum, x) => sum + Number(x.quantity || 0), 0)} total units
+                                            </span>
+                                          </div>
+                                          <div className="divide-y">
+                                            {brandItems.map((it: any, idx: number) => {
+                                              const variantId = String(it.variant_id || '');
+                                              const req = Number(it.quantity || 0);
+                                              const avail = approveStockByLocVar[locVarKey(locId, variantId)] ?? 0;
+                                              const short = variantId && req > avail;
+                                              return (
+                                                <div
+                                                  key={`${variantId || it.variant_name || idx}`}
+                                                  className={`px-3 py-2 text-sm flex items-center justify-between ${short ? 'bg-red-50/60' : ''}`}
+                                                >
+                                                  <div className="flex items-center gap-2 min-w-0">
+                                                    <Package className="h-4 w-4 text-muted-foreground shrink-0" />
+                                                    <span className="truncate">{it.variant_name}</span>
+                                                    <Badge
+                                                      variant="secondary"
+                                                      className={
+                                                        it.variant_type === 'flavor'
+                                                          ? 'bg-blue-100 text-blue-700'
+                                                          : it.variant_type === 'battery'
+                                                            ? 'bg-green-100 text-green-700'
+                                                            : 'bg-purple-100 text-purple-700'
+                                                      }
+                                                    >
+                                                      {String(it.variant_type).toUpperCase()}
+                                                    </Badge>
+                                                  </div>
+                                                  <div className="flex items-center gap-3 shrink-0">
+                                                    <span className="font-semibold">{req} req</span>
+                                                    <span className={`text-xs ${short ? 'text-red-700 font-semibold' : 'text-muted-foreground'}`}>
+                                                      {avail} avail
+                                                    </span>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </AccordionContent>
+                              </AccordionItem>
+                            );
+                          })}
+                        </Accordion>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {orderToApprove.fulfillment_type === 'warehouse_transfer'
+                  ? 'Sub-warehouse inventory must cover these quantities. This cannot be undone.'
+                  : "The quantities will be added to existing stock or new items will be created if they don't exist."}
+              </p>
+              </div>
+            )}
+          </ScrollArea>
+
+          <div className="p-6 pt-3 border-t">
+            <AlertDialogFooter className="flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <AlertDialogCancel className="w-full sm:w-auto">Cancel</AlertDialogCancel>
+              <AlertDialogAction className="w-full sm:w-auto" onClick={handleApproveOrder}>
+                <Check className="h-4 w-4 mr-2" />
+                {orderToApprove?.fulfillment_type === 'warehouse_transfer'
+                  ? 'Approve transfer'
+                  : 'Approve & Add to Inventory'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </div>
         </AlertDialogContent>
       </AlertDialog>
 
@@ -558,17 +958,41 @@ export default function PurchaseOrdersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Reject Purchase Order</AlertDialogTitle>
             <AlertDialogDescription>
-              {orderToReject && (
-                <div className="space-y-4 py-2">
-                  <p>Are you sure you want to reject <strong>{orderToReject.po_number}</strong>?</p>
-                </div>
-              )}
+              {orderToReject
+                ? `Are you sure you want to reject ${orderToReject.po_number}?`
+                : 'Select a purchase order to reject.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleRejectOrder} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               <X className="h-4 w-4 mr-2" /> Reject
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Fulfill Location Dialog (sub-warehouse) */}
+      <AlertDialog open={fulfillDialogOpen} onOpenChange={setFulfillDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Fulfill Warehouse Transfer</AlertDialogTitle>
+            <AlertDialogDescription>
+              {orderToFulfill
+                ? `Confirm fulfillment for ${orderToFulfill.po_number}. This will deduct stock from ${
+                    fulfillLocationName ? fulfillLocationName : 'the selected warehouse location'
+                  } and move it to the requesting company.`
+                : 'Select a purchase order to fulfill.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleFulfillOrder}
+              disabled={!orderToFulfill || !(fulfillLocationId ?? membership.locationId) || fulfillingOrderId === orderToFulfill?.id}
+            >
+              {fulfillingOrderId === orderToFulfill?.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Package className="h-4 w-4 mr-2" />}
+              Fulfill
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -648,10 +1072,18 @@ export default function PurchaseOrdersPage() {
                     {/* Seller Info Section */}
                     <AccordionItem value="seller" className="border rounded-lg px-4">
                       <AccordionTrigger className="hover:no-underline">
-                        <span className="font-semibold">Supplier</span>
+                        <span className="font-semibold">
+                          {orderToView.fulfillment_type === 'warehouse_transfer' ? 'Warehouse' : 'Supplier'}
+                        </span>
                       </AccordionTrigger>
                       <AccordionContent>
                         <div className="space-y-2 text-sm pt-4">
+                          {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                            <div className="rounded-md border bg-muted/40 p-3">
+                              <Label className="text-muted-foreground text-xs">Requested warehouse / sub-warehouse</Label>
+                              <p className="font-medium">{orderToView.warehouse_location?.name ?? '—'}</p>
+                            </div>
+                          )}
                           <div>
                             <p className="font-medium">{orderToView.supplier.company_name}</p>
                             <p className="text-muted-foreground text-xs">{orderToView.supplier.address}</p>
@@ -815,8 +1247,73 @@ export default function PurchaseOrdersPage() {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <h4 className="font-semibold text-lg">Seller Information</h4>
+                      <h4 className="font-semibold text-lg">
+                        {orderToView.fulfillment_type === 'warehouse_transfer' ? 'Warehouse Information' : 'Seller Information'}
+                      </h4>
                       <div className="bg-muted p-4 rounded-lg space-y-1">
+                        {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                          <div className="pb-2 border-b">
+                            <p className="text-xs text-muted-foreground">Requested warehouse / sub-warehouse</p>
+                            <p className="font-medium">{orderToView.warehouse_location?.name ?? '—'}</p>
+                          </div>
+                        )}
+                        {orderToView.fulfillment_type === 'warehouse_transfer' && transferLocationStatuses.length > 0 && (
+                          <div className="pt-3 mt-2 border-t space-y-2">
+                            <p className="text-xs font-semibold text-muted-foreground">Fulfillment progress (by location)</p>
+                            <div className="space-y-1">
+                              {transferLocationStatuses.map((s) => (
+                                <div key={s.location_id} className="flex items-center justify-between gap-2 text-sm">
+                                  <span className="font-medium">{s.location_name}</span>
+                                  <div className="flex items-center gap-2">
+                                    <Badge
+                                      variant={
+                                        s.status === 'fulfilled'
+                                          ? 'default'
+                                          : s.status === 'ready'
+                                            ? 'secondary'
+                                            : s.status === 'partial'
+                                              ? 'secondary'
+                                              : 'outline'
+                                      }
+                                    >
+                                      {s.status.toUpperCase()}
+                                    </Badge>
+                                    {orderToView.status &&
+                                      (orderToView.status === 'approved_for_fulfillment' || orderToView.status === 'partially_fulfilled') &&
+                                      shouldShowFulfillButtonInViewForLocation(s.location_id) && (
+                                        <Button
+                                          size="sm"
+                                          variant={s.status === 'fulfilled' ? 'secondary' : 'outline'}
+                                          onClick={() => handleOpenFulfillDialogForLocation(orderToView, s.location_id, s.location_name)}
+                                          disabled={
+                                            fulfillingOrderId === orderToView.id ||
+                                            !canFulfillFromViewForLocation(s.location_id, s.status)
+                                          }
+                                        >
+                                          {s.status === 'fulfilled' ? (
+                                            <>
+                                              <Check className="h-4 w-4 mr-1" />
+                                              Fulfilled
+                                            </>
+                                          ) : fulfillingOrderId === orderToView.id ? (
+                                            <>
+                                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                              Fulfilling...
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Package className="h-4 w-4 mr-1" />
+                                              Fulfill
+                                            </>
+                                          )}
+                                        </Button>
+                                      )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <p className="font-medium">{orderToView.supplier.company_name}</p>
                         <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
                         <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
@@ -830,41 +1327,144 @@ export default function PurchaseOrdersPage() {
                   <div className="space-y-2">
                     <h4 className="font-semibold text-lg">Items</h4>
                     <div className="border rounded-lg">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Brand</TableHead>
-                            <TableHead>Item</TableHead>
-                            <TableHead>Type</TableHead>
-                            <TableHead className="text-right">Quantity</TableHead>
-                            <TableHead className="text-right">Unit Price</TableHead>
-                            <TableHead className="text-right">Total</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {orderToView.items.map((item: any) => (
-                            <TableRow key={item.id}>
-                              <TableCell className="font-medium">{item.brand_name}</TableCell>
-                              <TableCell>{item.variant_name}</TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant="secondary"
-                                  className={
-                                    item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
-                                      item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
-                                        'bg-purple-100 text-purple-700'
-                                  }
-                                >
-                                  {item.variant_type.toUpperCase()}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-right">{item.quantity}</TableCell>
-                              <TableCell className="text-right">₱{item.unit_price.toFixed(2)}</TableCell>
-                              <TableCell className="text-right font-semibold">₱{item.total_price.toFixed(2)}</TableCell>
+                      {orderToView.fulfillment_type === 'warehouse_transfer' ? (
+                        <div className="p-3">
+                          {(() => {
+                            const items = (orderToView.items || []) as any[];
+                            const byLoc: Record<string, any[]> = {};
+                            for (const it of items) {
+                              const locId = String(it.warehouse_location_id || orderToView.warehouse_location_id || '');
+                              (byLoc[locId || 'unknown'] ||= []).push(it);
+                            }
+                            const locIds = Object.keys(byLoc);
+                            const nameOf = (locId: string) => {
+                              if (locId === 'unknown') return 'Warehouse';
+                              const fromStatus = transferLocationStatuses.find((s: any) => String(s.location_id) === locId)?.location_name;
+                              if (fromStatus) return fromStatus;
+                              const locItems = byLoc[locId] || [];
+                              return resolveLocationLabel(locId, locItems);
+                            };
+                            const sorted = locIds.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+
+                            return (
+                              <Accordion type="multiple" className="w-full">
+                                {sorted.map((locId) => {
+                                  const locItems = byLoc[locId] || [];
+                                  const byBrand: Record<string, any[]> = {};
+                                  for (const it of locItems) (byBrand[String(it.brand_name || 'Unknown')] ||= []).push(it);
+                                  const brandNames = Object.keys(byBrand).sort((a, b) => a.localeCompare(b));
+
+                                  return (
+                                    <AccordionItem key={locId} value={`view-${locId}`} className="border rounded-md px-3">
+                                      <AccordionTrigger className="hover:no-underline">
+                                        <div className="flex items-center justify-between w-full pr-3">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-sm">{nameOf(locId)}</span>
+                                            <Badge variant="secondary" className="text-xs">
+                                              {locItems.length} items
+                                            </Badge>
+                                          </div>
+                                        </div>
+                                      </AccordionTrigger>
+                                      <AccordionContent>
+                                        <div className="space-y-3 pt-2 pb-1">
+                                          {brandNames.map((brand) => {
+                                            const brandItems = (byBrand[brand] || []).slice().sort((a, b) => {
+                                              const ta = String(a.variant_type || '');
+                                              const tb = String(b.variant_type || '');
+                                              if (ta !== tb) return ta.localeCompare(tb);
+                                              return String(a.variant_name || '').localeCompare(String(b.variant_name || ''));
+                                            });
+                                            return (
+                                              <div key={brand} className="border rounded-md overflow-hidden">
+                                                <div className="px-3 py-2 bg-muted/40 flex items-center justify-between">
+                                                  <span className="font-semibold text-sm">{brand}</span>
+                                                  <span className="text-xs text-muted-foreground">
+                                                    {brandItems.reduce((sum, x) => sum + Number(x.quantity || 0), 0)} units
+                                                  </span>
+                                                </div>
+                                                <Table>
+                                                  <TableHeader>
+                                                    <TableRow>
+                                                      <TableHead>Variant</TableHead>
+                                                      <TableHead>Type</TableHead>
+                                                      <TableHead className="text-right">Qty</TableHead>
+                                                      <TableHead className="text-right">Unit</TableHead>
+                                                      <TableHead className="text-right">Total</TableHead>
+                                                    </TableRow>
+                                                  </TableHeader>
+                                                  <TableBody>
+                                                    {brandItems.map((item: any) => (
+                                                      <TableRow key={item.id}>
+                                                        <TableCell className="font-medium">{item.variant_name}</TableCell>
+                                                        <TableCell>
+                                                          <Badge
+                                                            variant="secondary"
+                                                            className={
+                                                              item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                                                item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                                                  'bg-purple-100 text-purple-700'
+                                                            }
+                                                          >
+                                                            {String(item.variant_type).toUpperCase()}
+                                                          </Badge>
+                                                        </TableCell>
+                                                        <TableCell className="text-right">{item.quantity}</TableCell>
+                                                        <TableCell className="text-right">₱{Number(item.unit_price || 0).toFixed(2)}</TableCell>
+                                                        <TableCell className="text-right font-semibold">₱{Number(item.total_price || 0).toFixed(2)}</TableCell>
+                                                      </TableRow>
+                                                    ))}
+                                                  </TableBody>
+                                                </Table>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </AccordionContent>
+                                    </AccordionItem>
+                                  );
+                                })}
+                              </Accordion>
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Brand</TableHead>
+                              <TableHead>Item</TableHead>
+                              <TableHead>Type</TableHead>
+                              <TableHead className="text-right">Quantity</TableHead>
+                              <TableHead className="text-right">Unit Price</TableHead>
+                              <TableHead className="text-right">Total</TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                          </TableHeader>
+                          <TableBody>
+                            {orderToView.items.map((item: any) => (
+                              <TableRow key={item.id}>
+                                <TableCell className="font-medium">{item.brand_name}</TableCell>
+                                <TableCell>{item.variant_name}</TableCell>
+                                <TableCell>
+                                  <Badge
+                                    variant="secondary"
+                                    className={
+                                      item.variant_type === 'flavor' ? 'bg-blue-100 text-blue-700' :
+                                        item.variant_type === 'battery' ? 'bg-green-100 text-green-700' :
+                                          'bg-purple-100 text-purple-700'
+                                    }
+                                  >
+                                    {String(item.variant_type).toUpperCase()}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right">{item.quantity}</TableCell>
+                                <TableCell className="text-right">₱{Number(item.unit_price || 0).toFixed(2)}</TableCell>
+                                <TableCell className="text-right font-semibold">₱{Number(item.total_price || 0).toFixed(2)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
                     </div>
                   </div>
 

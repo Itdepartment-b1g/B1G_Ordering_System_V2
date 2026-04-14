@@ -236,6 +236,7 @@ export interface PurchaseOrderItem {
   company_id: string;
   purchase_order_id: string;
   variant_id: string;
+  warehouse_location_id?: string | null;
   quantity: number;
   unit_price: number;
   total_price: number;

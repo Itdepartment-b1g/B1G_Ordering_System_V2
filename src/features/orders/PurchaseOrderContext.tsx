@@ -31,7 +31,12 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       let poQuery = supabase
         .from('purchase_orders')
         .select(`
-          id, created_at, supplier_id, fulfillment_type, warehouse_company_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
+          id, created_at, supplier_id, fulfillment_type, warehouse_company_id, warehouse_location_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
+          warehouse_locations:warehouse_location_id (
+            id,
+            name,
+            is_main
+          ),
           suppliers (
             id,
             company_name,
@@ -44,9 +49,16 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         `);
 
       if (user?.role === 'warehouse' && user.company_id) {
+        const { data: isMain } = await supabase.rpc('is_main_warehouse_user', {});
         poQuery = poQuery
           .eq('fulfillment_type', 'warehouse_transfer')
           .eq('warehouse_company_id', user.company_id);
+
+        // Do NOT filter by purchase_orders.warehouse_location_id for sub-warehouse users.
+        // Multi-location transfers store the true source per item (purchase_order_items.warehouse_location_id),
+        // and RLS already restricts sub-warehouses to their slice.
+        // Filtering here would hide valid multi-location POs (header location can be NULL).
+        void isMain;
       }
 
       const { data: orders, error: ordersError } = await poQuery.order('created_at', { ascending: false });
@@ -61,9 +73,15 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             .select(`
               id,
               variant_id,
+              warehouse_location_id,
               quantity,
               unit_price,
               total_price,
+              warehouse_locations:warehouse_location_id (
+                id,
+                name,
+                is_main
+              ),
               variants (
                 id,
                 name,
@@ -90,6 +108,8 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           const formattedItems: PurchaseOrderItem[] = (items || []).map((item: any) => ({
             id: item.id,
             variant_id: item.variant_id,
+            warehouse_location_id: item.warehouse_location_id ?? null,
+            warehouse_location: Array.isArray(item.warehouse_locations) ? item.warehouse_locations[0] : item.warehouse_locations,
             brand_name: item.variants?.brands?.name || 'Unknown',
             variant_name: item.variants?.name || 'Unknown',
             variant_type: item.variants?.variant_type || 'flavor',
@@ -99,12 +119,16 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           }));
 
           const rawSup = Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers;
+          const rawLoc = Array.isArray((order as any).warehouse_locations)
+            ? (order as any).warehouse_locations[0]
+            : (order as any).warehouse_locations;
           const supplier =
             order.fulfillment_type === 'warehouse_transfer' ? WAREHOUSE_PLACEHOLDER_SUPPLIER : rawSup;
 
           return {
             ...order,
             supplier,
+            warehouse_location: rawLoc ?? null,
             subtotal: parseFloat(order.subtotal),
             tax_rate: parseFloat(order.tax_rate),
             tax_amount: parseFloat(order.tax_amount),
@@ -118,9 +142,17 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       setPurchaseOrders(ordersWithItems);
     } catch (error) {
       console.error('Error fetching purchase orders:', error);
+      // Helpful details when Supabase returns a structured error object
+      if (error && typeof error === 'object') {
+        try {
+          console.error('Error details:', JSON.stringify(error));
+        } catch {
+          // ignore
+        }
+      }
       toast({
         title: 'Error',
-        description: 'Failed to load purchase orders',
+        description: (error as any)?.message || 'Failed to load purchase orders',
         variant: 'destructive',
       });
     } finally {
@@ -166,12 +198,14 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     supplier_id: string | null;
     fulfillment_type: 'supplier' | 'warehouse_transfer';
     warehouse_company_id?: string | null;
+    warehouse_location_id?: string | null;
     order_date: string;
     expected_delivery_date: string;
     items: Array<{
       variant_id: string;
       quantity: number;
       unit_price: number;
+      warehouse_location_id?: string | null;
     }>;
     tax_rate: number;
     discount: number;
@@ -196,6 +230,13 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         }
         if (orderData.fulfillment_type === 'warehouse_transfer' && !orderData.warehouse_company_id) {
           return { success: false, error: 'Warehouse hub is not configured for this company' };
+        }
+        if (orderData.fulfillment_type === 'warehouse_transfer') {
+          const hasHeaderLocation = !!orderData.warehouse_location_id;
+          const hasItemLocations = (orderData.items || []).every((it) => !!it.warehouse_location_id);
+          if (!hasHeaderLocation && !hasItemLocations) {
+            return { success: false, error: 'Warehouse location is required for internal transfers' };
+          }
         }
 
         // Calculate totals
@@ -246,6 +287,10 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
               orderData.fulfillment_type === 'warehouse_transfer'
                 ? orderData.warehouse_company_id
                 : null,
+            warehouse_location_id:
+              orderData.fulfillment_type === 'warehouse_transfer'
+                ? orderData.warehouse_location_id
+                : null,
             supplier_id: orderData.fulfillment_type === 'supplier' ? orderData.supplier_id : null,
             order_date: orderData.order_date,
             expected_delivery_date: orderData.expected_delivery_date,
@@ -276,6 +321,10 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           company_id: user.company_id,
           purchase_order_id: newPO.id,
           variant_id: item.variant_id,
+          warehouse_location_id:
+            orderData.fulfillment_type === 'warehouse_transfer'
+              ? (item.warehouse_location_id ?? orderData.warehouse_location_id ?? null)
+              : null,
           quantity: item.quantity,
           unit_price: item.unit_price,
           total_price: item.quantity * item.unit_price,
@@ -317,21 +366,31 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       const { data: poRow, error: poRowErr } = await supabase
         .from('purchase_orders')
-        .select('fulfillment_type')
+        .select('fulfillment_type,warehouse_location_id')
         .eq('id', poId)
         .single();
 
       if (poRowErr) throw poRowErr;
 
-      const rpcName =
-        poRow?.fulfillment_type === 'warehouse_transfer'
-          ? 'approve_warehouse_transfer_po'
-          : 'approve_purchase_order';
+      let rpcName: string = 'approve_purchase_order';
+      if (poRow?.fulfillment_type === 'warehouse_transfer') {
+        // Multi-location transfers use reserve-then-fulfill flow.
+        // Keep legacy single-location flow when a single PO header location is used.
+        const { data: locAgg, error: locAggErr } = await supabase
+          .from('purchase_order_items')
+          .select('warehouse_location_id')
+          .eq('purchase_order_id', poId);
+        if (locAggErr) throw locAggErr;
+        const distinct = new Set((locAgg || []).map((r: any) => String(r.warehouse_location_id || '')));
+        distinct.delete('');
+        const isMulti = !poRow.warehouse_location_id || distinct.size > 1;
+        rpcName = isMulti ? 'approve_multi_location_po' : 'approve_warehouse_transfer_po';
+      }
 
-      const { data, error } = await supabase.rpc(rpcName, {
-        po_id: poId,
-        approver_id: user.id,
-      });
+      const { data, error } =
+        rpcName === 'approve_multi_location_po'
+          ? await supabase.rpc(rpcName, { p_po_id: poId, p_approver_id: user.id })
+          : await supabase.rpc(rpcName as any, { po_id: poId, approver_id: user.id });
 
       console.log('[PO Approval] RPC response:', { data, error, rpcName });
 
@@ -357,6 +416,8 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         description:
           rpcName === 'approve_warehouse_transfer_po'
             ? `${data.po_number} approved — stock moved from warehouse to client company`
+            : rpcName === 'approve_multi_location_po'
+              ? `${data.po_number} approved — reserved for fulfillment by requested warehouses`
             : `${data.po_number} has been approved and added to inventory`,
         duration: 5000,
       });
@@ -419,19 +480,16 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setLinkedWarehouseCompanyId(null);
         return;
       }
-
-      const { data: whProfile, error: pErr } = await supabase
-        .from('profiles')
-        .select('company_id')
-        .eq('id', row.warehouse_user_id)
-        .single();
+      // Tenant users may not be able to SELECT the warehouse user's profile row due to RLS
+      // (different company). Use a SECURITY DEFINER RPC to resolve hub company_id safely.
+      const { data: hubCompanyId, error: hubErr } = await supabase.rpc('get_linked_warehouse_company_id', {});
 
       if (cancelled) return;
-      if (pErr || !whProfile?.company_id) {
+      if (hubErr || !hubCompanyId) {
         setLinkedWarehouseCompanyId(null);
         return;
       }
-      setLinkedWarehouseCompanyId(whProfile.company_id);
+      setLinkedWarehouseCompanyId(hubCompanyId as any);
     })();
 
     return () => {

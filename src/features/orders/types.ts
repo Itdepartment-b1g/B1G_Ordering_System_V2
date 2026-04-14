@@ -1,6 +1,8 @@
 export interface PurchaseOrderItem {
     id: string;
     variant_id: string;
+    warehouse_location_id?: string | null;
+    warehouse_location?: { id: string; name: string; is_main: boolean } | null;
     brand_name: string;
     variant_name: string;
     variant_type: 'flavor' | 'battery';
@@ -26,6 +28,8 @@ export interface PurchaseOrder {
     supplier_id: string | null;
     fulfillment_type?: 'supplier' | 'warehouse_transfer';
     warehouse_company_id?: string | null;
+    warehouse_location_id?: string | null;
+    warehouse_location?: { id: string; name: string; is_main: boolean } | null;
     supplier: Supplier | null;
     order_date: string;
     expected_delivery_date: string;
@@ -34,7 +38,7 @@ export interface PurchaseOrder {
     tax_amount: number;
     discount: number;
     total_amount: number;
-    status: 'pending' | 'approved' | 'rejected' | 'delivered';
+    status: 'draft' | 'submitted' | 'pending' | 'approved' | 'approved_for_fulfillment' | 'partially_fulfilled' | 'fulfilled' | 'rejected' | 'cancelled' | 'delivered';
     notes: string;
     created_by: string;
     approved_by?: string;

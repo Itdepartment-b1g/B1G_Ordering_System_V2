@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, ReactNode, useCallback } from 're
 import { supabase } from '@/lib/supabase';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AuthContext } from '@/features/auth/hooks';
+import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 
 export interface Variant {
   id: string;
@@ -57,38 +58,7 @@ const calculateStatus = (stock: number, reorderLevel: number = LOW_STOCK_THRESHO
   return 'in-stock';
 };
 
-const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
-  if (!companyId) return [];
-  const { data: brandsData, error } = await supabase
-    .from('brands')
-    .select(`
-      id,
-      name,
-      is_active,
-      variants (
-        id,
-        name,
-        variant_type,
-        created_at,
-        is_active,
-        main_inventory (
-          id,
-          stock,
-          allocated_stock,
-          unit_price,
-          selling_price,
-          dsp_price,
-          rsp_price,
-          reorder_level
-        )
-      )
-    `)
-    .eq('company_id', companyId)
-    .or('is_active.eq.true,is_active.is.null')
-    .order('name');
-
-  if (error) throw error;
-
+const groupBrands = (brandsData: any[]): Brand[] => {
   const transformedBrands: Brand[] = (brandsData || []).map(brand => {
     // Process all variants
     const allVariants: Variant[] = (brand.variants || [])
@@ -139,6 +109,121 @@ const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
   return transformedBrands.filter(b => b.allVariants.length > 0);
 };
 
+const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
+  if (!companyId) return [];
+  const { data: brandsData, error } = await supabase
+    .from('brands')
+    .select(`
+      id,
+      name,
+      is_active,
+      variants (
+        id,
+        name,
+        variant_type,
+        created_at,
+        is_active,
+        main_inventory (
+          id,
+          stock,
+          allocated_stock,
+          unit_price,
+          selling_price,
+          dsp_price,
+          rsp_price,
+          reorder_level
+        )
+      )
+    `)
+    .eq('company_id', companyId)
+    .or('is_active.eq.true,is_active.is.null')
+    .order('name');
+
+  if (error) throw error;
+
+  return groupBrands(brandsData || []);
+};
+
+const fetchLocationInventoryForSubWarehouse = async (companyId?: string): Promise<Brand[]> => {
+  if (!companyId) return [];
+
+  // Determine the current user's location. RLS ensures sub-warehouse users see only their own location here.
+  const { data: locId, error: locErr } = await supabase.rpc('get_warehouse_location_id', {});
+  if (locErr) throw locErr;
+  if (!locId) return [];
+
+  const { data: rows, error } = await supabase
+    .from('warehouse_location_inventory')
+    .select(
+      `
+      stock,
+      variant_id,
+      variants:variant_id (
+        id,
+        name,
+        variant_type,
+        created_at,
+        is_active,
+        brands:brand_id (
+          id,
+          name,
+          is_active
+        )
+      )
+    `
+    )
+    .eq('company_id', companyId)
+    .eq('location_id', locId as any);
+
+  if (error) throw error;
+
+  // Transform location inventory rows into the same Brand[] shape expected by UI.
+  const byBrand = new Map<string, any>();
+
+  for (const r of rows ?? []) {
+    const v = (r as any).variants;
+    if (!v || v.is_active === false) continue;
+    const b = v.brands;
+    if (!b || b.is_active === false) continue;
+
+    const brandId = b.id as string;
+    const brandName = b.name as string;
+    const variantId = v.id as string;
+
+    const inv = {
+      id: `loc:${String(locId)}:${variantId}`,
+      stock: (r as any).stock ?? 0,
+      allocated_stock: 0,
+      unit_price: 0,
+      selling_price: 0,
+      dsp_price: 0,
+      rsp_price: 0,
+      reorder_level: LOW_STOCK_THRESHOLD,
+    };
+
+    const variantRow = {
+      id: variantId,
+      name: v.name,
+      variant_type: v.variant_type,
+      created_at: v.created_at,
+      is_active: v.is_active,
+      main_inventory: inv,
+    };
+
+    const existing = byBrand.get(brandId) ?? { id: brandId, name: brandName, variants: [] as any[] };
+    existing.variants.push(variantRow);
+    byBrand.set(brandId, existing);
+  }
+
+  // Ensure stable ordering
+  const brandsData = Array.from(byBrand.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  for (const b of brandsData) {
+    b.variants.sort((a: any, b2: any) => new Date(a.created_at).getTime() - new Date(b2.created_at).getTime());
+  }
+
+  return groupBrands(brandsData);
+};
+
 /**
  * Maps do not round-trip through JSON (e.g. persisted React Query cache). Rebuild from `allVariants`
  * so `variantsByType` stays correct after hard refresh / localStorage restore.
@@ -156,10 +241,25 @@ function rebuildVariantsByType(allVariants: Variant[]): Map<string, Variant[]> {
 export function InventoryProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const { user } = useContext(AuthContext) || {};
+  const isWarehouse = user?.role === 'warehouse';
+  const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
 
   const { data: brands = [], isLoading: loading } = useQuery({
-    queryKey: ['inventory', user?.company_id],
-    queryFn: () => fetchInventory(user?.company_id),
+    // Include user id so sub-warehouse and main warehouse don't share cached inventory
+    // (they are in the same company but must see different stock sources).
+    queryKey: ['inventory', user?.company_id, user?.id, membership.status],
+    queryFn: async () => {
+      const companyId = user?.company_id;
+      if (!companyId) return [];
+
+      // For warehouse users: show main inventory for main warehouse accounts,
+      // but show location inventory for sub-warehouse accounts.
+      if (isWarehouse && membership.status === 'sub') {
+        return fetchLocationInventoryForSubWarehouse(companyId);
+      }
+
+      return fetchInventory(companyId);
+    },
     enabled: !!user?.company_id,
     select: (data) =>
       data.map((b) => ({
@@ -307,7 +407,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       addOrUpdateInventory,
       updateBrandName,
       updateVariant,
-      setBrands: (brands: Brand[]) => qc.setQueryData(['inventory'], brands),
+      setBrands: (brands: Brand[]) => qc.setQueryData(['inventory', user?.company_id, user?.id], brands),
       refreshInventory: () => qc.invalidateQueries({ queryKey: ['inventory'] })
     }}>
       {children}
