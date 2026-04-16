@@ -164,3 +164,16 @@ All colors MUST be HSL.
     opacity: 0.7;
   }
 }
+
+/* Hide number input spinners (arrow buttons) globally */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

@@ -542,6 +542,47 @@ export default function LeaderCashDepositsPage() {
           .map((o: any) => o.deposit_id as string)
       ));
 
+      // ========== FIX: Include Team Leader's own orders that bypass remittance ==========
+      // For orders created directly by Team Leader (not through agents), there's no remittance log entry
+      // These orders should still appear in cash deposits for the leader to record bank details
+      if (user?.role === 'team_leader' && user?.id) {
+        const { data: leaderOrders, error: leaderOrdersError } = await supabase
+          .from('client_orders')
+          .select('id, deposit_id, order_date, total_amount, payment_method, payment_mode, payment_splits, agent_id')
+          .eq('agent_id', user.id)  // Orders where leader is the agent
+          .not('deposit_id', 'is', null)  // Must have a deposit linked
+          .gte('order_date', V1_IMPORT_ORDER_DATE_CUTOFF)
+          .order('order_date', { ascending: false });
+
+        if (!leaderOrdersError && leaderOrders) {
+          // Filter to only CASH/CHEQUE orders (same logic as above)
+          const leaderDepositIds: string[] = [];
+          (leaderOrders || []).forEach((order: any) => {
+            const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+            const paymentMethod = order.payment_method as string | null;
+            const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+            let hasCashOrCheque = false;
+
+            if (paymentMode === 'SPLIT') {
+              hasCashOrCheque = splits.some((s: any) => s.method === 'CASH' || s.method === 'CHEQUE');
+            } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+              hasCashOrCheque = true;
+            }
+
+            // Only include if it has cash/cheque AND deposit_id is not already in our list
+            if (hasCashOrCheque && order.deposit_id && !depositIdsFromRemittances.includes(order.deposit_id)) {
+              leaderDepositIds.push(order.deposit_id);
+            }
+          });
+
+          // Add these new deposit IDs to the main list
+          if (leaderDepositIds.length > 0) {
+            depositIdsFromRemittances.push(...leaderDepositIds);
+          }
+        }
+      }
+      // ========== END FIX ==========
+ 
       if (depositIdsFromRemittances.length === 0) {
         setPendingDeposits([]);
         setDepositHistory([]);
