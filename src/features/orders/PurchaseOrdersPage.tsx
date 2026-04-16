@@ -55,6 +55,9 @@ export default function PurchaseOrdersPage() {
   const [fulfillLocationName, setFulfillLocationName] = useState<string | null>(null);
   const [fulfillingOrderId, setFulfillingOrderId] = useState<string | null>(null);
 
+  // Track fulfillment status for current user's warehouse location
+  const [myLocationStatuses, setMyLocationStatuses] = useState<Record<string, string>>({});
+
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [orderToView, setOrderToView] = useState<any>(null);
@@ -82,7 +85,7 @@ export default function PurchaseOrdersPage() {
           .from('companies')
           .select('company_name')
           .eq('id', user.company_id)
-          .single();
+          .maybeSingle();
         if (error) throw error;
         setCompanyInfo(data);
       } catch (error) {
@@ -125,6 +128,33 @@ export default function PurchaseOrdersPage() {
   const [loadingApproveStock, setLoadingApproveStock] = useState(false);
   const locVarKey = (locId: string, variantId: string) => `${locId}::${variantId}`;
   const shortId = (id: string) => (id && id.length > 10 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id);
+
+  const getStatusBadgeClass = (status: string) => {
+    switch (status) {
+      case 'fulfilled':
+        return 'bg-green-600 text-white hover:bg-green-700';
+      case 'approved':
+      case 'approved_for_fulfillment':
+        return 'bg-blue-600 text-white hover:bg-blue-700';
+      case 'partially_fulfilled':
+        return 'bg-amber-500 text-white hover:bg-amber-600';
+      case 'pending':
+        return 'bg-gray-500 text-white hover:bg-gray-600';
+      case 'rejected':
+        return 'bg-red-600 text-white hover:bg-red-700';
+      default:
+        return 'bg-gray-500 text-white hover:bg-gray-600';
+    }
+  };
+
+  const getStatusDisplayText = (status: string) => {
+    // Subwarehouse sees different text for pending POs
+    if (status === 'pending' && canFulfillAsSubWarehouse) {
+      return 'Waiting for Main';
+    }
+    return status.replace(/_/g, ' ');
+  };
+
   const itemLocLabel = (item: any) => {
     const raw = Array.isArray(item?.warehouse_location) ? item.warehouse_location[0] : item?.warehouse_location;
     if (raw?.name) return `${raw.name}${raw.is_main ? ' (Main)' : ''}`;
@@ -140,6 +170,47 @@ export default function PurchaseOrdersPage() {
     if (locId && locId !== 'unknown') return `Warehouse ${shortId(locId)}`;
     return 'Warehouse';
   };
+
+  // Fetch my location fulfillment statuses for warehouse transfer POs
+  useEffect(() => {
+    if (!isWarehouse || !membership.locationId || purchaseOrders.length === 0) {
+      setMyLocationStatuses({});
+      return;
+    }
+
+    const transferPoIds = purchaseOrders
+      .filter(o => o.fulfillment_type === 'warehouse_transfer')
+      .map(o => o.id);
+
+    if (transferPoIds.length === 0) {
+      setMyLocationStatuses({});
+      return;
+    }
+
+    let cancelled = false;
+    supabase
+      .from('warehouse_transfer_location_status')
+      .select('purchase_order_id, status')
+      .in('purchase_order_id', transferPoIds)
+      .eq('warehouse_location_id', membership.locationId)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn('[PO List] Failed to load location statuses', error);
+          setMyLocationStatuses({});
+          return;
+        }
+        const statusMap: Record<string, string> = {};
+        (data || []).forEach((row: any) => {
+          statusMap[row.purchase_order_id] = row.status;
+        });
+        setMyLocationStatuses(statusMap);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [purchaseOrders, membership.locationId, isWarehouse]);
 
   // Approve modal: preload stock availability (warehouse_transfer only).
   useEffect(() => {
@@ -254,7 +325,7 @@ export default function PurchaseOrdersPage() {
         .from('companies')
         .select('company_name')
         .eq('id', buyerId)
-        .single();
+        .maybeSingle();
       if (!cancelled && !error) setViewBuyerCompanyName(data?.company_name ?? null);
     })();
     return () => {
@@ -309,12 +380,13 @@ export default function PurchaseOrdersPage() {
 
   const canApproveOrder = (order: { status: string; fulfillment_type?: string }) =>
     order.status === 'pending' &&
-    (order.fulfillment_type !== 'warehouse_transfer' || user?.role === 'warehouse');
+    (order.fulfillment_type !== 'warehouse_transfer' || canFulfillAsMainWarehouse);
 
-  const canFulfillOrder = (order: { status: string; fulfillment_type?: string }) =>
+  const canFulfillOrder = (order: { id: string; status: string; fulfillment_type?: string }) =>
     canFulfillAsSubWarehouse &&
     order.fulfillment_type === 'warehouse_transfer' &&
-    (order.status === 'approved_for_fulfillment' || order.status === 'partially_fulfilled');
+    (order.status === 'approved_for_fulfillment' || order.status === 'partially_fulfilled') &&
+    myLocationStatuses[order.id] !== 'fulfilled';
 
   const handleApproveOrder = async () => {
     if (!orderToApprove) return;
@@ -382,6 +454,10 @@ export default function PurchaseOrdersPage() {
         title: 'Fulfilled',
         description: `${data.po_number} fulfilled for your warehouse location.`,
       });
+      // Update local status so Fulfill button hides immediately
+      if (orderToFulfill?.id) {
+        setMyLocationStatuses(prev => ({ ...prev, [orderToFulfill.id]: 'fulfilled' }));
+      }
       setFulfillDialogOpen(false);
       setOrderToFulfill(null);
       setFulfillLocationId(null);
@@ -530,8 +606,8 @@ export default function PurchaseOrdersPage() {
                     <div className="text-xs text-muted-foreground">PO Number</div>
                     <div className="font-mono font-semibold">{order.po_number}</div>
                   </div>
-                  <Badge variant={order.status === 'approved' ? 'default' : order.status === 'pending' ? 'secondary' : 'destructive'}>
-                    {order.status}
+                  <Badge variant="default" className={getStatusBadgeClass(order.status)}>
+                    {getStatusDisplayText(order.status)}
                   </Badge>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
@@ -572,7 +648,7 @@ export default function PurchaseOrdersPage() {
                   {canApproveOrder(order) && (
                     <Button variant="default" size="sm" onClick={() => handleOpenApproveDialog(order)} disabled={approvingOrderId === order.id}>
                       <Check className="h-4 w-4 mr-1" />
-                      {order.fulfillment_type === 'warehouse_transfer' ? 'Approve transfer' : 'Approve'}
+                      {order.fulfillment_type === 'warehouse_transfer' ? 'Approve PO' : 'Approve'}
                     </Button>
                   )}
                   {canFulfillOrder(order) && (
@@ -581,9 +657,9 @@ export default function PurchaseOrdersPage() {
                       Fulfill
                     </Button>
                   )}
-                  {order.status === 'pending' && (
+                  {canApproveOrder(order) && (
                     <Button variant="destructive" size="sm" onClick={() => handleOpenRejectDialog(order)} disabled={rejectingOrderId === order.id}>
-                      <X className="h-4 w-4 mr-1" /> Reject
+                      <X className="h-4 w-4 mr-1" /> {order.created_by === user?.id ? 'Cancel' : 'Reject'}
                     </Button>
                   )}
                   <Button variant="ghost" size="sm" onClick={() => handleViewOrder(order)}>
@@ -644,16 +720,8 @@ export default function PurchaseOrdersPage() {
                         ₱{order.total_amount.toLocaleString()}
                       </TableCell>
                       <TableCell>
-                        <Badge
-                          variant={
-                            order.status === 'approved'
-                              ? 'default'
-                              : order.status === 'pending'
-                              ? 'secondary'
-                              : 'destructive'
-                          }
-                        >
-                          {order.status}
+                        <Badge variant="default" className={getStatusBadgeClass(order.status)}>
+                          {getStatusDisplayText(order.status)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
@@ -671,7 +739,7 @@ export default function PurchaseOrdersPage() {
                                 <Check className="h-4 w-4 mr-1" />
                               )}
                               {order.fulfillment_type === 'warehouse_transfer'
-                                ? 'Approve transfer'
+                                ? 'Approve PO'
                                 : 'Approve & Add to Inventory'}
                             </Button>
                           )}
@@ -690,7 +758,7 @@ export default function PurchaseOrdersPage() {
                               Fulfill
                             </Button>
                           )}
-                          {order.status === 'pending' && (
+                          {canApproveOrder(order) && (
                             <Button
                               variant="destructive"
                               size="sm"
@@ -702,7 +770,7 @@ export default function PurchaseOrdersPage() {
                               ) : (
                                 <X className="h-4 w-4 mr-1" />
                               )}
-                              Reject
+                              {order.created_by === user?.id ? 'Cancel' : 'Reject'}
                             </Button>
                           )}
                           <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
@@ -944,7 +1012,7 @@ export default function PurchaseOrdersPage() {
               <AlertDialogAction className="w-full sm:w-auto" onClick={handleApproveOrder}>
                 <Check className="h-4 w-4 mr-2" />
                 {orderToApprove?.fulfillment_type === 'warehouse_transfer'
-                  ? 'Approve transfer'
+                  ? 'Approve PO'
                   : 'Approve & Add to Inventory'}
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -956,17 +1024,19 @@ export default function PurchaseOrdersPage() {
       <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reject Purchase Order</AlertDialogTitle>
+            <AlertDialogTitle>
+              {orderToReject?.created_by === user?.id ? 'Cancel Purchase Order' : 'Reject Purchase Order'}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {orderToReject
-                ? `Are you sure you want to reject ${orderToReject.po_number}?`
+                ? `Are you sure you want to ${orderToReject.created_by === user?.id ? 'cancel' : 'reject'} ${orderToReject.po_number}?`
                 : 'Select a purchase order to reject.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Back</AlertDialogCancel>
             <AlertDialogAction onClick={handleRejectOrder} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              <X className="h-4 w-4 mr-2" /> Reject
+              <X className="h-4 w-4 mr-2" /> {orderToReject?.created_by === user?.id ? 'Cancel' : 'Reject'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1006,14 +1076,8 @@ export default function PurchaseOrdersPage() {
               <div className="flex items-center justify-between">
                 <SheetTitle>PO Details</SheetTitle>
                 {orderToView && (
-                  <Badge
-                    variant={
-                      orderToView.status === 'approved' ? 'default' :
-                        orderToView.status === 'pending' ? 'secondary' :
-                          'destructive'
-                    }
-                  >
-                    {orderToView.status.toUpperCase()}
+                  <Badge variant="default" className={getStatusBadgeClass(orderToView.status)}>
+                    {getStatusDisplayText(orderToView.status)}
                   </Badge>
                 )}
               </div>
@@ -1211,14 +1275,10 @@ export default function PurchaseOrdersPage() {
                       <p className="text-sm text-muted-foreground">Purchase Order</p>
                     </div>
                     <Badge
-                      variant={
-                        orderToView.status === 'approved' ? 'default' :
-                          orderToView.status === 'pending' ? 'secondary' :
-                            'destructive'
-                      }
-                      className="text-base px-4 py-2"
+                      variant="default"
+                      className={`text-base px-4 py-2 ${getStatusBadgeClass(orderToView.status)}`}
                     >
-                      {orderToView.status.toUpperCase()}
+                      {getStatusDisplayText(orderToView.status)}
                     </Badge>
                   </div>
 
