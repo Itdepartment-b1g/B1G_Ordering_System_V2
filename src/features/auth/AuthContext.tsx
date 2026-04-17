@@ -137,14 +137,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Ensure role/location dependent caches don't persist across auth changes.
         // (e.g. warehouse main vs sub membership, inventory source selection)
-        if (event === 'SIGNED_IN' || !userRef.current || userRef.current.id !== session.user.id) {
+        if ((event === 'SIGNED_IN' && didAuthUserChange) || !userRef.current || userRef.current.id !== session.user.id) {
           await qc.invalidateQueries({ queryKey: ['warehouse-location-membership'] });
           await qc.invalidateQueries({ queryKey: ['inventory'] });
         }
 
         // Only load profile for SIGNED_IN events or when user changes
         // Skip TOKEN_REFRESHED and other events if we already have the same user loaded
-        if (event === 'SIGNED_IN' || !userRef.current || userRef.current.id !== session.user.id) {
+        if ((event === 'SIGNED_IN' && didAuthUserChange) || !userRef.current || userRef.current.id !== session.user.id) {
           await loadUserProfile(session.user);
         } else {
           // User already loaded, just ensure loading is false (in case of tab switch)
