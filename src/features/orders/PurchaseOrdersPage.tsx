@@ -1340,22 +1340,18 @@ export default function PurchaseOrdersPage() {
                                     </Badge>
                                     {orderToView.status &&
                                       (orderToView.status === 'approved_for_fulfillment' || orderToView.status === 'partially_fulfilled') &&
+                                      s.status !== 'fulfilled' &&
                                       shouldShowFulfillButtonInViewForLocation(s.location_id) && (
                                         <Button
                                           size="sm"
-                                          variant={s.status === 'fulfilled' ? 'secondary' : 'outline'}
+                                          variant="outline"
                                           onClick={() => handleOpenFulfillDialogForLocation(orderToView, s.location_id, s.location_name)}
                                           disabled={
                                             fulfillingOrderId === orderToView.id ||
                                             !canFulfillFromViewForLocation(s.location_id, s.status)
                                           }
                                         >
-                                          {s.status === 'fulfilled' ? (
-                                            <>
-                                              <Check className="h-4 w-4 mr-1" />
-                                              Fulfilled
-                                            </>
-                                          ) : fulfillingOrderId === orderToView.id ? (
+                                          {fulfillingOrderId === orderToView.id ? (
                                             <>
                                               <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                                               Fulfilling...
