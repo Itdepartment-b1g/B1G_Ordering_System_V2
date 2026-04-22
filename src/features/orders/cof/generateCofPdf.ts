@@ -259,6 +259,12 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
         <div style="height: 6px;"></div>
 
         <table class="items-table other-table">
+          <colgroup>
+            <col style="width: 52%;">
+            <col style="width: 14%;">
+            <col style="width: 17%;">
+            <col style="width: 17%;">
+          </colgroup>
           <thead>
             <tr>
               <th colspan="4" class="section-title">OTHER ITEMS</th>
@@ -459,7 +465,7 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
     height: 22px;
     font-size: 11px;
   }
-  .items-table .cell-name { text-align: left; }
+  .items-table .cell-name { text-align: left; width: 46%; }
   .items-table .cell-qty { text-align: center; width: 14%; }
   .items-table .cell-price { text-align: right; width: 18%; }
   .items-table .cell-total {
@@ -479,7 +485,6 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
     font-weight: 700;
   }
 
-  .device-table thead th:first-child { width: 46%; }
 
   /* ---- Sidebar ---- */
   .sidebar { display: flex; flex-direction: column; gap: 4px; }
@@ -654,6 +659,12 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
       <!-- LEFT: FLAVOR + DEVICE tables -->
       <div class="left-col">
         <table class="items-table flavor-table">
+          <colgroup>
+            <col style="width: 52%;">
+            <col style="width: 14%;">
+            <col style="width: 17%;">
+            <col style="width: 17%;">
+          </colgroup>
           <thead>
             <tr>
               <th colspan="4" class="section-title">FLAVOR</th>
@@ -686,6 +697,12 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
         <div style="height: 6px;"></div>
 
         <table class="items-table device-table">
+          <colgroup>
+            <col style="width: 52%;">
+            <col style="width: 14%;">
+            <col style="width: 17%;">
+            <col style="width: 17%;">
+          </colgroup>
           <thead>
             <tr>
               <th colspan="4" class="section-title">DEVICE</th>

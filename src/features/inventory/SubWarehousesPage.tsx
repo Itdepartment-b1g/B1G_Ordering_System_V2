@@ -115,12 +115,14 @@ export default function SubWarehousesPage() {
         .eq('user_id', user!.id)
         .maybeSingle();
       if (error) throw error;
-      return (data || null) as
-        | null
-        | {
-            location_id: string;
-            warehouse_locations: { id: string; name: string; is_main: boolean };
-          };
+      if (!data) return null;
+      const loc = data as any;
+      return {
+        location_id: loc.location_id as string,
+        warehouse_locations: Array.isArray(loc.warehouse_locations)
+          ? (loc.warehouse_locations[0] as { id: string; name: string; is_main: boolean })
+          : (loc.warehouse_locations as { id: string; name: string; is_main: boolean }),
+      };
     },
   });
 
@@ -208,6 +210,9 @@ export default function SubWarehousesPage() {
   const { data: returnInventory = [], isLoading: loadingReturnInventory } = useQuery({
     queryKey: ['warehouse-location-inventory', returnLocationId],
     enabled: !!returnLocationId && isWarehouse,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('warehouse_location_inventory')
@@ -402,6 +407,10 @@ export default function SubWarehousesPage() {
       await qc.invalidateQueries({
         queryKey: ['warehouse-location-inventory-brands', user?.company_id, selectedLocationId],
       });
+      // Invalidate the raw location inventory used by the return modal
+      await qc.invalidateQueries({
+        queryKey: ['warehouse-location-inventory', selectedLocationId],
+      });
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to allocate stock', variant: 'destructive' });
     } finally {
@@ -438,6 +447,10 @@ export default function SubWarehousesPage() {
       await onRefresh();
       await qc.invalidateQueries({
         queryKey: ['warehouse-location-inventory-brands', user?.company_id, returnLocationId],
+      });
+      // Invalidate the raw location inventory used by the return modal itself
+      await qc.invalidateQueries({
+        queryKey: ['warehouse-location-inventory', returnLocationId],
       });
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to return stock', variant: 'destructive' });
