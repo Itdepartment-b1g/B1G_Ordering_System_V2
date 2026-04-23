@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar, Plus, Unlink } from 'lucide-react';
+import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar, Plus, Unlink, Building2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
@@ -27,6 +27,10 @@ interface ReturnHistoryEntry {
   variantName: string;
   brandName: string;
   signatureUrl: string | null;
+  transactionType: string;
+  fromLocation: string | null;
+  isSubWarehouseReturn: boolean;
+  locationName?: string | null;  // Sub-warehouse name (e.g., "Bacoor", "Sta Rosa")
 }
 
 export default function MainInventoryPage() {
@@ -95,6 +99,20 @@ export default function MainInventoryPage() {
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
+
+  // Fetch sub-warehouse location name for display
+  const { data: myLocationName } = useQuery({
+    queryKey: ['my-warehouse-location-name', membership.locationId],
+    enabled: !isMainWarehouseUser && !!membership.locationId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('warehouse_locations')
+        .select('name')
+        .eq('id', membership.locationId!)
+        .single();
+      return data?.name || null;
+    },
+  });
 
   const [addStockDialogOpen, setAddStockDialogOpen] = useState(false);
   const [addBrandDialogOpen, setAddBrandDialogOpen] = useState(false);
@@ -251,11 +269,12 @@ export default function MainInventoryPage() {
           created_at,
           from_location,
           signature_url,
+          transaction_type,
           variant:variants!inventory_transactions_variant_id_fkey(name, brand:brands!variants_brand_id_fkey(name)),
           performer:profiles!inventory_transactions_performed_by_fkey(full_name)
         `)
         .eq('company_id', user.company_id)
-        .eq('transaction_type', 'return_to_main')
+        .in('transaction_type', ['return_to_main', 'warehouse_return_from_sub'])
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -268,11 +287,13 @@ export default function MainInventoryPage() {
             notes,
             created_at,
             from_location,
+            signature_url,
+            transaction_type,
             variant:variants!inventory_transactions_variant_id_fkey(name, brand:brands!variants_brand_id_fkey(name)),
             performer:profiles!inventory_transactions_performed_by_fkey(full_name)
           `)
           .eq('company_id', user.company_id)
-          .eq('transaction_type', 'return_to_main')
+          .in('transaction_type', ['return_to_main', 'warehouse_return_from_sub'])
           .order('created_at', { ascending: false })
           .limit(100);
 
@@ -291,9 +312,51 @@ export default function MainInventoryPage() {
         variantName: row.variant?.name || 'Unknown',
         brandName: row.variant?.brand?.name || 'Unknown',
         signatureUrl: row.signature_url || null,
+        transactionType: row.transaction_type || 'return_to_main',
+        fromLocation: row.from_location || null,
+        isSubWarehouseReturn: row.transaction_type === 'warehouse_return_from_sub',
+        locationName: null,
       }));
 
-      setReturnHistory(entries);
+      // Fetch sub-warehouse location names for returns from sub-warehouses
+      const subWarehouseReturns = entries.filter(e => e.isSubWarehouseReturn && e.fromLocation);
+      if (subWarehouseReturns.length > 0) {
+        // Extract location IDs from from_location (format: "warehouse_location:<uuid>")
+        const locationIds = subWarehouseReturns
+          .map(e => e.fromLocation?.replace('warehouse_location:', ''))
+          .filter(Boolean) as string[];
+
+        const uniqueLocationIds = [...new Set(locationIds)];
+
+        if (uniqueLocationIds.length > 0) {
+          const { data: locationsData } = await supabase
+            .from('warehouse_locations')
+            .select('id, name')
+            .in('id', uniqueLocationIds);
+
+          const locationNameMap = new Map(locationsData?.map(l => [l.id, l.name]) || []);
+
+          // Update entries with location names
+          entries.forEach(entry => {
+            if (entry.isSubWarehouseReturn && entry.fromLocation) {
+              const locationId = entry.fromLocation.replace('warehouse_location:', '');
+              entry.locationName = locationNameMap.get(locationId) || 'Sub Warehouse';
+            }
+          });
+        }
+      }
+
+      // Filter entries for sub-warehouse users - they only see their own returns
+      // Main warehouse users see all returns (both leader and all sub-warehouse returns)
+      const isUserSubWarehouse = !isMainWarehouseUser && !!membership.locationId;
+      const filteredEntries = isUserSubWarehouse
+        ? entries.filter(entry =>
+            entry.isSubWarehouseReturn &&
+            entry.fromLocation === `warehouse_location:${membership.locationId}`
+          )
+        : entries;
+
+      setReturnHistory(filteredEntries);
     } catch (err: any) {
       console.error('Error fetching return history:', err);
       toast({ title: 'Error', description: 'Failed to load return history', variant: 'destructive' });
@@ -2179,10 +2242,12 @@ export default function MainInventoryPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <RotateCcw className="h-5 w-5" />
-              Leader Stock Returns
+              {isMainWarehouseUser ? 'Stock Returns to Main Inventory' : 'My Stock Returns'}
             </DialogTitle>
             <p className="text-sm text-muted-foreground">
-              History of stock returned from team leaders to main inventory
+              {isMainWarehouseUser
+                ? 'History of stock returned from team leaders and sub-warehouses to main inventory'
+                : `History of your returns from ${myLocationName || 'your sub-warehouse'} to main inventory`}
             </p>
           </DialogHeader>
 
@@ -2195,7 +2260,11 @@ export default function MainInventoryPage() {
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <RotateCcw className="h-10 w-10 text-muted-foreground/50 mb-3" />
                 <p className="font-medium">No returns found</p>
-                <p className="text-sm text-muted-foreground">Returns from team leaders will appear here.</p>
+                <p className="text-sm text-muted-foreground">
+                  {isMainWarehouseUser
+                    ? 'Returns from team leaders and sub-warehouses will appear here.'
+                    : 'Your returns to main inventory will appear here.'}
+                </p>
               </div>
             ) : (
               <>
@@ -2205,7 +2274,7 @@ export default function MainInventoryPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
-                        <TableHead>Leader</TableHead>
+                        <TableHead>Source</TableHead>
                         <TableHead>Brand</TableHead>
                         <TableHead>Variant</TableHead>
                         <TableHead className="text-right">Qty</TableHead>
@@ -2219,7 +2288,19 @@ export default function MainInventoryPage() {
                           <TableCell className="whitespace-nowrap text-sm">
                             {format(new Date(entry.created_at), 'MMM d, yyyy h:mm a')}
                           </TableCell>
-                          <TableCell className="font-medium">{entry.leaderName}</TableCell>
+                          <TableCell className="font-medium">
+                            {entry.isSubWarehouseReturn ? (
+                              <span className="flex items-center gap-1">
+                                <Building2 className="h-3 w-3 text-blue-500" />
+                                {entry.locationName || 'Sub Warehouse'}
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1">
+                                <Users className="h-3 w-3 text-green-500" />
+                                {entry.leaderName}
+                              </span>
+                            )}
+                          </TableCell>
                           <TableCell>{entry.brandName}</TableCell>
                           <TableCell>{entry.variantName}</TableCell>
                           <TableCell className="text-right font-semibold">{entry.quantity}</TableCell>
@@ -2227,7 +2308,9 @@ export default function MainInventoryPage() {
                             {entry.notes || '—'}
                           </TableCell>
                           <TableCell>
-                            {entry.signatureUrl ? (
+                            {entry.isSubWarehouseReturn ? (
+                              <span className="text-xs text-muted-foreground">N/A</span>
+                            ) : entry.signatureUrl ? (
                               <img
                                 src={entry.signatureUrl}
                                 alt="Signature"
@@ -2249,7 +2332,16 @@ export default function MainInventoryPage() {
                   {returnHistory.map((entry) => (
                     <div key={entry.id} className="border rounded-lg p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="font-medium text-sm">{entry.leaderName}</span>
+                        <span className="font-medium text-sm">
+                          {entry.isSubWarehouseReturn ? (
+                            <span className="flex items-center gap-1">
+                              <Building2 className="h-3 w-3 text-blue-500" />
+                              {entry.locationName || 'Sub Warehouse'}
+                            </span>
+                          ) : (
+                            entry.leaderName
+                          )}
+                        </span>
                         <Badge variant="secondary" className="text-xs font-semibold">
                           {entry.quantity} units
                         </Badge>
@@ -2267,7 +2359,7 @@ export default function MainInventoryPage() {
                           {entry.notes}
                         </div>
                       )}
-                      {entry.signatureUrl && (
+                      {!entry.isSubWarehouseReturn && entry.signatureUrl && (
                         <div className="border-t pt-2 mt-1">
                           <span className="text-xs text-muted-foreground block mb-1">Signature:</span>
                           <img
