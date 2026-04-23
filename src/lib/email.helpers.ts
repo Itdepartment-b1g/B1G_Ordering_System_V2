@@ -151,7 +151,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                     
                     <!-- Header -->
                     <div style="border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 24px;">
-                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">B1G Corporation</h1>
+                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">Official Receipt</h1>
                     </div>
 
                     <!-- Main Content -->
@@ -159,7 +159,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                         <p style="margin: 0 0 16px 0; color: #666; font-size: 14px;">Order confirmation</p>
                         <h2 style="margin: 0 0 16px 0; font-size: 20px; font-weight: 600; color: #111;">${orderData.orderNumber}</h2>
                         <p style="margin: 0 0 4px 0; color: #666; text-align: left;">Hi <strong>${orderData.clientName}</strong>,</p>
-                        <p style="margin: 0 0 24px 0; color: #333; text-align: left;">This email serves as your official e-receipt. Thank you for your transaction with B1G Corporation.</p>
+                        <p style="margin: 0 0 24px 0; color: #333; text-align: left;">This email serves as your official e-receipt. Thank you for your transaction with us.</p>
                     </div>
 
                     <!-- Order Details -->
@@ -256,7 +256,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
 
                     <!-- Footer -->
                     <div style="padding-top: 24px; border-top: 1px solid #e5e5e5; font-size: 13px; color: #999;">
-                        <p style="margin: 0;">— B1G Corporation</p>
+                        <p style="margin: 0;">All Rights Reserved</p>
                     </div>
 
                 </div>
@@ -387,7 +387,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                     
                     <!-- Header -->
                     <div style="border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 24px;">
-                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">B1G Corporation · Internal Receipt</h1>
+                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">Internal Receipt</h1>
                     </div>
 
                     <!-- Alert -->

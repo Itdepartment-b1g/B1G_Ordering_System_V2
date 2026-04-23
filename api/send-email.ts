@@ -57,7 +57,7 @@ export default async function handler(req: any, res: any) {
 
     // Send email
     const info = await transporter.sendMail({
-      from: `B1G Corporation <${GMAIL_USERNAME}>`,
+      from: `NoReply <${GMAIL_USERNAME}>`,
       to,
       subject,
       html,
