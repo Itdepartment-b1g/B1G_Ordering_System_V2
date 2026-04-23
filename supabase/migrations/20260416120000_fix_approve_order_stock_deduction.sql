@@ -1,10 +1,13 @@
 -- ============================================================================
--- APPROVE ORDER AND VERIFY CASH DEPOSIT FUNCTION
+-- FIX: Deduct main_inventory.stock and allocated_stock on order approval
 -- ============================================================================
--- This function handles order approval for finance team with different logic
--- based on payment method:
--- 1. BANK_TRANSFER/GCASH: Simply approve the order
--- 2. CASH/CHEQUE: Approve the order AND verify the linked cash_deposit
+-- Previously, approve_order_and_verify_deposit only updated order status and
+-- deposit verification. It never touched main_inventory, causing:
+--   1. allocated_stock to grow indefinitely (included already-sold items)
+--   2. stock (Total Stock) to never decrease for sold items
+--
+-- This migration adds a loop that decrements both stock and allocated_stock
+-- for each order item when finance approves the order.
 -- ============================================================================
 
 DROP FUNCTION IF EXISTS approve_order_and_verify_deposit(UUID);
@@ -120,23 +123,4 @@ EXCEPTION
 END;
 $$;
 
--- Grant permissions
 GRANT EXECUTE ON FUNCTION approve_order_and_verify_deposit(UUID) TO authenticated;
-
--- ============================================================================
--- USAGE NOTES
--- ============================================================================
---
--- Call this function when finance approves an order:
--- SELECT * FROM approve_order_and_verify_deposit('order-uuid-here');
---
--- For Bank Transfer/GCash orders:
--- - Order status changes to 'approved'
--- - No deposit verification needed
---
--- For Cash/Cheque orders:
--- - Order status changes to 'approved'
--- - Related cash_deposit status changes to 'verified' (if deposit_id exists)
--- - Related financial_transaction status changes to 'completed'
---
--- ============================================================================

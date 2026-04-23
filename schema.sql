@@ -1474,6 +1474,7 @@ DECLARE
   v_deposit_id UUID;
   v_company_id UUID;
   v_has_cash_or_cheque BOOLEAN := FALSE;
+  v_item RECORD;
 BEGIN
   -- 1. Get order details
   SELECT payment_method, payment_mode, payment_splits, deposit_id, company_id
@@ -1511,6 +1512,21 @@ BEGIN
     stage = 'admin_approved',
     updated_at = NOW()
   WHERE id = p_order_id;
+
+  -- 4b. Deduct sold quantities from main_inventory (stock and allocated_stock)
+  FOR v_item IN
+    SELECT variant_id, quantity
+    FROM client_order_items
+    WHERE client_order_id = p_order_id
+  LOOP
+    UPDATE main_inventory
+    SET
+      stock = GREATEST(0, stock - v_item.quantity),
+      allocated_stock = GREATEST(0, COALESCE(allocated_stock, 0) - v_item.quantity),
+      updated_at = NOW()
+    WHERE variant_id = v_item.variant_id
+      AND company_id = v_company_id;
+  END LOOP;
 
   -- 5. If order has CASH/CHEQUE component and deposit_id exists, verify the cash_deposit
   IF v_has_cash_or_cheque AND v_deposit_id IS NOT NULL THEN

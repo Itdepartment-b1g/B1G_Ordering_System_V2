@@ -5,7 +5,12 @@ export interface PurchaseOrderItem {
     warehouse_location?: { id: string; name: string; is_main: boolean } | null;
     brand_name: string;
     variant_name: string;
-    variant_type: 'flavor' | 'battery';
+    /**
+     * Item category/type coming from the variants table.
+     * Historically only 'flavor' (pods) and 'battery' (devices) were used,
+     * but COF must support additional types (e.g. FOC, NCV, POSM).
+     */
+    variant_type: string;
     quantity: number;
     unit_price: number;
     total_price: number;
@@ -31,6 +36,21 @@ export interface PurchaseOrder {
     warehouse_location_id?: string | null;
     warehouse_location?: { id: string; name: string; is_main: boolean } | null;
     supplier: Supplier | null;
+    /** Requesting company (tenant that created the PO). */
+    requestor_company?: {
+        id: string;
+        company_name: string;
+    } | null;
+    /** User profile that created the PO (requestor's contact info). */
+    requestor_profile?: {
+        id: string;
+        full_name: string | null;
+        email: string | null;
+        phone: string | null;
+        address: string | null;
+        city: string | null;
+        country: string | null;
+    } | null;
     order_date: string;
     expected_delivery_date: string;
     subtotal: number;

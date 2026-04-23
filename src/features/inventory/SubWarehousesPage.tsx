@@ -31,7 +31,13 @@ type LocationUserRow = {
 type LocationInventoryRow = {
   variant_id: string;
   stock: number;
-  variant?: { name: string; variant_type: string; brand?: { name: string } | null } | null;
+  variant?:
+    | {
+        name: string;
+        variant_type: string;
+        brand?: { name: string } | null;
+      }
+    | null;
 };
 
 function getVariantsByTypeEntries(brand: Brand): [string, Variant[]][] {
@@ -95,6 +101,7 @@ export default function SubWarehousesPage() {
 
   const [returnLocationId, setReturnLocationId] = useState('');
   const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
+  const [returnFilter, setReturnFilter] = useState('');
 
   const isWarehouse = user?.role === 'warehouse';
 
@@ -108,16 +115,19 @@ export default function SubWarehousesPage() {
         .eq('user_id', user!.id)
         .maybeSingle();
       if (error) throw error;
-      return (data || null) as
-        | null
-        | {
-            location_id: string;
-            warehouse_locations: { id: string; name: string; is_main: boolean };
-          };
+      if (!data) return null;
+      const loc = data as any;
+      return {
+        location_id: loc.location_id as string,
+        warehouse_locations: Array.isArray(loc.warehouse_locations)
+          ? (loc.warehouse_locations[0] as { id: string; name: string; is_main: boolean })
+          : (loc.warehouse_locations as { id: string; name: string; is_main: boolean }),
+      };
     },
   });
 
   const isMainWarehouseUser = !!myLocation?.warehouse_locations?.is_main;
+  const myLocationId = myLocation?.location_id || '';
 
   const { data: locations = [], isLoading: loadingLocations } = useQuery({
     queryKey: ['warehouse-locations', user?.company_id],
@@ -191,24 +201,105 @@ export default function SubWarehousesPage() {
     return { lineCount: lines.length, totalQty };
   }, [allocQuantities]);
 
+  const returnSummary = useMemo(() => {
+    const lines = Object.entries(returnQuantities).filter(([, q]) => (q ?? 0) > 0);
+    const totalQty = lines.reduce((s, [, q]) => s + (q ?? 0), 0);
+    return { lineCount: lines.length, totalQty };
+  }, [returnQuantities]);
+
   const { data: returnInventory = [], isLoading: loadingReturnInventory } = useQuery({
     queryKey: ['warehouse-location-inventory', returnLocationId],
     enabled: !!returnLocationId && isWarehouse,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('warehouse_location_inventory')
-        .select('variant_id,stock,variants:variant_id ( name, variant_type, brands:brand_id ( name ) )')
+        // Explicit FK embeds to reliably fetch variant + brand names
+        .select(
+          'variant_id,stock,variant:variants!warehouse_location_inventory_variant_id_fkey ( name, variant_type, brand:brands!variants_brand_id_fkey ( name ) )',
+        )
         .eq('location_id', returnLocationId)
         .order('variant_id');
       if (error) throw error;
-      return (data || []) as any as LocationInventoryRow[];
+      // Normalize embed shape to match LocationInventoryRow
+      return ((data || []) as any[]).map((r) => ({
+        variant_id: r.variant_id,
+        stock: r.stock,
+        variant: r.variant
+          ? {
+              name: r.variant.name,
+              variant_type: r.variant.variant_type,
+              brand: r.variant.brand ? { name: r.variant.brand.name } : null,
+            }
+          : null,
+      })) as LocationInventoryRow[];
     },
   });
+
+  type ReturnRow = {
+    variant_id: string;
+    stock: number;
+    brandName: string;
+    variantName: string;
+    variantType: string;
+  };
+
+  const returnRows: ReturnRow[] = useMemo(() => {
+    return (returnInventory || [])
+      .map((r) => ({
+        variant_id: r.variant_id,
+        stock: r.stock ?? 0,
+        brandName: r.variant?.brand?.name || 'Unknown Brand',
+        variantName: r.variant?.name || r.variant_id,
+        variantType: r.variant?.variant_type || 'unknown',
+      }))
+      .filter((r) => r.stock > 0);
+  }, [returnInventory]);
+
+  const returnRowsFiltered = useMemo(() => {
+    const q = returnFilter.trim().toLowerCase();
+    if (!q) return returnRows;
+    return returnRows.filter(
+      (r) => r.brandName.toLowerCase().includes(q) || r.variantName.toLowerCase().includes(q),
+    );
+  }, [returnRows, returnFilter]);
+
+  const returnRowsByBrand = useMemo(() => {
+    const m = new Map<string, ReturnRow[]>();
+    for (const row of returnRowsFiltered) {
+      const list = m.get(row.brandName) || [];
+      list.push(row);
+      m.set(row.brandName, list);
+    }
+    // keep stable order
+    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [returnRowsFiltered]);
+
+  const getReturnTypeGroups = (rows: ReturnRow[]): [string, ReturnRow[]][] => {
+    const m = new Map<string, ReturnRow[]>();
+    for (const r of rows) {
+      const k = r.variantType || 'unknown';
+      const list = m.get(k) || [];
+      list.push(r);
+      m.set(k, list);
+    }
+    return Array.from(m.entries())
+      .map(([type, list]) => [type, list.sort((a, b) => a.variantName.localeCompare(b.variantName))] as [string, ReturnRow[]])
+      .sort(([a], [b]) => a.localeCompare(b));
+  };
 
   const onRefresh = async () => {
     await qc.invalidateQueries({ queryKey: ['warehouse-locations'] });
     await qc.invalidateQueries({ queryKey: ['warehouse-location-users'] });
     await refreshInventory();
+  };
+
+  const openReturnForMyLocation = () => {
+    if (!myLocationId) return;
+    setReturnLocationId(myLocationId);
+    setReturnOpen(true);
   };
 
   const createSubWarehouse = async () => {
@@ -316,6 +407,10 @@ export default function SubWarehousesPage() {
       await qc.invalidateQueries({
         queryKey: ['warehouse-location-inventory-brands', user?.company_id, selectedLocationId],
       });
+      // Invalidate the raw location inventory used by the return modal
+      await qc.invalidateQueries({
+        queryKey: ['warehouse-location-inventory', selectedLocationId],
+      });
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to allocate stock', variant: 'destructive' });
     } finally {
@@ -353,6 +448,10 @@ export default function SubWarehousesPage() {
       await qc.invalidateQueries({
         queryKey: ['warehouse-location-inventory-brands', user?.company_id, returnLocationId],
       });
+      // Invalidate the raw location inventory used by the return modal itself
+      await qc.invalidateQueries({
+        queryKey: ['warehouse-location-inventory', returnLocationId],
+      });
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to return stock', variant: 'destructive' });
     } finally {
@@ -374,10 +473,6 @@ export default function SubWarehousesPage() {
           </Button>
           {isMainWarehouseUser ? (
             <>
-              <Button variant="outline" onClick={() => setReturnOpen(true)}>
-                <Undo2 className="mr-2 h-4 w-4" />
-                Return stock
-              </Button>
               <Button variant="outline" onClick={() => setAllocOpen(true)}>
                 <Send className="mr-2 h-4 w-4" />
                 Allocate stock
@@ -388,10 +483,16 @@ export default function SubWarehousesPage() {
               </Button>
             </>
           ) : (
-            <div className="text-xs text-muted-foreground">
-              You’re logged in as a <span className="font-medium text-foreground">sub-warehouse</span>. Only the{' '}
-              <span className="font-medium text-foreground">Main Warehouse</span> account can create/allocate sub-warehouses.
-            </div>
+            <>
+              <Button variant="outline" onClick={() => openReturnForMyLocation()} disabled={!myLocationId}>
+                <Undo2 className="mr-2 h-4 w-4" />
+                Return stock
+              </Button>
+              <div className="text-xs text-muted-foreground">
+                You’re logged in as a <span className="font-medium text-foreground">sub-warehouse</span>. Only the{' '}
+                <span className="font-medium text-foreground">Main Warehouse</span> account can create/allocate sub-warehouses.
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -684,6 +785,7 @@ export default function SubWarehousesPage() {
           if (!open) {
             setReturnLocationId('');
             setReturnQuantities({});
+        setReturnFilter('');
           }
         }}
       >
@@ -695,13 +797,18 @@ export default function SubWarehousesPage() {
           <div className="space-y-4 py-2 flex-1 min-h-0 flex flex-col">
             <div className="space-y-2 shrink-0">
               <Label>Sub-warehouse</Label>
-              <Select value={returnLocationId || undefined} onValueChange={setReturnLocationId}>
+              <Select
+                value={returnLocationId || undefined}
+                onValueChange={setReturnLocationId}
+                disabled={!isMainWarehouseUser}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select location" />
                 </SelectTrigger>
                 <SelectContent>
                   {locations
                     .filter((l) => !l.is_main)
+                    .filter((l) => (isMainWarehouseUser ? true : l.id === myLocationId))
                     .map((l) => (
                       <SelectItem key={l.id} value={l.id}>
                         {l.name}
@@ -711,69 +818,141 @@ export default function SubWarehousesPage() {
               </Select>
             </div>
 
-            <div className="overflow-y-auto flex-1 min-h-[200px] max-h-[55vh] space-y-3 pr-1 border rounded-md p-3 bg-muted/20">
-              {!returnLocationId ? (
-                <p className="text-sm text-muted-foreground text-center py-8">Select a sub-warehouse to list its inventory.</p>
-              ) : loadingReturnInventory ? (
-                <div className="py-12 text-center text-muted-foreground">
-                  <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
-                  Loading inventory…
-                </div>
-              ) : returnInventory.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">No stock in this sub-warehouse.</p>
-              ) : (
-                <div className="space-y-2 rounded-lg border bg-background p-3">
-                  {returnInventory.map((row) => {
-                    const name = row.variant?.name || row.variant_id;
-                    return (
-                      <div key={row.variant_id} className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium truncate" title={name}>
-                            {name}
-                          </div>
-                          <div className="text-xs text-muted-foreground">In sub-warehouse: {row.stock}</div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Label htmlFor={`ret-${row.variant_id}`} className="text-xs text-muted-foreground whitespace-nowrap">
-                            Qty
-                          </Label>
-                          <Input
-                            id={`ret-${row.variant_id}`}
-                            type="number"
-                            min={0}
-                            className="w-24 h-9"
-                            value={returnQuantities[row.variant_id] ?? 0}
-                            onChange={(e) =>
-                              setReturnQuantities((q) => ({
-                                ...q,
-                                [row.variant_id]: Math.max(0, parseInt(e.target.value, 10) || 0),
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+        <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+          <div className="space-y-2 flex-1">
+            <Label htmlFor="return-filter">Filter brands or SKUs</Label>
+            <Input
+              id="return-filter"
+              placeholder="Search by brand or product name…"
+              value={returnFilter}
+              onChange={(e) => setReturnFilter(e.target.value)}
+              disabled={!returnLocationId || loadingReturnInventory}
+            />
+          </div>
+          <div className="flex items-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={returnSummary.lineCount === 0}
+              onClick={() => setReturnQuantities({})}
+            >
+              Clear quantities
+            </Button>
+          </div>
+        </div>
+
+        <div className="overflow-y-auto flex-1 min-h-[200px] max-h-[55vh] border rounded-md p-3 bg-muted/20">
+          {!returnLocationId ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Select a sub-warehouse to list its inventory.</p>
+          ) : loadingReturnInventory ? (
+            <div className="py-12 text-center text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+              Loading inventory…
             </div>
+          ) : returnRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No stock in this sub-warehouse.</p>
+          ) : returnRowsFiltered.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No brands or SKUs match your search.</p>
+          ) : (
+            <Accordion type="multiple" className="w-full">
+              {returnRowsByBrand.map(([brandName, rows]) => {
+                const typeGroups = getReturnTypeGroups(rows);
+                const brandQty = rows.reduce((sum, r) => sum + (returnQuantities[r.variant_id] ?? 0), 0);
+                return (
+                  <AccordionItem key={brandName} value={brandName} className="border-b-0">
+                    <AccordionTrigger className="py-3 hover:no-underline rounded-md px-2 -mx-2 hover:bg-muted/60">
+                      <span className="flex items-center gap-2 min-w-0 text-left">
+                        <span className="font-medium truncate">{brandName}</span>
+                        {brandQty > 0 && (
+                          <Badge variant="secondary" className="shrink-0">
+                            {brandQty} to return
+                          </Badge>
+                        )}
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-4 pb-4 pt-0">
+                      {typeGroups.map(([type, list]) => (
+                        <div key={type}>
+                          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                            {normalizeTypeLabel(type)}
+                          </h4>
+                          <div className="space-y-2 rounded-lg border bg-background p-3">
+                            {list.map((r) => (
+                              <div key={r.variant_id} className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium truncate" title={r.variantName}>
+                                    {r.variantName}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">In sub-warehouse: {r.stock}</div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <Label
+                                    htmlFor={`ret-${r.variant_id}`}
+                                    className="text-xs text-muted-foreground whitespace-nowrap"
+                                  >
+                                    Qty
+                                  </Label>
+                                  <Input
+                                    id={`ret-${r.variant_id}`}
+                                    type="number"
+                                    min={0}
+                                    max={r.stock}
+                                    className="w-24 h-9"
+                                    value={returnQuantities[r.variant_id] ?? 0}
+                                    onChange={(e) =>
+                                      setReturnQuantities((q) => ({
+                                        ...q,
+                                        [r.variant_id]: Math.max(
+                                          0,
+                                          Math.min(r.stock, parseInt(e.target.value, 10) || 0),
+                                        ),
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </AccordionContent>
+                  </AccordionItem>
+                );
+              })}
+            </Accordion>
+          )}
+        </div>
           </div>
 
-          <DialogFooter className="shrink-0 border-t pt-4 mt-2">
-            <Button variant="outline" onClick={() => setReturnOpen(false)} disabled={returning}>
-              Cancel
-            </Button>
-            <Button onClick={() => void returnFromLocation()} disabled={returning || !returnLocationId}>
-              {returning ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Returning…
-                </>
-              ) : (
-                'Return'
-              )}
-            </Button>
-          </DialogFooter>
+      <DialogFooter className="shrink-0 border-t pt-4 mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-muted-foreground order-2 sm:order-1">
+          {returnLocationId && returnSummary.lineCount > 0 ? (
+            <span>
+              <span className="font-medium text-foreground">{returnSummary.lineCount}</span> SKU
+              {returnSummary.lineCount !== 1 ? 's' : ''} · total qty{' '}
+              <span className="font-medium text-foreground">{returnSummary.totalQty}</span>
+            </span>
+          ) : returnLocationId ? (
+            <span>Enter quantities above to return.</span>
+          ) : null}
+        </div>
+        <div className="flex gap-2 order-1 sm:order-2 sm:ml-auto">
+          <Button variant="outline" onClick={() => setReturnOpen(false)} disabled={returning}>
+            Cancel
+          </Button>
+          <Button onClick={() => void returnFromLocation()} disabled={returning || !returnLocationId || returnSummary.lineCount === 0}>
+            {returning ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Returning…
+              </>
+            ) : (
+              'Return'
+            )}
+          </Button>
+        </div>
+      </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

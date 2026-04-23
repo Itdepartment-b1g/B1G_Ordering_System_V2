@@ -9,13 +9,14 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
 import { CreatePurchaseOrderDialog } from './components/CreatePurchaseOrderDialog';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
+import { generateAndOpenCofPdf } from './cof/generateCofPdf';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -128,6 +129,18 @@ export default function PurchaseOrdersPage() {
   const [loadingApproveStock, setLoadingApproveStock] = useState(false);
   const locVarKey = (locId: string, variantId: string) => `${locId}::${variantId}`;
   const shortId = (id: string) => (id && id.length > 10 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id);
+
+  const openCofForOrder = async (order: any) => {
+    try {
+      await generateAndOpenCofPdf(order);
+    } catch (e: any) {
+      toast({
+        title: 'COF Error',
+        description: e?.message || 'Failed to generate COF',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
@@ -662,6 +675,10 @@ export default function PurchaseOrdersPage() {
                       <X className="h-4 w-4 mr-1" /> {order.created_by === user?.id ? 'Cancel' : 'Reject'}
                     </Button>
                   )}
+                  <Button variant="outline" size="sm" onClick={() => void openCofForOrder(order)} title="View / Print COF">
+                    <FileText className="h-4 w-4 mr-1" />
+                    COF
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => handleViewOrder(order)}>
                     <Eye className="h-4 w-4 mr-1" /> View
                   </Button>
@@ -775,6 +792,9 @@ export default function PurchaseOrdersPage() {
                           )}
                           <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
                             <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button variant="outline" size="icon" onClick={() => void openCofForOrder(order)} title="View / Print COF">
+                            <FileText className="h-4 w-4" />
                           </Button>
                         </div>
                       </TableCell>
@@ -1340,22 +1360,18 @@ export default function PurchaseOrdersPage() {
                                     </Badge>
                                     {orderToView.status &&
                                       (orderToView.status === 'approved_for_fulfillment' || orderToView.status === 'partially_fulfilled') &&
+                                      s.status !== 'fulfilled' &&
                                       shouldShowFulfillButtonInViewForLocation(s.location_id) && (
                                         <Button
                                           size="sm"
-                                          variant={s.status === 'fulfilled' ? 'secondary' : 'outline'}
+                                          variant="outline"
                                           onClick={() => handleOpenFulfillDialogForLocation(orderToView, s.location_id, s.location_name)}
                                           disabled={
                                             fulfillingOrderId === orderToView.id ||
                                             !canFulfillFromViewForLocation(s.location_id, s.status)
                                           }
                                         >
-                                          {s.status === 'fulfilled' ? (
-                                            <>
-                                              <Check className="h-4 w-4 mr-1" />
-                                              Fulfilled
-                                            </>
-                                          ) : fulfillingOrderId === orderToView.id ? (
+                                          {fulfillingOrderId === orderToView.id ? (
                                             <>
                                               <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                                               Fulfilling...
