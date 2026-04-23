@@ -151,7 +151,7 @@ function generateEmailHTML(orderData: OrderEmailData): string {
                     
                     <!-- Header -->
                     <div style="border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 24px;">
-                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">B1G Corporation</h1>
+                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">Official Receipt</h1>
                     </div>
 
                     <!-- Main Content -->
@@ -387,7 +387,7 @@ function generateITReceiptHTML(orderData: OrderEmailData): string {
                     
                     <!-- Header -->
                     <div style="border-bottom: 2px solid #111; padding-bottom: 16px; margin-bottom: 24px;">
-                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">B1G Corporation · Internal Receipt</h1>
+                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111;">Internal Receipt</h1>
                     </div>
 
                     <!-- Alert -->
