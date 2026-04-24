@@ -395,11 +395,29 @@ export default function PurchaseOrdersPage() {
     order.status === 'pending' &&
     (order.fulfillment_type !== 'warehouse_transfer' || canFulfillAsMainWarehouse);
 
-  const canFulfillOrder = (order: { id: string; status: string; fulfillment_type?: string }) =>
-    canFulfillAsSubWarehouse &&
-    order.fulfillment_type === 'warehouse_transfer' &&
-    (order.status === 'approved_for_fulfillment' || order.status === 'partially_fulfilled') &&
-    myLocationStatuses[order.id] !== 'fulfilled';
+  const canFulfillOrder = (order: { id: string; status: string; fulfillment_type?: string; warehouse_location_id?: string; items?: any[] }) => {
+    if (!(canFulfillAsSubWarehouse || canFulfillAsMainWarehouse)) return false;
+    if (order.fulfillment_type !== 'warehouse_transfer') return false;
+    if (!(order.status === 'approved_for_fulfillment' || order.status === 'partially_fulfilled')) return false;
+    if (myLocationStatuses[order.id] === 'fulfilled') return false;
+
+    // Check if user's warehouse is a source for this PO
+    // For single-warehouse: check warehouse_location_id
+    // For multi-warehouse: check if any item has user's warehouse
+    const userLocationId = membership.locationId;
+    if (!userLocationId) return false;
+
+    // If PO has a header warehouse_location_id, user must match it
+    if (order.warehouse_location_id) {
+      return String(order.warehouse_location_id) === String(userLocationId);
+    }
+
+    // For multi-warehouse POs, check if any item's warehouse matches user's warehouse
+    const items = order.items || [];
+    return items.some(item =>
+      String(item.warehouse_location_id) === String(userLocationId)
+    );
+  };
 
   const handleApproveOrder = async () => {
     if (!orderToApprove) return;
@@ -660,7 +678,6 @@ export default function PurchaseOrdersPage() {
                 <div className="mt-3 flex justify-end gap-2">
                   {canApproveOrder(order) && (
                     <Button variant="default" size="sm" onClick={() => handleOpenApproveDialog(order)} disabled={approvingOrderId === order.id}>
-                      <Check className="h-4 w-4 mr-1" />
                       {order.fulfillment_type === 'warehouse_transfer' ? 'Approve PO' : 'Approve'}
                     </Button>
                   )}
@@ -672,7 +689,7 @@ export default function PurchaseOrdersPage() {
                   )}
                   {canApproveOrder(order) && (
                     <Button variant="destructive" size="sm" onClick={() => handleOpenRejectDialog(order)} disabled={rejectingOrderId === order.id}>
-                      <X className="h-4 w-4 mr-1" /> {order.created_by === user?.id ? 'Cancel' : 'Reject'}
+                      {order.created_by === user?.id ? 'Cancel' : 'Reject'}
                     </Button>
                   )}
                   <Button variant="outline" size="sm" onClick={() => void openCofForOrder(order)} title="View / Print COF">
@@ -752,12 +769,10 @@ export default function PurchaseOrdersPage() {
                             >
                               {approvingOrderId === order.id ? (
                                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : (
-                                <Check className="h-4 w-4 mr-1" />
-                              )}
+                              ) : null}
                               {order.fulfillment_type === 'warehouse_transfer'
                                 ? 'Approve PO'
-                                : 'Approve & Add to Inventory'}
+                                : 'Approve'}
                             </Button>
                           )}
                           {canFulfillOrder(order) && (
@@ -784,9 +799,7 @@ export default function PurchaseOrdersPage() {
                             >
                               {rejectingOrderId === order.id ? (
                                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : (
-                                <X className="h-4 w-4 mr-1" />
-                              )}
+                              ) : null}
                               {order.created_by === user?.id ? 'Cancel' : 'Reject'}
                             </Button>
                           )}
@@ -1358,32 +1371,6 @@ export default function PurchaseOrdersPage() {
                                     >
                                       {s.status.toUpperCase()}
                                     </Badge>
-                                    {orderToView.status &&
-                                      (orderToView.status === 'approved_for_fulfillment' || orderToView.status === 'partially_fulfilled') &&
-                                      s.status !== 'fulfilled' &&
-                                      shouldShowFulfillButtonInViewForLocation(s.location_id) && (
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() => handleOpenFulfillDialogForLocation(orderToView, s.location_id, s.location_name)}
-                                          disabled={
-                                            fulfillingOrderId === orderToView.id ||
-                                            !canFulfillFromViewForLocation(s.location_id, s.status)
-                                          }
-                                        >
-                                          {fulfillingOrderId === orderToView.id ? (
-                                            <>
-                                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                                              Fulfilling...
-                                            </>
-                                          ) : (
-                                            <>
-                                              <Package className="h-4 w-4 mr-1" />
-                                              Fulfill
-                                            </>
-                                          )}
-                                        </Button>
-                                      )}
                                   </div>
                                 </div>
                               ))}
