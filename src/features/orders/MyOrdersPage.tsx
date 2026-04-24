@@ -162,6 +162,9 @@ export default function MyOrdersPage() {
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [paymentProofPreview, setPaymentProofPreview] = useState<string | null>(null);
   const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
+  const [showQrPreviewModal, setShowQrPreviewModal] = useState(false);
+  const [qrPreviewUrl, setQrPreviewUrl] = useState<string | null>(null);
+  const [qrPreviewTitle, setQrPreviewTitle] = useState<string>('QR Code');
 
   // Split payment states
   const [paymentMode, setPaymentMode] = useState<'FULL' | 'SPLIT'>('FULL');
@@ -945,6 +948,20 @@ export default function MyOrdersPage() {
       stopCamera();
     }
   }, [showPaymentProofModal]);
+
+  // Close QR preview when payment proof modal closes
+  useEffect(() => {
+    if (!showPaymentProofModal) {
+      setShowQrPreviewModal(false);
+      setQrPreviewUrl(null);
+    }
+  }, [showPaymentProofModal]);
+
+  const openQrPreview = (url: string, title?: string) => {
+    setQrPreviewUrl(url);
+    setQrPreviewTitle(title || 'QR Code');
+    setShowQrPreviewModal(true);
+  };
 
   // Split payment helper functions
   // Removed unused helper functions: updateSplit, applyPreset, autoFillAmount
@@ -3072,12 +3089,19 @@ export default function MyOrdersPage() {
                 {selectedBank.qr_code_url && (
                   <div className="flex justify-center py-2">
                     <div className="bg-white p-3 rounded-lg border-2 border-blue-300">
-                      <img 
-                        src={selectedBank.qr_code_url} 
-                        alt={`${selectedBank.name} QR Code`}
-                        className="w-48 h-48 object-contain"
-                      />
-                      <p className="text-xs text-center text-blue-700 mt-2">Scan to pay</p>
+                      <button
+                        type="button"
+                        onClick={() => openQrPreview(selectedBank.qr_code_url!, `${selectedBank.name} QR Code`)}
+                        className="block rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                        aria-label={`Enlarge ${selectedBank.name} QR Code`}
+                      >
+                        <img
+                          src={selectedBank.qr_code_url}
+                          alt={`${selectedBank.name} QR Code`}
+                          className="w-48 h-48 object-contain cursor-pointer"
+                        />
+                      </button>
+                      <p className="text-xs text-center text-blue-700 mt-2">Click to enlarge</p>
                     </div>
                   </div>
                 )}
@@ -3108,11 +3132,18 @@ export default function MyOrdersPage() {
                 {paymentSettings.gcash_qr_url && (
                   <div className="flex justify-center py-2">
                     <div className="bg-white p-3 rounded-lg border-2 border-green-300">
-                      <img 
-                        src={paymentSettings.gcash_qr_url} 
-                        alt="GCash QR Code"
-                        className="w-48 h-48 object-contain"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => openQrPreview(paymentSettings.gcash_qr_url!, 'GCash QR Code')}
+                        className="block rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2"
+                        aria-label="Enlarge GCash QR Code"
+                      >
+                        <img
+                          src={paymentSettings.gcash_qr_url}
+                          alt="GCash QR Code"
+                          className="w-48 h-48 object-contain cursor-pointer"
+                        />
+                      </button>
                       <p className="text-xs text-center text-green-700 mt-2">Scan to pay via GCash</p>
                     </div>
                   </div>
@@ -3297,6 +3328,26 @@ export default function MyOrdersPage() {
                 )}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* QR Preview Modal */}
+      <Dialog open={showQrPreviewModal} onOpenChange={setShowQrPreviewModal}>
+        <DialogContent className="max-w-[95vw] sm:max-w-xl md:max-w-2xl p-3 sm:p-6">
+          <DialogHeader className="pb-2 sm:pb-4">
+            <DialogTitle className="text-sm sm:text-lg">{qrPreviewTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center justify-center">
+            {qrPreviewUrl ? (
+              <img
+                src={qrPreviewUrl}
+                alt={qrPreviewTitle}
+                className="max-h-[70vh] w-auto object-contain rounded-md border bg-white"
+              />
+            ) : (
+              <div className="text-sm text-muted-foreground">No QR code available.</div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
