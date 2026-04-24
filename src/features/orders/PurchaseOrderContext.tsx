@@ -374,17 +374,9 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       let rpcName: string = 'approve_purchase_order';
       if (poRow?.fulfillment_type === 'warehouse_transfer') {
-        // Multi-location transfers use reserve-then-fulfill flow.
-        // Keep legacy single-location flow when a single PO header location is used.
-        const { data: locAgg, error: locAggErr } = await supabase
-          .from('purchase_order_items')
-          .select('warehouse_location_id')
-          .eq('purchase_order_id', poId);
-        if (locAggErr) throw locAggErr;
-        const distinct = new Set((locAgg || []).map((r: any) => String(r.warehouse_location_id || '')));
-        distinct.delete('');
-        const isMulti = !poRow.warehouse_location_id || distinct.size > 1;
-        rpcName = isMulti ? 'approve_multi_location_po' : 'approve_warehouse_transfer_po';
+        // Always use reserve-then-fulfill flow for warehouse transfers
+        // This ensures sub-warehouse transfers require fulfillment after approval
+        rpcName = 'approve_multi_location_po';
       }
 
       const { data, error } =

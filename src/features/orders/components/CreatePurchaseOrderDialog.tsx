@@ -100,6 +100,7 @@ export function CreatePurchaseOrderDialog({
     const [catalogLoading, setCatalogLoading] = useState(false);
 
     const [warehouseLocations, setWarehouseLocations] = useState<Array<{ id: string; name: string; is_main: boolean }>>([]);
+    const [mainWarehouseLocationId, setMainWarehouseLocationId] = useState<string>('');
     const [selectedWarehouseLocationId, setSelectedWarehouseLocationId] = useState<string>('');
     const [sourceMode, setSourceMode] = useState<'single' | 'multi'>('single');
     const [activeWarehouseTabId, setActiveWarehouseTabId] = useState<string>('');
@@ -116,6 +117,9 @@ export function CreatePurchaseOrderDialog({
 
     // Items State
     const [items, setItems] = useState<NewPOItem[]>([]);
+
+    // Stock State: map of `${variantId}::${locationId}` to stock quantity
+    const [itemStockMap, setItemStockMap] = useState<Record<string, number>>({});
 
     // Keep item-level location in sync with source mode and default selection.
     useEffect(() => {
@@ -141,6 +145,98 @@ export function CreatePurchaseOrderDialog({
 
     // Clear All Confirmation State
     const [clearAllOpen, setClearAllOpen] = useState(false);
+
+    // Fetch stock data for items when they change or warehouse selection changes
+    useEffect(() => {
+        if (!open || fulfillmentMode !== 'warehouse_transfer' || !linkedWarehouseCompanyId) {
+            setItemStockMap({});
+            return;
+        }
+
+        // Fetch stock for ALL available variants (catalog) + items already added
+        // This ensures the "Add Existing" dialog can filter brands by available stock
+        const itemVariantIds = items.map(i => i.variantId).filter(Boolean);
+        const catalogVariantIds = availableVariants.map(v => v.id);
+        const variantIds = Array.from(new Set([...itemVariantIds, ...catalogVariantIds]));
+        if (variantIds.length === 0) {
+            setItemStockMap({});
+            return;
+        }
+
+        let cancelled = false;
+        (async () => {
+            // Fetch stock from both main_inventory and warehouse_location_inventory
+            const [{ data: mainInvData, error: mainInvError }, { data: locInvData, error: locInvError }] = await Promise.all([
+                supabase
+                    .from('main_inventory')
+                    .select('variant_id, stock, allocated_stock')
+                    .eq('company_id', linkedWarehouseCompanyId)
+                    .in('variant_id', variantIds),
+                supabase
+                    .from('warehouse_location_inventory')
+                    .select('variant_id, location_id, stock')
+                    .eq('company_id', linkedWarehouseCompanyId)
+                    .in('variant_id', variantIds),
+            ]);
+
+            console.log('[CreatePO] Stock fetch debug:', {
+                linkedWarehouseCompanyId,
+                mainWarehouseLocationId,
+                selectedWarehouseLocationId,
+                variantIds,
+                mainInvData,
+                mainInvDataCount: mainInvData?.length || 0,
+                locInvDataCount: locInvData?.length || 0,
+                mainInvError: mainInvError?.message || mainInvError,
+                locInvError: locInvError?.message || locInvError,
+            });
+
+            if (cancelled) return;
+
+            const stockMap: Record<string, number> = {};
+
+            // Map main inventory stock (location_id = main warehouse id)
+            // Calculate available = stock - allocated_stock
+            if (mainWarehouseLocationId && mainInvData) {
+                for (const row of mainInvData) {
+                    const key = `${row.variant_id}::${mainWarehouseLocationId}`;
+                    const stock = row.stock || 0;
+                    const allocated = row.allocated_stock || 0;
+                    stockMap[key] = Math.max(0, stock - allocated);
+                }
+                console.log('[CreatePO] Main inventory mapped:', mainInvData.map(r => {
+                    const stock = r.stock || 0;
+                    const allocated = r.allocated_stock || 0;
+                    return { var: r.variant_id, stock, allocated, available: stock - allocated, key: `${r.variant_id}::${mainWarehouseLocationId}` };
+                }));
+            } else {
+                console.log('[CreatePO] Main inventory NOT mapped:', { mainWarehouseLocationId: !!mainWarehouseLocationId, hasData: !!mainInvData });
+            }
+
+            // Map sub-warehouse inventory stock
+            if (locInvData) {
+                for (const row of locInvData) {
+                    const key = `${row.variant_id}::${row.location_id}`;
+                    stockMap[key] = row.stock || 0;
+                }
+            }
+
+            console.log('[CreatePO] Final stockMap keys:', Object.keys(stockMap));
+            setItemStockMap(stockMap);
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [open, items, availableVariants, selectedWarehouseLocationId, activeWarehouseTabId, fulfillmentMode, linkedWarehouseCompanyId, warehouseLocations, mainWarehouseLocationId]);
+
+    // Helper to get stock for an item
+    const getItemStock = (variantId: string, warehouseLocationId?: string) => {
+        const locId = warehouseLocationId || selectedWarehouseLocationId;
+        if (!locId || !variantId) return null;
+        const key = `${variantId}::${locId}`;
+        return itemStockMap[key] ?? null;
+    };
 
     // Variant Types for new item creation
     const [variantTypes, setVariantTypes] = useState<{ id: string; name: string; display_name?: string }[]>([]);
@@ -173,15 +269,19 @@ export function CreatePurchaseOrderDialog({
                     return;
                 }
                 const rows = (data as any) || [];
+                console.log('[CreatePO] Linked Warehouse Locations loaded:', rows.map((r: any) => ({ id: r.id, name: r.name, is_main: r.is_main })));
                 setWarehouseLocations(rows);
+                // Store main warehouse location ID for stock lookups
+                const main = rows.find((r: any) => r.is_main);
+                if (main?.id) {
+                    setMainWarehouseLocationId(main.id);
+                }
                 // Default to main warehouse location if not selected yet.
                 if (!selectedWarehouseLocationId) {
-                    const main = rows.find((r: any) => r.is_main);
                     setSelectedWarehouseLocationId(main?.id || rows[0]?.id || '');
                 }
                 // Default active tab (used in multi mode): main if present, otherwise first.
                 if (!activeWarehouseTabId) {
-                    const main = rows.find((r: any) => r.is_main);
                     setActiveWarehouseTabId(main?.id || rows[0]?.id || '');
                 }
             });
@@ -309,6 +409,26 @@ export function CreatePurchaseOrderDialog({
         return items.filter(i => i.warehouseLocationId === activeWarehouseTabId);
     }, [items, fulfillmentMode, sourceMode, activeWarehouseTabId]);
 
+    // Filter brands for "Add Existing" dialog - only show brands with available stock in selected warehouse
+    const filteredBrandsForDialog = useMemo(() => {
+        if (fulfillmentMode !== 'warehouse_transfer') return brands;
+        
+        const targetLocationId = sourceMode === 'multi' ? activeWarehouseTabId : selectedWarehouseLocationId;
+        if (!targetLocationId) return brands;
+        
+        // Get all variants that have stock > 0 in the selected warehouse
+        const variantsWithStock = availableVariants.filter(v => {
+            const stock = getItemStock(v.id, targetLocationId);
+            return stock !== null && stock > 0;
+        });
+        
+        // Get unique brand IDs from variants with stock
+        const brandIdsWithStock = new Set(variantsWithStock.map(v => v.brand_id));
+        
+        // Filter brands to only those with available stock
+        return brands.filter(b => brandIdsWithStock.has(b.id));
+    }, [brands, availableVariants, fulfillmentMode, sourceMode, activeWarehouseTabId, selectedWarehouseLocationId, itemStockMap]);
+
     const handleAddBrandVariants = () => {
         if (!selectedBrandForExisting) return;
 
@@ -326,22 +446,41 @@ export function CreatePurchaseOrderDialog({
         const keyOf = (variantId: string, locId: string) => `${variantId}::${locId || ''}`;
         const existingKeys = new Set(items.map((i) => keyOf(i.variantId, i.warehouseLocationId || '')));
 
-        const newItems: NewPOItem[] = variantsForBrand
-            .filter((v) => !existingKeys.has(keyOf(v.id, targetLocationId || '')))
-            .map((variant) => ({
-                id: crypto.randomUUID(),
-                brandId: variant.brand_id,
-                brandName: variant.brand_name,
-                variantId: variant.id,
-                variantName: variant.name,
-                variantType: variant.variant_type,
-                quantity: 0,
-                unitPrice: 0,
-                warehouseLocationId:
-                    fulfillmentMode === 'warehouse_transfer'
-                        ? (targetLocationId || undefined)
-                        : undefined,
-            }));
+        // Filter variants: show all that EXIST in the warehouse inventory (stock !== null, even if 0)
+        // For warehouse_transfer: only show variants with inventory records at the selected warehouse
+        // For supplier: show all variants from the brand
+        const variantsToAdd = variantsForBrand.filter((v) => {
+            if (existingKeys.has(keyOf(v.id, targetLocationId || ''))) return false;
+            if (fulfillmentMode === 'warehouse_transfer') {
+                const stock = getItemStock(v.id, targetLocationId || undefined);
+                // Only include if variant has an inventory record at this warehouse (stock !== null)
+                return stock !== null;
+            }
+            return true;
+        });
+
+        if (variantsToAdd.length === 0) {
+            const msg = fulfillmentMode === 'warehouse_transfer'
+                ? 'No variants exist at this warehouse for the selected brand.'
+                : 'No new variants found for this brand.';
+            toast({ title: 'No items', description: msg, variant: 'destructive' });
+            return;
+        }
+
+        const newItems: NewPOItem[] = variantsToAdd.map((variant) => ({
+            id: crypto.randomUUID(),
+            brandId: variant.brand_id,
+            brandName: variant.brand_name,
+            variantId: variant.id,
+            variantName: variant.name,
+            variantType: variant.variant_type,
+            quantity: 0,
+            unitPrice: 0,
+            warehouseLocationId:
+                fulfillmentMode === 'warehouse_transfer'
+                    ? (targetLocationId || undefined)
+                    : undefined,
+        }));
 
         setItems((prev) => [...prev, ...newItems]);
         setAddExistingOpen(false);
@@ -444,6 +583,20 @@ export function CreatePurchaseOrderDialog({
                 if (!item.quantity || item.quantity <= 0) continue;
                 if (item.variantType !== 'posm' && item.unitPrice < 0) {
                     throw new Error(`Item ${item.variantName || 'Unknown'} must have price >= 0`);
+                }
+
+                // Stock validation for warehouse transfers
+                if (fulfillmentMode === 'warehouse_transfer') {
+                    const availableStock = getItemStock(item.variantId, item.warehouseLocationId);
+                    if (availableStock === null || availableStock < item.quantity) {
+                        const locName = item.warehouseLocationId 
+                            ? warehouseLocations.find(l => l.id === item.warehouseLocationId)?.name || 'selected warehouse'
+                            : 'selected warehouse';
+                        throw new Error(
+                            `Insufficient stock for ${item.variantName || 'Unknown'} at ${locName}. ` +
+                            `Available: ${availableStock ?? 0}, Requested: ${item.quantity}`
+                        );
+                    }
                 }
 
                 let finalBrandId = item.brandId;
@@ -795,6 +948,9 @@ export function CreatePurchaseOrderDialog({
                                                 <TableHead className="w-[180px]">Warehouse</TableHead>
                                             )}
                                             <TableHead className="w-[100px]">Type</TableHead>
+                                            {fulfillmentMode === 'warehouse_transfer' && (
+                                                <TableHead className="w-[100px]">Stock</TableHead>
+                                            )}
                                             <TableHead className="w-[100px]">Qty</TableHead>
                                             <TableHead className="w-[120px]">Price</TableHead>
                                             <TableHead className="w-[120px] text-right">Total</TableHead>
@@ -804,7 +960,7 @@ export function CreatePurchaseOrderDialog({
                                     <TableBody>
                                         {displayedItems.length === 0 && (
                                             <TableRow className="hover:bg-transparent">
-                                                <TableCell colSpan={fulfillmentMode === 'warehouse_transfer' && sourceMode === 'multi' ? 8 : 7} className="h-[400px]">
+                                                <TableCell colSpan={fulfillmentMode === 'warehouse_transfer' ? (sourceMode === 'multi' ? 9 : 8) : 7} className="h-[400px]">
                                                     <div className="flex flex-col items-center justify-center h-full gap-6">
                                                         <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center">
                                                             <Package className="h-10 w-10 text-primary/60" />
@@ -868,7 +1024,7 @@ export function CreatePurchaseOrderDialog({
                                                     });
                                                     return [
                                                         <TableRow key={`brand:${brand}`} className="bg-muted/30 hover:bg-muted/30">
-                                                            <TableCell className="font-semibold" colSpan={8}>
+                                                            <TableCell className="font-semibold" colSpan={9}>
                                                                 {brand}
                                                             </TableCell>
                                                         </TableRow>,
@@ -881,6 +1037,13 @@ export function CreatePurchaseOrderDialog({
                                                                     <span className="inline-flex items-center rounded-md border px-2 py-1 text-xs capitalize">
                                                                         {String(item.variantType || '').toLowerCase()}
                                                                     </span>
+                                                                </TableCell>
+                                                                <TableCell className="text-xs text-muted-foreground">
+                                                                    {(() => {
+                                                                        const stock = getItemStock(item.variantId, item.warehouseLocationId);
+                                                                        if (stock === null) return '—';
+                                                                        return stock > 0 ? stock.toLocaleString() : <span className="text-destructive">0</span>;
+                                                                    })()}
                                                                 </TableCell>
                                                                 <TableCell>
                                                                     <Input
@@ -979,6 +1142,15 @@ export function CreatePurchaseOrderDialog({
                                                             </SelectContent>
                                                         </Select>
                                                     </TableCell>
+                                                    {fulfillmentMode === 'warehouse_transfer' && (
+                                                        <TableCell className="text-xs text-muted-foreground">
+                                                            {(() => {
+                                                                const stock = getItemStock(item.variantId, item.warehouseLocationId);
+                                                                if (stock === null) return '—';
+                                                                return stock > 0 ? stock.toLocaleString() : <span className="text-destructive">0</span>;
+                                                            })()}
+                                                        </TableCell>
+                                                    )}
                                                     <TableCell>
                                                         <Input
                                                             type="number"
@@ -1047,9 +1219,15 @@ export function CreatePurchaseOrderDialog({
                                     <SelectValue placeholder="Choose a brand..." />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {brands.map(b => (
-                                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                                    ))}
+                                    {filteredBrandsForDialog.length === 0 ? (
+                                        <div className="px-2 py-2 text-xs text-muted-foreground">
+                                            No brands with available stock at this warehouse.
+                                        </div>
+                                    ) : (
+                                        filteredBrandsForDialog.map(b => (
+                                            <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                                        ))
+                                    )}
                                 </SelectContent>
                             </Select>
                             <p className="text-xs text-muted-foreground">
