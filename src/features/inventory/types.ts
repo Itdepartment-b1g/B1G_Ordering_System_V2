@@ -18,6 +18,7 @@ export interface AgentBrand {
     flavors: AgentVariant[];
     batteries: AgentVariant[];
     posms: AgentVariant[];
+    foc: AgentVariant[];
     allVariants: AgentVariant[];
     variantsByType: Map<string, AgentVariant[]>;
 }

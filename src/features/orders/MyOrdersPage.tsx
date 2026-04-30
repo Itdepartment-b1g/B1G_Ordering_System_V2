@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -71,7 +71,18 @@ export default function MyOrdersPage() {
   const { agentBrands } = useAgentInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  
+
+  // Edit order dialog state
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [orderToEdit, setOrderToEdit] = useState<any>(null);
+  const [editingItems, setEditingItems] = useState<SelectedItem[]>([]);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editBrandName, setEditBrandName] = useState<string>('');
+  const [editSelectedVariant, setEditSelectedVariant] = useState<any>(null);
+  const [editQuantity, setEditQuantity] = useState<number>(1);
+  const [editPricingType, setEditPricingType] = useState<'rsp' | 'dsp' | 'special' | ''>('');
+  const [editCustomPrice, setEditCustomPrice] = useState<number>(0);
+
   // Auto-determined pricing based on company configuration
   const [allowedPricingStrategies, setAllowedPricingStrategies] = useState<string[]>([]);
   const [loadingPricingConfig, setLoadingPricingConfig] = useState(true);
@@ -90,6 +101,8 @@ export default function MyOrdersPage() {
         return { text: 'Rejected', variant: 'destructive' as const };
       case 'admin_rejected':
         return { text: 'Rejected', variant: 'destructive' as const };
+      case 'needs_revision':
+        return { text: 'Needs Revision', variant: 'outline' as const };
       default:
         return { text: order.status || 'Pending', variant: 'secondary' as const };
     }
@@ -439,6 +452,254 @@ export default function MyOrdersPage() {
   const handleViewOrder = (order: any) => {
     setOrderToView(order);
     setViewDialogOpen(true);
+  };
+
+  // ========== EDIT ORDER FUNCTIONS ==========
+  const handleEditOrder = (order: any) => {
+    // Convert order items to SelectedItem format for editing
+    const itemsForEdit: SelectedItem[] = order.items.map((item: any) => ({
+      variantId: item.id,
+      brandName: item.brandName,
+      variantName: item.variantName,
+      variantType: item.variantType,
+      unitPrice: item.unitPrice,
+      sellingPrice: item.sellingPrice,
+      dspPrice: item.dspPrice,
+      rspPrice: item.rspPrice,
+      availableStock: 999999, // Will be fetched
+      quantity: item.quantity,
+      customPrice: item.unitPrice // Use current unit price as custom
+    }));
+
+    setOrderToEdit(order);
+    setEditingItems(itemsForEdit);
+    setEditBrandName('');
+    setEditSelectedVariant(null);
+    setEditQuantity(1);
+    setEditPricingType(order.pricingType || 'rsp'); // Default to order's pricing type or RSP
+    setEditCustomPrice(0); // Reset custom price
+    setEditDialogOpen(true);
+  };
+
+  const handleAddItemToEdit = () => {
+    if (!editSelectedVariant || !editBrandName) {
+      toast({ title: 'Error', description: 'Please select a brand and product', variant: 'destructive' });
+      return;
+    }
+
+    // Calculate unit price based on pricing strategy
+    let unitPrice = 0;
+    let customPrice = 0;
+    switch (editPricingType) {
+      case 'rsp':
+        unitPrice = editSelectedVariant.rspPrice || editSelectedVariant.rsp_price || 0;
+        break;
+      case 'dsp':
+        unitPrice = editSelectedVariant.dspPrice || editSelectedVariant.dsp_price || 0;
+        break;
+      case 'special':
+        unitPrice = editCustomPrice > 0 ? editCustomPrice : (editSelectedVariant.unitPrice || editSelectedVariant.unit_price || 0);
+        customPrice = unitPrice;
+        break;
+      default:
+        unitPrice = editSelectedVariant.unitPrice || editSelectedVariant.unit_price || 0;
+    }
+
+    const existingItemIndex = editingItems.findIndex(item => item.variantId === editSelectedVariant.id);
+
+    if (existingItemIndex >= 0) {
+      // Update existing item quantity
+      setEditingItems(prev => prev.map((item, idx) =>
+        idx === existingItemIndex
+          ? { ...item, quantity: item.quantity + editQuantity }
+          : item
+      ));
+    } else {
+      // Add new item with calculated price based on pricing strategy
+      setEditingItems(prev => [...prev, {
+        variantId: editSelectedVariant.id,
+        brandName: editBrandName,
+        variantName: editSelectedVariant.name,
+        variantType: editSelectedVariant.variantType || editSelectedVariant.variant_type,
+        unitPrice: unitPrice,
+        sellingPrice: editSelectedVariant.sellingPrice || editSelectedVariant.selling_price || 0,
+        dspPrice: editSelectedVariant.dspPrice || editSelectedVariant.dsp_price || 0,
+        rspPrice: editSelectedVariant.rspPrice || editSelectedVariant.rsp_price || 0,
+        availableStock: editSelectedVariant.stock || 0,
+        quantity: editQuantity,
+        customPrice: customPrice
+      }]);
+    }
+
+    // Reset selection
+    setEditSelectedVariant(null);
+    setEditQuantity(1);
+  };
+
+  const handleSaveEditOrder = async () => {
+    if (!orderToEdit || editingItems.length === 0) return;
+
+    setSavingEdit(true);
+    try {
+      const oldItems = orderToEdit.items || [];
+      const newItems = editingItems;
+
+      // Create maps for easy lookup
+      const oldItemsMap = new Map(oldItems.map((item: any) => [item.id, item]));
+      const newItemsMap = new Map(newItems.map((item) => [item.variantId, item]));
+
+      // ========== STEP 1: Calculate inventory deltas ==========
+      const inventoryAdjustments: { variantId: string; delta: number; variantName: string }[] = [];
+
+      // Check for removed items and quantity changes
+      for (const oldItem of oldItems) {
+        const newItem = newItemsMap.get(oldItem.id);
+        if (!newItem) {
+          // Item removed - restore full old quantity
+          inventoryAdjustments.push({
+            variantId: oldItem.id,
+            delta: oldItem.quantity, // Positive = restore to inventory
+            variantName: oldItem.variantName
+          });
+        } else if (newItem.quantity !== oldItem.quantity) {
+          // Same variant, quantity changed - adjust by difference
+          const delta = oldItem.quantity - newItem.quantity; // Positive if reduced (restore), negative if increased (deduct)
+          inventoryAdjustments.push({
+            variantId: oldItem.id,
+            delta,
+            variantName: oldItem.variantName
+          });
+        }
+        // If quantity same - no adjustment needed
+      }
+
+      // Check for new items
+      for (const newItem of newItems) {
+        if (!oldItemsMap.has(newItem.variantId)) {
+          // New item added - deduct full quantity
+          inventoryAdjustments.push({
+            variantId: newItem.variantId,
+            delta: -newItem.quantity, // Negative = deduct from inventory
+            variantName: newItem.variantName
+          });
+        }
+      }
+
+      // ========== STEP 2: Apply inventory adjustments ==========
+      console.log('📊 Applying inventory adjustments:', inventoryAdjustments);
+      for (const adjustment of inventoryAdjustments) {
+        const { data: agentInv, error: getError } = await supabase
+          .from('agent_inventory')
+          .select('stock')
+          .eq('agent_id', user?.id)
+          .eq('variant_id', adjustment.variantId)
+          .maybeSingle();
+
+        if (getError || !agentInv) {
+          console.error('Error fetching agent inventory:', getError);
+          continue;
+        }
+
+        const currentStock = agentInv.stock || 0;
+        const newStock = currentStock + adjustment.delta;
+
+        // Check for sufficient stock when deducting
+        if (adjustment.delta < 0 && currentStock < Math.abs(adjustment.delta)) {
+          throw new Error(`Insufficient stock for ${adjustment.variantName}. Available: ${currentStock}, Required: ${Math.abs(adjustment.delta)}`);
+        }
+
+        const { error: updateError } = await supabase
+          .from('agent_inventory')
+          .update({
+            stock: newStock,
+            updated_at: new Date().toISOString()
+          })
+          .eq('agent_id', user?.id)
+          .eq('variant_id', adjustment.variantId);
+
+        if (updateError) {
+          console.error('Error updating stock:', updateError);
+          throw new Error(`Failed to update inventory for ${adjustment.variantName}`);
+        }
+
+        const action = adjustment.delta > 0 ? 'Restored' : 'Deducted';
+        const qty = Math.abs(adjustment.delta);
+        console.log(`✅ ${action} ${qty} of ${adjustment.variantName}`);
+      }
+
+      // ========== STEP 3: Delete old order items ==========
+      const { error: deleteError } = await supabase
+        .from('client_order_items')
+        .delete()
+        .eq('client_order_id', orderToEdit.id);
+
+      if (deleteError) {
+        console.error('Error deleting old items:', deleteError);
+        throw new Error('Failed to delete old order items');
+      }
+
+      // ========== STEP 4: Insert new order items ==========
+      const orderItemsWithPrices = newItems.map((item) => ({
+        company_id: user?.company_id,
+        client_order_id: orderToEdit.id,
+        variant_id: item.variantId,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        selling_price: item.sellingPrice || null,
+        dsp_price: item.dspPrice || null,
+        rsp_price: item.rspPrice || null,
+        total_price: item.quantity * item.unitPrice
+      }));
+
+      const { error: insertError } = await supabase
+        .from('client_order_items')
+        .insert(orderItemsWithPrices);
+
+      if (insertError) {
+        console.error('Error inserting new items:', insertError);
+        throw new Error('Failed to insert new order items');
+      }
+
+      // ========== STEP 5: Update order totals and reset stage to finance_pending ==========
+      const subtotal = newItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+      const tax = 0;
+      const discount = orderToEdit.discount || 0;
+      const total = subtotal + tax - discount;
+
+      const { error: orderUpdateError } = await supabase
+        .from('client_orders')
+        .update({
+          subtotal,
+          tax_amount: tax,
+          discount,
+          total_amount: total,
+          stage: 'finance_pending',
+          status: 'pending',
+          notes: `${orderToEdit.notes || ''}\nOrder revised on ${new Date().toLocaleDateString()}.`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderToEdit.id);
+
+      if (orderUpdateError) {
+        console.error('Error updating order:', orderUpdateError);
+        throw new Error('Failed to update order');
+      }
+
+      toast({
+        title: 'Order Updated',
+        description: 'Order has been revised and sent back to Finance for review.'
+      });
+
+      setEditDialogOpen(false);
+      setOrderToEdit(null);
+      setEditingItems([]);
+      setEditCustomPrice(0);
+    } catch (error: any) {
+      console.error('Error saving edit:', error);
+      toast({ title: 'Error', description: error.message || 'Failed to save changes', variant: 'destructive' });
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   const handleQuantityChange = (
@@ -2252,12 +2513,22 @@ export default function MyOrdersPage() {
                         <div className="font-semibold text-sm">₱{order.total.toLocaleString()}</div>
                       </div>
                     </div>
-                    <button 
-                      onClick={() => handleViewOrder(order)}
-                      className="w-full mt-2 pt-2 border-t text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      View Details
-                    </button>
+                    <div className="flex gap-2 mt-2 pt-2 border-t">
+                      <button 
+                        onClick={() => handleViewOrder(order)}
+                        className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        View Details
+                      </button>
+                      {order.stage === 'needs_revision' && (
+                        <button
+                          onClick={() => handleEditOrder(order)}
+                          className="flex-1 text-xs text-amber-600 hover:text-amber-700 font-medium transition-colors"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </Card>
               ))
@@ -2301,6 +2572,16 @@ export default function MyOrdersPage() {
                       <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
                         <Eye className="h-4 w-4" />
                       </Button>
+                      {order.stage === 'needs_revision' && (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => handleEditOrder(order)}
+                          className="text-amber-600 hover:text-amber-700"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -3605,14 +3886,10 @@ export default function MyOrdersPage() {
                   <p className="text-sm text-muted-foreground">Client Order</p>
                 </div>
                 <Badge
-                  variant={
-                    orderToView.status === 'approved' ? 'default' :
-                      orderToView.status === 'pending' ? 'secondary' :
-                        'destructive'
-                  }
+                  variant={getDisplayStatus(orderToView).variant}
                   className="text-base px-4 py-2"
                 >
-                  {orderToView.status.toUpperCase()}
+                  {getDisplayStatus(orderToView).text}
                 </Badge>
               </div>
 
@@ -3969,6 +4246,360 @@ export default function MyOrdersPage() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Order Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-[90vw] sm:max-w-2xl md:max-w-4xl max-h-[85vh] sm:max-h-[90vh] overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-amber-600" />
+              Edit Order #{orderToEdit?.orderNumber}
+            </DialogTitle>
+            <DialogDescription>
+              Modify the order items and quantities. The order will be sent back to Finance for re-review.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            {/* Add New Item Section */}
+            <div className="space-y-3 p-3 sm:p-4 bg-muted/50 rounded-lg border">
+              <Label className="text-sm sm:text-base font-semibold">Add New Item</Label>
+              {/* Pricing Strategy - shown when adding new items */}
+              <div className="space-y-1 sm:space-y-2 mb-3 sm:mb-4">
+                <div>
+                  <Label className="text-sm sm:text-base font-medium">Pricing Strategy *</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {allowedPricingStrategies.length === 1
+                      ? 'Auto-configured by your company'
+                      : 'Select the pricing strategy for new items'}
+                  </p>
+                </div>
+
+                {allowedPricingStrategies.length === 1 ? (
+                  // Single strategy - show as badge
+                  <Badge variant="secondary" className="text-sm font-medium">
+                    {editPricingType === 'rsp' && 'RSP Pricing'}
+                    {editPricingType === 'dsp' && 'DSP Pricing'}
+                    {editPricingType === 'special' && 'Special Pricing'}
+                  </Badge>
+                ) : (
+                  // Multiple strategies - show radio buttons
+                  <RadioGroup
+                    value={editPricingType}
+                    onValueChange={(value) => setEditPricingType(value as 'rsp' | 'dsp' | 'special')}
+                    className="gap-2 sm:gap-3"
+                  >
+                    {allowedPricingStrategies.includes('rsp_price') && (
+                      <div className="flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                        <RadioGroupItem value="rsp" id="edit-pricing-rsp" />
+                        <Label htmlFor="edit-pricing-rsp" className="flex-1 cursor-pointer text-sm">
+                          <span className="font-medium">RSP Pricing</span>
+                          <p className="text-xs text-muted-foreground">Retail Selling Price</p>
+                        </Label>
+                      </div>
+                    )}
+
+                    {allowedPricingStrategies.includes('dsp_price') && (
+                      <div className="flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                        <RadioGroupItem value="dsp" id="edit-pricing-dsp" />
+                        <Label htmlFor="edit-pricing-dsp" className="flex-1 cursor-pointer text-sm">
+                          <span className="font-medium">DSP Pricing</span>
+                          <p className="text-xs text-muted-foreground">Dealer Selling Price</p>
+                        </Label>
+                      </div>
+                    )}
+
+                    {allowedPricingStrategies.includes('selling_price') && (
+                      <div className="flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                        <RadioGroupItem value="special" id="edit-pricing-special" />
+                        <Label htmlFor="edit-pricing-special" className="flex-1 cursor-pointer text-sm">
+                          <span className="font-medium">Special Pricing</span>
+                          <p className="text-xs text-muted-foreground">Custom unit price</p>
+                        </Label>
+                      </div>
+                    )}
+                  </RadioGroup>
+                )}
+
+                {/* Custom Price Input for Special Pricing */}
+                {editPricingType === 'special' && (
+                  <div className="space-y-1 sm:space-y-2 mt-2 sm:mt-3 pt-2 sm:pt-3 border-t">
+                    <Label className="text-sm sm:text-base">Custom Price (₱)</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Enter custom price"
+                      value={editCustomPrice || ''}
+                      onChange={(e) => setEditCustomPrice(parseFloat(e.target.value) || 0)}
+                      className="text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      This price will be used for newly added items
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1 sm:space-y-2">
+                  <Label className="text-sm sm:text-base">Brand</Label>
+                  <Select value={editBrandName} onValueChange={setEditBrandName}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select brand" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {agentBrands.map((brand) => (
+                        <SelectItem key={brand.id} value={brand.name}>
+                          {brand.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1 sm:space-y-2">
+                  <Label className="text-sm sm:text-base">Product</Label>
+                  <Select
+                    value={editSelectedVariant?.id || ''}
+                    onValueChange={(value) => {
+                      const brand = agentBrands.find(b => b.name === editBrandName);
+                      if (brand) {
+                        // Use variantsByType Map to get all variants (same as dropdown)
+                        const allVariants: any[] = [];
+                        if (brand.variantsByType) {
+                          brand.variantsByType.forEach((variants: any[]) => {
+                            allVariants.push(...variants);
+                          });
+                        }
+                        // Fallback to manual arrays if variantsByType doesn't exist
+                        if (allVariants.length === 0) {
+                          allVariants.push(...(brand.flavors || []), ...(brand.batteries || []), ...(brand.posms || []), ...(brand.foc || []));
+                        }
+                        const variant = allVariants.find((v: any) => v.id === value);
+                        if (variant) {
+                          setEditSelectedVariant(variant);
+                        }
+                      }
+                    }}
+                    disabled={!editBrandName}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select product" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {editBrandName && (() => {
+                        const brand = agentBrands.find(b => b.name === editBrandName);
+                        if (!brand) return null;
+                        // Use variantsByType Map to get all variants regardless of type
+                        const allVariants: any[] = [];
+                        if (brand.variantsByType) {
+                          brand.variantsByType.forEach((variants: any[]) => {
+                            allVariants.push(...variants);
+                          });
+                        }
+                        // Fallback to old method if variantsByType doesn't exist
+                        if (allVariants.length === 0) {
+                          allVariants.push(...(brand.flavors || []), ...(brand.batteries || []), ...(brand.posms || []), ...(brand.foc || []));
+                        }
+                        // Only show variants with stock > 0
+                        const availableVariants = allVariants.filter((variant: any) => (variant.stock || 0) > 0);
+                        return availableVariants.map((variant: any) => (
+                          <SelectItem key={variant.id} value={variant.id}>
+                            <div className="flex items-center justify-between w-full">
+                              <span>{variant.name}</span>
+                              <span className="text-xs text-muted-foreground ml-2">
+                                ({variant.stock || 0} in stock)
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ));
+                      })()}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1 sm:space-y-2">
+                  <Label className="text-sm sm:text-base">Quantity</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={editQuantity}
+                    onChange={(e) => setEditQuantity(parseInt(e.target.value) || 1)}
+                  />
+                </div>
+              </div>
+              <Button
+                onClick={handleAddItemToEdit}
+                disabled={!editSelectedVariant || !editBrandName}
+                className="w-full"
+                size="sm"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Item
+              </Button>
+            </div>
+
+            {/* Current Items - Desktop Table / Mobile Cards */}
+            <div className="space-y-3">
+              <Label className="text-sm sm:text-base font-semibold">Order Items ({editingItems.length})</Label>
+              <p className="text-sm text-muted-foreground hidden sm:block">
+                Update quantities or remove items. The inventory will be adjusted accordingly.
+              </p>
+
+              {/* Desktop Table */}
+              <div className="hidden sm:block border rounded-lg overflow-x-auto">
+                <Table className="min-w-[500px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Product</TableHead>
+                      <TableHead className="text-center">Quantity</TableHead>
+                      <TableHead className="text-right">Unit Price</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="w-16"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {editingItems.map((item, index) => (
+                      <TableRow key={`${item.variantId}-${item.brandName}-${index}`}>
+                        <TableCell>
+                          <div className="font-medium">{item.variantName}</div>
+                          <div className="text-sm text-muted-foreground">{item.brandName}</div>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Input
+                            type="number"
+                            min="1"
+                            value={item.quantity}
+                            onChange={(e) => {
+                              const newQuantity = parseInt(e.target.value) || 0;
+                              setEditingItems(prev => prev.map((i, idx) => 
+                                idx === index ? { ...i, quantity: newQuantity } : i
+                              ));
+                            }}
+                            className="w-20 text-center mx-auto"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          ₱{item.unitPrice.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          ₱{(item.quantity * item.unitPrice).toLocaleString()}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setEditingItems(prev => prev.filter((_, idx) => idx !== index));
+                            }}
+                            className="text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile Cards */}
+              <div className="sm:hidden space-y-2">
+                {editingItems.map((item, index) => (
+                  <div key={`${item.variantId}-${item.brandName}-${index}`} className="border rounded-lg p-3 space-y-2 bg-card">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="font-medium text-sm">{item.variantName}</div>
+                        <div className="text-xs text-muted-foreground">{item.brandName}</div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setEditingItems(prev => prev.filter((_, idx) => idx !== index))}
+                        className="text-destructive hover:text-destructive h-7 w-7"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="flex items-center justify-between pt-2 border-t">
+                      <div className="text-xs text-muted-foreground">
+                        ₱{item.unitPrice.toLocaleString()} × {item.quantity} = 
+                        <span className="font-medium text-foreground ml-1">
+                          ₱{(item.quantity * item.unitPrice).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Qty:</span>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const newQuantity = parseInt(e.target.value) || 0;
+                            setEditingItems(prev => prev.map((i, idx) => 
+                              idx === index ? { ...i, quantity: newQuantity } : i
+                            ));
+                          }}
+                          className="w-14 h-7 text-center text-sm py-0"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Total */}
+            <div className="space-y-2 border-t pt-4">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Subtotal:</span>
+                <span className="font-medium">
+                  ₱{editingItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between text-lg font-bold border-t pt-2">
+                <span>Total Amount:</span>
+                <span>
+                  ₱{editingItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-col sm:flex-row gap-3 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEditDialogOpen(false);
+                  setOrderToEdit(null);
+                  setEditingItems([]);
+                  setEditCustomPrice(0);
+                }}
+                disabled={savingEdit}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveEditOrder}
+                disabled={editingItems.length === 0 || savingEdit}
+                className="flex-1 bg-amber-600 hover:bg-amber-700"
+              >
+                {savingEdit ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <span className="text-sm">Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Pencil className="h-4 w-4 mr-2" />
+                    <span className="text-sm sm:text-base">Save & Submit</span>
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

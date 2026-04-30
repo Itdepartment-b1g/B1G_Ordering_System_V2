@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, FileText, AlertCircle, Filter, Download, Upload, Loader2 } from 'lucide-react';
+import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, FileText, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
@@ -51,10 +51,16 @@ export default function OrdersPage() {
   const [rejectionReason, setRejectionReason] = useState('');
   const [rejectingForRole, setRejectingForRole] = useState<'leader' | 'admin' | null>(null);
 
+  // Re-evaluate dialog
+  const [reevaluateDialogOpen, setReevaluateDialogOpen] = useState(false);
+  const [orderToReevaluate, setOrderToReevaluate] = useState<Order | null>(null);
+  const [reevaluateReason, setReevaluateReason] = useState('');
+
   // Role flags and leader team state
   // Role flags
   const isAdmin = user?.role === 'admin' || user?.role === 'finance' || user?.role === 'super_admin';
   const isFinance = user?.role === 'finance';
+  const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
   
   // Team member IDs for leader filtering
@@ -232,6 +238,7 @@ export default function OrdersPage() {
   // Map legacy status + stage to a clearer label for display
   const getStatusLabel = (order: Order) => {
     // status is canonical: if status='pending', treat as pending even if stage is stale (e.g. after manual DB un-reject)
+    if (order.stage === 'needs_revision') return 'Needs Revision';
     if (order.status === 'pending' || order.stage === 'finance_pending') return 'Pending Finance Review';
     if (order.status === 'approved' || order.stage === 'admin_approved') return 'Approved';
     if (order.status === 'rejected' || order.stage === 'admin_rejected') return 'Rejected';
@@ -240,6 +247,7 @@ export default function OrdersPage() {
 
   const getStatusVariant = (order: Order) => {
     const label = getStatusLabel(order);
+    if (label === 'Needs Revision') return 'secondary';
     if (label.startsWith('Approved')) return 'default';
     if (label.startsWith('Pending')) return 'secondary';
     return 'destructive';
@@ -339,9 +347,67 @@ export default function OrdersPage() {
   const handleConfirmRejectWithReason = async () => {
     if (!orderToReject || !rejectingForRole) return;
     try {
+      // ========== STEP 1: RESTORE AGENT INVENTORY ==========
+      if (orderToReject.items && orderToReject.items.length > 0) {
+        console.log('📈 Restoring agent inventory for rejected order...');
+
+        for (const item of orderToReject.items) {
+          // Get current agent inventory stock
+          const { data: agentInv, error: getError } = await supabase
+            .from('agent_inventory')
+            .select('stock')
+            .eq('agent_id', orderToReject.agentId)
+            .eq('variant_id', item.id)
+            .maybeSingle();
+
+          if (getError || !agentInv) {
+            console.error('Error fetching agent inventory for restore:', getError);
+            continue; // Continue with other items
+          }
+
+          const currentStock = agentInv.stock || 0;
+          const restoredStock = currentStock + item.quantity;
+
+          // Restore the stock
+          const { error: updateError } = await supabase
+            .from('agent_inventory')
+            .update({
+              stock: restoredStock,
+              updated_at: new Date().toISOString()
+            })
+            .eq('agent_id', orderToReject.agentId)
+            .eq('variant_id', item.id);
+
+          if (updateError) {
+            console.error('Error restoring agent inventory:', updateError);
+            throw new Error(`Failed to restore inventory for item ${item.id}`);
+          }
+
+          // Log inventory transaction
+          await supabase.from('inventory_transactions').insert({
+            company_id: user?.company_id,
+            transaction_type: 'return',
+            variant_id: item.id,
+            quantity: item.quantity, // Positive = adding back
+            from_location: 'order_rejection',
+            to_location: 'agent_inventory',
+            reference_type: 'client_order',
+            reference_id: orderToReject.id,
+            performed_by: user?.id,
+            notes: `Stock restored from rejected order ${orderToReject.orderNumber}`
+          });
+
+          console.log(`✅ Restored ${item.quantity} to agent inventory for variant ${item.id}`);
+        }
+      }
+
+      // ========== STEP 2: REJECT THE ORDER ==========
       if (isAdmin) {
         await updateOrderStatus(orderToReject.id, 'rejected', rejectionReason);
-        toast({ title: 'Rejected', description: 'Order rejected. Sales agent will be notified.' });
+        toast({
+          title: 'Order Rejected',
+          description: 'Order rejected and inventory restored to agent.'
+        });
       }
       setReasonDialogOpen(false);
       setOrderToReject(null);
@@ -349,6 +415,46 @@ export default function OrdersPage() {
     } catch (error: any) {
       console.error('Reject error:', error);
       toast({ title: 'Error', description: error.message || 'Failed to reject', variant: 'destructive' });
+    }
+  };
+
+  // ========== RE-EVALUATE / RETURN FOR REVISION ==========
+  const handleOpenReevaluate = (order: Order) => {
+    setOrderToReevaluate(order);
+    setReevaluateReason('');
+    setReevaluateDialogOpen(true);
+  };
+
+  const handleConfirmReevaluate = async () => {
+    if (!orderToReevaluate) return;
+    try {
+      // ========== UPDATE ORDER TO NEEDS_REVISION ==========
+      // Note: Inventory is NOT restored here. It will be restored when agent edits and saves.
+      const { error: updateError } = await supabase
+        .from('client_orders')
+        .update({
+          stage: 'needs_revision',
+          notes: `${orderToReevaluate.notes || ''}\nRevision Required: ${reevaluateReason || 'No reason provided'}`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderToReevaluate.id);
+
+      if (updateError) {
+        throw new Error('Failed to update order status');
+      }
+
+      toast({
+        title: 'Order Returned for Revision',
+        description: 'Order sent back to agent for editing.'
+      });
+
+      setReevaluateDialogOpen(false);
+      setOrderToReevaluate(null);
+      setReevaluateReason('');
+      setViewDialogOpen(false);
+    } catch (error: any) {
+      console.error('Re-evaluate error:', error);
+      toast({ title: 'Error', description: error.message || 'Failed to return order for revision', variant: 'destructive' });
     }
   };
 
@@ -1327,7 +1433,7 @@ export default function OrdersPage() {
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
-                          {(order.stage === 'finance_pending' || order.status === 'pending') && (
+                          {(order.stage === 'finance_pending' || (order.status === 'pending' && order.stage !== 'needs_revision')) && (
                             (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
                           ) && (
                             order.depositId && order.depositBankAccount ? (
@@ -1336,7 +1442,7 @@ export default function OrdersPage() {
                               </Badge>
                             ) : order.depositId ? (
                               <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
-                                Awaiting Deposit Slip 
+                                Awaiting Deposit Slip
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
@@ -2033,7 +2139,7 @@ export default function OrdersPage() {
                 ) : null
               )}
 
-              {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && (
+              {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
                 (() => {
                   const hasCashOrChequeComponent = viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits
                     ? viewingOrder.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE')
@@ -2116,6 +2222,32 @@ export default function OrdersPage() {
                   );
                 })()
               )}
+
+              {/* Re-evaluate button - Only for Super Admin on finance_pending orders */}
+              {/* Hide if cash/cheque order has deposit recorded (already processed) */}
+              {(() => {
+                const hasCashOrCheque = viewingOrder.paymentMode === 'SPLIT' 
+                  ? viewingOrder.paymentSplits?.some((s: any) => s.method === 'CASH' || s.method === 'CHEQUE')
+                  : viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE';
+                const hasDepositRecorded = !!viewingOrder.depositId;
+                const shouldHideReevaluate = hasCashOrCheque && hasDepositRecorded;
+                
+                return isSuperAdmin && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && !shouldHideReevaluate;
+              })() && (
+                <div className="flex gap-3 pt-4 border-t">
+                  <Button
+                    variant="outline"
+                    className="flex-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300"
+                    onClick={() => {
+                      setViewDialogOpen(false);
+                      handleOpenReevaluate(viewingOrder);
+                    }}
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Re-evaluate
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
@@ -2172,6 +2304,40 @@ export default function OrdersPage() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmRejectWithReason} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Deny Order
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Re-evaluate Dialog */}
+      <AlertDialog open={reevaluateDialogOpen} onOpenChange={setReevaluateDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Return Order for Revision</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will return the order to the agent for editing. The current inventory will be restored to the agent's stock.
+              <br /><br />
+              Order: <strong>{orderToReevaluate?.orderNumber}</strong>
+              <br />
+              Agent: <strong>{orderToReevaluate?.agentName}</strong>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label>Revision Reason (Optional)</Label>
+            <Textarea 
+              value={reevaluateReason} 
+              onChange={(e) => setReevaluateReason(e.target.value)} 
+              placeholder="Provide instructions for what needs to be corrected..." 
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleConfirmReevaluate} 
+              className="bg-amber-600 text-white hover:bg-amber-700"
+            >
+              <RotateCcw className="h-4 w-4 mr-2" />
+              Return for Revision
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

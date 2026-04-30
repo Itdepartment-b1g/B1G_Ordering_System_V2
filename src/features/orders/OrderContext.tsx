@@ -45,7 +45,7 @@ export interface Order {
   total: number;
   notes: string;
   status: 'pending' | 'approved' | 'rejected';
-  stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected' | 'finance_pending';
+  stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected' | 'finance_pending' | 'needs_revision';
   signatureUrl?: string;
   paymentMethod?: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
   bankType?: 'Unionbank' | 'BPI' | 'PBCOM';
@@ -117,6 +117,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           cash_deposit:cash_deposits(status, bank_account, reference_number, deposit_slip_url, notes),
           items:client_order_items(
             id,
+            variant_id,
             quantity,
             unit_price,
             selling_price,
@@ -171,6 +172,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           .from('client_order_items')
           .select(`
             id,
+            variant_id,
             client_order_id,
             quantity,
             unit_price,
@@ -189,7 +191,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         (itemsFallback || []).forEach((row: any) => {
           const list = ordersWithEmbeddedItems[row.client_order_id] || [];
           list.push({
-            id: row.id,
+            id: row.variant_id,
             quantity: row.quantity,
             unit_price: row.unit_price,
             variant: row.variant || null,
@@ -217,7 +219,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           const effectiveUnit = (order.status === 'approved') ? ((typeof selling === 'number') ? selling : (typeof cost === 'number' ? cost : item.unit_price)) : item.unit_price;
 
           return {
-            id: item.id,
+            id: item.variant_id,
             brandName: brandName,
             variantName: variant?.name || 'Unknown',
             variantType: variant?.variant_type || 'flavor',
