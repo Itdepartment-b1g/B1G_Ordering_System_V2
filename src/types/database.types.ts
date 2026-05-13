@@ -110,6 +110,20 @@ export interface Profile {
   updated_at: string;
 }
 
+/** Row in `public.hubs` — `created_by`, `created_at`, `updated_at` are set by trigger on insert. */
+export interface Hub {
+  id: string;
+  hub_name: string;
+  hub_location: string | null;
+  created_by: string;
+  /** Team leader assigned to this hub; null when unassigned. */
+  assigned_team_leader_id: string | null;
+  longitude: number;
+  latitude: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ExecutiveCompanyAssignment {
   id: string;
   executive_id: string;

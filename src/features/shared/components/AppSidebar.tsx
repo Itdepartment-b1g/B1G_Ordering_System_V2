@@ -267,6 +267,7 @@ const superAdminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'User Management', url: '/sales-agents', icon: Users },
       { title: 'Team Management', url: '/team-management', icon: Crown },
+      { title: 'Hub Management', url: '/hub-management', icon: LayoutGrid },
     ]
   },
   {

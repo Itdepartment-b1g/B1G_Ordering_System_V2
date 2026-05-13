@@ -42,6 +42,8 @@ import { SupportWidget } from "@/components/SupportWidget";
 
 import { PrefetchController } from "@/features/core/PrefetchController";
 
+import HubManagementPage from "@/features/sales-agents/HubManagementPage";
+
 const App = () => (
   <PersistQueryClientProvider
     client={queryClient}
@@ -66,6 +68,14 @@ const App = () => (
                     <Route path="/member-management" element={<ProtectedRoute><SalesAgentsPage /></ProtectedRoute>} />
                     <Route path="/sales-agents" element={<ProtectedRoute><SalesAgentsOnlyPage /></ProtectedRoute>} />
                     <Route path="/team-management" element={<ProtectedRoute><TeamManagementPage /></ProtectedRoute>} />
+                    <Route
+                      path="/hub-management"
+                      element={
+                        <ProtectedRoute allowedRoles={['super_admin']}>
+                          <HubManagementPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/inventory" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/main" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route
