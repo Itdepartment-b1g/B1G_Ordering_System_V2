@@ -43,6 +43,9 @@ import { SupportWidget } from "@/components/SupportWidget";
 import { PrefetchController } from "@/features/core/PrefetchController";
 
 import HubManagementPage from "@/features/sales-agents/HubManagementPage";
+import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendancePage";
+import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
+import TeamAttendancesPage from "./features/team-leader/team-attendances/page/TeamAttendancesPage";
 
 const App = () => (
   <PersistQueryClientProvider
@@ -76,6 +79,7 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
+                    <Route path="/agent-attendance-overview" element={<ProtectedRoute><AgentAttendanceOverviewPage /></ProtectedRoute>} />
                     <Route path="/inventory" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route path="/inventory/main" element={<ProtectedRoute><MainInventoryPage /></ProtectedRoute>} />
                     <Route
@@ -110,6 +114,14 @@ const App = () => (
                     <Route path="/team-members" element={<ProtectedRoute><LeaderInventoryPage /></ProtectedRoute>} />
                     <Route path="/leader-inventory/request" element={<ProtectedRoute><LeaderStockRequestPage /></ProtectedRoute>} />
                     <Route path="/my-team" element={<ProtectedRoute><MyTeamPage /></ProtectedRoute>} />
+                    <Route
+                      path="/team-attendances"
+                      element={
+                        <ProtectedRoute allowedRoles={['team_leader']}>
+                          <TeamAttendancesPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/manager-teams" element={<ProtectedRoute><ManagerTeamsPage /></ProtectedRoute>} />
                     <Route path="/manager-inventory" element={<ProtectedRoute><ManagerTeamInventoryPage /></ProtectedRoute>} />
                     <Route path="/manager-remittances" element={<ProtectedRoute><ManagerTeamRemittancesPage /></ProtectedRoute>} />
@@ -140,6 +152,7 @@ const App = () => (
                     <Route path="/suppliers" element={<ProtectedRoute><SuppliersPage /></ProtectedRoute>} />
                     <Route path="/war-room" element={<ProtectedRoute><WarRoomPage /></ProtectedRoute>} />
                     <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+                    <Route path="/attendance" element={<ProtectedRoute><AgentAttendancePage /></ProtectedRoute>} />
                     <Route path="/system-settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
                     <Route path="/system-admin" element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
                     <Route path="/system-management" element={<ProtectedRoute><ManagementPortal /></ProtectedRoute>} />

@@ -37,6 +37,7 @@ import {
   Mail,
   Phone,
   MapPin,
+  Building
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
@@ -388,10 +389,13 @@ export default function MyTeamPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 md:gap-4">
             <CardTitle className="text-base md:text-lg flex flex-col gap-1">
               Team Members
-              <p className="text-xs text-foreground">
-                Assigned Hub:{" "}
-                <span className="text-xs text-muted-foreground">{hubLabel}</span>
-              </p>
+              <div className="flex items-center gap-1.5 w-fit px-2.5 py-1 rounded-md border border-border/50 bg-muted/50">
+                <Building className="w-3 h-3 text-muted-foreground/60" />
+                <p className="text-xs text-foreground">Assigned Hub:</p>
+                <span className="text-xs text-muted-foreground">
+                  {hubLabel}
+                </span>
+              </div>
             </CardTitle>
 
             <div className="flex flex-col sm:flex-row gap-2 md:gap-3">

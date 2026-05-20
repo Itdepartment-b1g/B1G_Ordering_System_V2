@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { MapContainer, Marker, TileLayer, useMap } from 'react-leaflet';
+import { MapContainer, Marker, TileLayer, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { GeoSearchControl, OpenStreetMapProvider } from 'leaflet-geosearch';
@@ -82,6 +82,8 @@ type HubLocationMapProps = {
   /** When set, the draggable pin is shown and kept in sync (controlled). */
   latitude?: number | null;
   longitude?: number | null;
+  /** Geofence radius in meters around the pin (matches `hubs.radius_meter`). Omit or ≤0 to hide the circle. */
+  radiusMeter?: number | null;
   /** Fires when the user picks a search result or finishes dragging the pin. */
   onPinChange: (update: HubPinUpdate) => void;
   /** When true (e.g. dialog just opened), Leaflet recomputes layout after becoming visible. */
@@ -181,6 +183,7 @@ export function HubLocationMap({
   className,
   latitude,
   longitude,
+  radiusMeter,
   onPinChange,
   active = true,
   flyToTrigger = 0,
@@ -190,6 +193,9 @@ export function HubLocationMap({
     longitude != null &&
     Number.isFinite(latitude) &&
     Number.isFinite(longitude);
+
+  const showRadius =
+    hasPin && radiusMeter != null && Number.isFinite(radiusMeter) && radiusMeter > 0;
 
   const handleGeocode = (result: OsmSearchResult) => {
     const [lat, lng] = clampLatLngToPhilippines(result.y, result.x);
@@ -231,6 +237,18 @@ export function HubLocationMap({
               longitude={longitude!}
               flyToTrigger={flyToTrigger}
             />
+            {showRadius ? (
+              <Circle
+                center={[latitude!, longitude!]}
+                radius={radiusMeter!}
+                pathOptions={{
+                  color: '#2563eb',
+                  fillColor: '#3b82f6',
+                  fillOpacity: 0.14,
+                  weight: 2,
+                }}
+              />
+            ) : null}
             <Marker
               position={[latitude!, longitude!]}
               draggable

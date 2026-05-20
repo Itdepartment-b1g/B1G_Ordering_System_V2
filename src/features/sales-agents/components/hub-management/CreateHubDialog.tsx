@@ -259,6 +259,7 @@ export function CreateHubDialog({ open, onOpenChange, onCreated }: CreateHubDial
                   className="min-h-[320px] flex-1"
                   latitude={lat ?? null}
                   longitude={lng ?? null}
+                  radiusMeter={100}
                   onPinChange={handlePinChange}
                   active={open}
                   flyToTrigger={flyToTrigger}

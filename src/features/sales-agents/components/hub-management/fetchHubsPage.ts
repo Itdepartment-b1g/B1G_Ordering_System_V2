@@ -62,6 +62,7 @@ export async function fetchHubsPage(
       updated_at,
       created_by,
       assigned_team_leader_id,
+      radius_meter,
       creator_profile:profiles!hubs_created_by_fkey ( full_name ),
       tl_profile:profiles!hubs_assigned_team_leader_id_fkey (
         id,

@@ -120,6 +120,31 @@ export interface Hub {
   assigned_team_leader_id: string | null;
   longitude: number;
   latitude: number;
+  /** Geofence radius in meters; DB default 100. */
+  radius_meter: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AgentAttendanceStatus = 'present' | 'absent' | 'non_working';
+
+/** Row in `public.agent_attendances` — one per user per `business_date` (Asia/Manila calendar day). */
+export interface AgentAttendance {
+  id: string;
+  user_id: string;
+  hub_id: string | null;
+  team_leader_id: string | null;
+  photo: string;
+  address: string | null;
+  longitude: number | null;
+  latitude: number | null;
+  time_in: string | null;
+  time_out: string | null;
+  /** Office-window hours (10 AM–7 PM Manila), capped at 8; set when time_out is recorded. */
+  total_hours: number | null;
+  status: AgentAttendanceStatus;
+  note: string | null;
+  business_date: string;
   created_at: string;
   updated_at: string;
 }

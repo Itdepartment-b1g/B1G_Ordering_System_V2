@@ -119,7 +119,7 @@ export default function HubManagementList() {
             onClear={clearSearch}
           />
 
-          {isError && (
+          {isError && ( 
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Could not load hubs</AlertTitle>
@@ -145,16 +145,6 @@ export default function HubManagementList() {
               <AlertTitle>No hubs yet</AlertTitle>
               <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <span>Create your first hub to see it listed here.</span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  className="w-fit shrink-0"
-                  onClick={() => setCreateOpen(true)}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create hub
-                </Button>
               </AlertDescription>
             </Alert>
           )}
