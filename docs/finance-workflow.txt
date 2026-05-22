@@ -1,0 +1,284 @@
+================================================================================
+  FINANCE ROLE — WORKFLOW OVERVIEW
+  B1G Ordering System
+================================================================================
+
+This document describes how the Finance role (finance) works: tenant-scoped
+financial review, order final approval, cash deposit verification, payment
+configuration, and reporting.
+
+Related: docs/mobile-sales-workflow.txt, docs/team-leader-workflow.txt,
+docs/order-correction-options.md
+
+
+--------------------------------------------------------------------------------
+ROLE IDENTITY
+--------------------------------------------------------------------------------
+
+  Database role ............... finance
+  Display name ................ Finance
+  Hierarchy level ............. 70 (roleUtils.ts)
+  Scope ....................... Sales TENANT (profiles.company_id)
+  Personal inventory .......... No
+  Can lead a team ............. No
+
+  Finance is the FINAL gate for revenue (admin_approved) and cash deposit
+  verification. Does NOT sell, allocate stock, or manage clients.
+
+  Provisioning: super admin / admin via User Management (/sales-agents)
+
+NOT the same as:
+  - admin / super_admin = broader tenant ops; admin can also approve /orders
+  - team_leader = records deposits and remittances; no final approve
+  - warehouse = hub company; no client orders
+
+
+--------------------------------------------------------------------------------
+ACCESS MODEL
+--------------------------------------------------------------------------------
+
+  Login redirect: /dashboard (RoleBasedRedirect.tsx)
+
+  Sidebar: financeMenuItems (AppSidebar.tsx) only
+
+  Route guard: /orders allowed for admin + finance (usePermissions.ts)
+
+  Payment settings: /finance/payment-settings -> super_admin, finance only
+
+  NO menu access (typical day):
+    inventory, clients DB, team management, field sales menus, procurement,
+    war room, system administrator portal
+
+  Note: Other tenant URLs may load if typed; finance work uses finance menu.
+
+
+--------------------------------------------------------------------------------
+NAVIGATION (SIDEBAR)
+--------------------------------------------------------------------------------
+
+  Screen              Route                         Purpose
+  ------------------  ----------------------------  ---------------------------
+  Dashboard           /dashboard                    Pending orders, deposits
+  Finance Page        /finance                      Revenue, expenses, charts
+  Order List          /orders                       Approve/deny, bulk, import
+  Cash Deposits       /inventory/cash-deposits      Read-only deposit monitor
+  Payment Settings    /finance/payment-settings     Banks, GCash, method toggles
+  System History      /system-history               Financial audit trail
+  Profile             /profile                      Account
+
+
+--------------------------------------------------------------------------------
+ORGANIZATION MODEL
+--------------------------------------------------------------------------------
+
+  Mobile Sales -> creates order -> Client
+  Mobile Sales -> EOD remittance -> Team Leader
+  Team Leader -> cash/cheque deposit (slip, bank, ref) -> Finance reviews
+  Mobile Sales -> Bank/GCash order -> Finance (finance_pending)
+  Finance -> approve_order_and_verify_deposit -> admin_approved
+  Admin/Super Admin -> may also approve on /orders (parallel capability)
+
+
+--------------------------------------------------------------------------------
+TYPICAL DAY — END TO END
+--------------------------------------------------------------------------------
+
+1. DASHBOARD (/dashboard)
+   -----------------------
+   FinanceDashboard + useFinanceStats (dashboardHooks.ts)
+
+   - Pending revenue (company pending orders)
+   - Deposits today (cash/cheque portions, split-aware)
+   - Incoming orders widget -> /orders
+   - Recent deposits widget -> /finance
+   - Realtime: client_orders, cash_deposits subscriptions
+
+
+2. ORDER LIST (/orders) — PRIMARY WORKFLOW
+   ----------------------------------------
+   OrdersPage.tsx, OrderContext.tsx
+
+   Visibility: finance treated as isAdmin -> ALL company orders
+
+   PENDING QUEUE:
+     stage = finance_pending  OR  status = pending
+     UI: "Pending Finance Review"
+
+   PAYMENT PATHS AT SUBMIT (MyOrdersPage.tsx):
+
+     Bank Transfer / GCash (full)     -> finance_pending
+     Split includes Bank/GCash        -> finance_pending
+     Cash / Cheque only               -> agent_pending
+     Split with cash/cheque           -> agent_pending (unless bank leg)
+
+   BEFORE APPROVE (cash/cheque component):
+     - Team leader remittance + Cash Deposits page
+     - deposit_id on order
+     - depositBankAccount + reference (leader recorded)
+     - Deposit slip uploaded (when applicable)
+
+   FINANCE APPROVE:
+     RPC: approve_order_and_verify_deposit(p_order_id)
+     File: create_approve_order_and_verify_deposit_function.sql
+
+     On success:
+       status = approved, stage = admin_approved
+       main_inventory deducted (stock + allocated_stock)
+       cash_deposits verified when deposit_id linked
+
+     UI disabled until deposit + bank details present for cash/cheque
+
+   FINANCE DENY:
+     reject_client_order via updateOrderStatus(rejected)
+     Restores agent inventory (see order-correction-options.md)
+
+   BULK APPROVE: finance-only — all pending per selected agent
+     (skips cash orders missing deposit)
+
+   IMPORT / EXPORT: finance + admin + super_admin historical orders
+
+   NOT FOR FINANCE:
+     Re-evaluate (needs_revision) = super_admin only on /orders
+     /leader-orders = team leader monitor only
+
+
+3. CASH DEPOSITS (/inventory/cash-deposits)
+   -----------------------------------------
+   LeaderCashDepositsPage.tsx — isFinanceOnly = true
+
+   - Company-wide view (not one leader's team)
+   - READ-ONLY: cannot record deposits or upload slips
+   - Monitor daily collections + verified history
+   - Leaders notify finance when deposit recorded (notification)
+
+   Verification happens on ORDER APPROVE, not a separate verify button here.
+
+
+4. FINANCE PAGE (/finance)
+   ------------------------
+   FinancePage.tsx
+
+   - Revenue: client_orders stage = admin_approved
+   - Expenses: approved purchase_orders + financial_transactions
+   - 6-month charts; recent deposit summaries
+   - v1 import cutoff: order_date before 2026-02-16 excluded from deposit math
+
+
+5. PAYMENT SETTINGS (/finance/payment-settings)
+   -------------------------------------------
+   PaymentSettingsPage.tsx, company_payment_settings
+
+   Configure:
+     - Bank accounts (for leader deposit recording)
+     - GCash (enable, number, name, QR)
+     - Toggles: cash, cheque, bank transfer enabled
+
+   Agents use these when placing orders.
+
+
+6. SYSTEM HISTORY (/system-history)
+   --------------------------------
+   Title: Transaction History
+
+   Finance filter tables:
+     client_orders, cash_deposits, financial_transactions,
+     purchase_orders, remittances_log
+
+   RLS: finance_audit_access (company-scoped)
+
+
+--------------------------------------------------------------------------------
+ORDER LIFECYCLE (FINANCE-CENTRIC)
+--------------------------------------------------------------------------------
+
+  [Agent submits]
+        |
+        +-- Bank/GCash --> finance_pending --> [Finance approve]
+        |
+        +-- Cash/Cheque --> agent_pending
+                |
+                v
+        [Remittance -> Leader deposit recorded]
+                |
+                v
+        [Finance approve] --> admin_approved (+ verify deposit)
+
+  Deny --> rejected (+ restore agent stock)
+
+  Super admin Re-evaluate --> needs_revision --> agent edit --> finance_pending
+
+  STAGE REFERENCE:
+
+    finance_pending .... Review & approve/deny
+    agent_pending ...... Approve when deposit requirements met
+    admin_approved ..... Done (revenue counted)
+    needs_revision ..... Wait for agent
+    admin_rejected ..... Closed
+
+
+--------------------------------------------------------------------------------
+PERMISSIONS VS OTHER ROLES
+--------------------------------------------------------------------------------
+
+  Capability                    Finance  TL    Admin  Super Admin
+  ----------------------------  -------  ---   -----  -----------
+  Final approve client orders   Yes      No    Yes    Yes
+  Verify deposit (on approve)   Yes      No    Yes    Yes
+  Record cash deposits          No       Yes   Yes    Yes
+  Team remittances              No       Yes   Yes    Yes
+  Payment settings              Yes      No    *      Yes
+  All company orders on /orders Yes      No    Yes    Yes
+  Bulk approve                  Yes      No    No     No
+  Re-evaluate order             No       No    No     Yes
+  Import historical orders      Yes      No    Yes    Yes
+  Inventory / clients / teams   No       Lim   Yes    Yes
+
+
+--------------------------------------------------------------------------------
+HAPPY PATH CHECKLIST
+--------------------------------------------------------------------------------
+
+  1. Dashboard — pending revenue, new deposits
+  2. /orders — Pending tab; proof (bank/GCash) or deposit (cash/cheque)
+  3. Approve — approve_order_and_verify_deposit
+  4. Cash Deposits — read-only check if order detail unclear
+  5. Payment Settings — banks/GCash current
+  6. Finance Page — revenue/expense review
+  7. System History — disputes / audit
+
+
+--------------------------------------------------------------------------------
+MAIN CODE LOCATIONS
+--------------------------------------------------------------------------------
+
+  Sidebar ................... AppSidebar.tsx, roleMenuHelper.ts
+  Role helpers .............. roleUtils.ts
+  Permissions ............... usePermissions.ts
+  Dashboard ................. DashboardPage.tsx, FinanceDashboard.tsx,
+                              dashboardHooks.ts (useFinanceStats)
+  Orders ...................... OrdersPage.tsx, OrderContext.tsx
+  Approve RPC ................. approve_order_and_verify_deposit
+  Reject RPC .................. reject_client_order
+  Cash deposits ............... LeaderCashDepositsPage.tsx
+  Finance reports ............. FinancePage.tsx
+  Payment config .............. PaymentSettingsPage.tsx, usePaymentSettings.ts
+  Audit ....................... SystemHistoryPage.tsx
+  Stages ...................... 20260427000000_add_needs_revision_stage.sql
+
+
+--------------------------------------------------------------------------------
+KNOWN GAPS / NOTES
+--------------------------------------------------------------------------------
+
+  - useFinanceStats pending query may include leader_approved; /orders uses
+    finance_pending OR status=pending.
+  - Cash deposits page banner text may omit "finance" though access works.
+  - Re-evaluate is super_admin only; finance uses Deny or escalates.
+  - Reject/inventory policy: order-correction-options.md
+  - FinancePage relies on RLS for tenant isolation (company_id on profile).
+  - /orders subtitle can mention "purchase orders" — finance work is CLIENT
+    orders, not procurement POs.
+
+================================================================================
+  End of document
+================================================================================

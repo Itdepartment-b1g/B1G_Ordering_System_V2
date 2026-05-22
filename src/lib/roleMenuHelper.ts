@@ -129,6 +129,7 @@ const superAdminMenuItems: MenuItem[] = [
   { title: 'Member Management', url: '/member-management', description: 'Global control of users and teams.', hasSubmenu: true, submenu: [
     { title: 'User Management', url: '/sales-agents', description: 'Manage all users across the tenant.' },
     { title: 'Team Management', url: '/team-management', description: 'Design and maintain global team hierarchies.' },
+    { title: 'Hub Management', url: '/hub-management', description: 'Create and manage hub locations with map-backed coordinates.' },
   ]},
   { title: 'Inventory', url: '/inventory', description: 'Tenant-wide inventory oversight and control.', hasSubmenu: true, submenu: [
     { title: 'Main Inventory', url: '/inventory/main', description: 'Manage central warehouse stock and costs.' },

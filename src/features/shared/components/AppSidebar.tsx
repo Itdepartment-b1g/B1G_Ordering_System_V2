@@ -260,6 +260,7 @@ const agentMenuItems: MenuItem[] = [
   { title: 'My Activity', url: '/system-history', icon: History },
   { title: 'Calendar', url: '/calendar', icon: Calendar },
   { title: 'Profile', url: '/profile', icon: UserCircle },
+  { title: 'Attendance', url: '/attendance', icon: Calendar },
 ];
 
 const hermanosMenuItems: MenuItem[] = [
@@ -296,6 +297,7 @@ const leaderMenuItems: MenuItem[] = [
   },
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: "My Team's Clients", url: '/my-teams', icon: Users },
+  { title:  "My Team's Attendance", url: '/team-attendances', icon: Calendar},
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
@@ -413,6 +415,7 @@ const superAdminMenuItems: MenuItem[] = [
     submenu: [
       { title: 'User Management', url: '/sales-agents', icon: Users },
       { title: 'Team Management', url: '/team-management', icon: Crown },
+      { title: 'Hub Management', url: '/hub-management', icon: LayoutGrid },
     ]
   },
   {
@@ -462,6 +465,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Suppliers', url: '/suppliers', icon: Building2 },
     ]
   },
+  { title: 'Agent Attendance', url: '/agent-attendance-overview', icon: Calendar},
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'System History', url: '/system-history', icon: History },
