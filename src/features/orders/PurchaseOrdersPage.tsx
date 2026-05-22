@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect, useMemo } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -9,7 +9,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, MapPin, Store } from 'lucide-react';
+import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
 import { CreatePurchaseOrderDialog } from './components/CreatePurchaseOrderDialog';
@@ -17,6 +18,10 @@ import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { generateAndOpenCofPdf } from './cof/generateCofPdf';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SignatureCanvas } from '@/components/ui/signature-canvas';
+import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
+import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,6 +33,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+/** Key Account dispatch: separate private buckets (see supabase migration key_account_delivery_storage_buckets). */
+const KA_DELIVERY_RIDER_PHOTOS_BUCKET = 'ka-delivery-rider-photos';
+const KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET = 'ka-delivery-warehouse-signatures';
 
 export default function PurchaseOrdersPage() {
   const { user } = useAuth();
@@ -55,6 +63,19 @@ export default function PurchaseOrdersPage() {
   const [fulfillLocationId, setFulfillLocationId] = useState<string | null>(null);
   const [fulfillLocationName, setFulfillLocationName] = useState<string | null>(null);
   const [fulfillingOrderId, setFulfillingOrderId] = useState<string | null>(null);
+
+  // Warehouse view tabs (supplier POs will be removed later; keep tabs by account type)
+  const [poTab, setPoTab] = useState<'all' | 'key_accounts' | 'standard_accounts'>('all');
+
+  // Key Account dispatch capture (after fulfillment)
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [dispatchPo, setDispatchPo] = useState<any>(null);
+  const [riderName, setRiderName] = useState('');
+  const [riderPlate, setRiderPlate] = useState('');
+  const [riderPhotoFile, setRiderPhotoFile] = useState<File | null>(null);
+  const [warehouseSignatureDataUrl, setWarehouseSignatureDataUrl] = useState<string | null>(null);
+  const [showWarehouseSignatureModal, setShowWarehouseSignatureModal] = useState(false);
+  const [savingDispatch, setSavingDispatch] = useState(false);
 
   // Track fulfillment status for current user's warehouse location
   const [myLocationStatuses, setMyLocationStatuses] = useState<Record<string, string>>({});
@@ -459,6 +480,15 @@ export default function PurchaseOrdersPage() {
     setOrderToFulfill(order);
     setFulfillLocationId(membership.locationId ?? null);
     setFulfillLocationName(null);
+    if (String(order?.company_account_type || '') === 'Key Accounts') {
+      setDispatchPo(order);
+      setRiderName('');
+      setRiderPlate('');
+      setRiderPhotoFile(null);
+      setWarehouseSignatureDataUrl(null);
+      setDispatchOpen(true);
+      return;
+    }
     setFulfillDialogOpen(true);
   };
 
@@ -466,6 +496,15 @@ export default function PurchaseOrdersPage() {
     setOrderToFulfill(order);
     setFulfillLocationId(locationId);
     setFulfillLocationName(locationName ?? null);
+    if (String(order?.company_account_type || '') === 'Key Accounts') {
+      setDispatchPo(order);
+      setRiderName('');
+      setRiderPlate('');
+      setRiderPhotoFile(null);
+      setWarehouseSignatureDataUrl(null);
+      setDispatchOpen(true);
+      return;
+    }
     setFulfillDialogOpen(true);
   };
 
@@ -490,6 +529,7 @@ export default function PurchaseOrdersPage() {
         setMyLocationStatuses(prev => ({ ...prev, [orderToFulfill.id]: 'fulfilled' }));
       }
       setFulfillDialogOpen(false);
+
       setOrderToFulfill(null);
       setFulfillLocationId(null);
       setFulfillLocationName(null);
@@ -517,6 +557,11 @@ export default function PurchaseOrdersPage() {
   const { toast } = useToast();
 
   const filteredOrders = purchaseOrders.filter((order) => {
+    if (user?.role === 'warehouse') {
+      const acct = String(order.company_account_type || 'Standard Accounts');
+      if (poTab === 'key_accounts' && acct !== 'Key Accounts') return false;
+      if (poTab === 'standard_accounts' && acct === 'Key Accounts') return false;
+    }
     const q = searchQuery.toLowerCase();
     const typeLabel = order.fulfillment_type === 'warehouse_transfer' ? 'internal warehouse' : 'supplier';
     return (
@@ -573,6 +618,16 @@ export default function PurchaseOrdersPage() {
           />
         )}
       </div>
+
+      {user?.role === 'warehouse' && (
+        <Tabs value={poTab} onValueChange={(v) => setPoTab(v as any)}>
+          <TabsList>
+            <TabsTrigger value="all">All</TabsTrigger>
+            <TabsTrigger value="key_accounts">Key Accounts</TabsTrigger>
+            <TabsTrigger value="standard_accounts">Standard</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
@@ -1101,6 +1156,234 @@ export default function PurchaseOrdersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Key Account Dispatch Dialog (after fulfillment) */}
+      <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Dispatch / Delivery (Key Accounts)</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="text-sm text-muted-foreground">
+              {dispatchPo?.po_number ? `PO: ${dispatchPo.po_number}` : 'PO'}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Rider name</Label>
+              <Input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="e.g. Juan Dela Cruz" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Plate number</Label>
+              <Input value={riderPlate} onChange={(e) => setRiderPlate(e.target.value)} placeholder="e.g. ABC-1234" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Rider photo</Label>
+              <Input type="file" accept="image/*" onChange={(e) => setRiderPhotoFile(e.target.files?.[0] ?? null)} />
+              <p className="text-xs text-muted-foreground">
+                Rider photo → <span className="font-medium">{KA_DELIVERY_RIDER_PHOTOS_BUCKET}</span>
+                {' · '}
+                Signature → <span className="font-medium">{KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET}</span>
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Warehouse e-signature</Label>
+              {warehouseSignatureDataUrl ? (
+                <div className="border rounded-md p-3 bg-muted/30 space-y-2">
+                  <img src={warehouseSignatureDataUrl} alt="Warehouse signature" className="max-h-24 mx-auto" />
+                  <div className="flex justify-end">
+                    <Button variant="ghost" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
+                      Change signature
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="border rounded-md p-3 bg-muted/30 flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">Draw warehouse signature before delivering.</p>
+                  <Button type="button" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
+                    Add signature
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setDispatchOpen(false)}
+                disabled={savingDispatch || fulfillingOrderId === orderToFulfill?.id}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  const locId = fulfillLocationId ?? membership.locationId;
+                  if (!dispatchPo?.id || !dispatchPo?.company_id || !locId) return;
+                  if (!riderName.trim() || !riderPlate.trim() || !riderPhotoFile || !warehouseSignatureDataUrl) {
+                    toast({ title: 'Missing info', description: 'Rider name, plate number, rider photo, and warehouse signature are required.', variant: 'destructive' });
+                    return;
+                  }
+
+                  const warehouseCompanyId =
+                    (dispatchPo.warehouse_company_id as string | null | undefined) ?? user?.company_id ?? null;
+                  if (!warehouseCompanyId) {
+                    toast({
+                      title: 'Missing warehouse',
+                      description: 'Could not resolve warehouse company for uploads and DR number.',
+                      variant: 'destructive',
+                    });
+                    return;
+                  }
+
+                  const storageBasePath = `${warehouseCompanyId}/po/${dispatchPo.id}`;
+
+                  setSavingDispatch(true);
+                  try {
+                    // 1) Fulfill first (deduct stock / move to requesting company)
+                    setFulfillingOrderId(dispatchPo.id);
+                    const { data: fulfillData, error: fulfillErr } = await supabase.rpc('fulfill_po_location', {
+                      p_po_id: dispatchPo.id,
+                      p_location_id: locId,
+                    });
+                    if (fulfillErr) throw fulfillErr;
+                    if (!fulfillData?.success) throw new Error(fulfillData?.error || 'Fulfillment failed');
+
+                    const fileExt = riderPhotoFile.name.split('.').pop() || 'jpg';
+                    const filePath = `${storageBasePath}/${Date.now()}_rider.${fileExt}`;
+
+                    const { error: uploadError } = await supabase.storage
+                      .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
+                      .upload(filePath, riderPhotoFile, {
+                        upsert: false,
+                        contentType: riderPhotoFile.type || 'image/jpeg',
+                      });
+                    if (uploadError) throw uploadError;
+
+                    const { data: urlData, error: urlErr } = await supabase.storage
+                      .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
+                      .createSignedUrl(filePath, 60 * 60 * 24 * 365);
+                    if (urlErr) throw urlErr;
+                    const riderPhotoUrl = urlData?.signedUrl;
+                    if (!riderPhotoUrl) throw new Error('Failed to create signed URL');
+
+                    // Upload warehouse signature
+                    let signatureBlob: Blob;
+                    const base64Data = warehouseSignatureDataUrl.split(',')[1];
+                    if (!base64Data) throw new Error('Invalid warehouse signature data');
+                    const binaryString = atob(base64Data);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                      bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    signatureBlob = new Blob([bytes], { type: 'image/png' });
+
+                    const signaturePath = `${storageBasePath}/${Date.now()}_warehouse-signature.png`;
+                    const { error: sigUploadError } = await supabase.storage
+                      .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
+                      .upload(signaturePath, signatureBlob, {
+                        contentType: 'image/png',
+                        upsert: false,
+                      });
+                    if (sigUploadError) throw sigUploadError;
+
+                    const { data: sigUrlData, error: sigUrlErr } = await supabase.storage
+                      .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
+                      .createSignedUrl(signaturePath, 60 * 60 * 24 * 365);
+                    if (sigUrlErr) throw sigUrlErr;
+                    const warehouseSignatureUrl = sigUrlData?.signedUrl;
+                    if (!warehouseSignatureUrl) throw new Error('Failed to create signature URL');
+
+                    // 2) Create DR number (WH + first letter of warehouse_locations.name, e.g. Bacoor → WHB)
+                    const { data: drNumber, error: drErr } = await supabase.rpc('generate_dr_number', {
+                      p_warehouse_location_id: locId,
+                    });
+                    if (drErr) throw drErr;
+                    if (!drNumber) throw new Error('Failed to generate DR number');
+
+                    if (!user?.id) {
+                      throw new Error('Not signed in; cannot record dispatch (created_by required).');
+                    }
+
+                    // 3) Save dispatch (RLS requires created_by = auth.uid())
+                    const { error: insErr } = await supabase.from('purchase_order_deliveries').insert({
+                      purchase_order_id: dispatchPo.id,
+                      company_id: dispatchPo.company_id,
+                      warehouse_location_id: locId,
+                      rider_name: riderName.trim(),
+                      rider_plate_number: riderPlate.trim(),
+                      rider_photo_url: riderPhotoUrl,
+                      warehouse_signature_url: warehouseSignatureUrl,
+                      warehouse_signature_path: signaturePath,
+                      status: 'dispatched',
+                      created_by: user.id,
+                    } as any);
+                    if (insErr) throw insErr;
+
+                    // 4) DR number + Key Account workflow: physical dispatch complete
+                    const { error: poUpdErr } = await supabase
+                      .from('purchase_orders')
+                      .update({
+                        dr_number: drNumber,
+                        workflow_status: 'delivered',
+                      })
+                      .eq('id', dispatchPo.id);
+                    if (poUpdErr) throw poUpdErr;
+
+                    toast({
+                      title: 'Delivered',
+                      description: `Dispatch info saved. DR: ${drNumber}`,
+                    });
+                    // Update local status so Fulfill button hides immediately
+                    setMyLocationStatuses((prev) => ({ ...prev, [dispatchPo.id]: 'fulfilled' }));
+                    setDispatchOpen(false);
+                    setDispatchPo(null);
+                    setWarehouseSignatureDataUrl(null);
+                    setOrderToFulfill(null);
+                    setFulfillLocationId(null);
+                    setFulfillLocationName(null);
+                    await fetchPurchaseOrders();
+                  } catch (e: any) {
+                    toast({ title: 'Error', description: e.message || 'Failed to save dispatch info', variant: 'destructive' });
+                  } finally {
+                    setSavingDispatch(false);
+                    setFulfillingOrderId(null);
+                  }
+                }}
+                disabled={
+                  savingDispatch ||
+                  fulfillingOrderId === dispatchPo?.id ||
+                  !warehouseSignatureDataUrl ||
+                  !warehouseSignatureDataUrl.trim()
+                }
+              >
+                {savingDispatch || fulfillingOrderId === dispatchPo?.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                Deliver
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Warehouse Signature Capture */}
+      <Dialog open={showWarehouseSignatureModal} onOpenChange={setShowWarehouseSignatureModal}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Warehouse Signature</DialogTitle>
+          </DialogHeader>
+          <SignatureCanvas
+            title="Draw the warehouse signature in the area below"
+            description="This signature confirms the warehouse personnel who fulfilled and dispatched this Key Account PO."
+            onSave={(sigDataUrl) => {
+              setWarehouseSignatureDataUrl(sigDataUrl);
+              setShowWarehouseSignatureModal(false);
+            }}
+            onCancel={() => setShowWarehouseSignatureModal(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
       {/* View Purchase Order - Mobile: Sheet, Desktop: Dialog */}
       {isMobile ? (
         <Sheet open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
@@ -1286,6 +1569,16 @@ export default function PurchaseOrdersPage() {
                       </div>
                     )}
                   </Accordion>
+
+                  {orderToView.key_account_client_id && keyAccountDeliveryDetailsEnabled(orderToView) && (
+                    <div className="mt-4">
+                      <PurchaseOrderDeliveryDetailsPanel
+                        purchaseOrderId={orderToView.id}
+                        enabled
+                        warehouseNamesById={{}}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </ScrollArea>
@@ -1301,6 +1594,12 @@ export default function PurchaseOrdersPage() {
             <ScrollArea className="max-h-[calc(90vh-120px)] pr-4">
               {orderToView && (
                 <div className="space-y-6 py-4">
+                  {/* Key Account PO View */}
+                  {orderToView.key_account_client_id ? (
+                    <KeyAccountPOView order={orderToView} />
+                  ) : (
+                    <>
+                  {/* Regular PO View */}
                   {/* PO Number and Status */}
                   <div className="flex justify-between items-center pb-4 border-b">
                     <div>
@@ -1562,11 +1861,331 @@ export default function PurchaseOrdersPage() {
                       <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{orderToView.notes}</p>
                     </div>
                   )}
+                    </>
+                  )}
                 </div>
               )}
             </ScrollArea>
           </DialogContent>
         </Dialog>
+      )}
+    </div>
+  );
+}
+
+// Key Account PO View Component - Used for POs created by key accounts
+interface KeyAccountPOViewProps {
+  order: any;
+}
+
+function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
+  const { user } = useAuth();
+  const [warehouseLocationMeta, setWarehouseLocationMeta] = useState<
+    Record<string, { name: string; is_main: boolean }>
+  >({});
+
+  // Local state for fetched data (in case RLS blocks the join)
+  const [kaData, setKaData] = useState<{
+    client: any;
+    shop: any;
+    address: any;
+    kam: any;
+  }>({ client: null, shop: null, address: null, kam: null });
+  const [loading, setLoading] = useState(false);
+
+  // Fetch Key Account details if not present in order (RLS workaround)
+  useEffect(() => {
+    const fetchKeyAccountDetails = async () => {
+      // If we already have all data, don't fetch
+      if (order.client && order.shop && order.address && order.kam) return;
+      
+      // If no key account IDs, nothing to fetch
+      if (!order.key_account_client_id && !order.kam_id) return;
+
+      setLoading(true);
+      try {
+        const [clientRes, shopRes, addressRes, kamRes] = await Promise.all([
+          order.key_account_client_id 
+            ? supabase.from('key_account_clients').select('client_name').eq('id', order.key_account_client_id).single()
+            : Promise.resolve({ data: null }),
+          order.key_account_shop_id
+            ? supabase
+                .from('key_account_shops')
+                .select('shop_name, cor_pdf_path')
+                .eq('id', order.key_account_shop_id)
+                .single()
+            : Promise.resolve({ data: null }),
+          order.key_account_address_id
+            ? supabase.from('key_account_delivery_addresses')
+                .select('address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default')
+                .eq('id', order.key_account_address_id)
+                .single()
+            : Promise.resolve({ data: null }),
+          order.kam_id
+            ? supabase.from('profiles').select('full_name,email').eq('id', order.kam_id).single()
+            : Promise.resolve({ data: null }),
+        ]);
+
+        setKaData({
+          client: clientRes.data,
+          shop: shopRes.data,
+          address: addressRes.data,
+          kam: kamRes.data,
+        });
+
+        console.log('Fetched Key Account details:', {
+          client: clientRes.data,
+          shop: shopRes.data,
+          address: addressRes.data,
+          kam: kamRes.data,
+        });
+      } catch (err) {
+        console.error('Error fetching Key Account details:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchKeyAccountDetails();
+  }, [order]);
+
+  useEffect(() => {
+    const hubCompanyId = order.warehouse_company_id || user?.company_id;
+    if (!hubCompanyId) return;
+
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('warehouse_locations')
+        .select('id,name,is_main')
+        .eq('company_id', hubCompanyId)
+        .order('is_main', { ascending: false })
+        .order('name');
+      if (cancelled || error) return;
+      const meta: Record<string, { name: string; is_main: boolean }> = {};
+      for (const row of data || []) {
+        if (row?.id && row?.name) {
+          meta[row.id] = { name: row.name, is_main: !!row.is_main };
+        }
+      }
+      setWarehouseLocationMeta(meta);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [order.warehouse_company_id, user?.company_id]);
+
+  const warehouseNamesById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const [id, m] of Object.entries(warehouseLocationMeta)) {
+      map[id] = m.name;
+    }
+    return map;
+  }, [warehouseLocationMeta]);
+
+  // Use order data if available, otherwise use fetched data
+  const client = order.client || kaData.client;
+  const shop = order.shop || kaData.shop;
+  const address = order.address || kaData.address;
+  const kam = order.kam || kaData.kam;
+
+
+
+  const statusBadgeClass = (status: string) => {
+    switch (status) {
+      case 'delivered':
+      case 'fulfilled':
+        return 'bg-green-600 text-white';
+      case 'approved':
+      case 'warehouse_reserved':
+        return 'bg-blue-600 text-white';
+      case 'admin_pending':
+      case 'director_pending':
+      case 'kam_pending':
+        return 'bg-amber-500 text-white';
+      case 'rejected':
+        return 'bg-red-600 text-white';
+      default:
+        return 'bg-gray-600 text-white';
+    }
+  };
+
+  const workflowLabel = (ws: string) => String(ws || '').replace(/_/g, ' ');
+
+  return (
+    <div className="space-y-5">
+      {/* PO Header */}
+      <div className="flex items-start justify-between gap-3 flex-wrap border-b pb-4">
+        <div>
+          <div className="text-xs text-muted-foreground">PO Number</div>
+          <div className="text-2xl font-bold font-mono">{order.po_number}</div>
+          <div className="text-xs text-muted-foreground">RFPF Number</div>
+          <div className="text-lg font-bold font-mono">{order.rfpf_number?.toUpperCase() || '—'}</div>
+          <div className="text-sm text-muted-foreground mt-1">
+            {client?.client_name || '—'} · {shop?.shop_name || '—'}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge className={statusBadgeClass(order.workflow_status || order.status)}>
+            {workflowLabel(order.workflow_status || order.status)}
+          </Badge>
+          {order.dr_number && <Badge variant="secondary">DR: {order.dr_number}</Badge>}
+        </div>
+      </div>
+
+      {/* Order Details Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <Label className="text-xs text-muted-foreground">Order date</Label>
+          <div className="font-medium">{new Date(order.order_date).toLocaleDateString()}</div>
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground">Expected</Label>
+          <div className="font-medium">
+            {order.expected_delivery_date ? new Date(order.expected_delivery_date).toLocaleDateString() : '—'}
+          </div>
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground">Created By</Label>
+          <div className="font-medium">{kam?.full_name || order.created_by_user?.full_name || '—'}</div>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Store className="h-4 w-4" />
+            Shop
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <p className="text-sm font-medium">{shop?.shop_name || '—'}</p>
+          <div>
+            <Label className="text-xs text-muted-foreground">COR (Certificate of Registration)</Label>
+            <div className="mt-1.5">
+              <KeyAccountShopCorView corPdfPath={shop?.cor_pdf_path} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Delivery Address */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <MapPin className="h-4 w-4" />
+            Delivery Address
+            {loading && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {address ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Left Side - Address */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">
+                      {address?.address_label}
+                    </span>
+                    {address?.is_default && (
+                      <Badge variant="secondary" className="text-xs">Default</Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground font-medium">
+                    {address?.full_address}
+                  </p>
+                  <p className="text-sm text-muted-foreground font-medium">
+                    {address?.city}, {address?.province} {address?.zip_code}
+                  </p>
+                </div>
+
+                {/* Right Side - Contact Info */}
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Contact Name</p>
+                    <p className="text-sm font-medium">
+                      {address?.contact_name}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Contact Phone</p>
+                    <p className="text-sm font-medium">
+                      {address?.contact_phone}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-muted-foreground">No delivery address specified.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <PurchaseOrderDeliveryDetailsPanel
+        purchaseOrderId={order.id}
+        enabled={keyAccountDeliveryDetailsEnabled(order)}
+        warehouseNamesById={warehouseNamesById}
+      />
+
+      {/* Items — grouped by source warehouse (same as Standard tab PO modal) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Items</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PurchaseOrderItemsByWarehouse
+            items={(order.items || []).map((item: any) => ({
+              id: item.id,
+              brand_name: item.brand_name || item.variants?.brands?.name,
+              variant_name: item.variant_name || item.variants?.name,
+              variant_type: item.variant_type || item.variants?.variant_type,
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              total_price: item.total_price,
+              warehouse_location_id: item.warehouse_location_id,
+            }))}
+            headerWarehouseLocationId={order.warehouse_location_id}
+            locationNamesById={warehouseNamesById}
+            locationMetaById={warehouseLocationMeta}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Pricing Summary */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Subtotal</span>
+              <span>₱{Number(order.subtotal || 0).toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Tax ({order.tax_rate || 0}%)</span>
+              <span>₱{Number(order.tax_amount || 0).toLocaleString()}</span>
+            </div>
+            {order.discount > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Discount</span>
+                <span className="text-green-600">- ₱{Number(order.discount).toLocaleString()}</span>
+              </div>
+            )}
+            <div className="flex justify-between font-bold text-lg border-t pt-2">
+              <span>Total</span>
+              <span>₱{Number(order.total_amount || 0).toLocaleString()}</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Notes */}
+      {order.notes && (
+        <div className="space-y-2">
+          <Label className="font-semibold">Notes</Label>
+          <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">{order.notes}</p>
+        </div>
       )}
     </div>
   );

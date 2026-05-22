@@ -552,7 +552,7 @@ export function useFinanceStats() {
 
     const query = useQuery({
         queryKey: ['finance_stats', user?.company_id],
-        enabled: !!user?.company_id && user?.role === 'finance',
+        enabled: !!user?.company_id && (user?.role === 'finance' || user?.role === 'accounting'),
         queryFn: async () => {
             if (!user?.company_id) return null;
 
@@ -688,7 +688,7 @@ export function useFinanceStats() {
     });
 
     useEffect(() => {
-        if (!user?.company_id || user.role !== 'finance') return;
+        if (!user?.company_id || (user.role !== 'finance' && user.role !== 'accounting')) return;
 
         const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['finance_stats'] }));
         const channel2 = subscribeToTable('cash_deposits', () => queryClient.invalidateQueries({ queryKey: ['finance_stats'] }));

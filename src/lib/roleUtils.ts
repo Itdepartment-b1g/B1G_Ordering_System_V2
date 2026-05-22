@@ -10,7 +10,13 @@ export type UserRole =
   | 'admin'
   | 'super_admin'
   | 'finance'
+  | 'accounting'
   | 'system_administrator';
+
+/** Finance or accounting — shared view access to finance pages */
+export function isFinanceRole(role?: UserRole | string): boolean {
+  return role === 'finance' || role === 'accounting';
+}
 
 /**
  * Check if a user can lead a team (has team members)
@@ -39,6 +45,7 @@ export function isAdmin(role?: UserRole | string): boolean {
 /**
  * Check if a user can approve orders (Finance team)
  */
+/** Order approval and finance settings writes — finance approvers only (not accounting) */
 export function canApproveFinance(role?: UserRole | string): boolean {
   return role === 'finance' || role === 'super_admin' || role === 'system_administrator';
 }
@@ -55,7 +62,7 @@ export function canAllocateFromMain(role?: UserRole | string): boolean {
  * Check if a user can view all orders (not just their own)
  */
 export function canViewAllOrders(role?: UserRole | string): boolean {
-  return isAdmin(role) || role === 'finance';
+  return isAdmin(role) || isFinanceRole(role);
 }
 
 /**
@@ -70,7 +77,7 @@ export function canManageCompanies(role?: UserRole | string): boolean {
  * Team Leaders, Managers, Admins, Super Admins can view deposits
  */
 export function canViewCashDeposits(role?: UserRole | string): boolean {
-  return canLeadTeam(role) || isAdmin(role) || role === 'finance';
+  return canLeadTeam(role) || isAdmin(role) || isFinanceRole(role);
 }
 
 /**
@@ -98,6 +105,8 @@ export function getRoleDisplayName(role?: UserRole | string): string {
       return 'Super Admin';
     case 'finance':
       return 'Finance';
+    case 'accounting':
+      return 'Accounting';
     case 'system_administrator':
       return 'System Administrator';
     default:
@@ -118,6 +127,8 @@ export function getRoleLevel(role?: UserRole | string): number {
       return 80;
     case 'finance':
       return 70;
+    case 'accounting':
+      return 65;
     case 'manager':
       return 60;
     case 'team_leader':

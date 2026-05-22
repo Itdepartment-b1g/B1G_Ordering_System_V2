@@ -91,7 +91,8 @@ export function UserImportExport({ users, onRefresh }: UserImportExportProps) {
         const notes = [
             ['ROLES GUIDE:'],
             ['admin - Administrator access'],
-            ['finance - Financial management'],
+            ['finance - Financial management (can approve orders)'],
+            ['accounting - View-only finance (no approvals or payment settings)'],
             ['manager - Operational manager'],
             ['team_leader - Team supervisor'],
             ['mobile_sales - Field agent'],

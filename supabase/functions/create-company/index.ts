@@ -25,7 +25,8 @@ serve(async (req) => {
             company_email, 
             super_admin_name, 
             super_admin_email, 
-            super_admin_password 
+            super_admin_password,
+            company_account_type = 'Standard Accounts'  // Backward compatible default
         } = await req.json()
 
         if (!company_name || !company_email || !super_admin_name || !super_admin_email || !super_admin_password) {
@@ -35,6 +36,11 @@ serve(async (req) => {
             )
         }
 
+        // Determine role based on company type
+        const isKeyAccount = company_account_type === 'Key Accounts'
+        const userRole = isKeyAccount ? 'sales_head' : 'super_admin'
+        const displayRole = isKeyAccount ? 'Sales Head' : 'Super Admin'
+
         // 1. Create Company
         const { data: company, error: companyError } = await supabaseClient
             .from('companies')
@@ -43,7 +49,8 @@ serve(async (req) => {
                 company_email: company_email,
                 super_admin_name: super_admin_name,
                 super_admin_email: super_admin_email,
-                role: 'Super Admin',
+                role: displayRole,
+                company_account_type: company_account_type,
                 status: 'active'
             })
             .select()
@@ -62,7 +69,7 @@ serve(async (req) => {
             email: super_admin_email,
             password: super_admin_password,
             email_confirm: true,
-            user_metadata: { full_name: super_admin_name, role: 'super_admin' }
+            user_metadata: { full_name: super_admin_name, role: userRole }
         })
 
         let userId = authData?.user?.id
@@ -107,7 +114,7 @@ serve(async (req) => {
                 id: userId,
                 email: super_admin_email,
                 full_name: super_admin_name,
-                role: 'super_admin',
+                role: userRole,
                 company_id: company.id,
                 status: 'active'
             })

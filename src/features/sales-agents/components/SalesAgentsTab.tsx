@@ -91,7 +91,7 @@ export function SalesAgentsTab() {
   const [agentInventory, setAgentInventory] = useState<Variant[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
   const roleRequiresTerritory = (role?: UserRole | '') =>
-    role === 'team_leader' || role === 'mobile_sales' || role === 'manager';
+    role === 'team_leader' || role === 'mobile_sales' || role === 'manager' || role === 'key_account_manager';
 
   const getRoleLabel = (role?: UserRole | '') => {
     switch (role) {
@@ -99,12 +99,24 @@ export function SalesAgentsTab() {
         return 'Admin';
       case 'finance':
         return 'Finance';
+      case 'accounting':
+        return 'Accounting';
       case 'manager':
         return 'Manager';
       case 'team_leader':
         return 'Team Leader';
       case 'mobile_sales':
         return 'Mobile Sales';
+      case 'key_account_manager':
+        return 'Key Account Manager';
+      case 'sales_director':
+        return 'Sales Director';
+      case 'sales_head':
+        return 'Sales Head';
+      case 'sales_admin':
+        return 'Sales Admin';
+      case 'key_account_accounting':
+        return 'Key Account Accounting';
       default:
         return '—';
     }
@@ -210,7 +222,7 @@ export function SalesAgentsTab() {
       }
 
       // Map agents with pre-aggregated sales data
-      const agentsWithSales = agentsData.map((agent: any) => ({
+      let agentsWithSales = agentsData.map((agent: any) => ({
         id: agent.id,
         name: agent.full_name,
         email: agent.email,
@@ -224,6 +236,17 @@ export function SalesAgentsTab() {
         totalSales: salesByAgent[agent.id]?.totalSales || 0,
         ordersCount: salesByAgent[agent.id]?.ordersCount || 0
       }));
+
+      // Key Account user managers see only Key Account team roles
+      if (user?.role === 'sales_admin' || user?.role === 'sales_head') {
+        agentsWithSales = agentsWithSales.filter(
+          (agent: SalesAgent) =>
+            agent.role === 'sales_admin' ||
+            agent.role === 'sales_director' ||
+            agent.role === 'key_account_manager' ||
+            agent.role === 'key_account_accounting'
+        );
+      }
 
       setAgents(agentsWithSales);
     } catch (error) {
@@ -484,20 +507,41 @@ export function SalesAgentsTab() {
 
       console.log('Creating user with company_id:', companyId);
 
-      // Create auth user and profile via Edge Function with all fields
-      const { data: fnRes, error: fnErr } = await supabase.functions.invoke('create-agent', {
-        body: {
-          email: newAgent.email?.trim(),
-          password: 'tempPassword123!',
-          full_name: newAgent.name?.trim(),
-          role: (newAgent.role as UserRole) || 'mobile_sales',
-          phone: newAgent.phone || null,
-          region: regionValue,
-          city: cityValue,
-          status: 'active',
-          company_id: companyId
+      const selectedRole = (newAgent.role as UserRole) || 'mobile_sales';
+      const useKeyAccountFn =
+        (user?.role === 'sales_admin' || user?.role === 'sales_head') &&
+        ['sales_admin', 'sales_director', 'key_account_manager', 'key_account_accounting'].includes(
+          selectedRole
+        );
+
+      const { data: fnRes, error: fnErr } = await supabase.functions.invoke(
+        useKeyAccountFn ? 'create-key-account-user' : 'create-agent',
+        {
+          body: useKeyAccountFn
+            ? {
+                email: newAgent.email?.trim(),
+                password: 'tempPassword123!',
+                full_name: newAgent.name?.trim(),
+                role: selectedRole,
+                company_id: companyId,
+                created_by: user?.id,
+                phone: newAgent.phone || null,
+                region: regionValue,
+                city: cityValue,
+              }
+            : {
+                email: newAgent.email?.trim(),
+                password: 'tempPassword123!',
+                full_name: newAgent.name?.trim(),
+                role: selectedRole,
+                phone: newAgent.phone || null,
+                region: regionValue,
+                city: cityValue,
+                status: 'active',
+                company_id: companyId,
+              },
         }
-      });
+      );
 
       if (fnErr) {
         const detailedMessage =
@@ -1111,6 +1155,7 @@ export function SalesAgentsTab() {
                       <SelectContent>
                         <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="finance">Finance</SelectItem>
+                        <SelectItem value="accounting">Accounting (view only)</SelectItem>
                         <SelectItem value="manager">Manager</SelectItem>
                         <SelectItem value="team_leader">Team Leader</SelectItem>
                         <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
@@ -1240,10 +1285,11 @@ export function SalesAgentsTab() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="finance">Finance</SelectItem>
-                    <SelectItem value="manager">Manager</SelectItem>
-                    <SelectItem value="team_leader">Team Leader</SelectItem>
-                    <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                      <SelectItem value="finance">Finance</SelectItem>
+                      <SelectItem value="accounting">Accounting (view only)</SelectItem>
+                      <SelectItem value="manager">Manager</SelectItem>
+                      <SelectItem value="team_leader">Team Leader</SelectItem>
+                      <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1537,7 +1583,11 @@ export function SalesAgentsTab() {
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add New User</DialogTitle>
+            <DialogTitle>
+              {user?.role === 'sales_admin' || user?.role === 'sales_head'
+                ? 'Add New Key Account User'
+                : 'Add New User'}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -1550,15 +1600,29 @@ export function SalesAgentsTab() {
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="finance">Finance</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="team_leader">Team Leader</SelectItem>
-                  <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                  {user?.role === 'sales_admin' || user?.role === 'sales_head' ? (
+                    <>
+                      <SelectItem value="sales_admin">Sales Admin</SelectItem>
+                      <SelectItem value="sales_director">Sales Director</SelectItem>
+                      <SelectItem value="key_account_manager">Key Account Manager</SelectItem>
+                      <SelectItem value="key_account_accounting">Key Account Accounting</SelectItem>
+                    </>
+                  ) : (
+                    <>
+                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="finance">Finance</SelectItem>
+                      <SelectItem value="accounting">Accounting (view only)</SelectItem>
+                      <SelectItem value="manager">Manager</SelectItem>
+                      <SelectItem value="team_leader">Team Leader</SelectItem>
+                      <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
               <p className="mt-2 text-xs text-muted-foreground">
-                Choose a role to see which details are required.
+                {user?.role === 'sales_admin' || user?.role === 'sales_head'
+                  ? 'Create Sales Admin, Directors, KAMs, and Accounting users for your Key Account company.'
+                  : 'Choose a role to see which details are required.'}
               </p>
             </div>
 
