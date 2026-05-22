@@ -1,0 +1,347 @@
+================================================================================
+  WAREHOUSE ROLE — WORKFLOW OVERVIEW
+  B1G Ordering System
+================================================================================
+
+This document describes how the Warehouse role (warehouse) works: hub company
+operations, internal stock transfers to client tenants, sub-warehouses, and
+catalog control.
+
+Related: docs/super-admin-workflow.txt (section 6.4 — client creates transfer PO),
+docs/mobile-sales-workflow.txt, docs/team-leader-workflow.txt
+
+
+--------------------------------------------------------------------------------
+ROLE IDENTITY
+--------------------------------------------------------------------------------
+
+  Database role ............... warehouse
+  Display name ................ Warehouse (hub)
+  Scope ....................... WAREHOUSE company (profiles.company_id = hub)
+  NOT a sales tenant company
+
+  Typical account ............. Distribution hub user linked to client tenants
+
+NOT the same as:
+  - super_admin / admin = sales TENANT; they REQUEST stock via transfer POs
+  - system_administrator = creates warehouse companies and assignments
+
+Provisioning:
+  - System administrator creates warehouse company + user (create-warehouse)
+  - warehouse_company_assignments links warehouse user <-> client companies
+    (typically ONE client company per assignment row)
+
+Location membership (warehouse_location_users -> warehouse_locations):
+
+  Main warehouse (is_main = true)
+    - Hub main_inventory; create sub-warehouses; allocate stock
+    - APPROVE multi-location transfer POs (main user only)
+
+  Sub-warehouse (is_main = false)
+    - Only warehouse_location_inventory at their location
+    - FULFILL their slice of transfer POs; RETURN stock to main
+
+  Unlinked (no link row)
+    - Fail-safe treated as main; should be fixed in production
+
+  Hook: useWarehouseLocationMembership.ts
+
+
+--------------------------------------------------------------------------------
+ACCESS MODEL
+--------------------------------------------------------------------------------
+
+  Login redirect: /inventory/board
+
+  Route whitelist (usePermissions) — warehouse CANNOT open:
+    /orders, /clients, team menus, finance, war room, sales dashboards, etc.
+
+  Allowed routes (typical):
+    /inventory/board
+    /purchase-orders
+    /brands, /variant-types
+    /inventory/main, /inventory/sub-warehouses
+    /profile
+
+  Warehouse users CANNOT create transfer POs.
+  Client super admin/admin CREATES warehouse_transfer POs.
+  Warehouse APPROVES (main) and FULFILLS (per location).
+
+
+--------------------------------------------------------------------------------
+NAVIGATION (SIDEBAR)
+--------------------------------------------------------------------------------
+
+  Area              Route                    Purpose
+  ----------------  -----------------------  ----------------------------------
+  Dashboard         /inventory/board         Brand/SKU stock grid
+  Procurement       /purchase-orders         Inbound transfers from clients
+                    /brands                  Hub master catalog
+                    /variant-types           Variant categories
+  Inventory         /inventory/sub-warehouses Create subs, allocate, return
+                    /inventory/main          Main stock, adjustments
+  Profile           /profile                   Account
+
+  NO ACCESS: client orders, finance, sales agents, team management, etc.
+
+
+--------------------------------------------------------------------------------
+ORGANIZATION MODEL
+--------------------------------------------------------------------------------
+
+  System Administrator
+    -> creates warehouse company + user
+    -> warehouse_company_assignments (hub user <-> client tenant)
+
+  Warehouse company (hub)
+    -> Main warehouse user(s)
+    -> Sub-warehouse user(s) per location
+
+  Client tenant (e.g. super admin company)
+    -> Creates transfer PO (pending)
+    -> Receives stock into THEIR main_inventory after hub fulfills
+
+  warehouse_company_assignments table:
+    warehouse_user_id, warehouse_company_id, client_company_id
+    UNIQUE per client_company_id (one hub link per tenant)
+
+
+--------------------------------------------------------------------------------
+TYPICAL OPERATIONS — END TO END
+--------------------------------------------------------------------------------
+
+1. INVENTORY BOARD (/inventory/board)
+   -----------------------------------
+   File: WarehouseInventoryDashboardPage.tsx
+
+   Visual board: brands x variant types (pods, devices, POSM).
+
+   Main warehouse user view modes:
+     Available ... stock minus allocated on main
+     Overall ..... total stock on main
+     Sub ......... stock at selected sub-warehouse location
+
+   Sub-warehouse users: usually only their location stock.
+
+
+2. CATALOG — BRANDS & VARIANT TYPES
+   ---------------------------------
+   /brands .............. Hub brands + variants (warehouse company_id)
+   /variant-types ....... Flavor, battery, POSM, etc.
+
+   This is the MASTER catalog for linked client tenants:
+   - Client tenants hide /brands and /variant-types when warehouse-linked
+   - On fulfill: warehouse_variant_mappings maps hub SKU -> client SKU
+
+   Maintain catalog BEFORE clients raise transfer POs.
+
+
+3. MAIN INVENTORY (/inventory/main)
+   -----------------------------------
+   File: MainInventoryPage.tsx, InventoryContext.tsx
+
+   MAIN WAREHOUSE USER:
+   - View/edit main_inventory (stock, allocated)
+   - Add brands/variants, add stock quantities
+   - Adjust stock; inventory_transactions audit
+   - View returns history (return_to_main, warehouse_return_from_sub)
+
+   SUB-WAREHOUSE USER:
+   - Sees only warehouse_location_inventory at their location
+   - Return stock to main (return_stock_from_sub_warehouse_to_main)
+   - Cannot create sub-warehouses or allocate from main
+
+   Stock source:
+     Main -> main_inventory
+     Sub  -> warehouse_location_inventory at linked location_id
+
+
+4. SUB-WAREHOUSES (/inventory/sub-warehouses)
+   -----------------------------------------
+   File: SubWarehousesPage.tsx
+   Edge: create-sub-warehouse (location + user account)
+
+   MAIN WAREHOUSE USER:
+   - Create sub-warehouse (location name + user email/password)
+   - Allocate stock: RPC allocate_stock_to_sub_warehouse
+       main available -> warehouse_location_inventory at sub
+   - Return from sub: RPC return_stock_from_sub_warehouse_to_main
+       sub stock -> main_inventory
+   - List all locations and linked users
+
+   SUB-WAREHOUSE USER:
+   - Return stock from OWN location to main only
+   - Cannot create subs or allocate
+
+   Internal hub pipeline:
+
+     main_inventory
+         | allocate_stock_to_sub_warehouse
+         v
+     warehouse_location_inventory (Sub A, Sub B, ...)
+         | return_stock_from_sub_warehouse_to_main
+         v
+     main_inventory
+
+
+5. PURCHASE ORDERS — INTERNAL TRANSFERS (CRITICAL)
+   -----------------------------------------------
+   Page: /purchase-orders (warehouse inbox only)
+   Subtitle: "Pending internal transfers from your assigned client companies"
+
+   Warehouse does NOT:
+   - Create PO (no Create PO button)
+   - Handle supplier POs on this screen
+
+   Work is INCOMING warehouse_transfer POs from linked client tenants.
+
+
+   STEP-BY-STEP (warehouse + client)
+
+   Step 1 — CLIENT REQUEST
+     Who: Client super admin or admin (tenant app)
+     Action: Create PO with fulfillment_type = warehouse_transfer
+     Data: warehouse_company_id = hub; lines pick hub locations + qty
+     Stock validated at hub on create (client-side)
+     Status: pending
+
+   Step 2 — WAREHOUSE APPROVE (MAIN USER ONLY)
+     Who: Main warehouse user on /purchase-orders
+     Button: Approve PO (canApproveOrder requires main for transfers)
+     RPC: approve_multi_location_po(po_id, approver_id)
+       - Validates stock per location + variant
+       - Creates warehouse_transfer_reservations
+       - warehouse_transfer_location_status -> ready
+       - PO status -> approved_for_fulfillment
+     Sub-warehouse users see "Waiting for Main" on pending list until approved
+
+   Step 3 — WAREHOUSE FULFILL (PER LOCATION)
+     Who: Warehouse user whose location_id matches PO lines
+       - Main warehouse user fulfills main-location lines
+       - Sub-warehouse user fulfills sub-location lines only
+     Button: Fulfill (when approved_for_fulfillment or partially_fulfilled)
+     RPC: fulfill_po_location(po_id, location_id)
+       - Deducts hub stock:
+           main location -> main_inventory (available = stock - allocated)
+           sub location -> warehouse_location_inventory
+       - Adds to CLIENT main_inventory (tenant company_id on PO)
+       - warehouse_variant_mappings (hub variant -> client variant)
+       - inventory_transactions: warehouse_transfer_out / warehouse_transfer_in
+
+   Step 4 — PO COMPLETION
+     partially_fulfilled ... some locations done, others pending
+     fulfilled ............. all locations fulfilled; client has stock
+
+   Step 5 — REJECT (optional, while pending)
+     Main warehouse can Reject -> status rejected
+     (Cancel label if warehouse created the PO — N/A; clients create POs)
+
+   MULTI-LOCATION:
+     View PO shows each warehouse location status separately.
+     Each sub fulfills only its rows; main fulfills main rows.
+
+   APPROVE DIALOG:
+     Main user sees requested qty vs available per location before approving.
+
+   COF:
+     View/print Confirmation of Order PDF (generateCofPdf) — documentation.
+
+   AFTER FULFILL:
+     Client tenant stock in their main_inventory.
+     Client super admin allocates to leaders / agents (see super-admin doc).
+     Warehouse work on that PO is DONE.
+
+
+   PO STATUS REFERENCE (warehouse view)
+
+     pending .................. Review; main Approve or Reject
+     approved_for_fulfillment . Ready to Fulfill per location
+     partially_fulfilled ...... Some locations fulfilled
+     fulfilled ................ All done; client received goods
+     rejected ................. Closed
+
+
+6. HOW WAREHOUSE FITS FULL SUPPLY CHAIN
+   ------------------------------------
+
+   [System Administrator]
+     warehouse company + assignments
+           |
+           v
+   [Warehouse hub]
+     /brands catalog
+     main_inventory <-> sub-warehouse locations
+           |
+           | fulfill transfer PO
+           v
+   [Client tenant main_inventory]
+           |
+           +-- /inventory/allocations -> team leaders
+           +-- /inventory/admin-requests -> agents
+           +-- client orders /orders (separate from POs)
+
+
+--------------------------------------------------------------------------------
+PERMISSIONS VS OTHER ROLES
+--------------------------------------------------------------------------------
+
+  Capability                 Warehouse   Client SA   Sub-WH user
+  -------------------------  ---------   ---------   -----------
+  Company type               Hub         Tenant      Hub (1 loc)
+  Create transfer PO         No          Yes         No
+  Approve transfer PO        Main only   No          No
+  Fulfill transfer PO        Per loc     No          Own loc
+  Create sub-warehouse       Main only   No          No
+  Allocate main -> sub       Main only   No          No
+  Return sub -> main         Main+sub    No          Own
+  Hub catalog CRUD           Yes         Hidden*     Scoped
+  Client /orders             No          Yes         No
+
+  * Client hides brands/variants when warehouse-linked
+
+
+--------------------------------------------------------------------------------
+HAPPY PATH CHECKLIST (WAREHOUSE HUB)
+--------------------------------------------------------------------------------
+
+  1. Provisioned by system admin (company, user, client assignments)
+  2. Main warehouse user linked to main warehouse_locations row
+  3. Build catalog (/brands, /variant-types) and stock in (/inventory/main)
+  4. Optional: create sub-warehouses; allocate stock from main
+  5. Monitor /inventory/board (available qty before POs)
+  6. Client creates transfer PO -> main APPROVE -> users FULFILL per location
+  7. Sub-warehouses RETURN unused stock to main when needed
+  8. Adjust main stock and catalog ongoing
+
+
+--------------------------------------------------------------------------------
+MAIN CODE LOCATIONS
+--------------------------------------------------------------------------------
+
+  Sidebar / routes .......... AppSidebar.tsx, usePermissions.ts, RoleBasedRedirect
+  Dashboard ................. WarehouseInventoryDashboardPage.tsx
+  Membership ................ useWarehouseLocationMembership.ts
+  Main inventory ............ MainInventoryPage.tsx, InventoryContext.tsx
+  Sub-warehouses ............ SubWarehousesPage.tsx, create-sub-warehouse
+  Transfer POs .............. PurchaseOrdersPage.tsx, PurchaseOrderContext.tsx
+  Catalog ................... BrandsPage.tsx, VariantTypesPage.tsx
+  RPCs ...................... approve_multi_location_po, fulfill_po_location,
+                              allocate_stock_to_sub_warehouse,
+                              return_stock_from_sub_warehouse_to_main
+  DB ........................ warehouse_company_assignments,
+                              20260401120000_warehouse_accounts_and_po_transfers.sql
+
+
+--------------------------------------------------------------------------------
+KNOWN GAPS / NOTES
+--------------------------------------------------------------------------------
+
+  - Transfer PO list filtered to ASSIGNED client companies only (RLS).
+  - Supplier POs are tenant-side; warehouse UI is transfer-focused.
+  - Unlinked warehouse users default to main — fix data if wrong.
+  - Clients cannot approve their own transfer PO; wait on hub.
+  - Multi-location approval requires MAIN warehouse login, not sub account.
+
+================================================================================
+  End of document
+================================================================================

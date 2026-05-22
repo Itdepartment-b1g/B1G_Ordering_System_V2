@@ -1,0 +1,468 @@
+================================================================================
+  SUPER ADMIN ROLE — WORKFLOW OVERVIEW
+  B1G Ordering System
+================================================================================
+
+This document describes how the Super Admin role (super_admin) works: tenant
+ownership, navigation, daily operations, and differences from Admin, System
+Administrator, and field roles.
+
+Related: docs/mobile-sales-workflow.txt, docs/team-leader-workflow.txt,
+docs/order-correction-options.md
+
+
+--------------------------------------------------------------------------------
+ROLE IDENTITY
+--------------------------------------------------------------------------------
+
+  Database role ............... super_admin
+  Display name ................ Super Admin
+  Hierarchy level ............. 90 (below system_administrator, above admin)
+  Scope ....................... ONE company (tenant) via company_id + RLS
+  Typical account ............. Company owner when tenant is provisioned
+
+NOT the same as:
+  - system_administrator = platform operator, creates companies (multi-tenant)
+  - admin = company ops user, similar menus, fewer super-only items
+
+Super admin is the top role INSIDE a single tenant.
+
+
+--------------------------------------------------------------------------------
+ACCESS MODEL
+--------------------------------------------------------------------------------
+
+  - ProtectedRoute: super_admin bypasses ALL allowedRoles checks
+  - usePermissions: full route + feature access (checkPermission / checkFeature)
+  - Exception: if company linked to warehouse hub, /brands and /variant-types
+    are hidden (warehouse controls catalog)
+  - Profile: only super_admin can change own login email
+
+  Login lands on: /super-admin-dashboard
+
+
+--------------------------------------------------------------------------------
+NAVIGATION (SIDEBAR)
+--------------------------------------------------------------------------------
+
+  Area                 Route(s)                          Purpose
+  -------------------  --------------------------------  -------------------------
+  Dashboard            /super-admin-dashboard            Company KPIs
+  Member Management    /sales-agents                     Users
+                       /team-management                  Assign agents to leaders
+                       /hub-management                   Attendance hubs (SA only)
+  Inventory            /inventory/main                     Main warehouse stock
+                       /inventory/allocations            Allocate to leaders
+                       /inventory/admin-requests         Approve stock requests
+                       /inventory/admin-team-remittances Audit team remittances
+  Clients              /clients                            Full client DB
+                       /clients/pending                    Approve pending clients
+                       /voided-clients                     Voided / restore
+  Finance              /finance                            Finance dashboard
+                       /orders                             Approve/reject orders
+                       /inventory/cash-deposits            Cash/cheque deposits
+                       /finance/payment-settings           Payment config
+  Procurement          /purchase-orders                    Purchase orders
+                       /brands, /variant-types, /suppliers Catalog (may be locked)
+  Agent Attendance     /agent-attendance-overview          Company attendance report
+  AI Analytics         /analytics                          Company analytics
+  War Room             /war-room                           Strategic map/KPIs
+  System History       /system-history                     Audit log
+  Settings             /profile                            Account
+                       /system-settings                    Pricing permissions
+
+Also reachable (not always in sidebar):
+  /inventory/admin-tl-requests (TL-to-TL stock; admin + super_admin)
+  /member-management (combined member page)
+
+VS ADMIN MENU — super admin HAS:
+  - Super Admin Dashboard (not /dashboard)
+  - Hub Management
+  - Agent Attendance Overview
+  - System Settings under Settings
+
+VS ADMIN MENU — admin HAS (super admin sidebar may omit):
+  - TL Stock Requests under Inventory (route still works for super_admin)
+
+
+--------------------------------------------------------------------------------
+ORGANIZATION (WITHIN ONE COMPANY)
+--------------------------------------------------------------------------------
+
+  System Administrator
+    -> creates company + super admin login
+
+  Super Admin (you)
+    -> configures users, teams, hubs, inventory, clients, finance rules
+
+  Admin / Finance
+    -> day-to-day operations (overlap with super admin)
+
+  Manager -> Team Leader -> Mobile Sales
+    -> field sales (see other workflow docs)
+
+Super admin duties:
+  1. Structure: users, leader_teams, hubs
+  2. Inbound stock (procurement): purchase orders -> main_inventory
+  3. Supply chain: allocations, admin stock requests, remittance audit
+  4. Governance: clients, voids, system settings, audit
+  5. Financial oversight: CLIENT orders (/orders), deposits, payment settings
+
+
+--------------------------------------------------------------------------------
+TYPICAL OPERATIONS — END TO END
+--------------------------------------------------------------------------------
+
+1. SUPER ADMIN DASHBOARD (/super-admin-dashboard)
+   -----------------------------------------------
+   Company metrics: users, inventory (stock/allocated/available), revenue by year,
+   monthly charts, recent users by role. Requires company_id on profile.
+
+
+2. MEMBER MANAGEMENT
+   ------------------
+
+   User Management (/sales-agents or /member-management):
+   - Create users (mobile_sales, team_leader, manager, admin, finance, etc.)
+   - Edit, activate/deactivate, reset password, delete
+   - Allocate stock from main inventory to users
+
+   Team Management (/team-management):
+   - Assign mobile_sales to team_leader (assign_agent_to_leader RPC)
+   - Admin and super_admin perform assignments
+
+   Hub Management (/hub-management) — SUPER ADMIN ONLY ROUTE:
+   - Create hubs: location, radius for attendance GPS check-in
+   - Assign hub to team leader
+
+
+3. INVENTORY
+   ----------
+
+   Main Inventory (/inventory/main):
+   - Central warehouse quantities and costs
+
+   Stock Allocations (/inventory/allocations):
+   - Allocate main stock down to team leaders
+
+   Inventory Requests (/inventory/admin-requests):
+   - Approve/deny/fulfill requests forwarded by team leaders
+   - Combined agent + leader quantities after forward_stock_request_with_leader_qty
+
+   TL Stock Requests (/inventory/admin-tl-requests):
+   - Approve transfers between team leaders (with admin)
+
+   Team Remittances (/inventory/admin-team-remittances):
+   - Audit end-of-day remittances from mobile sales teams
+
+
+4. CLIENTS
+   --------
+
+   Clients Database (/clients):
+   - Full company client list, transfer, void, bulk ops
+
+   Pending Clients (/clients/pending):
+   - Approve/reject (e.g. outside agent assigned cities)
+
+   Voided Clients (/voided-clients):
+   - Review and restore
+
+
+5. FINANCE & ORDERS
+   -----------------
+
+   Finance Page (/finance):
+   - Company financial overview
+
+   Order List (/orders):
+   - Approve/reject orders (approve_order_and_verify_deposit)
+   - Import/export historical orders (admin/finance/super_admin)
+   - Cash/cheque orders need team leader deposit recorded first
+
+   Cash Deposits (/inventory/cash-deposits):
+   - Verify deposits linked to orders
+
+   Payment Settings (/finance/payment-settings):
+   - super_admin + finance role
+
+
+6. PROCUREMENT (PURCHASE ORDERS) — IMPORTANT
+   -----------------------------------------
+
+   PURCHASE ORDERS ARE NOT CLIENT ORDERS
+
+     Purchase orders (/purchase-orders)     Client orders (/orders)
+     -------------------------------     -------------------------
+     Buy stock INTO main_inventory       Sell stock TO clients
+     Super admin / admin creates         Mobile sales / leaders create
+     Feeds warehouse supply chain        Feeds revenue / remittance
+     Approve: SA (supplier) or warehouse  Approve: finance / admin
+
+   All under sidebar Procurement: /purchase-orders, /suppliers,
+   /brands, /variant-types
+
+
+   6.1 PREREQUISITES
+   -----------------
+   /suppliers ............... Vendor master data (required for supplier POs)
+   /brands .................. Product brands
+   /variant-types ........... Flavor, battery, POSM, etc.
+
+   WAREHOUSE HUB LINK (warehouse_company_assignments):
+   - If tenant is linked to a warehouse company:
+     * Create PO defaults to "Internal warehouse transfer"
+     * /brands and /variant-types menus HIDDEN (warehouse owns catalog)
+     * Stock validated at warehouse locations on create
+     * Super admin CANNOT approve/fulfill transfer POs on tenant app
+       (warehouse role must approve and fulfill)
+
+
+   6.2 PURCHASE ORDERS PAGE (/purchase-orders)
+   -------------------------------------------
+   Files: PurchaseOrdersPage, CreatePurchaseOrderDialog, PurchaseOrderContext
+
+   Super admin can:
+   - Create PO (full-screen dialog)
+   - Search/list POs (supplier vs internal type)
+   - View details (items, status, per-location progress on multi transfers)
+   - COF: print Confirmation of Order PDF (generateCofPdf)
+   - Approve or Reject (depends on PO type — see below)
+   - List updates in real time (purchase_orders / purchase_order_items)
+
+   PO number format: PO-{YEAR}-{SEQUENCE}  (e.g. PO-2026-1001)
+
+   On every create:
+   - order_date, expected_delivery_date, tax, discount, notes
+   - line items: variant, qty, unit price
+   - status = pending
+   - company_id = tenant; created_by = current user
+
+   Create dialog extras:
+   - Can add new brands/variants inline while building the PO
+   - Warehouse transfer: checks available stock per location before submit
+   - Single-source: one warehouse location for all lines
+   - Multi-source: each line picks its own warehouse location
+
+
+   6.3 PATH A — SUPPLIER PURCHASE ORDER (fulfillment_type: supplier)
+   -----------------------------------------------------------------
+   Use when buying from external vendor (/suppliers).
+
+   Step 1 — CREATE (super admin / admin)
+     Select supplier, add lines, submit -> status pending
+
+   Step 2 — APPROVE (super admin / admin on /purchase-orders)
+     Approve button visible for supplier POs (canApproveOrder = true)
+     RPC: approve_purchase_order(po_id, approver_id)
+       - status -> approved
+       - quantities ADDED to main_inventory (tenant warehouse)
+       - inventory_transactions audit rows created
+
+   Step 3 — REJECT (optional, while pending)
+     status -> rejected
+     Button shows "Cancel" if you created the PO
+
+   After approval:
+     Stock is in main_inventory. Then:
+       /inventory/allocations -> team leaders
+       /inventory/admin-requests -> agent stock from main
+       Field distribution -> see team-leader-workflow.txt
+
+   No separate "fulfill" step for supplier PO on tenant side.
+
+
+   6.4 PATH B — INTERNAL WAREHOUSE TRANSFER (fulfillment_type: warehouse_transfer)
+   -------------------------------------------------------------------------------
+   Use when tenant is linked to warehouse hub; stock moves from warehouse
+   company into tenant main_inventory.
+
+   Step 1 — CREATE (super admin / admin)
+     Requires linkedWarehouseCompanyId (from warehouse_company_assignments)
+     Pick warehouse location(s), lines, qty (validated against warehouse stock)
+     Submit -> status pending
+     Super admin sees PO in list but typically NO Approve button for transfers
+
+   Step 2 — APPROVE (WAREHOUSE company — main warehouse user only)
+     Done on warehouse user's /purchase-orders (not tenant super admin)
+     RPC: approve_multi_location_po (or legacy single-location approve)
+       - Validates stock per location + variant
+       - Creates warehouse_transfer_reservations
+       - Location status -> ready
+       - PO status -> approved_for_fulfillment
+
+   Step 3 — FULFILL (warehouse user per location)
+     RPC: fulfill_po_location(po_id, location_id)
+       - Deducts stock at warehouse location (main or sub-warehouse rules)
+       - Adds stock to CLIENT main_inventory (tenant company_id)
+       - May create warehouse_variant_mappings (warehouse SKU -> client SKU)
+       - inventory_transactions type warehouse_transfer_in
+       - Location status -> fulfilled
+
+   Step 4 — PO COMPLETION
+     partially_fulfilled if some locations not done yet
+     fulfilled when all locations complete
+
+   Step 5 — TENANT (super admin)
+     Use /inventory/main, /inventory/allocations, /inventory/admin-requests
+     to push stock to leaders and mobile sales
+
+   Multi-location: view PO shows each warehouse location status separately.
+
+
+   6.5 PO STATUS REFERENCE
+   -----------------------
+   pending .................. Waiting approval
+   approved ................. Supplier PO done; stock in main_inventory
+   approved_for_fulfillment . Transfer approved; stock reserved at warehouse
+   partially_fulfilled ...... Transfer: some locations fulfilled
+   fulfilled ................ Transfer: all locations done; client stock received
+   rejected ................. Denied while pending
+
+
+   6.6 PROCUREMENT -> REST OF TENANT (PIPELINE)
+   --------------------------------------------
+
+   [Supplier PO approve]  -----\
+   [Warehouse fulfill]    ------+--> main_inventory (/inventory/main)
+                                        |
+                    +-------------------+-------------------+
+                    |                                       |
+         /inventory/allocations              /inventory/admin-requests
+         (to team leaders)                    (leader + agent requests)
+                    |                                       |
+                    v                                       v
+         leader / agent_inventory                  mobile sales stock
+                    |
+                    v
+         client_orders (/orders)  <-- separate sales flow, not POs
+
+   Related: /inventory/admin-tl-requests (TL-to-TL stock; admin sidebar item;
+   super admin can open route even if not in SA submenu)
+
+
+7. AGENT ATTENDANCE OVERVIEW (/agent-attendance-overview)
+   -------------------------------------------------------
+   Company-wide mobile_sales attendance; export/filter.
+   (Team leaders use /team-attendances for their team only.)
+
+
+8. ANALYTICS & WAR ROOM
+   ---------------------
+   /analytics — full company (not team-scoped)
+   /war-room — strategic KPI / map view
+
+
+9. SYSTEM HISTORY (/system-history)
+   ---------------------------------
+   Audit log of important system changes.
+
+
+10. SYSTEM SETTINGS (/system-settings)
+    ----------------------------------
+    Tenant configuration:
+    - team_leader_allowed_pricing
+    - mobile_sales_allowed_pricing
+    Saved on companies table. Drives what prices field roles can use on orders.
+
+
+--------------------------------------------------------------------------------
+STOCK REQUEST FLOW (SUMMARY)
+--------------------------------------------------------------------------------
+
+  Mobile sales requests -> Team leader pending/forward
+    -> Super admin/admin approves on admin-requests from MAIN inventory
+    -> Team leader allocates fulfilled qty to agents
+
+  See implement_stock_preorder_system.sql and team-leader-workflow.txt
+
+
+--------------------------------------------------------------------------------
+ORDER APPROVAL (SUMMARY)
+--------------------------------------------------------------------------------
+
+  Super admin can final-approve on /orders (like admin/finance).
+  Cash/cheque: team leader must record deposit before approval.
+  Bank/GCash: finance_pending path.
+
+  See order-correction-options.md for reject/revision inventory rules.
+
+
+--------------------------------------------------------------------------------
+PERMISSIONS VS OTHER ROLES
+--------------------------------------------------------------------------------
+
+  Capability                    Super Admin   Admin    System Admin
+  ----------------------------  -----------   -----    ------------
+  One tenant (company_id)       Yes           Yes      All companies
+  Bypass all route guards       Yes           No       Own routes only
+  /super-admin-dashboard        Yes           No       No
+  Hub management                Yes           No*      No
+  System settings (pricing)     Yes           No**     N/A
+  assign_agent_to_leader        Yes           Yes      No
+  Approve orders / main stock   Yes           Yes      No
+  Field sales / attendance      No            No       No
+  Create new companies          No            No       Yes
+
+  * Hub route allowedRoles: super_admin only
+  ** Admin may open URL; not in admin sidebar
+
+
+--------------------------------------------------------------------------------
+HAPPY PATH — TENANT SETUP & RUN
+--------------------------------------------------------------------------------
+
+  1. Account provisioned with company (by system administrator)
+  2. System settings — pricing for team leaders and mobile sales
+  3. Procurement setup — suppliers; brands/variants (if not warehouse-linked)
+  4. Stock into main_inventory:
+       (A) Supplier PO: create -> approve as super admin, OR
+       (B) Warehouse transfer: create -> warehouse approves -> warehouse fulfills
+  5. Users — managers, team leaders, mobile sales
+  6. Teams — leader_teams assignments; hubs for attendance
+  7. Allocate to leaders; approve admin-requests for agents
+  8. Field ops — clients, tasks, mobile sales, remittances
+  9. Finance — deposits; approve CLIENT orders on /orders
+  10. Review — analytics, war room, system history
+
+
+--------------------------------------------------------------------------------
+MAIN CODE LOCATIONS
+--------------------------------------------------------------------------------
+
+  Access .............. AppSidebar.tsx, ProtectedRoute.tsx, usePermissions.ts
+  Dashboard ........... SuperAdminDashboardPage.tsx
+  Users / teams ....... SalesAgentsPage.tsx, TeamManagementTab.tsx
+  Hubs ................ HubManagementPage (App.tsx)
+  Inventory ........... MainInventoryPage, StockAllocationsPage,
+                        AdminRequestsPage, AdminTLRequestsPage,
+                        AdminTeamRemittancesPage
+  Clients ............. ClientsPage, PendingClientsPage, VoidedClientsPage
+  Purchase orders ..... PurchaseOrdersPage, CreatePurchaseOrderDialog,
+                        PurchaseOrderContext, cof/generateCofPdf
+  Suppliers/catalog ... SuppliersPage, BrandsPage, VariantTypesPage
+  PO database RPCs .... approve_purchase_order, approve_multi_location_po,
+                        fulfill_po_location
+  Client orders/finance OrdersPage, FinancePage, LeaderCashDepositsPage,
+                        PaymentSettingsPage
+  Settings ............ SystemSettingsPage.tsx
+  Attendance .......... AgentAttendanceOverviewPage.tsx
+  Roles ............... roleUtils.ts, roleMenuHelper.ts
+
+
+--------------------------------------------------------------------------------
+KNOWN GAPS / NOTES
+--------------------------------------------------------------------------------
+
+  - Super admin data is company-scoped, not cross-tenant.
+  - Warehouse hub link disables local brand/variant menus.
+  - Sidebar may omit TL Stock Requests; route still works.
+  - Transfer POs must be approved/fulfilled by WAREHOUSE users, not tenant SA.
+  - Live View / impersonation is for system admin viewing a tenant, not
+    normal super admin login.
+  - Client order reject may not restore agent stock without server changes;
+    see order-correction-options.md (POs are separate from client orders)
+
+================================================================================
+  End of document
+================================================================================

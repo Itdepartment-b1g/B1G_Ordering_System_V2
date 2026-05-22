@@ -1,0 +1,255 @@
+================================================================================
+  SYSTEM ADMINISTRATOR ROLE — WORKFLOW OVERVIEW
+  B1G Ordering System
+================================================================================
+
+This document describes how the System Administrator role (system_administrator)
+works: multi-tenant provisioning, executive and warehouse accounts, cross-company
+observability, and Live View impersonation.
+
+Related: docs/super-admin-workflow.txt, docs/warehouse-workflow.txt,
+docs/finance-workflow.txt
+
+
+--------------------------------------------------------------------------------
+ROLE IDENTITY
+--------------------------------------------------------------------------------
+
+  Database role ............... system_administrator
+  Display name ................ System Administrator
+  Hierarchy level ............. 100 (highest in app)
+  Scope ....................... PLATFORM (all tenants)
+  profiles.company_id ......... Typically NULL
+  Personal inventory .......... No
+
+  Creates and governs tenants (sales companies + super admin login).
+  Does NOT run day-to-day sales/inventory/finance inside a tenant except
+  read-only Live View or Management Portal snapshots.
+
+NOT the same as:
+  - super_admin = owner inside ONE company
+  - executive = read-only user assigned to one or more companies
+  - warehouse = hub user (created by system admin)
+
+Provisioning: bootstrap account outside normal tenant user flows.
+
+
+--------------------------------------------------------------------------------
+ACCESS MODEL
+--------------------------------------------------------------------------------
+
+  Login redirect: /sys-admin-dashboard
+
+  Sidebar: systemAdminMenuItems (AppSidebar.tsx)
+
+  Route whitelist (usePermissions) when NOT impersonating:
+    /sys-admin-dashboard
+    /system-admin
+    /system-management
+    /profile
+    /sys-admin*
+
+  No tenant ops routes in normal mode (/orders, /clients, etc.)
+
+  Database: is_system_administrator() -> SELECT across many tables (support)
+
+  Edge functions (caller must be system_administrator):
+    create-company, create-executive, create-warehouse
+
+  LIVE VIEW (impersonation):
+    Management Portal -> Live View -> startImpersonation(company)
+    Effective user: super_admin + tenant company_id
+    Sidebar: super admin menu; body.read-only-mode (no mutations)
+    Stop Live View -> stopImpersonation()
+
+
+--------------------------------------------------------------------------------
+NAVIGATION (SIDEBAR)
+--------------------------------------------------------------------------------
+
+  Screen              Route                    Purpose
+  ------------------  -----------------------  ----------------------------------
+  Dashboard           /sys-admin-dashboard     Create/list/manage sales tenants
+  Executive Account   /system-admin            Executive + warehouse accounts
+  Management Portal   /system-management       Cross-tenant read-only drill-down
+  System History      /system-history          Platform audit (see note below)
+  Profile             /profile                   Account
+
+  NOTE: /system-history may be HIDDEN from sidebar by usePermissions whitelist
+  gap; page may still load via direct URL. Consider adding to whitelist.
+
+
+--------------------------------------------------------------------------------
+ORGANIZATION MODEL (PLATFORM)
+--------------------------------------------------------------------------------
+
+  System Administrator
+    |
+    +-- create-company --> Sales tenant + Super Admin login
+    |                         |
+    |                         v
+    |                    Super Admin runs tenant (users, stock, orders)
+    |
+    +-- create-executive --> Executive + executive_company_assignments
+    |                         -> /executive-dashboard, /war-room
+    |
+    +-- create-warehouse --> Hub company + warehouse user
+    |                         + warehouse_company_assignments -> client tenants
+    |
+    +-- Management Portal --> Read-only tabs per company
+    |
+    +-- Live View --> Impersonate tenant (read-only)
+
+  Hidden from lists: SYSTEM_ADMIN_COMPANY_ID (internal platform row)
+
+
+--------------------------------------------------------------------------------
+TYPICAL OPERATIONS — END TO END
+--------------------------------------------------------------------------------
+
+1. SYS-ADMIN DASHBOARD (/sys-admin-dashboard)
+   -----------------------------------------
+   SysAdDashboardPage.tsx
+
+   LIST companies (exclude system admin company id)
+
+   CREATE COMPANY (Add Company) -> Edge: create-company
+     company_name, company_email
+     super_admin_name, super_admin_email, super_admin_password
+     company_account_type: Standard Accounts | Key Accounts
+
+   Server:
+     1. Insert companies (status active)
+     2. auth.admin.createUser (super_admin)
+     3. Insert profiles (role super_admin, company_id)
+
+   ACTIONS per company:
+     View details
+     Inactivate -> status inactive (tenant users logged out via realtime)
+     Delete -> RPC delete_company_cascade(p_company_id)
+
+   After create: super admin onboards tenant (see super-admin-workflow.txt)
+
+
+2. EXECUTIVE ACCOUNT (/system-admin)
+   ----------------------------------
+   SystemAdminPage.tsx — two tabs:
+
+   EXECUTIVE ACCOUNTS (ExecutiveAccountsTab.tsx)
+     - List profiles role = executive
+     - Create -> create-executive edge function
+         Auth user, profile (company_id null)
+         executive_company_assignments for tenant(s)
+     - Edit profile + assignments
+     - Users work on /executive-dashboard and /war-room (read-only)
+
+   WAREHOUSE ACCOUNTS (WarehouseAccountsTab.tsx)
+     - List profiles role = warehouse
+     - Create -> create-warehouse edge function
+         Warehouse hub company + warehouse user
+         warehouse_company_assignments (>= 1 client tenant)
+     - Edit user + client links
+     - See warehouse-workflow.txt for hub operations
+
+
+3. MANAGEMENT PORTAL (/system-management)
+   ---------------------------------------
+   ManagementPortal.tsx — system_administrator only
+
+   Company grid -> select tenant -> tabs (read-only):
+     Clients ........ PortalClients
+     Inventory ...... PortalInventory
+     Orders ......... PortalOrders
+     Finance ........ PortalFinance
+
+   LIVE VIEW:
+     startImpersonation -> navigate /dashboard
+     Super admin sidebar, read-only tenant UX
+
+
+4. SYSTEM HISTORY (/system-history)
+   ---------------------------------
+   SystemHistoryPage.tsx — broad table filters, platform audit RLS
+   Same filter richness as super admin (companies, orders, inventory, etc.)
+
+
+5. PROFILE (/profile)
+   -------------------
+   System administrator account settings
+
+
+--------------------------------------------------------------------------------
+FULL ECOSYSTEM PLACEMENT
+--------------------------------------------------------------------------------
+
+  [System Administrator]
+        |
+        +-- tenant + super admin ----> [Tenant roles: SA, admin, finance, TL, MS]
+        +-- executive ----------------> [War Room / executive dashboard]
+        +-- warehouse ----------------> [Hub -> transfer PO -> tenant stock]
+        +-- portal / live view --------> [Support & audit, no writes in live view]
+
+
+--------------------------------------------------------------------------------
+PERMISSIONS VS OTHER ROLES
+--------------------------------------------------------------------------------
+
+  Capability                 Sys Admin  Super Admin  Executive  Warehouse
+  -------------------------  ---------  -----------  ---------  ---------
+  All tenants                Yes        One          Assigned   Hub+clients
+  Create sales company       Yes        No           No         No
+  Delete/inactivate company  Yes        No           No         No
+  Create executive           Yes        No           No         No
+  Create warehouse           Yes        No           No         No
+  Tenant daily ops           Read*      Yes          Read       Hub ops
+  Approve client orders      No*        Yes          No         No
+  company_id on profile      null       tenant       null       hub
+
+  * Live View blocks mutations even if UI visible
+
+
+--------------------------------------------------------------------------------
+HAPPY PATH CHECKLIST
+--------------------------------------------------------------------------------
+
+  1. Review tenants on /sys-admin-dashboard
+  2. Create company + super admin credentials
+  3. Create executives + company assignments (if using War Room)
+  4. Create warehouse hubs + client links (if using hub catalog/stock)
+  5. Management Portal spot-check (clients, inventory, orders, finance)
+  6. Live View to reproduce tenant issues read-only
+  7. Inactivate or delete company when offboarding (delete is destructive)
+  8. System History for cross-tenant audit
+
+
+--------------------------------------------------------------------------------
+MAIN CODE LOCATIONS
+--------------------------------------------------------------------------------
+
+  Sidebar / redirect .......... AppSidebar.tsx, RoleBasedRedirect.tsx,
+                                usePermissions.ts
+  Company UI .................. SysAdDashboardPage.tsx
+  Executive / warehouse ....... SystemAdminPage.tsx, ExecutiveAccountsTab.tsx,
+                                WarehouseAccountsTab.tsx
+  Management portal ........... ManagementPortal.tsx, portal/Portal*.tsx
+  Impersonation ............... AuthContext.tsx, index.css (.read-only-mode)
+  Edge functions .............. create-company, create-executive, create-warehouse
+  Delete tenant ............... delete_company_cascade
+  RLS ......................... is_system_administrator()
+  Hidden company id ........... SYSTEM_ADMIN_COMPANY_ID constant
+
+
+--------------------------------------------------------------------------------
+KNOWN GAPS / NOTES
+--------------------------------------------------------------------------------
+
+  - usePermissions whitelist may hide /system-history from sidebar.
+  - roleMenuHelper system menu may omit /system-admin; AppSidebar includes it.
+  - Live View is read-only; not for approving orders or editing stock.
+  - create-* functions require system_administrator JWT + service role server-side.
+  - Inactive company forces tenant user logout (realtime on companies).
+  - Ongoing tenant config remains super admin responsibility, not platform admin.
+
+================================================================================
+  End of document
+================================================================================
