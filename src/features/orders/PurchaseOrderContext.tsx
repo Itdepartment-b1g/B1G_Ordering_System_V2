@@ -1,4 +1,4 @@
-import { useState, useEffect, ReactNode } from 'react';
+import { useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -32,6 +32,9 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         .from('purchase_orders')
         .select(`
           id, created_at, supplier_id, fulfillment_type, warehouse_company_id, warehouse_location_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
+          company_account_type, workflow_status, rfpf_number, dr_number,
+          kam_id,
+          key_account_client_id, key_account_shop_id, key_account_address_id,
           warehouse_locations:warehouse_location_id (
             id,
             name,
@@ -45,7 +48,11 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             phone,
             address,
             status
-          )
+          ),
+          client:key_account_clients(client_name),
+          shop:key_account_shops(shop_name, cor_pdf_path),
+          address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
+          kam:profiles!purchase_orders_kam_id_fkey(full_name,email)
         `);
 
       if (user?.role === 'warehouse' && user.company_id) {
@@ -109,7 +116,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             id: item.id,
             variant_id: item.variant_id,
             warehouse_location_id: item.warehouse_location_id ?? null,
-            warehouse_location: Array.isArray(item.warehouse_locations) ? item.warehouse_locations[0] : item.warehouse_locations,
+            warehouse_location: item.warehouse_locations ?? null,
             brand_name: item.variants?.brands?.name || 'Unknown',
             variant_name: item.variants?.name || 'Unknown',
             variant_type: item.variants?.variant_type || 'flavor',
@@ -125,6 +132,12 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           const supplier =
             order.fulfillment_type === 'warehouse_transfer' ? WAREHOUSE_PLACEHOLDER_SUPPLIER : rawSup;
 
+          // Extract Key Account relations (handle both array and object formats)
+          const rawClient = Array.isArray((order as any).client) ? (order as any).client[0] : (order as any).client;
+          const rawShop = Array.isArray((order as any).shop) ? (order as any).shop[0] : (order as any).shop;
+          const rawAddress = Array.isArray((order as any).address) ? (order as any).address[0] : (order as any).address;
+          const rawKam = Array.isArray((order as any).kam) ? (order as any).kam[0] : (order as any).kam;
+
           return {
             ...order,
             supplier,
@@ -135,14 +148,25 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             discount: parseFloat(order.discount),
             total_amount: parseFloat(order.total_amount),
             items: formattedItems,
+            // Key Account fields
+            client: rawClient ?? null,
+            shop: rawShop ?? null,
+            address: rawAddress ?? null,
+            kam: rawKam ?? null,
           };
         })
       );
 
       setPurchaseOrders(ordersWithItems);
     } catch (error) {
+      const msg = String((error as any)?.message || '');
+      const isAbort =
+        (error as any)?.name === 'AbortError' ||
+        msg.includes('AbortError') ||
+        msg.includes('aborted');
+      if (isAbort) return;
+
       console.error('Error fetching purchase orders:', error);
-      // Helpful details when Supabase returns a structured error object
       if (error && typeof error === 'object') {
         try {
           console.error('Error details:', JSON.stringify(error));
@@ -152,7 +176,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       }
       toast({
         title: 'Error',
-        description: (error as any)?.message || 'Failed to load purchase orders',
+        description: msg || 'Failed to load purchase orders',
         variant: 'destructive',
       });
     } finally {
@@ -489,43 +513,51 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.company_id, user?.role]);
 
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const schedulePurchaseOrdersRefresh = (showLoading = false) => {
+    if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+    refreshDebounceRef.current = setTimeout(() => {
+      refreshDebounceRef.current = null;
+      void fetchPurchaseOrders(showLoading);
+    }, 400);
+  };
+
   // Real-time subscriptions
   useEffect(() => {
     if (!user) return;
 
-    fetchPurchaseOrders();
+    void fetchPurchaseOrders();
     fetchSuppliers();
 
-    // Subscribe to purchase orders changes
     const poSubscription = supabase
       .channel('purchase_orders_changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'purchase_orders' },
         () => {
-          console.log('Purchase orders changed, refreshing...');
-          fetchPurchaseOrders(false);
+          schedulePurchaseOrdersRefresh(false);
         }
       )
       .subscribe();
 
-    // Subscribe to purchase order items changes
     const poItemsSubscription = supabase
       .channel('purchase_order_items_changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'purchase_order_items' },
         () => {
-          console.log('Purchase order items changed, refreshing...');
-          fetchPurchaseOrders(false);
+          schedulePurchaseOrdersRefresh(false);
         }
       )
       .subscribe();
 
     return () => {
+      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
       poSubscription.unsubscribe();
       poItemsSubscription.unsubscribe();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.role, user?.company_id]);
 
   return (

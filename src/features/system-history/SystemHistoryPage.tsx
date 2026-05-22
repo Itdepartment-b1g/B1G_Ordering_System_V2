@@ -35,6 +35,7 @@ export default function SystemHistoryPage() {
       case 'system_administrator':
         return 'System History';
       case 'finance':
+      case 'accounting':
         return 'Transaction History';
       case 'manager':
       case 'team_leader':
@@ -51,6 +52,7 @@ export default function SystemHistoryPage() {
       case 'system_administrator':
         return 'Comprehensive audit trail of all system activities';
       case 'finance':
+      case 'accounting':
         return 'Track all financial transactions and order activities';
       case 'manager':
       case 'team_leader':
@@ -243,7 +245,7 @@ export default function SystemHistoryPage() {
       { value: 'client_orders', label: 'Orders' },
     ];
 
-    if (user?.role === 'finance') {
+    if (user?.role === 'finance' || user?.role === 'accounting') {
       return [
         { value: 'all', label: 'All Transactions' },
         { value: 'client_orders', label: 'Orders' },

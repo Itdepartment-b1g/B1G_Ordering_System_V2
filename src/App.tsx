@@ -18,7 +18,7 @@ import { MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, 
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
 import AdminTLRequestsPage from "@/features/inventory/AdminTLRequestsPage";
 import { ClientsPage, MyClientsPage, MyTeamsPage, PendingClientsPage } from "@/features/clients";
-import { AnalyticsPage, ClientAnalyticsPage } from "@/features/analytics";
+import { AnalyticsPage, ClientAnalyticsPage, ProductAnalyticsPage } from "@/features/analytics";
 import VoidedClientsPage from "@/features/clients/VoidedClientsPage";
 import { CalendarPage } from "@/features/calendar";
 import { SalesAgentsPage, TasksPage, ArchiveTasksPage, AgentHistoryPage } from "@/features/sales-agents";
@@ -36,6 +36,7 @@ import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
+import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components";
 import { SupportWidget } from "@/components/SupportWidget";
@@ -123,6 +124,14 @@ const App = () => (
                     <Route path="/system-history" element={<ProtectedRoute><SystemHistoryPage /></ProtectedRoute>} />
                     <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
                     <Route path="/analytics/client/:clientId" element={<ProtectedRoute><ClientAnalyticsPage /></ProtectedRoute>} />
+                    <Route
+                      path="/product-analytics"
+                      element={
+                        <ProtectedRoute allowedRoles={['accounting']}>
+                          <ProductAnalyticsPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
                     <Route path="/purchase-orders" element={<ProtectedRoute><PurchaseOrdersPage /></ProtectedRoute>} />
                     <Route path="/brands" element={<ProtectedRoute><BrandsPage /></ProtectedRoute>} />
@@ -134,8 +143,72 @@ const App = () => (
                     <Route path="/system-admin" element={<ProtectedRoute><SystemAdminPage /></ProtectedRoute>} />
                     <Route path="/system-management" element={<ProtectedRoute><ManagementPortal /></ProtectedRoute>} />
                     <Route path="/sys-admin-dashboard" element={<ProtectedRoute><SysAdDashboardPage /></ProtectedRoute>} />
-                    <Route path="/super-admin-dashboard" element={<ProtectedRoute><SuperAdminDashboardPage /></ProtectedRoute>} />
-                    <Route path="/executive-dashboard" element={<ProtectedRoute><ExecutiveDashboardPage /></ProtectedRoute>} />
+                    <Route path="/super-admin-dashboard" element={<ProtectedRoute allowedRoles={['super_admin']}><SuperAdminDashboardPage /></ProtectedRoute>} />
+                    <Route path="/executive-dashboard" element={<ProtectedRoute allowedRoles={['executive']}><ExecutiveDashboardPage /></ProtectedRoute>} />
+                    <Route 
+                      path="/key-accounts/dashboard" 
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager']}>
+                          <KeyAccountsDashboardWrapper />
+                        </ProtectedRoute>
+                      } 
+                    />
+                    <Route 
+                      path="/key-accounts/clients" 
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager']}>
+                          <ClientHierarchyPage />
+                        </ProtectedRoute>
+                      } 
+                    />
+                    <Route 
+                      path="/key-accounts/assignments" 
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager']}>
+                          <ClientAssignmentPage />
+                        </ProtectedRoute>
+                      } 
+                    />
+                    <Route 
+                      path="/key-accounts/team" 
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director']}>
+                          <KeyAccountTeamPage />
+                        </ProtectedRoute>
+                      } 
+                    />
+                    <Route
+                      path="/key-accounts/analytics"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director']}>
+                          <KeyAccountAnalyticsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/key-accounts/analytics/client/:clientId"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director']}>
+                          <KeyAccountClientAnalyticsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route 
+                      path="/key-accounts/create-order" 
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager']}>
+                          <KeyAccountPurchaseOrderPage />
+                        </ProtectedRoute>
+                      } 
+                    />
+                    <Route 
+                      path="/key-accounts/purchase-orders" 
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager', 'key_account_accounting']}>
+                          <KeyAccountPurchaseOrdersPage />
+                        </ProtectedRoute>
+                      } 
+                    />
                     {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                     <Route path="*" element={<NotFound />} />
                   </Routes>

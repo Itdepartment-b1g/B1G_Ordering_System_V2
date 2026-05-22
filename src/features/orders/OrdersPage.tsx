@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
 import { useAuth } from '@/features/auth';
+import { canApproveFinance } from '@/lib/roleUtils';
 import { supabase } from '@/lib/supabase';
 import { exportClientsToExcel } from '@/lib/excel.helpers';
 import {
@@ -34,6 +40,17 @@ export default function OrdersPage() {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+
+  const orderDateRange = useMemo(() => {
+    return getDateRangeFromPreset(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+  }, [dateRangeFilter]);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
@@ -59,7 +76,10 @@ export default function OrdersPage() {
   // Role flags and leader team state
   // Role flags
   const isAdmin = user?.role === 'admin' || user?.role === 'finance' || user?.role === 'super_admin';
-  const isFinance = user?.role === 'finance';
+  /** Sees all company orders (finance, admin, super_admin, accounting) — not the same as approve rights */
+  const canViewCompanyOrders =
+    isAdmin || user?.role === 'accounting';
+  const canApproveAsFinance = canApproveFinance(user?.role);
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
   
@@ -191,7 +211,7 @@ export default function OrdersPage() {
 
   // Restrict visible orders based on role
   const visibleOrders = useMemo(() => {
-    if (isAdmin) return orders;
+    if (canViewCompanyOrders) return orders;
     if (isLeader) {
       // Include team leader's own orders + team member orders
       const allAgentIds = user?.id ? [...teamMemberIds, user.id] : teamMemberIds;
@@ -200,7 +220,7 @@ export default function OrdersPage() {
       }
     }
     return [] as Order[];
-  }, [orders, isAdmin, isLeader, teamMemberIds, user?.id]);
+  }, [orders, canViewCompanyOrders, isLeader, teamMemberIds, user?.id]);
 
   // Team summary logic removed
   // Build team agent list (leaders only) from visible orders
@@ -234,6 +254,17 @@ export default function OrdersPage() {
       return d >= start && d < end;
     }).length;
   }, [approvedOrdersAll]);
+
+  /** Approved order value — respects header date filter (matches Product Analytics) */
+  const approvedOrderValueTotal = useMemo(() => {
+    let list = approvedOrdersAll;
+    if (orderDateRange.start || orderDateRange.end) {
+      list = list.filter((o) =>
+        isDateInRange(o.date, orderDateRange.start, orderDateRange.end)
+      );
+    }
+    return list.reduce((sum, o) => sum + o.total, 0);
+  }, [approvedOrdersAll, orderDateRange]);
 
   // Map legacy status + stage to a clearer label for display
   const getStatusLabel = (order: Order) => {
@@ -491,6 +522,11 @@ export default function OrdersPage() {
     if (selectedPaymentMethod && selectedPaymentMethod !== "all") {
       filtered = filtered.filter(o => orderMatchesPaymentMethod(o, selectedPaymentMethod));
     }
+    if (orderDateRange.start || orderDateRange.end) {
+      filtered = filtered.filter(o =>
+        isDateInRange(o.date, orderDateRange.start, orderDateRange.end)
+      );
+    }
     if (searchQuery) {
       filtered = filtered.filter(o =>
         o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -606,7 +642,7 @@ export default function OrdersPage() {
     }
 
     // Only admin / finance / super_admin can import historical orders
-    if (!isAdmin && !isFinance) {
+    if (!isAdmin && !canApproveAsFinance) {
       toast({
         title: 'Not authorized',
         description: 'Only admin or finance can import orders.',
@@ -862,7 +898,7 @@ export default function OrdersPage() {
       return;
     }
 
-    if (!isAdmin && !isFinance) {
+    if (!isAdmin && !canApproveAsFinance) {
       toast({
         title: 'Not authorized',
         description: 'Only admin or finance can import orders.',
@@ -1525,7 +1561,7 @@ export default function OrdersPage() {
       </>
     );
   };
-  if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'super_admin' && user.role !== 'team_leader')) {
+  if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'accounting' && user.role !== 'super_admin' && user.role !== 'team_leader')) {
     return (
       <div className="p-8 text-center">
         <h1 className="text-2xl font-bold text-red-600">Access Denied</h1>
@@ -1540,12 +1576,14 @@ export default function OrdersPage() {
         <div>
           <h1 className="text-3xl font-bold">Order Management</h1>
           <p className="text-muted-foreground">
-            {isLeader 
-              ? 'View and monitor orders from your team members' 
-              : 'Review and approve purchase orders from sales agents'}
+            {isLeader
+              ? 'View and monitor orders from your team members'
+              : user?.role === 'accounting'
+                ? 'View purchase orders from sales agents (read-only)'
+                : 'Review and approve purchase orders from sales agents'}
           </p>
         </div>
-        {(isAdmin || isFinance) && (
+        {(isAdmin || canApproveAsFinance) && (
           <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
             <Button variant="outline" onClick={handleDownloadOrderTemplate} className="gap-2">
               <Download className="h-4 w-4" />
@@ -1572,7 +1610,7 @@ export default function OrdersPage() {
               <FileText className="h-4 w-4" />
               Export
             </Button>
-            {isFinance && (
+            {canApproveAsFinance && (
               <Button onClick={handleOpenBulkApprove} className="gap-2">
                 <CheckSquare className="h-4 w-4" />
                 Bulk Approve Orders
@@ -1603,11 +1641,11 @@ export default function OrdersPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">Total Value</p>
+            <p className="text-sm font-medium">Approved Order Value</p>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              ₱{visibleOrders.reduce((sum, o) => sum + o.total, 0).toLocaleString()}
+              ₱{approvedOrderValueTotal.toLocaleString()}
             </div>
           </CardContent>
         </Card>
@@ -1648,11 +1686,16 @@ export default function OrdersPage() {
                 className="pl-10"
               />
             </div>
+            <DateRangeFilterPopover
+              value={dateRangeFilter}
+              onChange={setDateRangeFilter}
+              triggerClassName="w-full md:w-[220px] justify-between h-10 shrink-0"
+            />
             <Select
               value={selectedPaymentMethod}
               onValueChange={setSelectedPaymentMethod}
             >
-              <SelectTrigger className="w-full md:w-[200px]">
+              <SelectTrigger className="w-full md:w-[200px] shrink-0">
                 <div className="flex items-center gap-2">
                   <Filter className="h-4 w-4 text-muted-foreground" />
                   <SelectValue placeholder="Filter Method" />
@@ -2139,7 +2182,7 @@ export default function OrdersPage() {
                 ) : null
               )}
 
-              {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
+              {canApproveAsFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
                 (() => {
                   const hasCashOrChequeComponent = viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits
                     ? viewingOrder.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE')

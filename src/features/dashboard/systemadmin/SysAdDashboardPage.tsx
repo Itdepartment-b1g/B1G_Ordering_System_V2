@@ -397,10 +397,18 @@ export default function SysAdDashboardPage() {
                 </div>
               </div>
               <div className="border-t pt-6">
-                <h3 className="text-sm font-semibold mb-5">Super Administrator Details</h3>
+                <h3 className="text-sm font-semibold mb-5">
+                  {newCompany.company_account_type === 'Key Accounts'
+                    ? 'Sales Head Details'
+                    : 'Super Administrator Details'}
+                </h3>
                 <div className="space-y-5">
                   <div className="space-y-2">
-                    <Label htmlFor="super_admin_name">Super Admin Name *</Label>
+                    <Label htmlFor="super_admin_name">
+                      {newCompany.company_account_type === 'Key Accounts'
+                        ? 'Sales Head Name *'
+                        : 'Super Admin Name *'}
+                    </Label>
                     <Input
                       id="super_admin_name"
                       value={newCompany.super_admin_name}
@@ -411,7 +419,11 @@ export default function SysAdDashboardPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="super_admin_email">Super Admin Email *</Label>
+                    <Label htmlFor="super_admin_email">
+                      {newCompany.company_account_type === 'Key Accounts'
+                        ? 'Sales Head Email *'
+                        : 'Super Admin Email *'}
+                    </Label>
                     <Input
                       id="super_admin_email"
                       type="email"

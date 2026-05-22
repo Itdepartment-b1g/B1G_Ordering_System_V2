@@ -38,6 +38,14 @@ export function RoleBasedRedirect() {
       return <Navigate to="/executive-dashboard" replace />;
     case 'warehouse':
       return <Navigate to="/inventory/board" replace />;
+    // Key Account roles
+    case 'sales_head':
+    case 'sales_admin':
+    case 'sales_director':
+    case 'key_account_manager':
+      return <Navigate to="/key-accounts/dashboard" replace />;
+    case 'key_account_accounting':
+      return <Navigate to="/key-accounts/purchase-orders" replace />;
     default:
       return <Navigate to="/dashboard" replace />;
   }

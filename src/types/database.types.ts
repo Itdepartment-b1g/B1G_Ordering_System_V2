@@ -1,13 +1,45 @@
 // B1G Ordering System - Database Types
 // Auto-generated TypeScript types for Supabase tables
 
-export type UserRole = 'system_administrator' | 'super_admin' | 'admin' | 'finance' | 'manager' | 'team_leader' | 'mobile_sales' | 'sales_agent' | 'executive' | 'warehouse';
+export type UserRole = 
+  | 'system_administrator' 
+  | 'super_admin' 
+  | 'admin' 
+  | 'finance'
+  | 'accounting'
+  | 'manager' 
+  | 'team_leader' 
+  | 'mobile_sales' 
+  | 'sales_agent' 
+  | 'executive' 
+  | 'warehouse'
+  // Key Account specific roles
+  | 'sales_head'
+  | 'sales_admin'
+  | 'sales_director'
+  | 'key_account_manager'
+  | 'key_account_accounting';
 export type UserStatus = 'active' | 'inactive';
 export type VariantType = 'flavor' | 'battery' | 'posm';
 export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
 export type AgentInventoryStatus = 'available' | 'low' | 'none';
 export type OrderStatus = 'pending' | 'approved' | 'rejected';
 export type PurchaseOrderStatus = 'pending' | 'approved' | 'rejected' | 'delivered';
+
+// Key Account workflow specific statuses
+export type KeyAccountWorkflowStatus = 
+  | 'kam_pending'
+  | 'director_pending'
+  | 'admin_pending'
+  | 'approved'
+  | 'rejected'
+  | 'warehouse_reserved'
+  | 'fulfilled'
+  | 'delivered';
+
+export type CompanyAccountType = 'Standard Accounts' | 'Key Accounts';
+
+export type KeyAccountClientStatus = 'active' | 'inactive' | 'suspended';
 export type TransactionType =
   | 'purchase_order_received'
   | 'allocated_to_agent'
@@ -33,7 +65,14 @@ export type NotificationType =
   | 'stock_request_approved'
   | 'stock_request_rejected'
   | 'audit_system_change'
-  | 'audit_critical_action';
+  | 'audit_critical_action'
+  // Key Account specific notifications
+  | 'key_account_order_created'
+  | 'key_account_order_director_approved'
+  | 'key_account_order_admin_approved'
+  | 'key_account_order_rejected'
+  | 'key_account_client_assigned'
+  | 'key_account_dr_generated';
 
 export type AuditOperation = 'INSERT' | 'UPDATE' | 'DELETE';
 
@@ -133,6 +172,118 @@ export interface WarehouseCompanyAssignment {
   company?: Company;
 }
 
+// ============================================================================
+// KEY ACCOUNT TABLE TYPES (Phase 1)
+// ============================================================================
+
+export interface KeyAccountClient {
+  id: string;
+  company_id: string;
+  client_code: string;
+  client_name: string;
+  /** Business / channel category (distributor, retail variants) */
+  client_category?: string;
+  industry?: string;
+  contact_person?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  payment_terms?: string;
+  credit_limit: number;
+  status: KeyAccountClientStatus;
+  notes?: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KeyAccountShop {
+  id: string;
+  client_id: string;
+  shop_code: string;
+  shop_name: string;
+  /** Path in ka-shop-cor storage bucket */
+  cor_pdf_path?: string;
+  city?: string;
+  region?: string;
+  province?: string;
+  contact_person?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  operating_hours?: string;
+  is_active: boolean;
+  notes?: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KeyAccountDeliveryAddress {
+  id: string;
+  shop_id: string;
+  address_label: string;
+  full_address: string;
+  city?: string;
+  region?: string;
+  province?: string;
+  zip_code?: string;
+  contact_name?: string;
+  contact_phone?: string;
+  delivery_instructions?: string;
+  receiving_hours?: string;
+  is_default: boolean;
+  is_active: boolean;
+  latitude?: number;
+  longitude?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KAMDirectorAssignment {
+  id: string;
+  director_id: string;
+  kam_id: string;
+  company_id: string;
+  assigned_by?: string;
+  assigned_at: string;
+  created_at: string;
+  updated_at: string;
+  director?: Profile;
+  kam?: Profile;
+}
+
+export interface KAMClientAssignment {
+  id: string;
+  kam_id: string;
+  client_id: string;
+  company_id: string;
+  assigned_by?: string;
+  assigned_at: string;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+  kam?: Profile;
+  client?: KeyAccountClient;
+}
+
+// Extended PurchaseOrder interface (Key Account fields)
+export interface KeyAccountPurchaseOrder {
+  company_account_type: CompanyAccountType;
+  key_account_client_id?: string;
+  key_account_shop_id?: string;
+  key_account_address_id?: string;
+  kam_id?: string;
+  workflow_status: KeyAccountWorkflowStatus;
+  custom_pricing_confirmed: boolean;
+  director_approved_at?: string;
+  director_approved_by?: string;
+  admin_approved_at?: string;
+  admin_approved_by?: string;
+  dr_number?: string;
+  key_account_payment_terms?: string | null;
+  key_account_payment_mode?: KeyAccountPoPaymentMode | null;
+  key_account_payment_status?: KeyAccountPoPaymentStatus | null;
+}
+
 export interface Brand {
   id: string;
   company_id: string;
@@ -208,6 +359,21 @@ export interface Supplier {
 
 export type PurchaseOrderFulfillmentType = 'supplier' | 'warehouse_transfer';
 
+export type KeyAccountPoPaymentMode = 'full' | 'split';
+export type KeyAccountPoPaymentStatus = 'unpaid' | 'partial' | 'paid';
+
+export interface PurchaseOrderKeyAccountPayment {
+  id: string;
+  purchase_order_id: string;
+  company_id: string;
+  amount: number;
+  payment_method: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
+  bank_type?: 'Unionbank' | 'BPI' | 'PBCOM' | null;
+  proof_storage_path?: string | null;
+  recorded_by?: string | null;
+  created_at: string;
+}
+
 export interface PurchaseOrder {
   id: string;
   company_id: string;
@@ -229,6 +395,10 @@ export interface PurchaseOrder {
   approved_at?: string;
   created_at: string;
   updated_at: string;
+  /** Key Account: terms snapshot for this PO */
+  key_account_payment_terms?: string | null;
+  key_account_payment_mode?: KeyAccountPoPaymentMode | null;
+  key_account_payment_status?: KeyAccountPoPaymentStatus | null;
 }
 
 export interface PurchaseOrderItem {
@@ -823,6 +993,14 @@ export interface Database {
     Functions: {
       generate_po_number: {
         Args: Record<string, never>;
+        Returns: string;
+      };
+      generate_key_account_client_code: {
+        Args: { p_company_id: string };
+        Returns: string;
+      };
+      generate_key_account_shop_code: {
+        Args: { p_client_id: string };
         Returns: string;
       };
       generate_order_number: {
