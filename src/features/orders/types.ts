@@ -30,6 +30,13 @@ export interface PurchaseOrder {
     id: string;
     po_number: string;
     company_id?: string;
+    company_account_type?: 'Key Accounts' | 'Standard Accounts' | string | null;
+    workflow_status?: string | null;
+    rfpf_number?: string | null;
+    /** Set when Key Account dispatch completes (warehouse). */
+    dr_number?: string | null;
+    /** Key Account PO: assigned KAM profile id (may differ from warehouse company). */
+    kam_id?: string | null;
     supplier_id: string | null;
     fulfillment_type?: 'supplier' | 'warehouse_transfer';
     warehouse_company_id?: string | null;

@@ -31,7 +31,7 @@ export default function DashboardPage() {
   const isAdmin = user?.role === 'admin';
   const isLeader = user?.role === 'team_leader';
   const isAgent = user?.role === 'sales_agent' || user?.role === 'mobile_sales';
-  const isFinance = user?.role === 'finance';
+  const isFinance = user?.role === 'finance' || user?.role === 'accounting';
 
   // Redirect logic
   useEffect(() => {
@@ -41,6 +41,15 @@ export default function DashboardPage() {
       navigate('/super-admin-dashboard', { replace: true });
     } else if (user?.role === 'manager') {
       navigate('/manager-dashboard', { replace: true });
+    } else if (user?.role === 'key_account_accounting') {
+      navigate('/key-accounts/purchase-orders', { replace: true });
+    } else if (
+      user?.role === 'sales_head' ||
+      user?.role === 'sales_admin' ||
+      user?.role === 'sales_director' ||
+      user?.role === 'key_account_manager'
+    ) {
+      navigate('/key-accounts/dashboard', { replace: true });
     }
   }, [user?.role, navigate]);
 

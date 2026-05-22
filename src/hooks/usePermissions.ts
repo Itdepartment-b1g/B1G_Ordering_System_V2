@@ -81,9 +81,17 @@ export function usePermissions() {
     }
 
     // For other roles, you can add specific route checks here
-    // Restrict /orders to admin and finance roles
+    if (route === '/finance/payment-settings') {
+      return user?.role === 'finance';
+    }
+
+    if (route === '/product-analytics') {
+      return user?.role === 'accounting';
+    }
+
+    // Restrict /orders to admin, finance, and accounting (view-only for accounting)
     if (route === '/orders') {
-      return user?.role === 'admin' || user?.role === 'finance';
+      return user?.role === 'admin' || user?.role === 'finance' || user?.role === 'accounting';
     }
 
     // For other roles, return true for all authenticated users (will be refined later)

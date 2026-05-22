@@ -131,6 +131,7 @@ export function AuditLogCard({ groupedLog }: AuditLogCardProps) {
       case 'admin':
         return 'bg-indigo-100 text-indigo-800';
       case 'finance':
+      case 'accounting':
         return 'bg-yellow-100 text-yellow-800';
       case 'manager':
         return 'bg-orange-100 text-orange-800';

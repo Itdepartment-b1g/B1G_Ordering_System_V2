@@ -30,7 +30,10 @@ import {
   Settings,
   ShieldCheck,
   CreditCard,
-  FileText
+  FileText,
+  Link,
+  Network,
+  Plus
 } from 'lucide-react';
 import {
   Sidebar,
@@ -121,6 +124,130 @@ const adminMenuItems: MenuItem[] = [
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'System History', url: '/system-history', icon: History },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
+// Key Account Sales Admin menu
+const salesAdminMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/key-accounts/dashboard', icon: LayoutDashboard },
+  {
+    title: 'Member Management',
+    url: '/member-management',
+    icon: Users,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'User Management', url: '/sales-agents', icon: Users },
+      { title: 'Team Management', url: '/key-accounts/team', icon: Crown },
+    ]
+  },
+  {
+    title: 'Client',
+    url: '/key-accounts',
+    icon: Building2,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Client Hierarchy', url: '/key-accounts/clients', icon: Building2 },
+      { title: 'Client Assignment', url: '/key-accounts/assignments', icon: Link },
+    ]
+  },
+
+  {
+    title: 'Procurement',
+    url: '/purchase-order-management',
+    icon: ClipboardList,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+    ]
+  },
+  { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
+// Key Account Sales Head — same as Sales Admin plus create PO (orders start at admin_pending)
+const salesHeadMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/key-accounts/dashboard', icon: LayoutDashboard },
+  {
+    title: 'Member Management',
+    url: '/member-management',
+    icon: Users,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'User Management', url: '/sales-agents', icon: Users },
+      { title: 'Team Management', url: '/key-accounts/team', icon: Crown },
+    ]
+  },
+  {
+    title: 'Client',
+    url: '/key-accounts',
+    icon: Building2,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Client Hierarchy', url: '/key-accounts/clients', icon: Building2 },
+      { title: 'Client Assignment', url: '/key-accounts/assignments', icon: Link },
+    ]
+  },
+  {
+    title: 'Procurement',
+    url: '/purchase-order-management',
+    icon: ClipboardList,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
+      { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+    ]
+  },
+  { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
+// Key Account Accounting — view-only PO and transaction details
+const keyAccountAccountingMenuItems: MenuItem[] = [
+  { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
+// Key Account Sales Director menu
+const salesDirectorMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/key-accounts/dashboard', icon: LayoutDashboard },
+  {
+    title: 'Client',
+    url: '/key-accounts',
+    icon: Building2,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Client Hierarchy', url: '/key-accounts/clients', icon: Building2 },
+      { title: 'Client Assignment', url: '/key-accounts/assignments', icon: Link },
+    ]
+  },
+  {
+    title: 'Procurement',
+    url: '/key-accounts/purchase-orders',
+    icon: ClipboardList,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
+      { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+    ]
+  },
+  { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
+// Key Account Manager menu
+const keyAccountManagerMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/key-accounts/dashboard', icon: LayoutDashboard },
+  { title: 'My Clients', url: '/key-accounts/clients', icon: Building2 },
+  {
+    title: 'Purchase Orders',
+    url: '/key-accounts/purchase-orders',
+    icon: ClipboardList,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
+      { title: 'My Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+    ]
+  },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -258,6 +385,25 @@ const financeMenuItems: MenuItem[] = [
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
+/** View-only finance: same pages except Payment Settings */
+const accountingMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
+  {
+    title: 'Finance',
+    url: '/finance-section',
+    icon: DollarSign,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'Finance Page', url: '/finance', icon: DollarSign },
+      { title: 'Order List', url: '/orders', icon: ShoppingCart },
+      { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+    ]
+  },
+  { title: 'Product Analytics', url: '/product-analytics', icon: Package },
+  { title: 'System History', url: '/system-history', icon: History },
+  { title: 'Profile', url: '/profile', icon: UserCircle },
+];
+
 // Super Admin menu - has access to ALL pages
 const superAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/super-admin-dashboard', icon: LayoutDashboard },
@@ -390,12 +536,22 @@ export function AppSidebar() {
       baseMenuItems = superAdminMenuItems;
     } else if (user?.role === 'admin') {
       baseMenuItems = adminMenuItems;
+    } else if (user?.role === 'sales_admin' || user?.role === 'sales_head') {
+      baseMenuItems = user?.role === 'sales_head' ? salesHeadMenuItems : salesAdminMenuItems;
+    } else if (user?.role === 'key_account_accounting') {
+      baseMenuItems = keyAccountAccountingMenuItems;
+    } else if (user?.role === 'sales_director') {
+      baseMenuItems = salesDirectorMenuItems;
     } else if (user?.role === 'manager') {
       baseMenuItems = managerMenuItems;
+    } else if (user?.role === 'key_account_manager') {
+      baseMenuItems = keyAccountManagerMenuItems;
     } else if (user?.role === 'team_leader') {
       baseMenuItems = leaderMenuItems;
     } else if (user?.role === 'finance') {
       baseMenuItems = financeMenuItems;
+    } else if (user?.role === 'accounting') {
+      baseMenuItems = accountingMenuItems;
     } else if (user?.role === 'mobile_sales') {
       baseMenuItems = agentMenuItems;
     } else {

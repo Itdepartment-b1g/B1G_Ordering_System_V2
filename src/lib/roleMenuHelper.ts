@@ -112,6 +112,18 @@ const financeMenuItems: MenuItem[] = [
   { title: 'Profile', url: '/profile', description: 'Update your finance user profile.' },
 ];
 
+const accountingMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/dashboard', description: 'Finance snapshot and pending items overview.' },
+  { title: 'Finance', url: '/finance-section', description: 'View finance tools (read-only).', hasSubmenu: true, submenu: [
+    { title: 'Finance Page', url: '/finance', description: 'Revenue and deposit summaries.' },
+    { title: 'Order List', url: '/orders', description: 'View orders without approval actions.' },
+    { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Track cash and cheque deposits.' },
+  ]},
+  { title: 'Product Analytics', url: '/product-analytics', description: 'Product sales from approved orders by brand and variant.' },
+  { title: 'System History', url: '/system-history', description: 'Transaction and order activity history.' },
+  { title: 'Profile', url: '/profile', description: 'Update your profile.' },
+];
+
 const superAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/super-admin-dashboard', description: 'Super admin overview across all companies and tenants.' },
   { title: 'Member Management', url: '/member-management', description: 'Global control of users and teams.', hasSubmenu: true, submenu: [
@@ -194,6 +206,8 @@ export function getMenuItemsForRole(role: string | undefined): MenuItem[] {
       return leaderMenuItems;
     case 'finance':
       return financeMenuItems;
+    case 'accounting':
+      return accountingMenuItems;
     case 'mobile_sales':
       return agentMenuItems;
     default:
