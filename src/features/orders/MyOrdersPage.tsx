@@ -960,6 +960,20 @@ export default function MyOrdersPage() {
   const handleSignatureCaptured = (dataUrl: string) => {
     setSignatureDataUrl(dataUrl);
     setShowSignatureModal(false);
+
+    // FOC (Free of Charge) orders: total is zero, so no payment is required.
+    // Skip payment mode / method / proof modals and jump straight to confirmation.
+    if (calculateTotal() === 0) {
+      setPaymentMode('FULL');
+      setPaymentMethod(null);
+      setSelectedBank(null);
+      setPaymentProofFile(null);
+      setPaymentProofPreview(null);
+      setPaymentSplits([]);
+      setShowConfirmModal(true);
+      return;
+    }
+
     setShowPaymentModeDialog(true); // Changed to show payment mode selector first
   };
 
@@ -1417,8 +1431,11 @@ export default function MyOrdersPage() {
       return;
     }
 
-    // Validate FULL payment mode
-    if (paymentMode === 'FULL') {
+    // FOC (Free of Charge) orders: total is zero, so no payment method / proof is required.
+    const isFreeOfCharge = calculateTotal() === 0;
+
+    // Validate FULL payment mode (skipped for FOC orders)
+    if (!isFreeOfCharge && paymentMode === 'FULL') {
       if (!paymentMethod || !paymentProofFile) {
         toast({
           title: 'Error',
@@ -1439,8 +1456,8 @@ export default function MyOrdersPage() {
       }
     }
 
-    // Validate SPLIT payment mode
-    if (paymentMode === 'SPLIT') {
+    // Validate SPLIT payment mode (skipped for FOC orders)
+    if (!isFreeOfCharge && paymentMode === 'SPLIT') {
       if (!validateSplitPayment()) {
         toast({
           title: 'Error',
@@ -1500,26 +1517,29 @@ export default function MyOrdersPage() {
       let paymentProofUrl: string | undefined = undefined;
       let uploadedSplits: PaymentSplit[] | undefined = undefined;
 
-      if (paymentMode === 'FULL') {
-        // Upload payment proof for FULL payment
-        paymentProofUrl = await uploadPaymentProofToStorage(generatedOrderNumber);
-      } else {
-        // Upload split payment proofs
-        const uploadsPromises = paymentSplits.map((split, index) => {
-          if (split.proofFile) {
-            return uploadSplitProof(split.proofFile, index, generatedOrderNumber);
-          }
-          return Promise.resolve('');
-        });
-        
-        const uploadedUrls = await Promise.all(uploadsPromises);
-        
-        uploadedSplits = paymentSplits.map((split, index) => ({
-          method: split.method,
-          bank: split.bank,
-          amount: split.amount,
-          proofUrl: uploadedUrls[index]
-        }));
+      // FOC orders skip payment proof uploads entirely (nothing to pay for).
+      if (!isFreeOfCharge) {
+        if (paymentMode === 'FULL') {
+          // Upload payment proof for FULL payment
+          paymentProofUrl = await uploadPaymentProofToStorage(generatedOrderNumber);
+        } else {
+          // Upload split payment proofs
+          const uploadsPromises = paymentSplits.map((split, index) => {
+            if (split.proofFile) {
+              return uploadSplitProof(split.proofFile, index, generatedOrderNumber);
+            }
+            return Promise.resolve('');
+          });
+
+          const uploadedUrls = await Promise.all(uploadsPromises);
+
+          uploadedSplits = paymentSplits.map((split, index) => ({
+            method: split.method,
+            bank: split.bank,
+            amount: split.amount,
+            proofUrl: uploadedUrls[index]
+          }));
+        }
       }
 
       // Helper function to normalize bank name to match database constraint
@@ -1546,12 +1566,16 @@ export default function MyOrdersPage() {
       };
 
       // Determine stage based on payment method
-      // BANK_TRANSFER/GCASH -> finance_pending (goes directly to finance for approval)
-      // CASH/CHEQUE -> agent_pending (goes to team leader first for cash deposit handling)
+      // FOC (total = 0)             -> finance_pending (no cash to remit/deposit, finance approves directly)
+      // BANK_TRANSFER/GCASH         -> finance_pending (goes directly to finance for approval)
+      // CASH/CHEQUE                 -> agent_pending (goes to team leader first for cash deposit handling)
       // This applies to both mobile sales agents and team leaders
       let orderStage: 'agent_pending' | 'finance_pending' = 'agent_pending';
-      
-      if (paymentMode === 'FULL') {
+
+      if (isFreeOfCharge) {
+        // FOC orders skip the remittance/deposit path entirely
+        orderStage = 'finance_pending';
+      } else if (paymentMode === 'FULL') {
         // For full payment, check the payment method
         if (paymentMethod === 'BANK_TRANSFER' || paymentMethod === 'GCASH') {
           orderStage = 'finance_pending';
@@ -1584,11 +1608,12 @@ export default function MyOrdersPage() {
         notes,
         status: 'pending' as const,
         stage: orderStage, // Set stage based on role and payment method
+        remitted: isFreeOfCharge ? true : undefined, // FOC orders are auto-remitted (nothing to remit)
         signatureUrl, // Add signature URL to order
-        paymentMode, // NEW: Add payment mode
-        paymentMethod: paymentMode === 'FULL' ? paymentMethod : undefined, // Only for FULL
-        bankType: paymentMode === 'FULL' && paymentMethod === 'BANK_TRANSFER' && selectedBank 
-          ? normalizeBankType(selectedBank.name) || null 
+        paymentMode: isFreeOfCharge ? 'FULL' : paymentMode, // FOC stays as FULL with no method
+        paymentMethod: isFreeOfCharge ? null : (paymentMode === 'FULL' ? paymentMethod : undefined), // Only for FULL non-FOC
+        bankType: !isFreeOfCharge && paymentMode === 'FULL' && paymentMethod === 'BANK_TRANSFER' && selectedBank
+          ? normalizeBankType(selectedBank.name) || null
           : undefined, // Normalize bank name to match constraint
         paymentProofUrl: paymentMode === 'FULL' ? paymentProofUrl : undefined, // Only for FULL
         paymentSplits: paymentMode === 'SPLIT' ? uploadedSplits : undefined, // NEW: Only for SPLIT
@@ -3762,12 +3787,17 @@ export default function MyOrdersPage() {
                 variant="outline"
                 onClick={() => {
                   setShowConfirmModal(false);
-                  setShowPaymentProofModal(true);
+                  // FOC orders skipped payment proof entirely - go back to signature instead
+                  if (calculateTotal() === 0) {
+                    setShowSignatureModal(true);
+                  } else {
+                    setShowPaymentProofModal(true);
+                  }
                 }}
                 disabled={uploadingSignature || uploadingPaymentProof}
                 className="w-full sm:w-auto min-h-[44px]"
               >
-                Back to Payment Proof
+                {calculateTotal() === 0 ? 'Back to Signature' : 'Back to Payment Proof'}
               </Button>
               <Button
                 onClick={() => {

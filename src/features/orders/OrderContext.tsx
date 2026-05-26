@@ -72,6 +72,56 @@ interface OrderContextType {
 
 const OrderContext = createContext<OrderContextType | undefined>(undefined);
 
+function isZeroOrderTotal(totalAmount: unknown): boolean {
+  return Math.abs(Number(totalAmount ?? 0)) < 0.01;
+}
+
+/** Used when Supabase RPC still requires deposit for zero-value cash/cheque orders */
+async function approveZeroValueOrderDirect(orderId: string, companyId: string): Promise<void> {
+  const { error: orderError } = await supabase
+    .from('client_orders')
+    .update({
+      status: 'approved',
+      stage: 'admin_approved',
+      updated_at: new Date().toISOString(),
+    } as any)
+    .eq('id', orderId);
+
+  if (orderError) throw orderError;
+
+  const { data: items, error: itemsError } = await supabase
+    .from('client_order_items')
+    .select('variant_id, quantity')
+    .eq('client_order_id', orderId);
+
+  if (itemsError) throw itemsError;
+
+  for (const item of items || []) {
+    const { data: inv, error: invGetError } = await supabase
+      .from('main_inventory')
+      .select('stock, allocated_stock')
+      .eq('variant_id', item.variant_id)
+      .eq('company_id', companyId)
+      .maybeSingle();
+
+    if (invGetError) throw invGetError;
+    if (!inv) continue;
+
+    const qty = item.quantity || 0;
+    const { error: invUpdateError } = await supabase
+      .from('main_inventory')
+      .update({
+        stock: Math.max(0, (inv.stock || 0) - qty),
+        allocated_stock: Math.max(0, (inv.allocated_stock || 0) - qty),
+        updated_at: new Date().toISOString(),
+      } as any)
+      .eq('variant_id', item.variant_id)
+      .eq('company_id', companyId);
+
+    if (invUpdateError) throw invUpdateError;
+  }
+}
+
 export function OrderProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -270,7 +320,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           subtotal: order.subtotal,
           tax: order.tax_amount,
           discount: order.discount || 0,
-          total: order.status === 'approved' ? approvedTotal + (order.tax_amount || 0) - (order.discount || 0) : order.total_amount,
+          total: order.status === 'approved'
+            ? approvedTotal + (order.tax_amount || 0) - (order.discount || 0)
+            : Number(order.total_amount ?? 0),
           notes: order.notes || '',
           status: order.status,
           stage: order.stage,
@@ -446,6 +498,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             : null,
           status: 'pending',
           stage: (order as any).stage || 'agent_pending', // Use stage from order (finance_pending for team leader bank transfers)
+          remitted: (order as any).remitted ?? false, // FOC (total=0) orders are marked remitted on creation
           pricing_strategy: (order as any).pricingStrategy || 'rsp'
         } as any)
         .select('id, order_number')
@@ -765,28 +818,44 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       if (!user) throw new Error('User not authenticated');
 
       if (status === 'approved') {
-        // Use new database function that handles:
-        // 1. Order approval & inventory deduction
-        // 2. Cash deposit verification (for CASH orders with deposit_id)
-        const { data, error } = await supabase
-          .rpc('approve_order_and_verify_deposit', {
-            p_order_id: orderId
-          });
+        const { data: orderMeta, error: metaError } = await supabase
+          .from('client_orders')
+          .select('total_amount, company_id')
+          .eq('id', orderId)
+          .maybeSingle();
+
+        if (metaError) throw metaError;
+
+        const isZeroValue = isZeroOrderTotal(orderMeta?.total_amount);
+
+        const { data, error } = await supabase.rpc('approve_order_and_verify_deposit', {
+          p_order_id: orderId,
+        });
 
         if (error) {
           console.error('Error approving order:', error);
           throw error;
         }
 
-        if (!data || !data.success) {
-          throw new Error(data?.message || 'Failed to approve order');
-        }
+        if (!data?.success) {
+          const depositBlocked =
+            isZeroValue &&
+            typeof data?.message === 'string' &&
+            data.message.toLowerCase().includes('deposit');
 
-        console.log('✅ Order approved:', data);
-
-        // Log if deposit was verified
-        if (data.deposit_verified) {
-          console.log('💰 Cash deposit verified as part of order approval');
+          if (depositBlocked && orderMeta?.company_id) {
+            console.warn(
+              'Zero-value order: RPC deposit check failed; approving via direct update. Deploy supabase/migrations/20260525130000_approve_order_zero_value_bypass.sql on Supabase for permanent fix.'
+            );
+            await approveZeroValueOrderDirect(orderId, orderMeta.company_id);
+          } else {
+            throw new Error(data?.message || 'Failed to approve order');
+          }
+        } else {
+          console.log('✅ Order approved:', data);
+          if (data.deposit_verified) {
+            console.log('💰 Cash deposit verified as part of order approval');
+          }
         }
       } else if (status === 'rejected') {
         // Use database function for rejection (handles inventory return)
@@ -864,7 +933,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       }
 
       // Optimistically update local state so UI reflects changes immediately
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+      setOrders(prev =>
+        prev.map(o =>
+          o.id === orderId
+            ? {
+                ...o,
+                status,
+                ...(status === 'approved' ? { stage: 'admin_approved' as const } : {}),
+              }
+            : o
+        )
+      );
 
       // Real-time will handle the UI update
     } catch (err: any) {

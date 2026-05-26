@@ -33,6 +33,20 @@ import {
 } from "@/components/ui/alert-dialog";
 import * as XLSX from 'xlsx';
 
+/** Zero-value orders skip deposit/remittance requirements (handles "0.00" strings from Supabase). */
+function isZeroValueOrder(order: {
+  total?: number | string | null;
+  subtotal?: number | string | null;
+  tax?: number | string | null;
+  discount?: number | string | null;
+}): boolean {
+  const total = Number(order.total);
+  if (!Number.isNaN(total) && Math.abs(total) < 0.01) return true;
+  const computed =
+    Number(order.subtotal ?? 0) + Number(order.tax ?? 0) - Number(order.discount ?? 0);
+  return !Number.isNaN(computed) && Math.abs(computed) < 0.01;
+}
+
 //orderpage
 export default function OrdersPage() {
   const { getAllOrders, updateOrderStatus } = useOrders();
@@ -318,6 +332,19 @@ export default function OrdersPage() {
     if (!orderToApprove) return;
 
     // Safety check: Block approval of cash/cheque orders (FULL or SPLIT) without deposit OR without bank details recorded
+    // Zero-value orders ignore deposit_id (nothing to remit/deposit).
+    let isZeroValue = isZeroValueOrder(orderToApprove);
+    if (!isZeroValue) {
+      const { data: row } = await supabase
+        .from('client_orders')
+        .select('total_amount')
+        .eq('id', orderToApprove.id)
+        .maybeSingle();
+      if (row != null) {
+        isZeroValue = Math.abs(Number(row.total_amount ?? 0)) < 0.01;
+      }
+    }
+
     let hasCashOrCheque = false;
     if (orderToApprove.paymentMode === 'SPLIT' && orderToApprove.paymentSplits) {
       hasCashOrCheque = orderToApprove.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
@@ -325,7 +352,7 @@ export default function OrdersPage() {
       hasCashOrCheque = orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE';
     }
 
-    if (hasCashOrCheque && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
+    if (!isZeroValue && hasCashOrCheque && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
       toast({
         title: 'Cannot Approve',
         description: orderToApprove.depositId
@@ -1282,13 +1309,14 @@ export default function OrdersPage() {
 
     // Check for cash/cheque orders (FULL or SPLIT) without deposits OR without bank details recorded
     const ordersWithoutDeposit = agentOrders.filter(order => {
+      const isZeroValue = isZeroValueOrder(order);
       let hasCashOrCheque = false;
       if (order.paymentMode === 'SPLIT' && order.paymentSplits) {
         hasCashOrCheque = order.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
       } else {
         hasCashOrCheque = order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
       }
-      return hasCashOrCheque && (!order.depositId || !order.depositBankAccount);
+      return !isZeroValue && hasCashOrCheque && (!order.depositId || !order.depositBankAccount);
     });
 
     if (ordersWithoutDeposit.length > 0) {
@@ -1310,6 +1338,7 @@ export default function OrdersPage() {
       for (const order of agentOrders) {
         try {
           // Double-check cash/cheque orders before approval (safety net)
+          const isZeroValue = isZeroValueOrder(order);
           let hasCashOrCheque = false;
           if (order.paymentMode === 'SPLIT' && order.paymentSplits) {
             hasCashOrCheque = order.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
@@ -1317,7 +1346,7 @@ export default function OrdersPage() {
             hasCashOrCheque = order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
           }
 
-          if (hasCashOrCheque && (!order.depositId || !order.depositBankAccount)) {
+          if (!isZeroValue && hasCashOrCheque && (!order.depositId || !order.depositBankAccount)) {
             console.warn(`Skipping cash/cheque order ${order.orderNumber} - deposit not recorded or bank details missing`);
             skippedCash++;
             continue;
@@ -1391,6 +1420,7 @@ export default function OrdersPage() {
                         {getStatusLabel(order)}
                       </Badge>
                       {(order.stage === 'finance_pending' || order.status === 'pending') && (
+                        !isZeroValueOrder(order) &&
                         (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
                       ) && (
                         order.depositId && order.depositBankAccount ? (
@@ -1470,6 +1500,7 @@ export default function OrdersPage() {
                         <div className="flex flex-col gap-1">
                           <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
                           {(order.stage === 'finance_pending' || (order.status === 'pending' && order.stage !== 'needs_revision')) && (
+                            !isZeroValueOrder(order) &&
                             (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
                           ) && (
                             order.depositId && order.depositBankAccount ? (
@@ -2184,9 +2215,14 @@ export default function OrdersPage() {
 
               {canApproveAsFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
                 (() => {
-                  const hasCashOrChequeComponent = viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits
-                    ? viewingOrder.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE')
-                    : viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE';
+                  // Zero-value orders have nothing to remit/deposit, so deposit checks are bypassed.
+                  const isFreeOfCharge = isZeroValueOrder(viewingOrder);
+
+                  const hasCashOrChequeComponent = !isFreeOfCharge && (
+                    viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits
+                      ? viewingOrder.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE')
+                      : viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE'
+                  );
 
                   const needsDeposit = hasCashOrChequeComponent && !viewingOrder.depositId;
                   const needsBankDetails = hasCashOrChequeComponent && viewingOrder.depositId && !viewingOrder.depositBankAccount;
