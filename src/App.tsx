@@ -91,12 +91,14 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
-                    <Route 
-                    path="/super-admin-allocation-history"
-                     element={
-                     <ProtectedRoute allowedRoles={['super_admin']}>
-                      <SuperAdminAllocationHistoryPage />
-                     </ProtectedRoute>} />
+                    <Route
+                      path="/allocation-history"
+                      element={
+                        <ProtectedRoute allowedRoles={['super_admin']}>
+                          <SuperAdminAllocationHistoryPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route
                       path="/inventory/sub-warehouses"
                       element={

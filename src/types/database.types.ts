@@ -1,84 +1,97 @@
 // B1G Ordering System - Database Types
 // Auto-generated TypeScript types for Supabase tables
 
-export type UserRole = 
-  | 'system_administrator' 
-  | 'super_admin' 
-  | 'admin' 
-  | 'finance'
-  | 'accounting'
-  | 'manager' 
-  | 'team_leader' 
-  | 'mobile_sales' 
-  | 'sales_agent' 
-  | 'executive' 
-  | 'warehouse'
+export type UserRole =
+  | "system_administrator"
+  | "super_admin"
+  | "admin"
+  | "finance"
+  | "accounting"
+  | "manager"
+  | "team_leader"
+  | "mobile_sales"
+  | "sales_agent"
+  | "executive"
+  | "warehouse"
   // Key Account specific roles
-  | 'sales_head'
-  | 'sales_admin'
-  | 'sales_director'
-  | 'key_account_manager'
-  | 'key_account_accounting';
-export type UserStatus = 'active' | 'inactive';
-export type VariantType = 'flavor' | 'battery' | 'posm';
-export type InventoryStatus = 'in-stock' | 'low-stock' | 'out-of-stock';
-export type AgentInventoryStatus = 'available' | 'low' | 'none';
-export type OrderStatus = 'pending' | 'approved' | 'rejected';
-export type PurchaseOrderStatus = 'pending' | 'approved' | 'rejected' | 'delivered';
+  | "sales_head"
+  | "sales_admin"
+  | "sales_director"
+  | "key_account_manager"
+  | "key_account_accounting";
+export type UserStatus = "active" | "inactive";
+export type VariantType = "flavor" | "battery" | "posm";
+export type InventoryStatus = "in-stock" | "low-stock" | "out-of-stock";
+export type AgentInventoryStatus = "available" | "low" | "none";
+export type OrderStatus = "pending" | "approved" | "rejected";
+export type PurchaseOrderStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "delivered";
 
 // Key Account workflow specific statuses
-export type KeyAccountWorkflowStatus = 
-  | 'kam_pending'
-  | 'director_pending'
-  | 'admin_pending'
-  | 'approved'
-  | 'rejected'
-  | 'warehouse_reserved'
-  | 'fulfilled'
-  | 'delivered';
+export type KeyAccountWorkflowStatus =
+  | "kam_pending"
+  | "director_pending"
+  | "admin_pending"
+  | "approved"
+  | "rejected"
+  | "warehouse_reserved"
+  | "fulfilled"
+  | "delivered";
 
-export type CompanyAccountType = 'Standard Accounts' | 'Key Accounts';
+export type CompanyAccountType = "Standard Accounts" | "Key Accounts";
 
-export type KeyAccountClientStatus = 'active' | 'inactive' | 'suspended';
+export type KeyAccountClientStatus = "active" | "inactive" | "suspended";
 export type TransactionType =
-  | 'purchase_order_received'
-  | 'allocated_to_agent'
-  | 'order_fulfilled'
-  | 'adjustment'
-  | 'return'
-  | 'return_to_main'
-  | 'warehouse_transfer_out'
-  | 'warehouse_transfer_in';
-export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
-export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
-export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';
+  | "purchase_order_received"
+  | "allocated_to_agent"
+  | "order_fulfilled"
+  | "adjustment"
+  | "return"
+  | "return_to_main"
+  | "warehouse_transfer_out"
+  | "warehouse_transfer_in";
+export type FinancialTransactionType =
+  | "revenue"
+  | "expense"
+  | "commission"
+  | "refund";
+export type FinancialTransactionStatus = "pending" | "completed" | "cancelled";
+export type StockRequestStatus =
+  | "pending"
+  | "approved_by_leader"
+  | "approved_by_admin"
+  | "rejected"
+  | "fulfilled";
 export type NotificationType =
-  | 'order_created'
-  | 'order_approved'
-  | 'order_rejected'
-  | 'inventory_low'
-  | 'inventory_allocated'
-  | 'purchase_order_approved'
-  | 'new_client'
-  | 'system_message'
-  | 'stock_request_created'
-  | 'stock_request_approved'
-  | 'stock_request_rejected'
-  | 'audit_system_change'
-  | 'audit_critical_action'
+  | "order_created"
+  | "order_approved"
+  | "order_rejected"
+  | "inventory_low"
+  | "inventory_allocated"
+  | "purchase_order_approved"
+  | "new_client"
+  | "system_message"
+  | "stock_request_created"
+  | "stock_request_approved"
+  | "stock_request_rejected"
+  | "audit_system_change"
+  | "audit_critical_action"
   // Key Account specific notifications
-  | 'key_account_order_created'
-  | 'key_account_order_director_approved'
-  | 'key_account_order_admin_approved'
-  | 'key_account_order_rejected'
-  | 'key_account_client_assigned'
-  | 'key_account_dr_generated';
+  | "key_account_order_created"
+  | "key_account_order_director_approved"
+  | "key_account_order_admin_approved"
+  | "key_account_order_rejected"
+  | "key_account_client_assigned"
+  | "key_account_dr_generated";
 
-export type AuditOperation = 'INSERT' | 'UPDATE' | 'DELETE';
+export type AuditOperation = "INSERT" | "UPDATE" | "DELETE";
 
 // Pricing types for order creation
-export type PricingColumn = 'selling_price' | 'dsp_price' | 'rsp_price';
-export type PricingStrategy = 'custom' | 'dsp' | 'rsp';
+export type PricingColumn = "selling_price" | "dsp_price" | "rsp_price";
+export type PricingStrategy = "custom" | "dsp" | "rsp";
 
 // ============================================================================
 // TABLE TYPES
@@ -92,7 +105,7 @@ export interface Company {
   super_admin_email: string;
   role: string; // Default: 'Super Admin'
   status: UserStatus;
-  company_account_type: 'Key Accounts' | 'Standard Accounts';
+  company_account_type: "Key Accounts" | "Standard Accounts";
   team_leader_allowed_pricing?: PricingColumn[];
   mobile_sales_allowed_pricing?: PricingColumn[];
   created_at: string;
@@ -101,35 +114,35 @@ export interface Company {
 
 // Helper to map pricing strategy to column
 export const PRICING_STRATEGY_MAP: Record<PricingStrategy, PricingColumn> = {
-  rsp: 'rsp_price',
-  dsp: 'dsp_price',
-  custom: 'selling_price'
+  rsp: "rsp_price",
+  dsp: "dsp_price",
+  custom: "selling_price",
 };
 
 // Reverse map for UI display
 export const PRICING_COLUMN_MAP: Record<PricingColumn, PricingStrategy> = {
-  rsp_price: 'rsp',
-  dsp_price: 'dsp',
-  selling_price: 'custom'
+  rsp_price: "rsp",
+  dsp_price: "dsp",
+  selling_price: "custom",
 };
 
 // Pricing option metadata for UI
 export const PRICING_OPTIONS = {
   selling_price: {
-    label: 'Special Pricing',
-    description: 'Custom Unit Prices',
-    badge: 'Custom'
+    label: "Special Pricing",
+    description: "Custom Unit Prices",
+    badge: "Custom",
   },
   dsp_price: {
-    label: 'DSP Pricing',
-    description: 'Distributor Price',
-    badge: 'DSP'
+    label: "DSP Pricing",
+    description: "Distributor Price",
+    badge: "DSP",
   },
   rsp_price: {
-    label: 'RSP Pricing',
-    description: 'Standard Retail Price',
-    badge: 'RSP'
-  }
+    label: "RSP Pricing",
+    description: "Standard Retail Price",
+    badge: "RSP",
+  },
 } as const;
 
 export interface Profile {
@@ -165,7 +178,7 @@ export interface Hub {
   updated_at: string;
 }
 
-export type AgentAttendanceStatus = 'present' | 'absent' | 'non_working';
+export type AgentAttendanceStatus = "present" | "absent" | "non_working";
 
 /** Row in `public.agent_attendances` — one per user per `business_date` (Asia/Manila calendar day). */
 export interface AgentAttendance {
@@ -396,18 +409,18 @@ export interface Supplier {
   updated_at: string;
 }
 
-export type PurchaseOrderFulfillmentType = 'supplier' | 'warehouse_transfer';
+export type PurchaseOrderFulfillmentType = "supplier" | "warehouse_transfer";
 
-export type KeyAccountPoPaymentMode = 'full' | 'split';
-export type KeyAccountPoPaymentStatus = 'unpaid' | 'partial' | 'paid';
+export type KeyAccountPoPaymentMode = "full" | "split";
+export type KeyAccountPoPaymentStatus = "unpaid" | "partial" | "paid";
 
 export interface PurchaseOrderKeyAccountPayment {
   id: string;
   purchase_order_id: string;
   company_id: string;
   amount: number;
-  payment_method: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
-  bank_type?: 'Unionbank' | 'BPI' | 'PBCOM' | null;
+  payment_method: "GCASH" | "BANK_TRANSFER" | "CASH" | "CHEQUE";
+  bank_type?: "Unionbank" | "BPI" | "PBCOM" | null;
   proof_storage_path?: string | null;
   recorded_by?: string | null;
   created_at: string;
@@ -452,9 +465,9 @@ export interface PurchaseOrderItem {
   created_at: string;
 }
 
-export type ClientApprovalStatus = 'pending' | 'approved' | 'rejected';
-export type ClientAccountType = 'Key Accounts' | 'Standard Accounts';
-export type ClientCategory = 'Permanently Closed' | 'Renovating' | 'Open';
+export type ClientApprovalStatus = "pending" | "approved" | "rejected";
+export type ClientAccountType = "Key Accounts" | "Standard Accounts";
+export type ClientCategory = "Permanently Closed" | "Renovating" | "Open";
 
 export interface ShopType {
   id: string;
@@ -495,14 +508,14 @@ export interface Client {
   cor_url?: string;
   contact_person?: string;
   tin?: string;
-  tax_status?: 'Tax on Sales' | 'Tax Exempt';
+  tax_status?: "Tax on Sales" | "Tax Exempt";
   shop_type?: string;
   created_at: string;
   updated_at: string;
 }
 
 export interface PaymentSplit {
-  method: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
+  method: "GCASH" | "BANK_TRANSFER" | "CASH" | "CHEQUE";
   bank?: string; // For BANK_TRANSFER
   amount: number;
   proof_url?: string;
@@ -524,12 +537,17 @@ export interface ClientOrder {
   status: OrderStatus;
   notes?: string;
   signature_url?: string;
-  payment_method?: 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
-  bank_type?: 'Unionbank' | 'BPI' | 'PBCOM';
+  payment_method?: "GCASH" | "BANK_TRANSFER" | "CASH" | "CHEQUE";
+  bank_type?: "Unionbank" | "BPI" | "PBCOM";
   payment_proof_url?: string;
-  payment_mode?: 'FULL' | 'SPLIT'; // NEW: Payment mode
+  payment_mode?: "FULL" | "SPLIT"; // NEW: Payment mode
   payment_splits?: PaymentSplit[]; // NEW: Split payment data
-  stage?: 'agent_pending' | 'leader_approved' | 'admin_approved' | 'leader_rejected' | 'admin_rejected';
+  stage?:
+    | "agent_pending"
+    | "leader_approved"
+    | "admin_approved"
+    | "leader_rejected"
+    | "admin_rejected";
   remitted?: boolean;
   created_at: string;
   approved_by?: string;
@@ -572,7 +590,7 @@ export interface AllocationHistory {
   allocated_to: string;
   allocated_by: string;
   brand_id: string | null;
-  allocation_type: 'main_to_leader' | 'leader_to_agent';
+  allocation_type: "main_to_leader" | "leader_to_agent";
   created_at: string;
 }
 
@@ -714,8 +732,8 @@ export interface Task {
   client_id?: string; // Added
   title: string;
   description?: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
-  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  priority: "low" | "medium" | "high" | "urgent";
   due_date?: string;
   time?: string;
   notes?: string;
@@ -955,93 +973,105 @@ export interface Database {
     Tables: {
       companies: {
         Row: Company;
-        Insert: Omit<Company, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<Company, 'id' | 'created_at'>>;
+        Insert: Omit<Company, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<Company, "id" | "created_at">>;
       };
       profiles: {
         Row: Profile;
-        Insert: Omit<Profile, 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<Profile, 'id' | 'created_at'>>;
+        Insert: Omit<Profile, "created_at" | "updated_at">;
+        Update: Partial<Omit<Profile, "id" | "created_at">>;
       };
       brands: {
         Row: Brand;
-        Insert: Omit<Brand, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<Brand, 'id' | 'created_at'>>;
+        Insert: Omit<Brand, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<Brand, "id" | "created_at">>;
       };
       variants: {
         Row: Variant;
-        Insert: Omit<Variant, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<Variant, 'id' | 'created_at'>>;
+        Insert: Omit<Variant, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<Variant, "id" | "created_at">>;
       };
       main_inventory: {
         Row: MainInventory;
-        Insert: Omit<MainInventory, 'id' | 'status' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<MainInventory, 'id' | 'status' | 'created_at'>>;
+        Insert: Omit<
+          MainInventory,
+          "id" | "status" | "created_at" | "updated_at"
+        >;
+        Update: Partial<Omit<MainInventory, "id" | "status" | "created_at">>;
       };
       agent_inventory: {
         Row: AgentInventory;
-        Insert: Omit<AgentInventory, 'id' | 'status' | 'allocated_at' | 'updated_at'>;
-        Update: Partial<Omit<AgentInventory, 'id' | 'status' | 'allocated_at'>>;
+        Insert: Omit<
+          AgentInventory,
+          "id" | "status" | "allocated_at" | "updated_at"
+        >;
+        Update: Partial<Omit<AgentInventory, "id" | "status" | "allocated_at">>;
       };
       suppliers: {
         Row: Supplier;
-        Insert: Omit<Supplier, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<Supplier, 'id' | 'created_at'>>;
+        Insert: Omit<Supplier, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<Supplier, "id" | "created_at">>;
       };
       purchase_orders: {
         Row: PurchaseOrder;
-        Insert: Omit<PurchaseOrder, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<PurchaseOrder, 'id' | 'created_at'>>;
+        Insert: Omit<PurchaseOrder, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<PurchaseOrder, "id" | "created_at">>;
       };
       purchase_order_items: {
         Row: PurchaseOrderItem;
-        Insert: Omit<PurchaseOrderItem, 'id' | 'total_price' | 'created_at'>;
+        Insert: Omit<PurchaseOrderItem, "id" | "total_price" | "created_at">;
         Update: never;
       };
       clients: {
         Row: Client;
-        Insert: Omit<Client, 'id' | 'total_orders' | 'total_spent' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<Client, 'id' | 'created_at'>>;
+        Insert: Omit<
+          Client,
+          "id" | "total_orders" | "total_spent" | "created_at" | "updated_at"
+        >;
+        Update: Partial<Omit<Client, "id" | "created_at">>;
       };
       client_orders: {
         Row: ClientOrder;
-        Insert: Omit<ClientOrder, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<ClientOrder, 'id' | 'created_at'>>;
+        Insert: Omit<ClientOrder, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<ClientOrder, "id" | "created_at">>;
       };
       client_order_items: {
         Row: ClientOrderItem;
-        Insert: Omit<ClientOrderItem, 'id' | 'total_price' | 'created_at'>;
+        Insert: Omit<ClientOrderItem, "id" | "total_price" | "created_at">;
         Update: never;
       };
       remittances_log: {
         Row: RemittanceLog;
-        Insert: Omit<RemittanceLog, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<RemittanceLog, 'id' | 'created_at'>>;
+        Insert: Omit<RemittanceLog, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<RemittanceLog, "id" | "created_at">>;
       };
       inventory_transactions: {
         Row: InventoryTransaction;
-        Insert: Omit<InventoryTransaction, 'id' | 'created_at'>;
+        Insert: Omit<InventoryTransaction, "id" | "created_at">;
         Update: never;
       };
       allocation_history: {
         Row: AllocationHistory;
-        Insert: Omit<AllocationHistory, 'id' | 'created_at'>;
+        Insert: Omit<AllocationHistory, "id" | "created_at">;
         Update: never;
       };
       financial_transactions: {
         Row: FinancialTransaction;
-        Insert: Omit<FinancialTransaction, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<FinancialTransaction, 'id' | 'created_at'>>;
+        Insert: Omit<FinancialTransaction, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<FinancialTransaction, "id" | "created_at">>;
       };
       notifications: {
         Row: Notification;
-        Insert: Omit<Notification, 'id' | 'created_at'>;
-        Update: Partial<Omit<Notification, 'id' | 'created_at'>>;
+        Insert: Omit<Notification, "id" | "created_at">;
+        Update: Partial<Omit<Notification, "id" | "created_at">>;
       };
       company_payment_settings: {
         Row: CompanyPaymentSettings;
-        Insert: Omit<CompanyPaymentSettings, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<CompanyPaymentSettings, 'id' | 'created_at'>>;
+        Insert: Omit<
+          CompanyPaymentSettings,
+          "id" | "created_at" | "updated_at"
+        >;
+        Update: Partial<Omit<CompanyPaymentSettings, "id" | "created_at">>;
       };
     };
     Functions: {
@@ -1070,7 +1100,17 @@ export interface Database {
         Returns: FunctionResponse;
       };
       allocate_to_agent: {
-        Args: { p_agent_id: string; p_variant_id: string; p_quantity: number; p_allocated_price: number; p_dsp_price?: number; p_rsp_price?: number; p_performed_by: string; p_reference_type?: string | null; p_reference_id?: string | null };
+        Args: {
+          p_agent_id: string;
+          p_variant_id: string;
+          p_quantity: number;
+          p_allocated_price: number;
+          p_dsp_price?: number;
+          p_rsp_price?: number;
+          p_performed_by: string;
+          p_reference_type?: string | null;
+          p_reference_id?: string | null;
+        };
         Returns: FunctionResponse;
       };
       allocate_batch_to_agent: {
@@ -1140,7 +1180,11 @@ export interface Database {
         Returns: FunctionResponse;
       };
       reject_stock_request: {
-        Args: { p_request_id: string; p_rejector_id: string; p_reason?: string };
+        Args: {
+          p_request_id: string;
+          p_rejector_id: string;
+          p_reason?: string;
+        };
         Returns: FunctionResponse;
       };
       // New PRE-ORDER system functions
@@ -1172,4 +1216,3 @@ export interface Database {
     };
   };
 }
-

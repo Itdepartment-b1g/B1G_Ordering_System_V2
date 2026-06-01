@@ -35,7 +35,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { canLeadTeam } from '@/lib/roleUtils';
-import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
+import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/allocation-history/hooks/useSuperAdminAllocationHistory';
 import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
 import ReturnRequestsSection from './components/ReturnRequestsSection';
 

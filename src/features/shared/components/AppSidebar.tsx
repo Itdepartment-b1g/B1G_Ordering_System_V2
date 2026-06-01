@@ -476,7 +476,7 @@ const superAdminMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'System History', url: '/system-history', icon: History },
-      { title: 'Allocation History', url: '/super-admin-allocation-history', icon: Package2Icon },
+      { title: 'Allocation History', url: '/allocation-history', icon: Package2Icon },
     ]
   },
   {
