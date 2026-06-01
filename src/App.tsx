@@ -47,7 +47,7 @@ import HubManagementPage from "@/features/sales-agents/HubManagementPage";
 import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendancePage";
 import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
 import TeamAttendancesPage from "./features/team-leader/team-attendances/page/TeamAttendancesPage";
-
+import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
 const App = () => (
   <PersistQueryClientProvider
     client={queryClient}
@@ -91,6 +91,12 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
+                    <Route 
+                    path="/super-admin-allocation-history"
+                     element={
+                     <ProtectedRoute allowedRoles={['super_admin']}>
+                      <SuperAdminAllocationHistoryPage />
+                     </ProtectedRoute>} />
                     <Route
                       path="/inventory/sub-warehouses"
                       element={

@@ -270,7 +270,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           subtotal: order.subtotal,
           tax: order.tax_amount,
           discount: order.discount || 0,
-          total: order.status === 'approved' ? approvedTotal + (order.tax_amount || 0) - (order.discount || 0) : order.total_amount,
+          total: order.status === 'approved'
+            ? approvedTotal + (order.tax_amount || 0) - (order.discount || 0)
+            : Number(order.total_amount ?? 0),
           notes: order.notes || '',
           status: order.status,
           stage: order.stage,
@@ -446,6 +448,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             : null,
           status: 'pending',
           stage: (order as any).stage || 'agent_pending', // Use stage from order (finance_pending for team leader bank transfers)
+          remitted: (order as any).remitted ?? false, // FOC (total=0) orders are marked remitted on creation
           pricing_strategy: (order as any).pricingStrategy || 'rsp'
         } as any)
         .select('id, order_number')

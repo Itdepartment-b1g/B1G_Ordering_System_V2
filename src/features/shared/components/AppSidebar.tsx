@@ -33,7 +33,8 @@ import {
   FileText,
   Link,
   Network,
-  Plus
+  Plus,
+  Package2Icon
 } from 'lucide-react';
 import {
   Sidebar,
@@ -468,7 +469,16 @@ const superAdminMenuItems: MenuItem[] = [
   { title: 'Agent Attendance', url: '/agent-attendance-overview', icon: Calendar},
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
-  { title: 'System History', url: '/system-history', icon: History },
+  {
+    title: 'History',
+    url: '/system-history',
+    icon: History,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'System History', url: '/system-history', icon: History },
+      { title: 'Allocation History', url: '/super-admin-allocation-history', icon: Package2Icon },
+    ]
+  },
   {
     title: 'Settings',
     url: '/settings',

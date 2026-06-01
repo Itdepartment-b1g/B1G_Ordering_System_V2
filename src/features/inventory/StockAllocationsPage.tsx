@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +30,7 @@ import { useInventory } from '@/features/inventory/InventoryContext';
 import { unsubscribe } from '@/lib/realtime.helpers';
 
 export default function StockAllocationsPage() {
+  const queryClient = useQueryClient();
   const { brands, loading: loadingBrands, refreshInventory } = useInventory();
   const [agentsInventory, setAgentsInventory] = useState<any[]>([]);
   const [loadingAllocations, setLoadingAllocations] = useState(false);
@@ -560,17 +563,20 @@ export default function StockAllocationsPage() {
       // Validate performer
       if (!performerId) throw new Error('User not authenticated');
 
-      // Call RPC per item to ensure stock checks and logging
-      for (const item of allocationItems) {
-        const { data, error } = await supabase.rpc('allocate_to_leader', {
-          p_leader_id: allocation.agentId,
-          p_variant_id: item.variant_id,
-          p_quantity: item.quantity,
-          p_performed_by: performerId,
-        });
-        if (error) throw error;
-        if (!data?.success) throw new Error(data?.error || 'Allocation failed');
-      }
+      const { data, error } = await supabase.rpc('allocate_batch_to_leader', {
+        p_leader_id: allocation.agentId,
+        p_items: allocationItems.map((item) => ({
+          variant_id: item.variant_id,
+          quantity: item.quantity,
+          allocated_price: item.selling_price ?? item.price ?? null,
+          dsp_price: item.dsp_price ?? null,
+          rsp_price: item.rsp_price ?? null,
+        })),
+        p_performed_by: performerId,
+        p_brand_id: allocation.brandId || null,
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Allocation failed');
 
       toast({
         title: 'Success',
@@ -587,7 +593,8 @@ export default function StockAllocationsPage() {
       // Immediately refresh all data for instant UI feedback
       await Promise.all([
         fetchAgentsInventory(false),
-        refreshInventory() // Refresh main inventory to update available stock
+        refreshInventory(),
+        refetchSuperAdminAllocationHistory(queryClient),
       ]);
 
       // Real-time subscriptions will also keep data updated in the background

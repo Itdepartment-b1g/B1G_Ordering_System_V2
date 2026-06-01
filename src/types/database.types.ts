@@ -566,6 +566,16 @@ export interface InventoryTransaction {
   created_at: string;
 }
 
+export interface AllocationHistory {
+  id: string;
+  company_id: string;
+  allocated_to: string;
+  allocated_by: string;
+  brand_id: string | null;
+  allocation_type: 'main_to_leader' | 'leader_to_agent';
+  created_at: string;
+}
+
 export interface RemittanceLog {
   id: string;
   company_id: string;
@@ -1013,6 +1023,11 @@ export interface Database {
         Insert: Omit<InventoryTransaction, 'id' | 'created_at'>;
         Update: never;
       };
+      allocation_history: {
+        Row: AllocationHistory;
+        Insert: Omit<AllocationHistory, 'id' | 'created_at'>;
+        Update: never;
+      };
       financial_transactions: {
         Row: FinancialTransaction;
         Insert: Omit<FinancialTransaction, 'id' | 'created_at' | 'updated_at'>;
@@ -1055,8 +1070,38 @@ export interface Database {
         Returns: FunctionResponse;
       };
       allocate_to_agent: {
-        Args: { p_agent_id: string; p_variant_id: string; p_quantity: number; p_allocated_price: number; p_dsp_price?: number; p_rsp_price?: number; p_performed_by: string };
+        Args: { p_agent_id: string; p_variant_id: string; p_quantity: number; p_allocated_price: number; p_dsp_price?: number; p_rsp_price?: number; p_performed_by: string; p_reference_type?: string | null; p_reference_id?: string | null };
         Returns: FunctionResponse;
+      };
+      allocate_batch_to_agent: {
+        Args: {
+          p_agent_id: string;
+          p_items: {
+            variant_id: string;
+            quantity: number;
+            allocated_price: number;
+            dsp_price?: number | null;
+            rsp_price?: number | null;
+          }[];
+          p_performed_by: string;
+          p_brand_id?: string | null;
+        };
+        Returns: FunctionResponse<{ allocation_id: string }>;
+      };
+      allocate_batch_to_leader: {
+        Args: {
+          p_leader_id: string;
+          p_items: {
+            variant_id: string;
+            quantity: number;
+            allocated_price?: number | null;
+            dsp_price?: number | null;
+            rsp_price?: number | null;
+          }[];
+          p_performed_by: string;
+          p_brand_id?: string | null;
+        };
+        Returns: FunctionResponse<{ allocation_id: string }>;
       };
       create_client_order: {
         Args: CreateClientOrderInput;
