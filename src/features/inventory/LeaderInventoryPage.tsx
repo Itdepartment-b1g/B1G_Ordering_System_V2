@@ -35,7 +35,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { canLeadTeam } from '@/lib/roleUtils';
-import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/allocation-history/hooks/useSuperAdminAllocationHistory';
+import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
 import ReturnRequestsSection from './components/ReturnRequestsSection';
 
@@ -121,8 +121,9 @@ export default function LeaderInventoryPage() {
           variants!inner(
             id,
             name,
+            brand_id,
             variant_type,
-            brands!inner(name)
+            brands!inner(id, name)
           )
         `)
         .gt('stock', 0);  // Only fetch items with stock > 0
@@ -143,8 +144,9 @@ export default function LeaderInventoryPage() {
             variants!inner(
               id,
               name,
+              brand_id,
               variant_type,
-              brands!inner(name)
+              brands!inner(id, name)
             ),
             profiles!agent_inventory_agent_id_fkey(
               id,
@@ -163,6 +165,7 @@ export default function LeaderInventoryPage() {
           variantId: item.variants.id,
           variantName: item.variants.name,
           variantType: item.variants.variant_type,
+          brandId: item.variants.brand_id || item.variants.brands?.id,
           brandName: item.variants.brands.name,
           stock: item.stock,
           allocatedStock: 0,
@@ -187,6 +190,7 @@ export default function LeaderInventoryPage() {
         variantId: item.variants.id,
         variantName: item.variants.name,
         variantType: item.variants.variant_type,
+        brandId: item.variants.brand_id || item.variants.brands?.id,
         brandName: item.variants.brands.name,
         stock: item.stock,
         allocatedStock: 0,
@@ -720,6 +724,7 @@ export default function LeaderInventoryPage() {
           variant_id: variantId,
           variant_name: variant.variantName,
           variant_type: variant.variantType,
+          brand_id: variant.brandId ?? null,
           brand_name: variant.brandName,
           quantity: quantity,
           price: variant.allocatedPrice,
@@ -753,6 +758,11 @@ export default function LeaderInventoryPage() {
       console.log('Agent ID:', allocation.agentId);
       console.log('Allocation items:', itemsToAllocate);
 
+      const selectedBrandIds = new Set(
+        itemsToAllocate.map((i: any) => i.brand_id).filter(Boolean)
+      );
+      const batchBrandId = selectedBrandIds.size === 1 ? [...selectedBrandIds][0] : null;
+
       const { data: allocationResult, error: allocationError } = await supabase.rpc(
         'allocate_batch_to_agent',
         {
@@ -765,9 +775,8 @@ export default function LeaderInventoryPage() {
             rsp_price: item.rspPrice ?? null,
           })),
           p_performed_by: user?.id,
-          // `allocation.brandId` here is a brand name key from groupedInventory, not a UUID.
-          // Pass null until this flow is wired to real brand IDs.
-          p_brand_id: null,
+          // Only set brand when the batch is a single brand.
+          p_brand_id: batchBrandId,
         }
       );
 

@@ -46,7 +46,8 @@ import { PrefetchController } from "@/features/core/PrefetchController";
 import HubManagementPage from "@/features/sales-agents/HubManagementPage";
 import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendancePage";
 import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
-import TeamAttendancesPage from "./features/team-leader/team-attendances/page/TeamAttendancesPage";
+import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
+import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
 import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
 const App = () => (
   <PersistQueryClientProvider
@@ -128,6 +129,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['team_leader']}>
                           <TeamAttendancesPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/leader-allocation-history"
+                      element={
+                        <ProtectedRoute allowedRoles={['team_leader']}>
+                          <LeaderAllocationHistoryPage />
                         </ProtectedRoute>
                       }
                     />

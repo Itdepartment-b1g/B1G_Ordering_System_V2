@@ -6,13 +6,13 @@ import { toast } from 'sonner';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import type { AgentAttendance } from '@/types/database.types';
-import { exportFilteredTeamAttendanceExcel } from '@/features/team-leader/team-attendances/exportTeamAttendance';
+import { exportFilteredTeamAttendanceExcel } from '@/features/team-leader/utils/exportTeamAttendance';
 import { fetchComputedHoursForFilteredAgent } from '@/lib/fetchComputedAttendanceHours';
 import {
   formatAttendanceTotalHours,
   formatTotalHoursDisplay,
 } from '@/lib/agentAttendanceTotalHours';
-import { useTeamLeaderAgentIds } from '@/features/team-leader/team-attendances/useTeamLeaderAgentIds';
+import { useTeamLeaderAgentIds } from '@/features/team-leader/hooks/useTeamLeaderAgentIds';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

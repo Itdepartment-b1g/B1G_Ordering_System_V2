@@ -1,4 +1,4 @@
-import SuperAdminAllocationHistoryList from './components/allocation-history/SuperAdminAllocationHistoryList';
+import SuperAdminAllocationHistoryList from './components/super-admin-allocation-history/SuperAdminAllocationHistoryList';
 
 export default function SuperAdminAllocationHistoryPage() {
   return <SuperAdminAllocationHistoryList />;
