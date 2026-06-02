@@ -26,11 +26,13 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/features/auth';
 import { useInventory } from '@/features/inventory/InventoryContext';
 import { unsubscribe } from '@/lib/realtime.helpers';
 
 export default function StockAllocationsPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const { brands, loading: loadingBrands, refreshInventory } = useInventory();
   const [agentsInventory, setAgentsInventory] = useState<any[]>([]);
   const [loadingAllocations, setLoadingAllocations] = useState(false);
@@ -594,7 +596,7 @@ export default function StockAllocationsPage() {
       await Promise.all([
         fetchAgentsInventory(false),
         refreshInventory(),
-        refetchSuperAdminAllocationHistory(queryClient),
+        refetchSuperAdminAllocationHistory(queryClient, user),
       ]);
 
       // Real-time subscriptions will also keep data updated in the background

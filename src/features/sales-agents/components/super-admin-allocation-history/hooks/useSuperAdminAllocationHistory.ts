@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/features/auth';
@@ -10,11 +11,13 @@ import {
 
 export const SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY = 'super-admin-allocation-history';
 
-type FetchUser = {
+export type AllocationHistoryFetchUser = {
   id: string;
   company_id?: string | null;
   role?: string;
 };
+
+type FetchUser = AllocationHistoryFetchUser;
 
 async function fetchAllocationHistory(user: FetchUser): Promise<AllocationHistoryGroup[]> {
   let sessionsQuery = supabase
@@ -127,6 +130,16 @@ async function fetchAllocationHistory(user: FetchUser): Promise<AllocationHistor
 
 export function useSuperAdminAllocationHistory() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const queryKey = [SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY, user.id, user.company_id];
+    const cached = queryClient.getQueryCache().find({ queryKey });
+    if (cached && typeof cached.options.queryFn !== 'function') {
+      queryClient.removeQueries({ queryKey });
+    }
+  }, [user?.id, user?.company_id, queryClient]);
 
   return useQuery({
     queryKey: [SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY, user?.id, user?.company_id],
@@ -136,16 +149,31 @@ export function useSuperAdminAllocationHistory() {
     },
     enabled: Boolean(user?.id),
     staleTime: 0,
-    refetchOnMount: 'always',
+    refetchOnMount: true,
   });
 }
 
-/** Call after allocate_batch_to_leader so history updates even if the page is not open. */
+/**
+ * Refresh allocation history after allocate/approve.
+ * Uses fetchQuery (not refetchQueries) so a persisted cache entry without queryFn cannot throw.
+ */
 export function refetchSuperAdminAllocationHistory(
-  queryClient: ReturnType<typeof useQueryClient>
+  queryClient: ReturnType<typeof useQueryClient>,
+  user: AllocationHistoryFetchUser | null | undefined
 ) {
-  return queryClient.refetchQueries({
+  if (!user?.id) return Promise.resolve();
+
+  // Drop entries restored from localStorage (they have data but no queryFn).
+  for (const query of queryClient.getQueryCache().findAll({
     queryKey: [SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY],
-    type: 'all',
+  })) {
+    if (typeof query.options.queryFn !== 'function') {
+      queryClient.removeQueries({ queryKey: query.queryKey });
+    }
+  }
+
+  return queryClient.fetchQuery({
+    queryKey: [SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY, user.id, user.company_id],
+    queryFn: () => fetchAllocationHistory(user),
   });
 }

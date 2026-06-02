@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -77,7 +79,21 @@ interface ForwardedRequest {
 
 type ReviewAction = 'approve' | 'forward' | 'deny' | null;
 
+function parseRpcResult<T extends Record<string, unknown>>(data: unknown): T | null {
+  if (!data) return null;
+  if (typeof data === 'object') return data as T;
+  if (typeof data === 'string') {
+    try {
+      return JSON.parse(data) as T;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export default function PendingRequestsPage() {
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -521,28 +537,30 @@ export default function PendingRequestsPage() {
       const requestsToProcess = selectedGroup?.requests || (selectedRequest ? [selectedRequest] : []);
 
       if (reviewAction === 'approve') {
-        // Approve & allocate using stock_requests RPC
-        const results = await Promise.all(
-          requestsToProcess.map(async (req) => {
-            const { data, error } = await supabase.rpc('approve_stock_request_by_leader', {
-              p_request_id: req.id,
-              p_leader_id: user.id,
-              p_notes: notes || null,
-            });
+        const requestIds = requestsToProcess.map((req) => req.id);
+        const { data, error } = await supabase.rpc('approve_stock_requests_batch_by_leader', {
+          p_request_ids: requestIds,
+          p_leader_id: user.id,
+          p_notes: notes || null,
+        });
 
-            if (error) throw error;
-            return data;
-          })
-        );
+        if (error) throw error;
 
-        const allSuccess = results.every((r) => r?.success);
-        if (allSuccess) {
+        const result = parseRpcResult<{
+          success?: boolean;
+          error?: string;
+          message?: string;
+          allocation_id?: string;
+        }>(data);
+
+        if (result?.success) {
           toast({
             title: 'Success',
             description: `Successfully approved ${requestsToProcess.length} product request(s)`,
           });
 
-          // Notify Agent
+          await refetchSuperAdminAllocationHistory(queryClient, user);
+
           if (user?.company_id) {
             const agentId = requestsToProcess[0]?.agent_id;
             if (agentId) {
@@ -553,7 +571,7 @@ export default function PendingRequestsPage() {
                 title: 'Stock Request Approved',
                 message: `Your leader ${user.full_name} has approved your stock request.`,
                 referenceType: 'stock_request',
-                referenceId: requestsToProcess[0].id
+                referenceId: requestsToProcess[0].id,
               });
             }
           }
@@ -561,10 +579,9 @@ export default function PendingRequestsPage() {
           setReviewDialogOpen(false);
           fetchRequests();
         } else {
-          const failed = results.find((r) => !r?.success);
           toast({
             title: 'Error',
-            description: failed?.message || 'Some requests failed to approve',
+            description: result?.error || result?.message || 'Failed to approve requests',
             variant: 'destructive',
           });
         }

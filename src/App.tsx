@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { queryClient, persister } from "@/lib/queryClient";
+import { queryClient, queryPersistOptions } from "@/lib/queryClient";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
@@ -52,7 +52,7 @@ import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminA
 const App = () => (
   <PersistQueryClientProvider
     client={queryClient}
-    persistOptions={{ persister }}
+    persistOptions={queryPersistOptions}
   >
     <AuthProvider>
       <PrefetchController />

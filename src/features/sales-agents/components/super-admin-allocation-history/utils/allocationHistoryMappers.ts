@@ -1,3 +1,5 @@
+export const MULTIPLE_BRANDS_LABEL = 'Multiple brands';
+
 export type AllocationHistoryLine = {
   id: string;
   variantId: string;
@@ -59,6 +61,33 @@ type SupabaseHistoryRow = {
   brand?: { name: string } | { name: string }[] | null;
 };
 
+/** Header brand_id is null for multi-brand batches; derive a row label from line brands. */
+function deriveGroupBrandDisplay(
+  brandId: string | null,
+  brandName: string | null,
+  lines: AllocationHistoryLine[]
+): { brandId: string | null; brandName: string | null } {
+  if (brandName?.trim()) {
+    return { brandId, brandName: brandName.trim() };
+  }
+
+  const uniqueBrandNames = [
+    ...new Set(
+      lines
+        .map((line) => line.brandName.trim())
+        .filter((name) => name.length > 0 && name !== 'Unknown brand')
+    ),
+  ];
+
+  if (uniqueBrandNames.length === 0) {
+    return { brandId, brandName: null };
+  }
+  if (uniqueBrandNames.length === 1) {
+    return { brandId, brandName: uniqueBrandNames[0] };
+  }
+  return { brandId: null, brandName: MULTIPLE_BRANDS_LABEL };
+}
+
 function mapTransaction(row: SupabaseTransactionRow): AllocationHistoryLine {
   const variant = unwrapRelation(row.variant);
   const brand = unwrapRelation(variant?.brand ?? null);
@@ -92,6 +121,11 @@ export function mapAllocationHistoryRows(
     const sessionTxs = txsBySession.get(row.id) ?? [];
     const lines = sessionTxs.map(mapTransaction);
     const totalQuantity = lines.reduce((sum, line) => sum + line.quantity, 0);
+    const derivedBrand = deriveGroupBrandDisplay(
+      row.brand_id,
+      brand?.name ?? null,
+      lines
+    );
 
     return {
       groupId: row.id,
@@ -100,8 +134,8 @@ export function mapAllocationHistoryRows(
       allocatedToName: allocatedTo?.full_name ?? 'Unknown',
       allocatedById: row.allocated_by,
       allocatedByName: allocatedBy?.full_name ?? 'Unknown',
-      brandId: row.brand_id,
-      brandName: brand?.name ?? null,
+      brandId: derivedBrand.brandId,
+      brandName: derivedBrand.brandName,
       allocationType: row.allocation_type,
       totalQuantity,
       lineCount: lines.length,

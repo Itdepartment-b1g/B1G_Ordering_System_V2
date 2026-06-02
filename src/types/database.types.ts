@@ -1175,6 +1175,14 @@ export interface Database {
         Args: { p_request_id: string; p_leader_id: string; p_notes?: string };
         Returns: FunctionResponse;
       };
+      approve_stock_requests_batch_by_leader: {
+        Args: {
+          p_request_ids: string[];
+          p_leader_id: string;
+          p_notes?: string | null;
+        };
+        Returns: FunctionResponse<{ allocation_id: string; approved_count: number }>;
+      };
       approve_stock_request_by_admin: {
         Args: { p_request_id: string; p_admin_id: string; p_notes?: string };
         Returns: FunctionResponse;

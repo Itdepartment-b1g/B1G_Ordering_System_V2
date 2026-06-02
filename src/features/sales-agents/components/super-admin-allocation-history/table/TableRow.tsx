@@ -12,7 +12,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-import type { AllocationHistoryGroup } from '../utils/allocationHistoryMappers';
+import {
+  MULTIPLE_BRANDS_LABEL,
+  type AllocationHistoryGroup,
+} from '../utils/allocationHistoryMappers';
 
 export function formatManilaDateTime(iso: string): string {
   return new Date(iso).toLocaleString('en-PH', {
@@ -71,7 +74,15 @@ export function AllocationGroupRow({ group }: { group: AllocationHistoryGroup })
         <TableCell>
           <Badge variant="secondary">{allocationTypeLabel(group.allocationType)}</Badge>
         </TableCell>
-        <TableCell className="text-muted-foreground">{group.brandName ?? '—'}</TableCell>
+        <TableCell
+          className={
+            group.brandName === MULTIPLE_BRANDS_LABEL
+              ? 'text-muted-foreground italic'
+              : 'text-muted-foreground'
+          }
+        >
+          {group.brandName ?? '—'}
+        </TableCell>
         <TableCell className="text-muted-foreground">{group.allocatedByName}</TableCell>
         <TableCell className="text-right tabular-nums">
           {missingLines ? (

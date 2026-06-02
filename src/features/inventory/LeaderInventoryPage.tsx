@@ -853,7 +853,7 @@ export default function LeaderInventoryPage() {
         });
       }
 
-      await refetchSuperAdminAllocationHistory(queryClient);
+      await refetchSuperAdminAllocationHistory(queryClient, user);
 
       // Update leader inventory immediately (optimistic update)
       // IMPORTANT: Also update the actual stock field, not just availableStock

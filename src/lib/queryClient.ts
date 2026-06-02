@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
+import { SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 
 export const queryClient = new QueryClient({
     defaultOptions: {
@@ -32,3 +33,12 @@ export const persister = createSyncStoragePersister({
     key: 'VITE_APP_QUERY_CACHE',
     throttleTime: 1000, // Only persist once per second
 });
+
+/** Persisted queries are restored without queryFn; refetching them throws in TanStack Query v5. */
+export const queryPersistOptions = {
+    persister,
+    dehydrateOptions: {
+        shouldDehydrateQuery: (query: { queryKey: readonly unknown[] }) =>
+            query.queryKey[0] !== SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY,
+    },
+};
