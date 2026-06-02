@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -169,8 +170,28 @@ export function SuperAdminAllocationHistoryFilter({
         </Select>
       )}
 
-      <Input type="date" value={fromDate} onChange={(e) => onFromDateChange(e.target.value)} />
-      <Input type="date" value={toDate} onChange={(e) => onToDateChange(e.target.value)} />
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor="allocation-history-from-date" className="text-xs text-muted-foreground whitespace-nowrap">
+          From
+        </Label>
+        <Input
+          id="allocation-history-from-date"
+          type="date"
+          value={fromDate}
+          onChange={(e) => onFromDateChange(e.target.value)}
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <Label htmlFor="allocation-history-to-date" className="text-xs text-muted-foreground whitespace-nowrap">
+          To
+        </Label>
+        <Input
+          id="allocation-history-to-date"
+          type="date"
+          value={toDate}
+          onChange={(e) => onToDateChange(e.target.value)}
+        />
+      </div>
 
       <Button variant="outline" className="w-fit justify-self-start" onClick={onClearFilters}>
         Clear filters
