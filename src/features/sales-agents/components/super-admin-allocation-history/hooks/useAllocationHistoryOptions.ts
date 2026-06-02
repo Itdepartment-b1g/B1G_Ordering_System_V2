@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 
 import type { CompanyBrandOption } from './useCompanyBrands';
 import type { CompanyRecipientOption, RecipientRole } from './useCompanyTeamLeaders';
-import type { AllocationHistoryGroup } from '../utils/allocationHistoryMappers';
+import { MULTIPLE_BRANDS_LABEL, type AllocationHistoryGroup } from '../utils/allocationHistoryMappers';
+import { MULTIBRAND_FILTER_VALUE } from '../utils/allocationHistoryFilters';
 
 type Option = { id: string; name: string };
 
@@ -54,12 +55,25 @@ export function useAllocationHistoryOptions(
   }, [companyRecipients, groups]);
 
   const brandOptions = useMemo<Option[]>(() => {
-    if (companyBrands.length > 0) return companyBrands;
     const map = new Map<string, string>();
-    groups.forEach((group) => {
-      if (group.brandId && group.brandName) map.set(group.brandId, group.brandName);
-    });
-    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+    if (companyBrands.length > 0) {
+      companyBrands.forEach((brand) => map.set(brand.id, brand.name));
+    } else {
+      groups.forEach((group) => {
+        if (group.brandId && group.brandName) map.set(group.brandId, group.brandName);
+      });
+    }
+
+    const options = [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const hasMultibrand = groups.some((group) => group.brandName === MULTIPLE_BRANDS_LABEL);
+    if (hasMultibrand) {
+      return [{ id: MULTIBRAND_FILTER_VALUE, name: 'Multibrand' }, ...options];
+    }
+
+    return options;
   }, [companyBrands, groups]);
 
   return {
