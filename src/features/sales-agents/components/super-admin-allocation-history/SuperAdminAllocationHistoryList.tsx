@@ -9,8 +9,11 @@ import { useAuth } from '@/features/auth';
 
 import { exportAllocationHistoryExcel } from './utils/exportAllocationHistoryExcel';
 import { SuperAdminAllocationHistoryFilter } from './filter/Filter';
+import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
 import {
   filterAllocationHistoryGroups,
+  getAllocationHistoryDateBounds,
+  hasAllocationHistoryDateFilter,
   type AllocationFilterKey,
 } from './utils/allocationHistoryFilters';
 import { useCompanyBrands } from './hooks/useCompanyBrands';
@@ -34,8 +37,7 @@ export default function SuperAdminAllocationHistoryList() {
   const [selectedFilter, setSelectedFilter] = useState<AllocationFilterKey>('all');
   const [filterValue, setFilterValue] = useState('');
   const [allocatedToRole, setAllocatedToRole] = useState<RecipientRole | ''>('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [isExportingFiltered, setIsExportingFiltered] = useState(false);
@@ -61,6 +63,11 @@ export default function SuperAdminAllocationHistoryList() {
     brandOptions,
   } = useAllocationHistoryOptions(groups, companyBrands, companyRecipients);
 
+  const { fromDate, toDate } = useMemo(
+    () => getAllocationHistoryDateBounds(dateRangeFilter),
+    [dateRangeFilter]
+  );
+
   const filteredGroups = useMemo(
     () => filterAllocationHistoryGroups(groups, selectedFilter, filterValue, fromDate, toDate),
     [groups, selectedFilter, filterValue, fromDate, toDate]
@@ -68,7 +75,7 @@ export default function SuperAdminAllocationHistoryList() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedFilter, filterValue, allocatedToRole, fromDate, toDate]);
+  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
@@ -86,13 +93,11 @@ export default function SuperAdminAllocationHistoryList() {
     setSelectedFilter('all');
     setFilterValue('');
     setAllocatedToRole('');
-    setFromDate('');
-    setToDate('');
+    setDateRangeFilter({ preset: 'all' });
   };
 
   const hasActiveFilters =
-    Boolean(fromDate) ||
-    Boolean(toDate) ||
+    hasAllocationHistoryDateFilter(dateRangeFilter) ||
     (selectedFilter !== 'all' && filterValue.trim().length > 0);
 
   const canExportFiltered = hasActiveFilters && filteredGroups.length > 0 && !isExportingFiltered;
@@ -196,8 +201,7 @@ export default function SuperAdminAllocationHistoryList() {
             selectedFilter={selectedFilter}
             filterValue={filterValue}
             allocatedToRole={allocatedToRole}
-            fromDate={fromDate}
-            toDate={toDate}
+            dateRangeFilter={dateRangeFilter}
             allocatedToTeamLeaderOptions={allocatedToTeamLeaderOptions}
             allocatedToMobileSalesOptions={allocatedToMobileSalesOptions}
             allocatedByOptions={allocatedByOptions}
@@ -206,8 +210,7 @@ export default function SuperAdminAllocationHistoryList() {
             onSelectedFilterChange={setSelectedFilter}
             onFilterValueChange={setFilterValue}
             onAllocatedToRoleChange={setAllocatedToRole}
-            onFromDateChange={setFromDate}
-            onToDateChange={setToDate}
+            onDateRangeFilterChange={setDateRangeFilter}
             onClearFilters={clearFilters}
           />
 
