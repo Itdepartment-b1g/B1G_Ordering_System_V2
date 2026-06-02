@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { keyAccountDispatchWorkflowActive } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -33,6 +34,7 @@ export type PurchaseOrderDeliveryRow = {
   rider_photo_url: string | null;
   warehouse_signature_url: string | null;
   status: string | null;
+  dr_number?: string | null;
   dispatched_at: string | null;
   delivered_at: string | null;
 };
@@ -42,11 +44,10 @@ export function keyAccountDeliveryDetailsEnabled(order: {
   status?: string | null;
   key_account_client_id?: string | null;
 }): boolean {
-  return (
-    !!order.key_account_client_id &&
-    String(order.workflow_status || '') === 'delivered' &&
-    String(order.status || '') === 'fulfilled'
-  );
+  if (!order.key_account_client_id) return false;
+  if (!keyAccountDispatchWorkflowActive(order.workflow_status)) return false;
+  const status = String(order.status || '');
+  return status === 'fulfilled' || status === 'partially_fulfilled';
 }
 
 interface PurchaseOrderDeliveryDetailsPanelProps {
@@ -76,7 +77,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
       const { data, error: qErr } = await supabase
         .from('purchase_order_deliveries')
         .select(
-          'id,warehouse_location_id,warehouse_locations:warehouse_location_id(name),created_by_profile:profiles!purchase_order_deliveries_created_by_fkey(full_name,email),rider_name,rider_plate_number,rider_photo_url,warehouse_signature_url,status,dispatched_at,delivered_at'
+          'id,warehouse_location_id,warehouse_locations:warehouse_location_id(name),created_by_profile:profiles!purchase_order_deliveries_created_by_fkey(full_name,email),rider_name,rider_plate_number,rider_photo_url,warehouse_signature_url,status,dr_number,dispatched_at,delivered_at'
         )
         .eq('purchase_order_id', purchaseOrderId)
         .order('dispatched_at', { ascending: false });
@@ -138,64 +139,77 @@ export function PurchaseOrderDeliveryDetailsPanel({
                 '—';
 
               return (
-                <div key={row.id} className="rounded-md border bg-muted/20 p-3 space-y-3 text-sm">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Fulfilled / signed by</Label>
-                      <p className="font-medium">{actorName}</p>
+                  <div key={row.id} className="rounded-md border bg-muted/20 p-3 space-y-3 text-sm">
+                    <div className="grid grid-cols-2 gap-2">
+                      {/* Left column */}
+                      <div className="space-y-2">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Fulfilled / signed by</Label>
+                          <p className="font-medium">{actorName}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Rider</Label>
+                          <p className="font-medium">{row.rider_name || '—'}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Status</Label>
+                          <p className="font-medium capitalize">{row.status || '—'}</p>
+                        </div>
+                        {row.dr_number ? (
+                          <div>
+                            <Label className="text-xs text-muted-foreground">DR number</Label>
+                            <p className="font-medium font-mono">{row.dr_number}</p>
+                          </div>
+                        ) : null}
+
+                      </div>
+                      {/* Right column */}
+                      <div className="space-y-2">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Warehouse</Label>
+                          <p className="font-medium">{fulfillingWarehouse}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Plate</Label>
+                          <p className="font-medium">{row.rider_plate_number || '—'}</p>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Dispatched</Label>
+                          <p className="font-medium">
+                            {row.dispatched_at ? new Date(row.dispatched_at).toLocaleString() : '—'}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Warehouse</Label>
-                      <p className="font-medium">{fulfillingWarehouse}</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Rider</Label>
-                      <p className="font-medium">{row.rider_name || '—'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Plate</Label>
-                      <p className="font-medium">{row.rider_plate_number || '—'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Status</Label>
-                      <p className="font-medium capitalize">{row.status || '—'}</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Dispatched</Label>
-                      <p className="font-medium">
-                        {row.dispatched_at ? new Date(row.dispatched_at).toLocaleString() : '—'}
-                      </p>
-                    </div>
+                    {row.rider_photo_url ? (
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Rider photo</Label>
+                        <div className="mt-1 rounded border overflow-hidden max-w-xs bg-background">
+                          <img
+                            src={row.rider_photo_url}
+                            alt="Rider"
+                            className="max-h-40 w-full object-contain"
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                    {row.warehouse_signature_url ? (
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Warehouse signature</Label>
+                        <div className="mt-1 rounded border overflow-hidden max-w-xs bg-background">
+                          <img
+                            src={row.warehouse_signature_url}
+                            alt="Warehouse signature"
+                            className="max-h-32 w-full object-contain"
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                    <p className="text-[11px] text-muted-foreground">
+                      Proof images use signed URLs; if they fail to load later, links may have expired and need
+                      refresh from storage.
+                    </p>
                   </div>
-                  {row.rider_photo_url ? (
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Rider photo</Label>
-                      <div className="mt-1 rounded border overflow-hidden max-w-xs bg-background">
-                        <img
-                          src={row.rider_photo_url}
-                          alt="Rider"
-                          className="max-h-40 w-full object-contain"
-                        />
-                      </div>
-                    </div>
-                  ) : null}
-                  {row.warehouse_signature_url ? (
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Warehouse signature</Label>
-                      <div className="mt-1 rounded border overflow-hidden max-w-xs bg-background">
-                        <img
-                          src={row.warehouse_signature_url}
-                          alt="Warehouse signature"
-                          className="max-h-32 w-full object-contain"
-                        />
-                      </div>
-                    </div>
-                  ) : null}
-                  <p className="text-[11px] text-muted-foreground">
-                    Proof images use signed URLs; if they fail to load later, links may have expired and need
-                    refresh from storage.
-                  </p>
-                </div>
               );
             })}
           </CollapsibleContent>

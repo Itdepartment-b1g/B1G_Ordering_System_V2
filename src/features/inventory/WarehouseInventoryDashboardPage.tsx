@@ -1,22 +1,27 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { LayoutGrid, List, RefreshCw, Search } from 'lucide-react';
+import { BarChart3, LayoutGrid, List, RefreshCw, Search } from 'lucide-react';
 import { useInventory, type Brand, type Variant } from './InventoryContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/features/auth';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
+import { WarehouseFsnPanel } from './components/WarehouseFsnPanel';
+import { useWarehouseFsnAnalysis } from './useWarehouseFsnAnalysis';
+import { type FsnPeriodDays } from './warehouseFsnAnalysis';
 
 /** Order variant-type columns: known types first, then alphabetical. */
 const TYPE_SORT_ORDER: string[] = ['flavor', 'battery', 'POSM', 'posm'];
 
 type DashboardViewMode = 'available' | 'overall' | 'sub';
+type DashboardSection = 'stock' | 'fsn';
 
 function getVariantsByTypeEntries(brand: Brand): [string, Variant[]][] {
   const v = brand.variantsByType;
@@ -219,6 +224,8 @@ export default function WarehouseInventoryDashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState<DashboardViewMode>('available');
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
+  const [dashboardSection, setDashboardSection] = useState<DashboardSection>('stock');
+  const [fsnPeriodDays, setFsnPeriodDays] = useState<FsnPeriodDays>(90);
 
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
@@ -227,7 +234,7 @@ export default function WarehouseInventoryDashboardPage() {
 
   type LocationRow = { id: string; name: string; is_main: boolean };
 
-  const { data: locations = [] } = useQuery({
+  const { data: locations = [], isLoading: loadingLocations } = useQuery({
     queryKey: ['warehouse-locations', user?.company_id],
     enabled: !!user?.company_id && isWarehouse && isMainWarehouseUser,
     queryFn: async () => {
@@ -365,6 +372,41 @@ export default function WarehouseInventoryDashboardPage() {
   });
 
   const subLocations = useMemo(() => locations.filter((l) => !l.is_main), [locations]);
+  const mainLocation = useMemo(() => locations.find((l) => l.is_main) ?? null, [locations]);
+
+  /** FSN uses the same location scope as the stock board (main vs selected sub). */
+  const fsnLocationId = useMemo(() => {
+    if (!isWarehouse) return null;
+    if (!isMainWarehouseUser) return membership.locationId;
+    if (viewMode === 'sub' && selectedLocationId) return selectedLocationId;
+    if (viewMode === 'available' || viewMode === 'overall') return mainLocation?.id ?? null;
+    return null;
+  }, [
+    isWarehouse,
+    isMainWarehouseUser,
+    membership.locationId,
+    viewMode,
+    selectedLocationId,
+    mainLocation?.id,
+  ]);
+
+  const fsnLocationLabel = useMemo(() => {
+    if (!isMainWarehouseUser) {
+      return membership.status === 'sub' ? 'This sub-warehouse' : 'Your warehouse location';
+    }
+    if (viewMode === 'sub' && selectedLocationId) {
+      const loc = locations.find((l) => l.id === selectedLocationId);
+      return loc ? `Sub: ${loc.name}` : 'Selected sub-warehouse';
+    }
+    return mainLocation?.name ? `Main: ${mainLocation.name}` : 'Main warehouse';
+  }, [
+    isMainWarehouseUser,
+    membership.status,
+    viewMode,
+    selectedLocationId,
+    locations,
+    mainLocation?.name,
+  ]);
 
   const activeViewKey = useMemo(() => {
     if (viewMode === 'sub' && selectedLocationId) return `sub:${selectedLocationId}`;
@@ -405,6 +447,36 @@ export default function WarehouseInventoryDashboardPage() {
     });
   }, [displayedBrands, search]);
 
+  const fsnCatalogBrands = displayedBrands;
+
+  const fsnQueryEnabled =
+    dashboardSection === 'fsn' &&
+    !!user?.company_id &&
+    !!fsnLocationId &&
+    !(isMainWarehouseUser && viewMode === 'sub' && !selectedLocationId);
+
+  const {
+    data: fsnRows = [],
+    isLoading: loadingFsn,
+    error: fsnError,
+  } = useWarehouseFsnAnalysis({
+    companyId: user?.company_id,
+    locationId: fsnLocationId,
+    periodDays: fsnPeriodDays,
+    brands: fsnCatalogBrands,
+    enabled: fsnQueryEnabled,
+  });
+
+  const stockScopeHint = useMemo(() => {
+    if (isWarehouse && membership.status === 'sub') return 'Showing this sub-warehouse stock.';
+    if (isMainWarehouseUser) {
+      if (viewMode === 'available') return 'Showing available stock (main stock minus allocated).';
+      if (viewMode === 'overall') return 'Showing overall stock (main stock, including allocated).';
+      return 'Showing selected sub-warehouse stock.';
+    }
+    return 'Showing available stock.';
+  }, [isWarehouse, membership.status, isMainWarehouseUser, viewMode]);
+
   const onRefresh = async () => {
     setRefreshing(true);
     try {
@@ -415,6 +487,11 @@ export default function WarehouseInventoryDashboardPage() {
       if (isMainWarehouseUser && viewMode === 'sub' && selectedLocationId) {
         await qc.invalidateQueries({
           queryKey: ['warehouse-location-inventory-brands', user?.company_id, selectedLocationId],
+        });
+      }
+      if (fsnLocationId) {
+        await qc.invalidateQueries({
+          queryKey: ['warehouse-fsn-movement', user?.company_id, fsnLocationId],
         });
       }
     } finally {
@@ -428,19 +505,13 @@ export default function WarehouseInventoryDashboardPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            {isWarehouse && membership.status === 'sub'
-              ? 'Showing this sub-warehouse stock.'
-              : isMainWarehouseUser
-              ? viewMode === 'available'
-                ? 'Showing available stock (main stock minus allocated).'
-                : viewMode === 'overall'
-                  ? 'Showing overall stock (main stock, including allocated).'
-                  : 'Showing selected sub-warehouse stock.'
-              : 'Showing available stock.'}
+            {dashboardSection === 'fsn'
+              ? `FSN analysis (transfer PO fulfillments). ${fsnLocationLabel}.`
+              : stockScopeHint}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {isMainWarehouseUser && (
+          {isMainWarehouseUser && dashboardSection === 'stock' && (
             <>
               {/* Mobile: one compact dropdown (direct selection, no second step) */}
               <div className="w-full sm:hidden">
@@ -496,6 +567,54 @@ export default function WarehouseInventoryDashboardPage() {
               </div>
             </>
           )}
+          {isMainWarehouseUser && dashboardSection === 'fsn' && (
+            <>
+              <div className="w-full sm:hidden">
+                <Label className="sr-only">Location for FSN</Label>
+                <Select value={activeViewKey} onValueChange={handleQuickViewChange}>
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue placeholder="Select location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="available">Main warehouse</SelectItem>
+                    {subLocations.map((loc) => (
+                      <SelectItem key={loc.id} value={`sub:${loc.id}`}>
+                        Sub: {loc.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="hidden sm:block">
+                <div className="max-w-[min(720px,70vw)] rounded-md border bg-muted/20 p-1">
+                  <div className="overflow-x-auto">
+                    <ToggleGroup
+                      type="single"
+                      value={activeViewKey === 'overall' ? 'available' : activeViewKey}
+                      onValueChange={handleQuickViewChange}
+                      className="w-max justify-start gap-1"
+                      aria-label="FSN location scope"
+                    >
+                      <ToggleGroupItem value="available" size="sm" aria-label="Main warehouse FSN">
+                        Main
+                      </ToggleGroupItem>
+                      {subLocations.map((loc) => (
+                        <ToggleGroupItem
+                          key={loc.id}
+                          value={`sub:${loc.id}`}
+                          size="sm"
+                          className="max-w-[220px] truncate"
+                          title={loc.name}
+                        >
+                          {loc.name}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
           <Button variant="outline" size="sm" asChild>
             <Link to="/inventory/main">
               <List className="mr-2 h-4 w-4" aria-hidden />
@@ -515,33 +634,52 @@ export default function WarehouseInventoryDashboardPage() {
         </div>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-          <Input
-            className="pl-9"
-            placeholder="Filter brands or variant names…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Filter inventory board"
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-sm bg-destructive" aria-hidden />
-            Out of stock
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-sm bg-amber-400" aria-hidden />
-            Low stock
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-sm bg-emerald-600" aria-hidden />
-            In stock
-          </span>
-        </div>
-      </div>
+      <Tabs
+        value={dashboardSection}
+        onValueChange={(v) => setDashboardSection(v as DashboardSection)}
+        className="space-y-4"
+      >
+        <TabsList>
+          <TabsTrigger value="stock" className="gap-1.5">
+            <LayoutGrid className="h-4 w-4" aria-hidden />
+            Stock board
+          </TabsTrigger>
+          <TabsTrigger value="fsn" className="gap-1.5">
+            <BarChart3 className="h-4 w-4" aria-hidden />
+            FSN analysis
+          </TabsTrigger>
+        </TabsList>
 
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative max-w-sm flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input
+              className="pl-9"
+              placeholder="Filter brands or variant names…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Filter dashboard"
+            />
+          </div>
+          {dashboardSection === 'stock' ? (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className="h-3 w-3 rounded-sm bg-destructive" aria-hidden />
+                Out of stock
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-3 w-3 rounded-sm bg-amber-400" aria-hidden />
+                Low stock
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-3 w-3 rounded-sm bg-emerald-600" aria-hidden />
+                In stock
+              </span>
+            </div>
+          ) : null}
+        </div>
+
+        <TabsContent value="stock" className="mt-0 space-y-0">
       {loading && brands.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <LayoutGrid className="mb-3 h-10 w-10 opacity-40" aria-hidden />
@@ -574,6 +712,30 @@ export default function WarehouseInventoryDashboardPage() {
           </div>
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="fsn" className="mt-0">
+          {!fsnLocationId ? (
+            <div className="rounded-lg border border-dashed border-border bg-muted/30 py-16 text-center text-muted-foreground">
+              {isMainWarehouseUser && loadingLocations
+                ? 'Loading warehouse locations…'
+                : isMainWarehouseUser && viewMode === 'sub' && !selectedLocationId
+                  ? 'Select a sub-warehouse to view FSN for that location.'
+                  : 'Warehouse location is not configured yet. Link this account to a location to run FSN analysis.'}
+            </div>
+          ) : (
+            <WarehouseFsnPanel
+              rows={fsnRows}
+              loading={loadingFsn}
+              error={fsnError}
+              periodDays={fsnPeriodDays}
+              onPeriodDaysChange={setFsnPeriodDays}
+              locationLabel={fsnLocationLabel}
+              search={search}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

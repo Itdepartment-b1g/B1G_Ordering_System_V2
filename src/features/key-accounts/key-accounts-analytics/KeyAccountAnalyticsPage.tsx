@@ -14,6 +14,7 @@ import {
   Loader2,
   Package,
   ShoppingCart,
+  TrendingDown,
   TrendingUp,
   Users,
 } from 'lucide-react';
@@ -27,6 +28,8 @@ import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import KeyAccountKamAnalyticsTab from './KeyAccountKamAnalyticsTab';
 import KeyAccountClientAnalyticsTab from './KeyAccountClientAnalyticsTab';
+import KeyAccountFsnAnalyticsTab from './KeyAccountFsnAnalyticsTab';
+import { firstRelation, isDeliveredKeyAccountOrder } from './keyAccountAnalyticsShared';
 import {
   AnalyticsTablePagination,
   paginateAnalyticsRows,
@@ -41,6 +44,10 @@ interface KeyAccountOrder {
   total_amount: number | null;
   status: string | null;
   workflow_status: string | null;
+  po_order_kind?: string | null;
+  source_rebate_id?: string | null;
+  fulfillment_type?: string | null;
+  warehouse_location_id?: string | null;
   kam_id: string | null;
   key_account_client_id: string | null;
   key_account_payment_status?: string | null;
@@ -66,6 +73,8 @@ interface KeyAccountClient {
 interface PurchaseOrderItemRow {
   id: string;
   purchase_order_id: string;
+  variant_id: string;
+  warehouse_location_id?: string | null;
   quantity: number | null;
   unit_price: number | null;
   total_price: number | null;
@@ -89,15 +98,6 @@ interface ProductAnalyticsRow {
 }
 
 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function firstRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (Array.isArray(value)) return value[0] ?? null;
-  return value ?? null;
-}
-
-function isDeliveredRevenue(order: { status?: string | null; workflow_status?: string | null }) {
-  return order.status === 'fulfilled' && order.workflow_status === 'delivered';
-}
 
 function formatCurrency(value: number) {
   return `₱${Math.round(value).toLocaleString()}`;
@@ -151,6 +151,10 @@ export default function KeyAccountAnalyticsPage() {
             total_amount,
             status,
             workflow_status,
+            po_order_kind,
+            source_rebate_id,
+            fulfillment_type,
+            warehouse_location_id,
             kam_id,
             key_account_client_id,
             key_account_payment_status,
@@ -179,7 +183,7 @@ export default function KeyAccountAnalyticsPage() {
       if (clientsResult.error) throw clientsResult.error;
 
       const nextOrders = (ordersResult.data || []) as KeyAccountOrder[];
-      const deliveredIds = nextOrders.filter(isDeliveredRevenue).map((order) => order.id);
+      const deliveredIds = nextOrders.filter(isDeliveredKeyAccountOrder).map((order) => order.id);
       let nextItems: PurchaseOrderItemRow[] = [];
 
       if (deliveredIds.length > 0) {
@@ -188,6 +192,8 @@ export default function KeyAccountAnalyticsPage() {
           .select(`
             id,
             purchase_order_id,
+            variant_id,
+            warehouse_location_id,
             quantity,
             unit_price,
             total_price,
@@ -223,7 +229,7 @@ export default function KeyAccountAnalyticsPage() {
     return orders.filter((order) => order.order_date >= range.start && order.order_date <= range.end);
   }, [orders, selectedMonth, selectedYear]);
 
-  const deliveredOrders = useMemo(() => productOrders.filter(isDeliveredRevenue), [productOrders]);
+  const deliveredOrders = useMemo(() => productOrders.filter(isDeliveredKeyAccountOrder), [productOrders]);
   const deliveredOrderById = useMemo(
     () => new Map(deliveredOrders.map((order) => [order.id, order])),
     [deliveredOrders]
@@ -447,18 +453,34 @@ export default function KeyAccountAnalyticsPage() {
           </div>
 
           <Tabs defaultValue="products" className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="products" className="gap-2">
-                <Package className="h-4 w-4" />
+            <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+              <TabsTrigger
+                value="products"
+                className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
+              >
+                <Package className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
                 Product Analytics
               </TabsTrigger>
-              <TabsTrigger value="agents" className="gap-2">
-                <Users className="h-4 w-4" />
+              <TabsTrigger
+                value="agents"
+                className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
+              >
+                <Users className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
                 Agent Analytics
               </TabsTrigger>
-              <TabsTrigger value="clients" className="gap-2">
-                <Building2 className="h-4 w-4" />
+              <TabsTrigger
+                value="clients"
+                className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
+              >
+                <Building2 className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
                 Client Analytics
+              </TabsTrigger>
+              <TabsTrigger
+                value="fsn"
+                className="h-auto gap-1.5 whitespace-normal px-2 py-2 text-xs sm:gap-2 sm:px-3 sm:text-sm"
+              >
+                <TrendingDown className="h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4" />
+                FSN Analysis
               </TabsTrigger>
             </TabsList>
 
@@ -584,6 +606,10 @@ export default function KeyAccountAnalyticsPage() {
                 brands={allBrands}
                 formatCurrency={formatCurrency}
               />
+            </TabsContent>
+
+            <TabsContent value="fsn">
+              <KeyAccountFsnAnalyticsTab orders={orders} items={items} />
             </TabsContent>
           </Tabs>
         </>

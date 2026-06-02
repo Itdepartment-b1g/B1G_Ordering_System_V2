@@ -34,6 +34,7 @@ import {
   Link,
   Network,
   Plus,
+  RotateCcw,
   Package2Icon
 } from 'lucide-react';
 import {
@@ -159,6 +160,7 @@ const salesAdminMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
@@ -196,6 +198,7 @@ const salesHeadMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
@@ -205,6 +208,7 @@ const salesHeadMenuItems: MenuItem[] = [
 // Key Account Accounting — view-only PO and transaction details
 const keyAccountAccountingMenuItems: MenuItem[] = [
   { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+  { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -229,6 +233,7 @@ const salesDirectorMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Analytics', url: '/key-accounts/analytics', icon: Brain },
@@ -247,6 +252,7 @@ const keyAccountManagerMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Create Purchase Order', url: '/key-accounts/create-order', icon: Plus },
       { title: 'My Purchase Orders', url: '/key-accounts/purchase-orders', icon: ClipboardList },
+      { title: 'Rebates', url: '/key-accounts/rebates', icon: RotateCcw },
     ]
   },
   { title: 'Profile', url: '/profile', icon: UserCircle },

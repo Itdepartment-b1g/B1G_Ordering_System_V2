@@ -411,6 +411,8 @@ export interface Supplier {
 
 export type PurchaseOrderFulfillmentType = "supplier" | "warehouse_transfer";
 
+export type PurchaseOrderKind = 'standard' | 'rebate_fulfillment';
+
 export type KeyAccountPoPaymentMode = "full" | "split";
 export type KeyAccountPoPaymentStatus = "unpaid" | "partial" | "paid";
 
@@ -451,6 +453,8 @@ export interface PurchaseOrder {
   key_account_payment_terms?: string | null;
   key_account_payment_mode?: KeyAccountPoPaymentMode | null;
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
+  po_order_kind?: PurchaseOrderKind | null;
+  source_rebate_id?: string | null;
 }
 
 export interface PurchaseOrderItem {

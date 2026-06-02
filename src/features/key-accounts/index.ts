@@ -21,6 +21,7 @@ export { KeyAccountTeamPage } from './pages/KeyAccountTeamPage';
 export { KeyAccountPurchaseOrderPage } from './pages/KeyAccountCreatePurchaseOrderPage';
 export { KeyAccountPurchaseOrdersPage } from './pages/KeyAccountPurchaseOrdersPage';
 export { KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage } from './key-accounts-analytics';
+export { KeyAccountRebatesPage, KeyAccountCreateRebatePage } from './rebates';
 
 // Future exports (Phase 3+):
 // - KAMOrderPage: Create purchase orders

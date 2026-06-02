@@ -295,7 +295,7 @@ export function ClientAssignmentManager() {
 
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Clients</CardTitle>
@@ -430,12 +430,12 @@ export function ClientAssignmentManager() {
       {/* Client List */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="flex items-center gap-2 text-lg">
               <Building2 className="h-5 w-5" />
               Client Assignments
             </CardTitle>
-            <div className="relative w-64">
+            <div className="relative w-full sm:w-64">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search clients..."
@@ -454,22 +454,22 @@ export function ClientAssignmentManager() {
             {paginatedClients.map((client) => (
               <div 
                 key={client.id} 
-                className={`flex items-center justify-between p-3 rounded-lg border ${
+                className={`flex flex-col gap-3 p-3 rounded-lg border sm:flex-row sm:items-center sm:justify-between ${
                   client.kam_id ? 'bg-muted/50' : 'bg-amber-50 border-amber-200'
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <Building2 className="h-5 w-5 text-muted-foreground" />
-                  <div>
-                    <p className="font-medium">{client.client_name}</p>
+                <div className="flex items-center gap-3 min-w-0">
+                  <Building2 className="h-5 w-5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{client.client_name}</p>
                     <p className="text-sm text-muted-foreground">{client.client_code}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 shrink-0 sm:justify-end">
                   {client.kam_id ? (
                     <>
-                      <div className="text-right">
-                        <Badge variant="default" className="bg-green-100 text-green-800 hover:bg-green-100">
+                      <div className="sm:text-right">
+                        <Badge variant="default" className="max-w-full whitespace-normal bg-green-100 text-green-800 hover:bg-green-100">
                           Assigned to: {client.kam_name}
                         </Badge>
                       </div>

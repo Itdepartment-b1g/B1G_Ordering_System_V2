@@ -36,7 +36,7 @@ import PaymentSettingsPage from "@/features/finance/PaymentSettingsPage";
 import SystemAdminPage from "@/features/system-admin/SystemAdminPage";
 import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
-import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage } from "@/features/key-accounts";
+import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
 import { AgentRemittanceReminder } from "@/features/shared/components";
 import { SupportWidget } from "@/components/SupportWidget";
@@ -248,6 +248,22 @@ const App = () => (
                           <KeyAccountPurchaseOrdersPage />
                         </ProtectedRoute>
                       } 
+                    />
+                    <Route
+                      path="/key-accounts/rebates"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager', 'key_account_accounting']}>
+                          <KeyAccountRebatesPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/key-accounts/rebates/new"
+                      element={
+                        <ProtectedRoute allowedRoles={['sales_head', 'sales_admin', 'sales_director', 'key_account_manager']}>
+                          <KeyAccountCreateRebatePage />
+                        </ProtectedRoute>
+                      }
                     />
                     {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                     <Route path="*" element={<NotFound />} />
