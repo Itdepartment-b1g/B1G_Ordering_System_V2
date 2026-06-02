@@ -1,6 +1,4 @@
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -8,6 +6,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
 
 import type { RecipientRole } from '../hooks/useCompanyTeamLeaders';
 import type { AllocationFilterKey } from '../utils/allocationHistoryFilters';
@@ -21,8 +23,7 @@ type SuperAdminAllocationHistoryFilterProps = {
   selectedFilter: AllocationFilterKey;
   filterValue: string;
   allocatedToRole: RecipientRole | '';
-  fromDate: string;
-  toDate: string;
+  dateRangeFilter: DateRangeFilterValue;
   allocatedToTeamLeaderOptions: FilterOption[];
   allocatedToMobileSalesOptions: FilterOption[];
   allocatedByOptions: FilterOption[];
@@ -31,8 +32,7 @@ type SuperAdminAllocationHistoryFilterProps = {
   onSelectedFilterChange: (value: AllocationFilterKey) => void;
   onFilterValueChange: (value: string) => void;
   onAllocatedToRoleChange: (value: RecipientRole | '') => void;
-  onFromDateChange: (value: string) => void;
-  onToDateChange: (value: string) => void;
+  onDateRangeFilterChange: (value: DateRangeFilterValue) => void;
   onClearFilters: () => void;
 };
 
@@ -40,8 +40,7 @@ export function SuperAdminAllocationHistoryFilter({
   selectedFilter,
   filterValue,
   allocatedToRole,
-  fromDate,
-  toDate,
+  dateRangeFilter,
   allocatedToTeamLeaderOptions,
   allocatedToMobileSalesOptions,
   allocatedByOptions,
@@ -50,8 +49,7 @@ export function SuperAdminAllocationHistoryFilter({
   onSelectedFilterChange,
   onFilterValueChange,
   onAllocatedToRoleChange,
-  onFromDateChange,
-  onToDateChange,
+  onDateRangeFilterChange,
   onClearFilters,
 }: SuperAdminAllocationHistoryFilterProps) {
   const allocatedToUserOptions =
@@ -170,28 +168,12 @@ export function SuperAdminAllocationHistoryFilter({
         </Select>
       )}
 
-      <div className="flex items-center gap-1.5">
-        <Label htmlFor="allocation-history-from-date" className="text-xs text-muted-foreground whitespace-nowrap">
-          From
-        </Label>
-        <Input
-          id="allocation-history-from-date"
-          type="date"
-          value={fromDate}
-          onChange={(e) => onFromDateChange(e.target.value)}
-        />
-      </div>
-      <div className="flex items-center gap-1.5">
-        <Label htmlFor="allocation-history-to-date" className="text-xs text-muted-foreground whitespace-nowrap">
-          To
-        </Label>
-        <Input
-          id="allocation-history-to-date"
-          type="date"
-          value={toDate}
-          onChange={(e) => onToDateChange(e.target.value)}
-        />
-      </div>
+      <DateRangeFilterPopover
+        value={dateRangeFilter}
+        onChange={onDateRangeFilterChange}
+        triggerClassName="h-10 w-full justify-between"
+        align="end"
+      />
 
       <Button variant="outline" className="w-fit justify-self-start" onClick={onClearFilters}>
         Clear filters

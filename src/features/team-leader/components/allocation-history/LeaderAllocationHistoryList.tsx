@@ -16,8 +16,11 @@ import {
   SuperAdminAllocationHistoryPagination,
 } from '@/features/sales-agents/components/super-admin-allocation-history/pagination/Pagination';
 import { SuperAdminAllocationHistoryTable } from '@/features/sales-agents/components/super-admin-allocation-history/table/TableHeader';
+import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
 import {
   filterAllocationHistoryGroups,
+  getAllocationHistoryDateBounds,
+  hasAllocationHistoryDateFilter,
   type AllocationFilterKey,
 } from '@/features/sales-agents/components/super-admin-allocation-history/utils/allocationHistoryFilters';
 import { exportAllocationHistoryExcel } from '@/features/sales-agents/components/super-admin-allocation-history/utils/exportAllocationHistoryExcel';
@@ -32,8 +35,7 @@ export default function LeaderAllocationHistoryList() {
   const [selectedFilter, setSelectedFilter] = useState<AllocationFilterKey>('all');
   const [filterValue, setFilterValue] = useState('');
   const [allocatedToRole, setAllocatedToRole] = useState<RecipientRole | ''>('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [isExportingFiltered, setIsExportingFiltered] = useState(false);
@@ -65,6 +67,11 @@ export default function LeaderAllocationHistoryList() {
     brandOptions,
   } = useAllocationHistoryOptions(leaderGroups, companyBrands, companyRecipients);
 
+  const { fromDate, toDate } = useMemo(
+    () => getAllocationHistoryDateBounds(dateRangeFilter),
+    [dateRangeFilter]
+  );
+
   const filteredGroups = useMemo(
     () =>
       filterAllocationHistoryGroups(leaderGroups, selectedFilter, filterValue, fromDate, toDate),
@@ -73,7 +80,7 @@ export default function LeaderAllocationHistoryList() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedFilter, filterValue, allocatedToRole, fromDate, toDate]);
+  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
@@ -91,13 +98,11 @@ export default function LeaderAllocationHistoryList() {
     setSelectedFilter('all');
     setFilterValue('');
     setAllocatedToRole('');
-    setFromDate('');
-    setToDate('');
+    setDateRangeFilter({ preset: 'all' });
   };
 
   const hasActiveFilters =
-    Boolean(fromDate) ||
-    Boolean(toDate) ||
+    hasAllocationHistoryDateFilter(dateRangeFilter) ||
     (selectedFilter !== 'all' && filterValue.trim().length > 0);
 
   const canExportFiltered = hasActiveFilters && filteredGroups.length > 0 && !isExportingFiltered;
@@ -201,8 +206,7 @@ export default function LeaderAllocationHistoryList() {
             selectedFilter={selectedFilter}
             filterValue={filterValue}
             allocatedToRole={allocatedToRole}
-            fromDate={fromDate}
-            toDate={toDate}
+            dateRangeFilter={dateRangeFilter}
             allocatedToTeamLeaderOptions={allocatedToTeamLeaderOptions}
             allocatedToMobileSalesOptions={allocatedToMobileSalesOptions}
             allocatedByOptions={allocatedByOptions}
@@ -211,8 +215,7 @@ export default function LeaderAllocationHistoryList() {
             onSelectedFilterChange={setSelectedFilter}
             onFilterValueChange={setFilterValue}
             onAllocatedToRoleChange={setAllocatedToRole}
-            onFromDateChange={setFromDate}
-            onToDateChange={setToDate}
+            onDateRangeFilterChange={setDateRangeFilter}
             onClearFilters={clearFilters}
           />
 
