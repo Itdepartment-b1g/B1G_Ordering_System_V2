@@ -1,4 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -21,7 +26,9 @@ import { generateAndOpenCofPdf } from './cof/generateCofPdf';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
+import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
+import { RebateReplacementPricingSummary } from '@/features/key-accounts/rebates';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +57,10 @@ export default function PurchaseOrdersPage() {
     fetchPurchaseOrders,
   } = usePurchaseOrders();
   const [searchQuery, setSearchQuery] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+  const [poPage, setPoPage] = useState(1);
   // Form states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
@@ -556,29 +567,52 @@ export default function PurchaseOrdersPage() {
 
   const { toast } = useToast();
 
-  const filteredOrders = purchaseOrders.filter((order) => {
-    if (user?.role === 'warehouse') {
+  const orderDateRange = useMemo(() => {
+    return getDateRangeFromPreset(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+  }, [dateRangeFilter]);
+
+  /** Warehouse: account tab + date range (cards and table share this scope). */
+  const scopedOrders = useMemo(() => {
+    if (!isWarehouse) return purchaseOrders;
+    return purchaseOrders.filter((order) => {
       const acct = String(order.company_account_type || 'Standard Accounts');
       if (poTab === 'key_accounts' && acct !== 'Key Accounts') return false;
       if (poTab === 'standard_accounts' && acct === 'Key Accounts') return false;
-    }
+      return isDateInRange(new Date(order.order_date), orderDateRange.start, orderDateRange.end);
+    });
+  }, [purchaseOrders, isWarehouse, poTab, orderDateRange.end, orderDateRange.start]);
+
+  const filteredOrders = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    const typeLabel = order.fulfillment_type === 'warehouse_transfer' ? 'internal warehouse' : 'supplier';
-    return (
-      order.po_number.toLowerCase().includes(q) ||
-      (order.supplier?.company_name || '').toLowerCase().includes(q) ||
-      typeLabel.includes(q) ||
-      (order.fulfillment_type === 'warehouse_transfer' && (order.warehouse_location?.name || '').toLowerCase().includes(q))
-    );
-  });
+    return scopedOrders.filter((order) => {
+      const typeLabel = order.fulfillment_type === 'warehouse_transfer' ? 'internal warehouse' : 'supplier';
+      return (
+        order.po_number.toLowerCase().includes(q) ||
+        (order.supplier?.company_name || '').toLowerCase().includes(q) ||
+        typeLabel.includes(q) ||
+        (order.fulfillment_type === 'warehouse_transfer' &&
+          (order.warehouse_location?.name || '').toLowerCase().includes(q))
+      );
+    });
+  }, [scopedOrders, searchQuery]);
+
+  const summaryOrders = isWarehouse ? scopedOrders : purchaseOrders;
+
+  useEffect(() => {
+    setPoPage(1);
+  }, [searchQuery, poTab, orderDateRange.start, orderDateRange.end]);
 
   // Pagination: 10 purchase orders per page
   const PO_PER_PAGE = 10;
-  const [poPage, setPoPage] = useState(1);
   const totalPoPages = Math.max(1, Math.ceil(filteredOrders.length / PO_PER_PAGE));
+  const currentPoPage = Math.min(Math.max(1, poPage), totalPoPages);
   const paginatedOrders = filteredOrders.slice(
-    (poPage - 1) * PO_PER_PAGE,
-    poPage * PO_PER_PAGE
+    (currentPoPage - 1) * PO_PER_PAGE,
+    currentPoPage * PO_PER_PAGE
   );
 
   if (loading) {
@@ -635,7 +669,7 @@ export default function PurchaseOrdersPage() {
             <p className="text-sm font-medium">Total Orders</p>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{purchaseOrders.length}</div>
+            <div className="text-2xl font-bold">{summaryOrders.length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -644,17 +678,17 @@ export default function PurchaseOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {purchaseOrders.filter(o => o.status === 'pending').length}
+              {summaryOrders.filter((o) => o.status === 'pending').length}
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">Approved</p>
+            <p className="text-sm font-medium">Fulfilled</p>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold ">
-              {purchaseOrders.filter(o => o.status === 'approved').length}
+              {summaryOrders.filter((o) => o.status === 'fulfilled').length}
             </div>
           </CardContent>
         </Card>
@@ -664,7 +698,11 @@ export default function PurchaseOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              ₱{purchaseOrders.filter(o => o.status === 'approved').reduce((sum, o) => sum + o.total_amount, 0).toLocaleString()}
+              ₱
+              {summaryOrders
+                .filter((o) => o.status === 'fulfilled')
+                .reduce((sum, o) => sum + Number(o.total_amount || 0), 0)
+                .toLocaleString()}
             </div>
           </CardContent>
         </Card>
@@ -672,14 +710,24 @@ export default function PurchaseOrdersPage() {
 
       <Card>
         <CardHeader>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search orders..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search orders..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            {isWarehouse && (
+              <DateRangeFilterPopover
+                value={dateRangeFilter}
+                onChange={setDateRangeFilter}
+                triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
+                align="end"
+              />
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -690,7 +738,14 @@ export default function PurchaseOrdersPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-xs text-muted-foreground">PO Number</div>
-                    <div className="font-mono font-semibold">{order.po_number}</div>
+                    <div className="font-mono font-semibold flex items-center gap-2 flex-wrap">
+                      {order.po_number}
+                      {order.po_order_kind === 'rebate_fulfillment' && (
+                        <Badge variant="secondary" className="text-xs font-normal">
+                          Rebate replacement
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   <Badge variant="default" className={getStatusBadgeClass(order.status)}>
                     {getStatusDisplayText(order.status)}
@@ -785,7 +840,16 @@ export default function PurchaseOrdersPage() {
                 ) : (
                   paginatedOrders.map((order) => (
                     <TableRow key={order.id}>
-                      <TableCell className="font-mono font-medium">{order.po_number}</TableCell>
+                      <TableCell className="font-mono font-medium">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {order.po_number}
+                          {order.po_order_kind === 'rebate_fulfillment' && (
+                            <Badge variant="secondary" className="text-xs font-normal">
+                              Rebate
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline">
                           {order.fulfillment_type === 'warehouse_transfer' ? 'Internal' : 'Supplier'}
@@ -878,8 +942,8 @@ export default function PurchaseOrdersPage() {
                 <div className="text-xs text-muted-foreground">
                   Showing{' '}
                   <span className="font-medium">
-                    {(poPage - 1) * PO_PER_PAGE + 1}-
-                    {Math.min(poPage * PO_PER_PAGE, filteredOrders.length)}
+                    {(currentPoPage - 1) * PO_PER_PAGE + 1}-
+                    {Math.min(currentPoPage * PO_PER_PAGE, filteredOrders.length)}
                   </span>{' '}
                   of <span className="font-medium">{filteredOrders.length}</span> purchase orders
                 </div>
@@ -888,19 +952,19 @@ export default function PurchaseOrdersPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => setPoPage((p) => Math.max(1, p - 1))}
-                    disabled={poPage === 1}
+                    disabled={currentPoPage === 1}
                   >
                     <ChevronLeft className="h-4 w-4 mr-1" />
                     Prev
                   </Button>
                   <span className="text-xs text-muted-foreground">
-                    Page {poPage} of {totalPoPages}
+                    Page {currentPoPage} of {totalPoPages}
                   </span>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setPoPage((p) => Math.min(totalPoPages, p + 1))}
-                    disabled={poPage === totalPoPages}
+                    disabled={currentPoPage === totalPoPages}
                   >
                     Next
                     <ChevronRight className="h-4 w-4 ml-1" />
@@ -1316,24 +1380,53 @@ export default function PurchaseOrdersPage() {
                       rider_photo_url: riderPhotoUrl,
                       warehouse_signature_url: warehouseSignatureUrl,
                       warehouse_signature_path: signaturePath,
+                      dr_number: drNumber,
                       status: 'dispatched',
                       created_by: user.id,
                     } as any);
                     if (insErr) throw insErr;
 
-                    // 4) DR number + Key Account workflow: physical dispatch complete
+                    // 4) Key Account workflow: partial vs full delivery (multi-warehouse)
+                    const { data: locStatusRows, error: locStatusErr } = await supabase
+                      .from('warehouse_transfer_location_status')
+                      .select('status')
+                      .eq('purchase_order_id', dispatchPo.id);
+                    if (locStatusErr) throw locStatusErr;
+
+                    const workflowStatus = keyAccountWorkflowStatusAfterLocationDispatch(
+                      locStatusRows || []
+                    );
+                    const poUpdate: { workflow_status: string; dr_number?: string } = {
+                      workflow_status: workflowStatus,
+                    };
+
+                    if (workflowStatus === 'delivered') {
+                      const { data: deliveryRows, error: drListErr } = await supabase
+                        .from('purchase_order_deliveries')
+                        .select('dr_number')
+                        .eq('purchase_order_id', dispatchPo.id)
+                        .not('dr_number', 'is', null);
+                      if (drListErr) throw drListErr;
+                      const drList = (deliveryRows || [])
+                        .map((r: { dr_number?: string | null }) => r.dr_number)
+                        .filter(Boolean) as string[];
+                      if (drList.length > 0) {
+                        poUpdate.dr_number = drList.join(', ');
+                      }
+                    }
+
                     const { error: poUpdErr } = await supabase
                       .from('purchase_orders')
-                      .update({
-                        dr_number: drNumber,
-                        workflow_status: 'delivered',
-                      })
+                      .update(poUpdate)
                       .eq('id', dispatchPo.id);
                     if (poUpdErr) throw poUpdErr;
 
                     toast({
-                      title: 'Delivered',
-                      description: `Dispatch info saved. DR: ${drNumber}`,
+                      title: workflowStatus === 'delivered' ? 'Delivered' : 'Partial delivery',
+                      description:
+                        workflowStatus === 'delivered'
+                          ? `All warehouses dispatched. DR: ${poUpdate.dr_number || drNumber}`
+                          : `Dispatch saved for this warehouse. DR: ${drNumber}. Other warehouse(s) still pending.`,
                     });
                     // Update local status so Fulfill button hides immediately
                     setMyLocationStatuses((prev) => ({ ...prev, [dispatchPo.id]: 'fulfilled' }));
@@ -1892,6 +1985,34 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
     kam: any;
   }>({ client: null, shop: null, address: null, kam: null });
   const [loading, setLoading] = useState(false);
+  const [rebatePricing, setRebatePricing] = useState<{
+    disputed_total: number;
+    replacement_total: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (order.po_order_kind !== 'rebate_fulfillment' || !order.source_rebate_id) {
+      setRebatePricing(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from('key_account_po_rebates')
+        .select('disputed_total, replacement_total')
+        .eq('id', order.source_rebate_id)
+        .maybeSingle();
+      if (!cancelled && data) {
+        setRebatePricing({
+          disputed_total: Number(data.disputed_total) || 0,
+          replacement_total: Number(data.replacement_total) || 0,
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [order.id, order.po_order_kind, order.source_rebate_id]);
 
   // Fetch Key Account details if not present in order (RLS workaround)
   useEffect(() => {
@@ -2019,7 +2140,12 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
       <div className="flex items-start justify-between gap-3 flex-wrap border-b pb-4">
         <div>
           <div className="text-xs text-muted-foreground">PO Number</div>
-          <div className="text-2xl font-bold font-mono">{order.po_number}</div>
+          <div className="text-2xl font-bold font-mono flex items-center gap-2 flex-wrap">
+            {order.po_number}
+            {order.po_order_kind === 'rebate_fulfillment' && (
+              <Badge variant="secondary">Rebate replacement</Badge>
+            )}
+          </div>
           <div className="text-xs text-muted-foreground">RFPF Number</div>
           <div className="text-lg font-bold font-mono">{order.rfpf_number?.toUpperCase() || '—'}</div>
           <div className="text-sm text-muted-foreground mt-1">
@@ -2155,30 +2281,7 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
       </Card>
 
       {/* Pricing Summary */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span>₱{Number(order.subtotal || 0).toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Tax ({order.tax_rate || 0}%)</span>
-              <span>₱{Number(order.tax_amount || 0).toLocaleString()}</span>
-            </div>
-            {order.discount > 0 && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Discount</span>
-                <span className="text-green-600">- ₱{Number(order.discount).toLocaleString()}</span>
-              </div>
-            )}
-            <div className="flex justify-between font-bold text-lg border-t pt-2">
-              <span>Total</span>
-              <span>₱{Number(order.total_amount || 0).toLocaleString()}</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <RebateReplacementPricingSummary order={order} rebate={rebatePricing} />
 
       {/* Notes */}
       {order.notes && (

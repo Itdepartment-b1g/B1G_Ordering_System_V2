@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +16,6 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
@@ -32,8 +37,10 @@ import {
   ChevronsUpDown,
   ChevronLeft,
   ChevronRight,
+  RotateCcw,
 } from 'lucide-react';
 import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from '@/features/orders/components/PurchaseOrderDeliveryDetailsPanel';
+import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import type { KeyAccountPoPaymentStatus, PurchaseOrderKeyAccountPayment } from '@/types/database.types';
 import {
   getKeyAccountPaymentProofSignedUrl,
@@ -49,6 +56,16 @@ import {
   isKeyAccountSalesAdmin,
   isKeyAccountSalesHead,
 } from '@/features/key-accounts/keyAccountRoles';
+import { isDeliveredKeyAccountOrder } from '@/features/key-accounts/key-accounts-analytics/keyAccountAnalyticsShared';
+import {
+  formatRebateCurrency,
+  getRebateReplacementPricingTotals,
+  isRebateDerivedPurchaseOrder,
+  rebateReplacementOrderTotalLabel,
+  rebateStatusBadgeClass,
+  rebateStatusLabel,
+  RebateReplacementPricingSummary,
+} from '@/features/key-accounts/rebates';
 
 type KeyAccountWorkflowStatus =
   | 'kam_pending'
@@ -58,6 +75,7 @@ type KeyAccountWorkflowStatus =
   | 'rejected'
   | 'warehouse_reserved'
   | 'fulfilled'
+  | 'partial_delivered'
   | 'delivered';
 
 type Row = {
@@ -65,11 +83,17 @@ type Row = {
   po_number: string;
   company_id: string;
   company_account_type?: string | null;
+  po_order_kind?: string | null;
+  source_rebate_id?: string | null;
   workflow_status: KeyAccountWorkflowStatus;
   status: string;
   order_date: string;
   expected_delivery_date?: string | null;
   total_amount: number;
+  subtotal?: number | null;
+  tax_rate?: number | null;
+  tax_amount?: number | null;
+  discount?: number | null;
   kam_id?: string | null;
   rfpf_number?: string | null;
   dr_number?: string | null;
@@ -111,7 +135,7 @@ type Row = {
   }>;
 };
 
-type TabKey = 'pending' | 'warehouse' | 'done' | 'my' | 'all';
+type TabKey = 'pending' | 'rebates' | 'warehouse' | 'done' | 'my' | 'all';
 
 const PO_PER_PAGE = 10;
 
@@ -138,7 +162,7 @@ function itemWarehouseName(
 }
 
 function createInitialTabPages(): Record<TabKey, number> {
-  return { pending: 1, warehouse: 1, done: 1, my: 1, all: 1 };
+  return { pending: 1, rebates: 1, warehouse: 1, done: 1, my: 1, all: 1 };
 }
 
 function paymentStatusBadgeClass(s: string | null | undefined) {
@@ -164,10 +188,22 @@ function isKeyAccountPaymentNotComplete(po: {
 export function KeyAccountPurchaseOrdersPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+
+  const orderDateRange = useMemo(() => {
+    return getDateRangeFromPreset(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+  }, [dateRangeFilter]);
 
   const [viewOpen, setViewOpen] = useState(false);
   const [active, setActive] = useState<Row | null>(null);
@@ -193,6 +229,16 @@ export function KeyAccountPurchaseOrdersPage() {
   const [linkedWarehouseNamesById, setLinkedWarehouseNamesById] = useState<Record<string, string>>({});
   const [paymentEntryCount, setPaymentEntryCount] = useState(0);
   const [tabPages, setTabPages] = useState<Record<TabKey, number>>(createInitialTabPages);
+  const [poRebates, setPoRebates] = useState<
+    { id: string; rebate_number: string; status: string; disputed_total: number; resolution_type: string }[]
+  >([]);
+  const [poRebatesLoading, setPoRebatesLoading] = useState(false);
+  const [rebateSource, setRebateSource] = useState<{
+    rebate_number: string;
+    source_po_number: string;
+    disputed_total: number;
+    replacement_total: number;
+  } | null>(null);
 
   const role = user?.role;
   const isKAM = role === 'key_account_manager';
@@ -223,6 +269,7 @@ export function KeyAccountPurchaseOrdersPage() {
     po.status === 'partially_fulfilled';
   const isDoneWorkflow = (po: Row) =>
     po.workflow_status === 'fulfilled' ||
+    po.workflow_status === 'partial_delivered' ||
     po.workflow_status === 'delivered' ||
     po.status === 'fulfilled';
 
@@ -257,10 +304,25 @@ export function KeyAccountPurchaseOrdersPage() {
   const canRecordRemainingPayment = (po: Row | null) => {
     if (!po || !user?.id) return false;
     if (!po.key_account_payment_mode) return false;
-    if (po.key_account_payment_status !== 'partial') return false;
-    if (!['kam_pending', 'director_pending','admin_pending','warehouse_reserved', 'fulfilled', 'delivered'].includes(po.workflow_status)) return false;
+    const payStatus = String(po.key_account_payment_status || 'unpaid');
+    if (!(payStatus === 'partial' || payStatus === 'unpaid')) return false;
+    if (
+      ![
+        'kam_pending',
+        'director_pending',
+        'admin_pending',
+        'approved',
+        'warehouse_reserved',
+        'fulfilled',
+        'partial_delivered',
+        'delivered',
+      ].includes(po.workflow_status)
+    )
+      return false;
     const actorOk =
       po.created_by === user.id ||
+      isSalesAdmin ||
+      isSalesHead ||
       (isDirector && !!po.kam_id && directorKamIds.has(po.kam_id));
     return actorOk;
   };
@@ -307,11 +369,17 @@ export function KeyAccountPurchaseOrdersPage() {
           po_number,
           company_id,
           company_account_type,
+          po_order_kind,
+          source_rebate_id,
           workflow_status,
           status,
           order_date,
           expected_delivery_date,
           total_amount,
+          subtotal,
+          tax_rate,
+          tax_amount,
+          discount,
           kam_id,
           rfpf_number,
           dr_number,
@@ -380,7 +448,7 @@ export function KeyAccountPurchaseOrdersPage() {
 
   useEffect(() => {
     setTabPages(createInitialTabPages());
-  }, [q]);
+  }, [q, orderDateRange.start, orderDateRange.end]);
 
   useEffect(() => {
     if (!user?.id || user.role !== 'sales_director') {
@@ -402,9 +470,14 @@ export function KeyAccountPurchaseOrdersPage() {
   }, [user?.id, user?.role]);
 
   const filtered = useMemo(() => {
+    const dateFiltered = rows.filter((r) => {
+      // `purchase_orders.order_date` is typically an ISO timestamp.
+      // Pass a Date object so `isDateInRange` doesn't assume YYYY-MM-DD input.
+      return isDateInRange(new Date(r.order_date), orderDateRange.start, orderDateRange.end);
+    });
     const query = q.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter((r) => {
+    if (!query) return dateFiltered;
+    return dateFiltered.filter((r) => {
       const po = (r.po_number || '').toLowerCase();
       const client = (r.client?.client_name || '').toLowerCase();
       const shop = (r.shop?.shop_name || '').toLowerCase();
@@ -419,15 +492,17 @@ export function KeyAccountPurchaseOrdersPage() {
         x.includes(query)
       );
     });
-  }, [rows, q]);
+  }, [rows, q, orderDateRange.end, orderDateRange.start]);
 
   const byTab = useMemo(() => {
     const myRows = filtered.filter(isCreatedByCurrentUser);
+    const rebateRows = filtered.filter((r) => String(r.po_order_kind || '') === 'rebate_fulfillment');
 
     // Workflow tabs use the full filtered list so a director's own POs still appear
     // under Pending / Warehouse / Done (My PO remains a separate "created by me" view).
     return {
       pending: filtered.filter(isPendingWorkflow),
+      rebates: rebateRows,
       warehouse: filtered.filter(isWarehouseWorkflow),
       done: filtered.filter(isDoneWorkflow),
       my: myRows,
@@ -438,6 +513,7 @@ export function KeyAccountPurchaseOrdersPage() {
   const visibleTabs = useMemo<Array<{ value: TabKey; label: string }>>(
     () => [
       { value: 'pending', label: 'Pending' },
+      { value: 'rebates', label: 'Rebate' },
       { value: 'warehouse', label: 'Warehouse' },
       { value: 'done', label: 'Done' },
       ...(isDirector ? [{ value: 'my' as TabKey, label: 'My PO' }] : []),
@@ -450,6 +526,7 @@ export function KeyAccountPurchaseOrdersPage() {
     setActive(po);
     setRfpfDraft(po.rfpf_number || '');
     setViewOpen(true);
+    setRebateSource(null);
     setRecordPayOpen(false);
     setNewPayAmount('');
     setNewPayMethod('BANK_TRANSFER');
@@ -488,6 +565,55 @@ export function KeyAccountPurchaseOrdersPage() {
         title: 'Error loading PO items',
         description: e?.message || 'Failed to load items',
       });
+    }
+
+    if (String(po.po_order_kind || '') === 'rebate_fulfillment' && po.source_rebate_id) {
+      try {
+        const { data, error } = await supabase
+          .from('key_account_po_rebates')
+          .select(
+            'rebate_number, disputed_total, replacement_total, source_po:purchase_orders!key_account_po_rebates_purchase_order_id_fkey(po_number)'
+          )
+          .eq('id', po.source_rebate_id)
+          .maybeSingle();
+        if (!error && data) {
+          const src = (data as any).source_po;
+          const poNum = Array.isArray(src) ? src?.[0]?.po_number : src?.po_number;
+          if (poNum) {
+            setRebateSource({
+              rebate_number: (data as any).rebate_number,
+              source_po_number: poNum,
+              disputed_total: Number((data as any).disputed_total) || 0,
+              replacement_total: Number((data as any).replacement_total) || 0,
+            });
+          }
+        }
+      } catch {
+        setRebateSource(null);
+      }
+    }
+
+    if (isDoneWorkflow(po)) {
+      setPoRebatesLoading(true);
+      try {
+        if (isDeliveredKeyAccountOrder(po)) {
+          const { data: rebateRows, error: rebateErr } = await supabase
+            .from('key_account_po_rebates')
+            .select('id, rebate_number, status, disputed_total, resolution_type')
+            .eq('purchase_order_id', po.id)
+            .order('created_at', { ascending: false });
+          if (rebateErr) throw rebateErr;
+          setPoRebates(rebateRows || []);
+        } else {
+          setPoRebates([]);
+        }
+      } catch {
+        setPoRebates([]);
+      } finally {
+        setPoRebatesLoading(false);
+      }
+    } else {
+      setPoRebates([]);
     }
   };
 
@@ -693,11 +819,18 @@ export function KeyAccountPurchaseOrdersPage() {
                       : 'Purchase Orders'}
           </p>
         </div>
-        <div className="w-full sm:w-[360px]">
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto sm:items-center">
           <Input
             placeholder="Search PO / client / workflow / payment / DR / RFPF…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
+            className="w-full sm:w-[360px]"
+          />
+          <DateRangeFilterPopover
+            value={dateRangeFilter}
+            onChange={setDateRangeFilter}
+            triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
+            align="end"
           />
         </div>
       </div>
@@ -738,9 +871,9 @@ export function KeyAccountPurchaseOrdersPage() {
       </div>
 
       <Tabs defaultValue="pending">
-        <TabsList className={`grid w-full ${isDirector ? 'grid-cols-5' : 'grid-cols-4'}`}>
+        <TabsList className="w-full justify-between gap-1 px-4 sm:gap-2 md:gap-4 overflow-x-auto">
           {visibleTabs.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value}>
+            <TabsTrigger key={tab.value} value={tab.value} className="px-8 sm:px-4">
               {tab.label}
             </TabsTrigger>
           ))}
@@ -759,6 +892,7 @@ export function KeyAccountPurchaseOrdersPage() {
           <TabsContent key={tab.value} value={tab.value}>
             <Card>
               <CardContent className="pt-6">
+                <div className="w-full overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -786,6 +920,15 @@ export function KeyAccountPurchaseOrdersPage() {
                         <TableCell className="font-mono font-medium">
                           <div className="flex items-center gap-2">
                             <span>{po.po_number}</span>
+                            {String(po.po_order_kind || '') === 'rebate_fulfillment' ? (
+                              <Badge variant="secondary" className="text-xs font-normal">
+                                Rebate replacement
+                              </Badge>
+                            ) : String(po.po_order_kind || '') === 'rebate_topup' ? (
+                              <Badge variant="secondary" className="text-xs font-normal">
+                                Rebate top-up
+                              </Badge>
+                            ) : null}
 
                             {isKeyAccountPaymentNotComplete(po) ? (
                               <span
@@ -816,16 +959,20 @@ export function KeyAccountPurchaseOrdersPage() {
                           <TableCell className="font-medium">{po.rfpf_number || '—'}</TableCell>
                           <TableCell className="text-right font-semibold">₱{Number(po.total_amount || 0).toLocaleString()}</TableCell>
                           <TableCell className="text-right">
-                            <Button variant="ghost" size="sm" onClick={() => void openView(po)}>
-                              <Eye className="h-4 w-4 mr-2" />
-                              View
-                            </Button>
+                            <div className="flex items-center justify-end gap-1 flex-wrap">
+
+                              <Button variant="ghost" size="sm" onClick={() => void openView(po)}>
+                                <Eye className="h-4 w-4 mr-2" />
+                                View
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))
                     )}
                   </TableBody>
                 </Table>
+                </div>
 
                 {tabRows.length > PO_PER_PAGE && (
                   <div className="flex items-center justify-between mt-4 flex-wrap gap-3">
@@ -880,9 +1027,9 @@ export function KeyAccountPurchaseOrdersPage() {
       </Tabs>
 
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] p-0 flex flex-col">
-          <DialogHeader className="px-6 pt-6 pb-2">
-            <DialogTitle className="flex items-center gap-2.5">
+        <DialogContent className="w-[calc(100vw-1.5rem)] sm:w-full max-w-4xl max-h-[90vh] p-0 flex flex-col gap-0 overflow-hidden">
+          <DialogHeader className="shrink-0 px-4 pt-4 pb-2 sm:px-6 sm:pt-6">
+            <DialogTitle className="flex flex-wrap items-center gap-2 text-base sm:text-lg">
               {active && isKeyAccountPaymentNotComplete(active) ? (
                 <span
                   className="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500 shadow-sm ring-2 ring-red-500/25"
@@ -894,36 +1041,138 @@ export function KeyAccountPurchaseOrdersPage() {
             </DialogTitle>
           </DialogHeader>
 
-          <ScrollArea className="flex-1 px-6 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6">
             {active ? (
               <div className="space-y-5 pb-6">
-                <div className="flex items-start justify-between gap-3 flex-wrap border-b pb-4">
-                  <div>
+                <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">PO Number</div>
-                    <div className="text-2xl font-bold font-mono">{active.po_number}</div>
+                    <div className="text-xl font-bold font-mono break-all sm:text-2xl flex flex-wrap items-center gap-2">
+                      <span>{active.po_number}</span>
+                      {String(active.po_order_kind || '') === 'rebate_fulfillment' ? (
+                        <Badge variant="secondary">Rebate replacement</Badge>
+                      ) : String(active.po_order_kind || '') === 'rebate_topup' ? (
+                        <Badge variant="secondary">Rebate top-up</Badge>
+                      ) : null}
+                    </div>
+                    {rebateSource ? (
+                      <>
+                        <div className="text-xs text-muted-foreground">Source PO</div>
+                        <div className="text-lg font-bold font-mono break-all">
+                          {rebateSource.source_po_number}{' '}
+                          <Badge variant="outline" className="ml-2 align-middle">
+                            {rebateSource.rebate_number}
+                          </Badge>
+                        </div>
+                      </>
+                    ) : null}
                     <div className="text-xs text-muted-foreground">RFPF Number</div>
                     <div className="text-lg font-bold font-mono">{active.rfpf_number?.toUpperCase() || '—'}</div>
                     <div className="text-sm text-muted-foreground mt-1">
                       {active.client?.client_name || '—'} · {active.shop?.shop_name || '—'}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <Badge className={keyAccountWorkflowBadgeClass(active.workflow_status)}>
                       {keyAccountWorkflowLabel(active.workflow_status)}
                     </Badge>
-                    {active.dr_number ? <Badge variant="secondary">DR: {active.dr_number}</Badge> : null}
+                    {active.dr_number ? (
+                      <Badge variant="secondary">DR: {active.dr_number}</Badge>
+                    ) : active.workflow_status === 'partial_delivered' ? (
+                      <Badge variant="outline">Partial delivery</Badge>
+                    ) : null}
                   </div>
                 </div>
 
+                <KeyAccountPoWarehouseProgress
+                  purchaseOrderId={active.id}
+                  workflowStatus={active.workflow_status}
+                  fulfillmentType="warehouse_transfer"
+                />
+
+                {isDoneWorkflow(active) && (
+                  <Card className="border-dashed">
+                    <CardHeader className="flex flex-col gap-2 space-y-0 pb-2 sm:flex-row sm:items-center sm:justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <RotateCcw className="h-4 w-4" />
+                        Rebates
+                      </CardTitle>
+                      {isDeliveredKeyAccountOrder(active) &&
+                        !isRebateDerivedPurchaseOrder(active) &&
+                        !isReadOnlyAccounting && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setViewOpen(false);
+                            navigate(`/key-accounts/rebates/new?poId=${active.id}`);
+                          }}
+                        >
+                          Create rebate
+                        </Button>
+                      )}
+                    </CardHeader>
+                    <CardContent className="text-sm">
+                      {isDeliveredKeyAccountOrder(active) ? (
+                        poRebatesLoading ? (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading rebates…
+                          </div>
+                        ) : poRebates.length === 0 ? (
+                          <p className="text-muted-foreground">
+                            No rebates on this PO yet. Use Create rebate for client complaints (slow moving, quality, etc.).
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {poRebates.map((r) => (
+                              <div
+                                key={r.id}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2"
+                              >
+                                <span className="font-mono font-medium">{r.rebate_number}</span>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-muted-foreground capitalize">{r.resolution_type}</span>
+                                  <span>{formatRebateCurrency(r.disputed_total)}</span>
+                                  <Badge variant="outline" className={rebateStatusBadgeClass(r.status)}>
+                                    {rebateStatusLabel(r.status)}
+                                  </Badge>
+                                </div>
+                              </div>
+                            ))}
+                            <Button
+                              variant="link"
+                              className="px-0 h-auto"
+                              onClick={() => {
+                                setViewOpen(false);
+                                navigate('/key-accounts/rebates');
+                              }}
+                            >
+                              View all rebates
+                            </Button>
+                          </div>
+                        )
+                      ) : (
+                        <p className="text-muted-foreground">
+                          Rebates are available after warehouse completes dispatch and this PO is marked{' '}
+                          <span className="font-medium text-foreground">Delivered</span>. Current status:{' '}
+                          <span className="font-medium">{keyAccountWorkflowLabel(active.workflow_status)}</span>.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Order date</Label>
-                    <div className="font-medium">{new Date(active.order_date).toLocaleDateString()}</div>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Expected</Label>
-                    <div className="font-medium">
-                      {active.expected_delivery_date ? new Date(active.expected_delivery_date).toLocaleDateString() : '—'}
+                  <div className="grid grid-cols-2 sm:grid-cols-subgrid sm:col-span-2 gap-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Order date</Label>
+                      <div className="font-medium">{new Date(active.order_date).toLocaleDateString()}</div>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Expected</Label>
+                      <div className="font-medium">
+                        {active.expected_delivery_date ? new Date(active.expected_delivery_date).toLocaleDateString() : '—'}
+                      </div>
                     </div>
                   </div>
                   <div>
@@ -935,12 +1184,12 @@ export function KeyAccountPurchaseOrdersPage() {
 
                 {active.key_account_payment_mode ? (
                   <Card>
-                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                    <CardHeader className="flex flex-col gap-2 space-y-0 pb-2 sm:flex-row sm:items-center sm:justify-between">
                       <CardTitle className="text-base flex items-center gap-2">
                         <CreditCard className="h-4 w-4" />
                         Payment
                       </CardTitle>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="outline" className="capitalize">
                           {active.key_account_payment_mode}
                         </Badge>
@@ -958,7 +1207,11 @@ export function KeyAccountPurchaseOrdersPage() {
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                         <div>
-                          <span className="text-muted-foreground">Order total</span>
+                          <span className="text-muted-foreground">
+                            {rebateReplacementOrderTotalLabel(
+                              getRebateReplacementPricingTotals(active, rebateSource)
+                            )}
+                          </span>
                           <div className="font-semibold">₱{Number(active.total_amount || 0).toLocaleString()}</div>
                         </div>
                         <div>
@@ -993,7 +1246,9 @@ export function KeyAccountPurchaseOrdersPage() {
                       {canRecordRemainingPayment(active) && !isReadOnlyAccounting && (
                         <Button type="button" variant="default" size="sm" onClick={() => setRecordPayOpen(true)}>
                           <Plus className="h-4 w-4 mr-2" />
-                          Record remaining payment
+                          {String(active.key_account_payment_status || 'unpaid') === 'unpaid'
+                            ? 'Record payment'
+                            : 'Record remaining payment'}
                         </Button>
                       )}
 
@@ -1187,34 +1442,36 @@ export function KeyAccountPurchaseOrdersPage() {
                   </CardHeader>
                   <CardContent>
                     {active.items ? (
-                      <Table>
+                      <div className="w-full overflow-x-auto rounded-md border">
+                        <Table className="min-w-[720px]">
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Brand</TableHead>
-                            <TableHead>Variant</TableHead>
-                            <TableHead>Warehouse</TableHead>
-                            <TableHead>Type</TableHead>
-                            <TableHead className="text-right">Qty</TableHead>
-                            <TableHead className="text-right">Unit</TableHead>
-                            <TableHead className="text-right">Total</TableHead>
+                            <TableHead className="whitespace-nowrap">Brand</TableHead>
+                            <TableHead className="whitespace-nowrap">Variant</TableHead>
+                            <TableHead className="whitespace-nowrap">Warehouse</TableHead>
+                            <TableHead className="whitespace-nowrap">Type</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">Qty</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">Unit</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">Total</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {active.items.map((it) => (
                             <TableRow key={it.id}>
-                              <TableCell className="font-medium">{it.variants?.brands?.name || '—'}</TableCell>
-                              <TableCell>{it.variants?.name || it.variant_id}</TableCell>
-                              <TableCell className="text-sm">
+                              <TableCell className="font-medium whitespace-nowrap">{it.variants?.brands?.name || '—'}</TableCell>
+                              <TableCell className="whitespace-nowrap">{it.variants?.name || it.variant_id}</TableCell>
+                              <TableCell className="text-sm whitespace-nowrap">
                                 {itemWarehouseName(it, linkedWarehouseNamesById, active.warehouse_location_id)}
                               </TableCell>
-                              <TableCell>{it.variants?.variant_type || '—'}</TableCell>
-                              <TableCell className="text-right">{it.quantity}</TableCell>
-                              <TableCell className="text-right">₱{Number(it.unit_price || 0).toFixed(2)}</TableCell>
-                              <TableCell className="text-right font-semibold">₱{Number(it.total_price || 0).toFixed(2)}</TableCell>
+                              <TableCell className="whitespace-nowrap">{it.variants?.variant_type || '—'}</TableCell>
+                              <TableCell className="text-right whitespace-nowrap">{it.quantity}</TableCell>
+                              <TableCell className="text-right whitespace-nowrap">₱{Number(it.unit_price || 0).toFixed(2)}</TableCell>
+                              <TableCell className="text-right font-semibold whitespace-nowrap">₱{Number(it.total_price || 0).toFixed(2)}</TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
                       </Table>
+                      </div>
                     ) : (
                       <div className="py-6 text-center text-muted-foreground">
                         <Loader2 className="h-5 w-5 animate-spin inline-block mr-2" />
@@ -1223,6 +1480,8 @@ export function KeyAccountPurchaseOrdersPage() {
                     )}
                   </CardContent>
                 </Card>
+
+                <RebateReplacementPricingSummary order={active} rebate={rebateSource} />
 
                 {isSalesAdmin && (
                   <Card>
@@ -1264,12 +1523,28 @@ export function KeyAccountPurchaseOrdersPage() {
                 )}
               </div>
             ) : null}
-          </ScrollArea>
+          </div>
 
-          <div className="px-6 py-4 border-t flex items-center justify-end gap-2">
+          <div className="shrink-0 border-t px-4 py-4 sm:px-6 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {active &&
+              isDeliveredKeyAccountOrder(active) &&
+              !isRebateDerivedPurchaseOrder(active) &&
+              !isReadOnlyAccounting && (
+              <Button
+                className="w-full sm:w-auto"
+                onClick={() => {
+                  setViewOpen(false);
+                  navigate(`/key-accounts/rebates/new?poId=${active.id}`);
+                }}
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Create rebate
+              </Button>
+            )}
             {active && canDirectorApprove(active) && !isReadOnlyAccounting && (
               <>
                 <Button
+                  className="w-full sm:w-auto"
                   variant="outline"
                   onClick={() => void directorReject()}
                   disabled={actingId === active.id}
@@ -1277,23 +1552,27 @@ export function KeyAccountPurchaseOrdersPage() {
                   {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <X className="h-4 w-4 mr-2" />}
                   Reject
                 </Button>
-                <Button onClick={() => void directorApprove()} disabled={actingId === active.id}>
+                <Button className="w-full sm:w-auto" onClick={() => void directorApprove()} disabled={actingId === active.id}>
                   {actingId === active.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
                   Approve
                 </Button>
               </>
             )}
-            <Button variant="outline" onClick={() => setViewOpen(false)}>
+            <Button className="w-full sm:w-auto" variant="outline" onClick={() => setViewOpen(false)}>
               Close
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={recordPayOpen} onOpenChange={setRecordPayOpen}>
+          <Dialog open={recordPayOpen} onOpenChange={setRecordPayOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Record remaining payment</DialogTitle>
+                <DialogTitle>
+                  {String(active?.key_account_payment_status || 'unpaid') === 'unpaid'
+                    ? 'Record payment'
+                    : 'Record remaining payment'}
+                </DialogTitle>
           </DialogHeader>
           {active ? (
             <div className="space-y-4 py-2">

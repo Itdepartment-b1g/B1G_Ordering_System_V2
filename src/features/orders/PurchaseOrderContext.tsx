@@ -32,7 +32,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         .from('purchase_orders')
         .select(`
           id, created_at, supplier_id, fulfillment_type, warehouse_company_id, warehouse_location_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
-          company_account_type, workflow_status, rfpf_number, dr_number,
+          company_account_type, workflow_status, rfpf_number, dr_number, po_order_kind, source_rebate_id,
           kam_id,
           key_account_client_id, key_account_shop_id, key_account_address_id,
           warehouse_locations:warehouse_location_id (

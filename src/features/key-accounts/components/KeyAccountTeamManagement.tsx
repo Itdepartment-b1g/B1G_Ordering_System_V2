@@ -244,7 +244,7 @@ export function KeyAccountTeamManagement() {
   return (
     <div className="space-y-6">
       {/* Stats Cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -280,9 +280,9 @@ export function KeyAccountTeamManagement() {
       </div>
 
       {/* Action Buttons */}
-      <div className="flex gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:gap-4">
         {unassignedKAMs.length > 0 && directors.length > 0 && (
-          <Button onClick={() => setAssignKAMOpen(true)}>
+          <Button className="w-full sm:w-auto" onClick={() => setAssignKAMOpen(true)}>
             <UserPlus className="mr-2 h-4 w-4" />
             Assign KAM to Director
           </Button>
@@ -434,11 +434,17 @@ export function KeyAccountTeamManagement() {
 
       {/* Team Tabs */}
       <Tabs defaultValue="teams" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 bg-muted/50">
-          <TabsTrigger value="teams" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-muted/50 p-1">
+          <TabsTrigger
+            value="teams"
+            className="h-auto whitespace-normal px-2 py-2 text-xs sm:text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          >
             Teams
           </TabsTrigger>
-          <TabsTrigger value="unassigned" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
+          <TabsTrigger
+            value="unassigned"
+            className="h-auto flex-wrap gap-1 whitespace-normal px-2 py-2 text-xs sm:text-sm data-[state=active]:bg-background data-[state=active]:shadow-sm"
+          >
             Unassigned KAMs
             {unassignedKAMs.length > 0 && (
               <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
@@ -461,7 +467,7 @@ export function KeyAccountTeamManagement() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2 max-w-3xl">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {directors.map((director) => (
                 <Card key={director.id} className="min-h-[260px]">
                   <CardHeader className="pb-4">
@@ -470,13 +476,13 @@ export function KeyAccountTeamManagement() {
                         <Crown className="h-7 w-7" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <CardTitle className="truncate text-lg">{director.full_name}</CardTitle>
-                          <Badge className="bg-purple-600 hover:bg-purple-600">Sales Director</Badge>
+                          <Badge className="shrink-0 bg-purple-600 hover:bg-purple-600">Sales Director</Badge>
                         </div>
                         <p className="mt-1 text-sm font-medium">Team: {director.full_name}'s Team</p>
-                        <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
-                          <Mail className="h-3.5 w-3.5" />
+                        <p className="mt-1 flex items-center gap-1 break-all text-sm text-muted-foreground">
+                          <Mail className="h-3.5 w-3.5 shrink-0" />
                           {director.email}
                         </p>
                       </div>
@@ -499,13 +505,13 @@ export function KeyAccountTeamManagement() {
                           {director.kams.map((kam) => (
                             <div
                               key={kam.id}
-                              className="flex items-center justify-between rounded-md border bg-muted/30 p-3"
+                              className="flex flex-col gap-3 rounded-md border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between"
                             >
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex-1">
                                 <p className="truncate text-sm font-medium">{kam.full_name}</p>
                                 <p className="truncate text-xs text-muted-foreground">{kam.email}</p>
                               </div>
-                              <div className="ml-3 flex shrink-0 items-center gap-2">
+                              <div className="flex shrink-0 items-center gap-2 sm:ml-3">
                                 <Badge variant="outline" className="rounded-full">
                                   KAM
                                 </Badge>
@@ -561,13 +567,14 @@ export function KeyAccountTeamManagement() {
                 {unassignedKAMs.map((kam) => (
                   <div
                     key={kam.id}
-                    className="flex items-center justify-between rounded-md bg-amber-50 p-3"
+                    className="flex flex-col gap-3 rounded-md bg-amber-50 p-3 sm:flex-row sm:items-center sm:justify-between"
                   >
-                    <div>
+                    <div className="min-w-0">
                       <span className="text-sm font-medium">{kam.full_name}</span>
-                      <p className="text-xs text-muted-foreground">{kam.email}</p>
+                      <p className="break-all text-xs text-muted-foreground">{kam.email}</p>
                     </div>
                     <Button
+                      className="w-full shrink-0 sm:w-auto"
                       size="sm"
                       variant="outline"
                       onClick={() => {

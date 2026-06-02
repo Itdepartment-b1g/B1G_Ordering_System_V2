@@ -6,6 +6,8 @@ export function keyAccountWorkflowBadgeClass(workflowStatus: string) {
     case 'delivered':
     case 'fulfilled':
       return 'bg-green-600 text-white';
+    case 'partial_delivered':
+      return 'bg-teal-600 text-white';
     case 'approved':
     case 'warehouse_reserved':
       return 'bg-blue-600 text-white';
@@ -21,7 +23,9 @@ export function keyAccountWorkflowBadgeClass(workflowStatus: string) {
 }
 
 export function keyAccountWorkflowLabel(workflowStatus: string | null | undefined) {
-  return String(workflowStatus || '').replace(/_/g, ' ');
+  const ws = String(workflowStatus || '');
+  if (ws === 'partial_delivered') return 'Partial delivered';
+  return ws.replace(/_/g, ' ');
 }
 
 export function isKeyAccountPendingWorkflow(workflowStatus: string | null | undefined) {

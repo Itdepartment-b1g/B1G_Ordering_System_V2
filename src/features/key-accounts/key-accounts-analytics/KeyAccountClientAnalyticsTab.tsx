@@ -54,6 +54,8 @@ interface ClientAnalyticsOrder {
   total_amount: number | null;
   status: string | null;
   workflow_status: string | null;
+  po_order_kind?: string | null;
+  source_rebate_id?: string | null;
   key_account_client_id: string | null;
   key_account_payment_status?: string | null;
   key_account_payment_mode?: string | null;
@@ -303,6 +305,13 @@ export default function KeyAccountClientAnalyticsTab({
   const [itemsDialogOrder, setItemsDialogOrder] = useState<ClientAnalyticsOrder | null>(null);
   const [dialogLineItems, setDialogLineItems] = useState<PoLineItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
+  const [dialogPaidTotal, setDialogPaidTotal] = useState<number | null>(null);
+  const [dialogPaymentCount, setDialogPaymentCount] = useState(0);
+  const [dialogPaymentLoading, setDialogPaymentLoading] = useState(false);
+  const [dialogRebateSource, setDialogRebateSource] = useState<{
+    rebate_number: string;
+    source_po_number: string;
+  } | null>(null);
   const [poHistoryPage, setPoHistoryPage] = useState(1);
   const [clientPickerOpen, setClientPickerOpen] = useState(false);
 
@@ -428,6 +437,56 @@ export default function KeyAccountClientAnalyticsTab({
 
   const openItemsDialog = async (order: ClientAnalyticsOrder) => {
     setItemsDialogOrder(order);
+    setDialogPaidTotal(null);
+    setDialogPaymentCount(0);
+    setDialogRebateSource(null);
+
+    if (order.key_account_payment_mode) {
+      setDialogPaymentLoading(true);
+      void (async () => {
+        try {
+          const { data, error } = await supabase
+            .from('purchase_order_key_account_payments')
+            .select('amount')
+            .eq('purchase_order_id', order.id);
+          if (error) throw error;
+          const rows = (data || []) as Array<{ amount: number | null }>;
+          const paid = rows.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+          setDialogPaidTotal(paid);
+          setDialogPaymentCount(rows.length);
+        } catch {
+          setDialogPaidTotal(0);
+          setDialogPaymentCount(0);
+        } finally {
+          setDialogPaymentLoading(false);
+        }
+      })();
+    }
+
+    if (String(order.po_order_kind || '') === 'rebate_fulfillment' && order.source_rebate_id) {
+      void (async () => {
+        try {
+          const { data, error } = await supabase
+            .from('key_account_po_rebates')
+            .select(
+              'rebate_number, source_po:purchase_orders!key_account_po_rebates_purchase_order_id_fkey(po_number)'
+            )
+            .eq('id', order.source_rebate_id)
+            .maybeSingle();
+          if (error || !data) return;
+          const src = (data as any).source_po;
+          const poNum = Array.isArray(src) ? src?.[0]?.po_number : src?.po_number;
+          if (!poNum) return;
+          setDialogRebateSource({
+            rebate_number: String((data as any).rebate_number || ''),
+            source_po_number: String(poNum || ''),
+          });
+        } catch {
+          setDialogRebateSource(null);
+        }
+      })();
+    }
+
     const cached = itemsByOrderId.get(order.id);
     if (cached?.length) {
       setDialogLineItems(mapLineItems(cached));
@@ -815,7 +874,20 @@ export default function KeyAccountClientAnalyticsTab({
                     const paymentStatus = order.key_account_payment_status || 'unpaid';
                     return (
                       <TableRow key={order.id}>
-                        <TableCell className="font-medium">{order.po_number}</TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span>{order.po_number}</span>
+                            {String(order.po_order_kind || '') === 'rebate_fulfillment' ? (
+                              <Badge variant="secondary" className="text-xs font-normal">
+                                Rebate replacement
+                              </Badge>
+                            ) : String(order.po_order_kind || '') === 'rebate_topup' ? (
+                              <Badge variant="secondary" className="text-xs font-normal">
+                                Rebate top-up
+                              </Badge>
+                            ) : null}
+                          </div>
+                        </TableCell>
                         <TableCell>
                           {order.order_date
                             ? new Date(order.order_date).toLocaleDateString()
@@ -870,18 +942,46 @@ export default function KeyAccountClientAnalyticsTab({
             setItemsDialogOrder(null);
             setDialogLineItems([]);
             setItemsLoading(false);
+            setDialogPaidTotal(null);
+            setDialogPaymentCount(0);
+            setDialogPaymentLoading(false);
+            setDialogRebateSource(null);
           }
         }}
       >
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>PO items — {itemsDialogOrder?.po_number}</DialogTitle>
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              <span>PO items — {itemsDialogOrder?.po_number}</span>
+              {String(itemsDialogOrder?.po_order_kind || '') === 'rebate_fulfillment' ? (
+                <Badge variant="secondary" className="text-xs font-normal">
+                  Rebate replacement
+                </Badge>
+              ) : String(itemsDialogOrder?.po_order_kind || '') === 'rebate_topup' ? (
+                <Badge variant="secondary" className="text-xs font-normal">
+                  Rebate top-up
+                </Badge>
+              ) : null}
+            </DialogTitle>
             <DialogDescription>
               {firstRelation(itemsDialogOrder?.client ?? null)?.client_name || 'Client'} ·{' '}
               {itemsDialogOrder?.order_date
                 ? new Date(itemsDialogOrder.order_date).toLocaleDateString()
                 : '—'}{' '}
               · PO total {formatCurrency(Number(itemsDialogOrder?.total_amount || 0))}
+              {itemsDialogOrder?.key_account_payment_mode ? (
+                <>
+                  {' '}
+                  · Paid {dialogPaymentLoading ? '…' : formatCurrency(Number(dialogPaidTotal || 0))}
+                  {dialogPaymentCount > 0 ? ` (${dialogPaymentCount})` : ''}
+                </>
+              ) : null}
+              {dialogRebateSource?.source_po_number && dialogRebateSource?.rebate_number ? (
+                <>
+                  {' '}
+                  · Source PO {dialogRebateSource.source_po_number} · Rebate {dialogRebateSource.rebate_number}
+                </>
+              ) : null}
             </DialogDescription>
           </DialogHeader>
 

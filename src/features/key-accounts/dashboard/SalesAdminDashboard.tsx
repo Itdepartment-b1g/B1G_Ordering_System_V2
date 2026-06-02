@@ -328,7 +328,7 @@ export function SalesAdminDashboard() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Key Account Management</h1>
           <p className="text-muted-foreground">
@@ -352,7 +352,7 @@ export function SalesAdminDashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -406,7 +406,7 @@ export function SalesAdminDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground mt-1">Fulfilled and delivered POs</p>
+            <p className="text-xs text-muted-foreground mt-1">Fulfilled or delivered POs</p>
           </CardContent>
         </Card>
         <Card>
