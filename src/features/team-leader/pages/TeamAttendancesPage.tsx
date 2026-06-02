@@ -1,4 +1,4 @@
-import TeamAttendanceList from "../component/TeamAttendanceList";
+import TeamAttendanceList from "../components/team-attendances/TeamAttendanceList";
 
 export default function TeamAttendancesPage() {
     return (

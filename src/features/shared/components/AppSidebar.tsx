@@ -33,7 +33,8 @@ import {
   FileText,
   Link,
   Network,
-  Plus
+  Plus,
+  Package2Icon
 } from 'lucide-react';
 import {
   Sidebar,
@@ -298,6 +299,7 @@ const leaderMenuItems: MenuItem[] = [
   { title: 'My Clients', url: '/my-clients', icon: ShoppingBag },
   { title: "My Team's Clients", url: '/my-teams', icon: Users },
   { title:  "My Team's Attendance", url: '/team-attendances', icon: Calendar},
+  { title: "My Allocation History", url: '/leader-allocation-history', icon: Package2Icon },
   { title: 'My Orders', url: '/my-orders', icon: ShoppingCart },
   { title: 'Order Management', url: '/leader-orders', icon: FileText },
   { title: 'Team Activity', url: '/system-history', icon: History },
@@ -468,7 +470,16 @@ const superAdminMenuItems: MenuItem[] = [
   { title: 'Agent Attendance', url: '/agent-attendance-overview', icon: Calendar},
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
-  { title: 'System History', url: '/system-history', icon: History },
+  {
+    title: 'History',
+    url: '/system-history',
+    icon: History,
+    hasSubmenu: true,
+    submenu: [
+      { title: 'System History', url: '/system-history', icon: History },
+      { title: 'Allocation History', url: '/allocation-history', icon: Package2Icon },
+    ]
+  },
   {
     title: 'Settings',
     url: '/settings',

@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { queryClient, persister } from "@/lib/queryClient";
+import { queryClient, queryPersistOptions } from "@/lib/queryClient";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider, ProtectedRoute, LoginPage, RoleBasedRedirect } from "@/features/auth";
@@ -46,12 +46,13 @@ import { PrefetchController } from "@/features/core/PrefetchController";
 import HubManagementPage from "@/features/sales-agents/HubManagementPage";
 import AgentAttendancePage from "@/features/agent-attendance/page/AgentAttendancePage";
 import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendanceOverviewPage";
-import TeamAttendancesPage from "./features/team-leader/team-attendances/page/TeamAttendancesPage";
-
+import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
+import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
+import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
 const App = () => (
   <PersistQueryClientProvider
     client={queryClient}
-    persistOptions={{ persister }}
+    persistOptions={queryPersistOptions}
   >
     <AuthProvider>
       <PrefetchController />
@@ -92,6 +93,14 @@ const App = () => (
                       }
                     />
                     <Route
+                      path="/allocation-history"
+                      element={
+                        <ProtectedRoute allowedRoles={['super_admin']}>
+                          <SuperAdminAllocationHistoryPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/inventory/sub-warehouses"
                       element={
                         <ProtectedRoute allowedRoles={["warehouse"]}>
@@ -120,6 +129,14 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={['team_leader']}>
                           <TeamAttendancesPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/leader-allocation-history"
+                      element={
+                        <ProtectedRoute allowedRoles={['team_leader']}>
+                          <LeaderAllocationHistoryPage />
                         </ProtectedRoute>
                       }
                     />
