@@ -10,13 +10,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar, Plus, Unlink, Building2 } from 'lucide-react';
+import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar, Plus, Unlink, Building2, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { InventoryImportExport } from './components/InventoryImportExport';
 import { format } from 'date-fns';
+import { usePendingMobileSalesAllocations, type PendingMobileSalesAllocation } from './requestHooks';
 
 interface ReturnHistoryEntry {
   id: string;
@@ -95,6 +96,12 @@ export default function MainInventoryPage() {
   const [returnHistory, setReturnHistory] = useState<ReturnHistoryEntry[]>([]);
   const [loadingReturns, setLoadingReturns] = useState(false);
   const [viewSignatureUrl, setViewSignatureUrl] = useState<string | null>(null);
+
+  const [pendingAllocDialog, setPendingAllocDialog] = useState<{
+    variantName: string;
+    brandName: string;
+    items: PendingMobileSalesAllocation[];
+  } | null>(null);
 
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
@@ -866,6 +873,60 @@ export default function MainInventoryPage() {
 
 
   const isSubWarehouseUser = isWarehouse && !isMainWarehouseUser;
+  const showPendingAllocations = !isSubWarehouseUser;
+
+  const { data: pendingMobileSalesAllocations = [] } = usePendingMobileSalesAllocations(showPendingAllocations);
+
+  const pendingByVariantId = useMemo(() => {
+    const map = new Map<string, PendingMobileSalesAllocation[]>();
+    for (const row of pendingMobileSalesAllocations) {
+      const list = map.get(row.variant_id) ?? [];
+      list.push(row);
+      map.set(row.variant_id, list);
+    }
+    return map;
+  }, [pendingMobileSalesAllocations]);
+
+  const getPendingAllocQuantity = (variantId: string) =>
+    (pendingByVariantId.get(variantId) ?? []).reduce((sum, r) => sum + r.quantity, 0);
+
+  const getOrderStageLabel = (stage: string) => {
+    switch (stage) {
+      case 'finance_pending':
+        return 'Pending Finance';
+      case 'agent_pending':
+        return 'Pending Team Leader';
+      case 'leader_approved':
+        return 'Leader Approved';
+      case 'needs_revision':
+        return 'Needs Revision';
+      default:
+        return stage.replace(/_/g, ' ');
+    }
+  };
+
+  const openPendingAllocDialog = (brandName: string, variantName: string, variantId: string) => {
+    const items = pendingByVariantId.get(variantId) ?? [];
+    if (items.length === 0) return;
+    setPendingAllocDialog({ brandName, variantName, items });
+  };
+
+  const renderPendingAllocatedCell = (brandName: string, variant: Variant) => {
+    const items = pendingByVariantId.get(variant.id) ?? [];
+    const qty = getPendingAllocQuantity(variant.id);
+    if (qty === 0) {
+      return <TableCell className="text-center text-muted-foreground">-</TableCell>;
+    }
+    return (
+      <TableCell
+        className="text-amber-700 font-medium text-center cursor-pointer hover:underline hover:bg-amber-50/50"
+        onClick={() => openPendingAllocDialog(brandName, variant.name, variant.id)}
+        title="View mobile sales orders pending finance approval"
+      >
+        {qty}
+      </TableCell>
+    );
+  };
 
   // Calculate stats
   const totalBrands = brands.length;
@@ -1119,6 +1180,7 @@ export default function MainInventoryPage() {
                               <TableHead className="text-blue-800 text-center">Flavor Name</TableHead>
                               <TableHead className="text-blue-800 text-center">Total Stock</TableHead>
                               {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated Pending</TableHead>}
                               {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Available</TableHead>}
                               {!isWarehouse && <TableHead className="text-blue-800 text-center">Selling Price</TableHead>}
                               {!isWarehouse && <TableHead className="text-blue-800 text-center">DSP</TableHead>}
@@ -1150,6 +1212,7 @@ export default function MainInventoryPage() {
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
                                   )}
+                                  {showPendingAllocations && renderPendingAllocatedCell(brand.name, flavor)}
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
                                   )}
@@ -1293,6 +1356,7 @@ export default function MainInventoryPage() {
                               <TableHead className="text-green-800 text-center">Battery Name</TableHead>
                               <TableHead className="text-green-800 text-center">Total Stock</TableHead>
                               {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated Pending</TableHead>}
                               {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Available</TableHead>}
                               {!isWarehouse && <TableHead className="text-green-800 text-center">Selling Price</TableHead>}
                               {!isWarehouse && <TableHead className="text-green-800 text-center">DSP</TableHead>}
@@ -1324,22 +1388,13 @@ export default function MainInventoryPage() {
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
                                   )}
+                                  {showPendingAllocations && renderPendingAllocatedCell(brand.name, battery)}
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
                                   )}
                                   {!isWarehouse && (
                                     <TableCell className="text-center">
                                       {typeof (battery as any).sellingPrice === 'number' ? `₱${(battery as any).sellingPrice.toFixed(2)}` : '-'}
-                                    </TableCell>
-                                  )}
-                                  {!isWarehouse && (
-                                    <TableCell className="text-center">
-                                      {typeof (battery as any).dspPrice === 'number' ? `₱${(battery as any).dspPrice.toFixed(2)}` : '-'}
-                                    </TableCell>
-                                  )}
-                                  {!isWarehouse && (
-                                    <TableCell className="text-center">
-                                      {typeof (battery as any).rspPrice === 'number' ? `₱${(battery as any).rspPrice.toFixed(2)}` : '-'}
                                     </TableCell>
                                   )}
                                   <TableCell className="text-center">
@@ -1454,6 +1509,7 @@ export default function MainInventoryPage() {
                               <TableHead className="text-purple-800 text-center">POSM Name</TableHead>
                               <TableHead className="text-purple-800 text-center">Total Stock</TableHead>
                               {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Allocated</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Allocated Pending</TableHead>}
                               {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Available</TableHead>}
                               {!isWarehouse && <TableHead className="text-purple-800 text-center">Selling Price</TableHead>}
                               {!isWarehouse && <TableHead className="text-purple-800 text-center">DSP</TableHead>}
@@ -1485,6 +1541,7 @@ export default function MainInventoryPage() {
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
                                   )}
+                                  {showPendingAllocations && renderPendingAllocatedCell(brand.name, posm)}
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
                                   )}
@@ -1623,6 +1680,7 @@ export default function MainInventoryPage() {
                                   <TableHead className="text-gray-800 text-center">Name</TableHead>
                                   <TableHead className="text-gray-800 text-center">Total Stock</TableHead>
                                   {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated</TableHead>}
+                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated Pending</TableHead>}
                                   {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Available</TableHead>}
                                   {!isWarehouse && <TableHead className="text-gray-800 text-center">Selling Price</TableHead>}
                                   {!isWarehouse && <TableHead className="text-gray-800 text-center">DSP</TableHead>}
@@ -1653,6 +1711,7 @@ export default function MainInventoryPage() {
                                       {!isSubWarehouseUser && (
                                         <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
                                       )}
+                                      {showPendingAllocations && renderPendingAllocatedCell(brand.name, variant)}
                                       {!isSubWarehouseUser && (
                                         <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
                                       )}
@@ -2376,6 +2435,81 @@ export default function MainInventoryPage() {
               </>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Pending allocation breakdown */}
+      <Dialog open={!!pendingAllocDialog} onOpenChange={(open) => !open && setPendingAllocDialog(null)}>
+        <DialogContent className="max-w-3xl w-[95vw] sm:w-full max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-amber-600" />
+              Allocated Pending — Mobile Sales
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              {pendingAllocDialog && (
+                <>
+                  <span className="font-medium text-foreground">{pendingAllocDialog.brandName}</span>
+                  {' — '}
+                  {pendingAllocDialog.variantName}
+                  {' · '}
+                  {pendingAllocDialog.items.reduce((sum, r) => sum + r.quantity, 0)}{' '}
+                  units on mobile sales orders not yet approved by finance
+                </>
+              )}
+            </p>
+          </DialogHeader>
+
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {pendingAllocDialog && pendingAllocDialog.items.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Order #</TableHead>
+                    <TableHead>Mobile sales</TableHead>
+                    <TableHead>Client</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead>Payment</TableHead>
+                    <TableHead>Ordered</TableHead>
+                    <TableHead>Notes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pendingAllocDialog.items.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-mono text-sm whitespace-nowrap">
+                        {item.order_number || item.order_id.slice(0, 8)}
+                      </TableCell>
+                      <TableCell>{item.agent?.full_name || '—'}</TableCell>
+                      <TableCell>{item.client?.name || '—'}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 text-xs">
+                          {getOrderStageLabel(item.stage)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-amber-700">{item.quantity}</TableCell>
+                      <TableCell className="text-sm">{item.payment_method || '—'}</TableCell>
+                      <TableCell className="text-sm whitespace-nowrap">
+                        {format(new Date(item.created_at), 'MMM d, yyyy h:mm a')}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[180px] truncate" title={item.order_notes || undefined}>
+                        {item.order_notes || '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-sm text-muted-foreground py-6 text-center">No pending mobile sales orders for this variant.</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingAllocDialog(null)}>
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

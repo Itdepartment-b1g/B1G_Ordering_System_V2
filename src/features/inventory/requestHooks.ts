@@ -257,6 +257,125 @@ export function useMainInventorySummary() {
     });
 }
 
+/** One line item from a mobile_sales order not yet approved by finance. */
+export interface PendingMobileSalesAllocation {
+    id: string;
+    variant_id: string;
+    quantity: number;
+    order_id: string;
+    order_number?: string | null;
+    created_at: string;
+    stage: string;
+    status: string;
+    payment_method?: string | null;
+    order_notes?: string | null;
+    agent?: { full_name: string } | null;
+    client?: { name: string } | null;
+}
+
+const PENDING_FINANCE_STAGES = ['agent_pending', 'finance_pending', 'leader_approved', 'needs_revision'] as const;
+
+function isPendingFinanceOrder(order: { status: string; stage: string | null }) {
+    if (order.status !== 'pending') return false;
+    const stage = order.stage || 'finance_pending';
+    return (PENDING_FINANCE_STAGES as readonly string[]).includes(stage);
+}
+
+/** Mobile sales client orders awaiting finance approval (by variant line item). */
+export function usePendingMobileSalesAllocations(enabled: boolean) {
+    const { user } = useAuth();
+    const queryClient = useQueryClient();
+
+    const query = useQuery({
+        queryKey: ['pending_mobile_sales_allocations', user?.company_id],
+        enabled: enabled && !!user?.company_id,
+        queryFn: async () => {
+            const companyId = user!.company_id!;
+
+            const { data: agents, error: agentsError } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('company_id', companyId)
+                .eq('role', 'mobile_sales');
+
+            if (agentsError) throw agentsError;
+
+            const agentIds = (agents || []).map((a) => a.id);
+            if (agentIds.length === 0) return [];
+
+            const { data: orders, error: ordersError } = await supabase
+                .from('client_orders')
+                .select(`
+          id,
+          order_number,
+          agent_id,
+          stage,
+          status,
+          created_at,
+          payment_method,
+          notes,
+          agent:profiles!client_orders_agent_id_fkey(full_name),
+          client:clients(name),
+          items:client_order_items(id, variant_id, quantity)
+        `)
+                .eq('company_id', companyId)
+                .eq('status', 'pending')
+                .in('agent_id', agentIds)
+                .order('created_at', { ascending: false });
+
+            if (ordersError) throw ordersError;
+
+            const rows: PendingMobileSalesAllocation[] = [];
+
+            for (const order of orders || []) {
+                if (!isPendingFinanceOrder(order)) continue;
+
+                const agent = Array.isArray(order.agent) ? order.agent[0] : order.agent;
+                const client = Array.isArray(order.client) ? order.client[0] : order.client;
+                const items = Array.isArray(order.items) ? order.items : [];
+
+                for (const item of items) {
+                    if (!item?.variant_id || !item?.quantity) continue;
+                    rows.push({
+                        id: item.id,
+                        variant_id: item.variant_id,
+                        quantity: item.quantity ?? 0,
+                        order_id: order.id,
+                        order_number: order.order_number,
+                        created_at: order.created_at,
+                        stage: order.stage || 'finance_pending',
+                        status: order.status,
+                        payment_method: order.payment_method,
+                        order_notes: order.notes,
+                        agent: agent ?? null,
+                        client: client ?? null,
+                    });
+                }
+            }
+
+            return rows;
+        },
+        staleTime: 1000 * 60 * 2,
+    });
+
+    useEffect(() => {
+        if (!enabled || !user?.company_id) return;
+
+        const channels = [
+            subscribeToTable('client_orders', () => {
+                queryClient.invalidateQueries({ queryKey: ['pending_mobile_sales_allocations', user.company_id] });
+            }),
+            subscribeToTable('client_order_items', () => {
+                queryClient.invalidateQueries({ queryKey: ['pending_mobile_sales_allocations', user.company_id] });
+            }),
+        ];
+
+        return () => channels.forEach(unsubscribe);
+    }, [enabled, user?.company_id, queryClient]);
+
+    return query;
+}
+
 export function useMyLeader() {
     const { user } = useAuth();
     
