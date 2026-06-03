@@ -100,6 +100,7 @@ export default function MainInventoryPage() {
   const [pendingAllocDialog, setPendingAllocDialog] = useState<{
     variantName: string;
     brandName: string;
+    grossAllocated: number;
     items: PendingMobileSalesAllocation[];
   } | null>(null);
 
@@ -588,22 +589,6 @@ export default function MainInventoryPage() {
     return brand.allVariants.reduce((sum, v) => sum + v.stock, 0);
   };
 
-  const getAllocatedStock = (brand: Brand) => {
-    return brand.allVariants.reduce((sum, v) => sum + (v.allocatedStock || 0), 0);
-  };
-
-  const getAvailableStock = (brand: Brand) => {
-    return getTotalStock(brand) - getAllocatedStock(brand);
-  };
-
-  const getVariantAllocatedStock = (variant: Variant) => {
-    return variant.allocatedStock || 0;
-  };
-
-  const getVariantAvailableStock = (variant: Variant) => {
-    return variant.stock - getVariantAllocatedStock(variant);
-  };
-
   // Helper to get color scheme for variant type
   const getVariantTypeColor = (variantType: string) => {
     const normalized = variantType.toLowerCase();
@@ -890,6 +875,30 @@ export default function MainInventoryPage() {
   const getPendingAllocQuantity = (variantId: string) =>
     (pendingByVariantId.get(variantId) ?? []).reduce((sum, r) => sum + r.quantity, 0);
 
+  /** From main_inventory.allocated_stock (gross). */
+  const getVariantGrossAllocated = (variant: Variant) => variant.allocatedStock || 0;
+
+  /** Remaining allocated: gross allocated − mobile-sales pending (not yet finance-approved). */
+  const getVariantRemainingAllocated = (variant: Variant) => {
+    const gross = getVariantGrossAllocated(variant);
+    if (!showPendingAllocations) return gross;
+    return Math.max(0, gross - getPendingAllocQuantity(variant.id));
+  };
+
+  const getVariantAvailableStock = (variant: Variant) => {
+    return Math.max(0, variant.stock - getVariantGrossAllocated(variant));
+  };
+
+  const getAllocatedStock = (brand: Brand) =>
+    brand.allVariants.reduce((sum, v) => sum + getVariantGrossAllocated(v), 0);
+
+  /** Full allocated_stock from main inventory. */
+  const renderAllocatedCell = (variant: Variant) => (
+    <TableCell className="text-orange-600 font-medium text-center">
+      {getVariantGrossAllocated(variant)}
+    </TableCell>
+  );
+
   const getOrderStageLabel = (stage: string) => {
     switch (stage) {
       case 'finance_pending':
@@ -905,25 +914,34 @@ export default function MainInventoryPage() {
     }
   };
 
-  const openPendingAllocDialog = (brandName: string, variantName: string, variantId: string) => {
-    const items = pendingByVariantId.get(variantId) ?? [];
+  const openPendingAllocDialog = (brandName: string, variantName: string, variant: Variant) => {
+    const items = pendingByVariantId.get(variant.id) ?? [];
     if (items.length === 0) return;
-    setPendingAllocDialog({ brandName, variantName, items });
+    setPendingAllocDialog({
+      brandName,
+      variantName,
+      grossAllocated: getVariantGrossAllocated(variant),
+      items,
+    });
   };
 
+  /** Allocated minus pending order qty; click to see pending line items (qty per order). */
   const renderPendingAllocatedCell = (brandName: string, variant: Variant) => {
-    const items = pendingByVariantId.get(variant.id) ?? [];
-    const qty = getPendingAllocQuantity(variant.id);
-    if (qty === 0) {
+    const pendingQty = getPendingAllocQuantity(variant.id);
+    const gross = getVariantGrossAllocated(variant);
+    const remaining = getVariantRemainingAllocated(variant);
+
+    if (!showPendingAllocations || pendingQty === 0) {
       return <TableCell className="text-center text-muted-foreground">-</TableCell>;
     }
+
     return (
       <TableCell
         className="text-amber-700 font-medium text-center cursor-pointer hover:underline hover:bg-amber-50/50"
-        onClick={() => openPendingAllocDialog(brandName, variant.name, variant.id)}
-        title="View mobile sales orders pending finance approval"
+        onClick={() => openPendingAllocDialog(brandName, variant.name, variant)}
+        title={`Allocated ${gross} − ${pendingQty} pending — click to view pending orders`}
       >
-        {qty}
+        {remaining}
       </TableCell>
     );
   };
@@ -933,7 +951,11 @@ export default function MainInventoryPage() {
   const totalVariants = brands.reduce((sum, brand) => sum + brand.flavors.length + brand.batteries.length + (brand.posms || []).length, 0);
   const totalStock = brands.reduce((sum, brand) => sum + getTotalStock(brand), 0);
   const totalAllocatedStock = brands.reduce((sum, brand) => sum + getAllocatedStock(brand), 0);
-  const totalAvailableStock = totalStock - totalAllocatedStock;
+  const totalGrossAllocatedStock = brands.reduce(
+    (sum, brand) => sum + brand.allVariants.reduce((s, v) => s + getVariantGrossAllocated(v), 0),
+    0
+  );
+  const totalAvailableStock = Math.max(0, totalStock - totalGrossAllocatedStock);
   const lowStockItems = brands.reduce((sum, brand) => {
     const lowFlavors = brand.flavors.filter((f: any) => f.status === 'low-stock').length;
     const lowBatteries = brand.batteries.filter((b: any) => b.status === 'low-stock').length;
@@ -1191,7 +1213,6 @@ export default function MainInventoryPage() {
                           </TableHeader>
                           <TableBody>
                             {brand.flavors.map((flavor) => {
-                              const allocated = isSubWarehouseUser ? 0 : getVariantAllocatedStock(flavor);
                               const available = isSubWarehouseUser ? flavor.stock : getVariantAvailableStock(flavor);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (flavor as any).sellingPrice;
@@ -1209,9 +1230,7 @@ export default function MainInventoryPage() {
                                     </div>
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{flavor.stock}</TableCell>
-                                  {!isSubWarehouseUser && (
-                                    <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
-                                  )}
+                                  {!isSubWarehouseUser && renderAllocatedCell(flavor)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, flavor)}
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
@@ -1367,7 +1386,6 @@ export default function MainInventoryPage() {
                           </TableHeader>
                           <TableBody>
                             {brand.batteries.map((battery) => {
-                              const allocated = isSubWarehouseUser ? 0 : getVariantAllocatedStock(battery);
                               const available = isSubWarehouseUser ? battery.stock : getVariantAvailableStock(battery);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (battery as any).sellingPrice;
@@ -1385,9 +1403,7 @@ export default function MainInventoryPage() {
                                     </div>
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{battery.stock}</TableCell>
-                                  {!isSubWarehouseUser && (
-                                    <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
-                                  )}
+                                  {!isSubWarehouseUser && renderAllocatedCell(battery)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, battery)}
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
@@ -1520,7 +1536,6 @@ export default function MainInventoryPage() {
                           </TableHeader>
                           <TableBody>
                             {(brand as any).posms.map((posm: any) => {
-                              const allocated = isSubWarehouseUser ? 0 : getVariantAllocatedStock(posm);
                               const available = isSubWarehouseUser ? posm.stock : getVariantAvailableStock(posm);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (posm as any).sellingPrice;
@@ -1538,9 +1553,7 @@ export default function MainInventoryPage() {
                                     </div>
                                   </TableCell>
                                   <TableCell className="font-semibold text-center">{posm.stock}</TableCell>
-                                  {!isSubWarehouseUser && (
-                                    <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
-                                  )}
+                                  {!isSubWarehouseUser && renderAllocatedCell(posm)}
                                   {showPendingAllocations && renderPendingAllocatedCell(brand.name, posm)}
                                   {!isSubWarehouseUser && (
                                     <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
@@ -1691,7 +1704,6 @@ export default function MainInventoryPage() {
                               </TableHeader>
                               <TableBody>
                                 {variants.map((variant) => {
-                                  const allocated = isSubWarehouseUser ? 0 : getVariantAllocatedStock(variant);
                                   const available = isSubWarehouseUser ? variant.stock : getVariantAvailableStock(variant);
                                   const sellingPriceRaw = (variant as any).sellingPrice;
                                   const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
@@ -1708,9 +1720,7 @@ export default function MainInventoryPage() {
                                         </div>
                                       </TableCell>
                                       <TableCell className="font-semibold text-center">{variant.stock}</TableCell>
-                                      {!isSubWarehouseUser && (
-                                        <TableCell className="text-orange-600 font-medium text-center">{allocated}</TableCell>
-                                      )}
+                                      {!isSubWarehouseUser && renderAllocatedCell(variant)}
                                       {showPendingAllocations && renderPendingAllocatedCell(brand.name, variant)}
                                       {!isSubWarehouseUser && (
                                         <TableCell className="text-green-600 font-medium text-center">{available}</TableCell>
@@ -2447,16 +2457,24 @@ export default function MainInventoryPage() {
               Allocated Pending — Mobile Sales
             </DialogTitle>
             <p className="text-sm text-muted-foreground">
-              {pendingAllocDialog && (
-                <>
-                  <span className="font-medium text-foreground">{pendingAllocDialog.brandName}</span>
-                  {' — '}
-                  {pendingAllocDialog.variantName}
-                  {' · '}
-                  {pendingAllocDialog.items.reduce((sum, r) => sum + r.quantity, 0)}{' '}
-                  units on mobile sales orders not yet approved by finance
-                </>
-              )}
+              {pendingAllocDialog && (() => {
+                const pendingUnits = pendingAllocDialog.items.reduce((sum, r) => sum + r.quantity, 0);
+                const columnValue = Math.max(0, pendingAllocDialog.grossAllocated - pendingUnits);
+                return (
+                  <>
+                    <span className="font-medium text-foreground">{pendingAllocDialog.brandName}</span>
+                    {' — '}
+                    {pendingAllocDialog.variantName}
+                    {' · '}
+                    Allocated {pendingAllocDialog.grossAllocated} − {pendingUnits} pending = {columnValue} in table
+                    {' · '}
+                    <span className="text-sm font-semibold italic">
+                      {pendingUnits} unit{pendingUnits === 1 ? '' : 's'} below (not yet finance-approved)
+                    </span>
+                    
+                  </>
+                );
+              })()}
             </p>
           </DialogHeader>
 
