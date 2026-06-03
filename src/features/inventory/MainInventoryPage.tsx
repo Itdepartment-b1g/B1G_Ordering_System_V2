@@ -2489,7 +2489,7 @@ export default function MainInventoryPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-semibold text-amber-700">{item.quantity}</TableCell>
-                      <TableCell className="text-sm">{item.payment_method || '—'}</TableCell>
+                      <TableCell className="text-sm">{item.payment_method || 'N/A'}</TableCell>
                       <TableCell className="text-sm whitespace-nowrap">
                         {format(new Date(item.created_at), 'MMM d, yyyy h:mm a')}
                       </TableCell>
