@@ -34,8 +34,8 @@ import {
   Link,
   Network,
   Plus,
-  RotateCcw,
-  Package2Icon
+  Package2Icon,
+  RotateCcw
 } from 'lucide-react';
 import {
   Sidebar,

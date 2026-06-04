@@ -28,7 +28,7 @@ import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
 import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
-import { RebateReplacementPricingSummary } from '@/features/key-accounts/rebates';
+import { RebateReplacementPricingSummary, RebateReceiveReturnsDialog } from '@/features/key-accounts/rebates';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -87,6 +87,18 @@ export default function PurchaseOrdersPage() {
   const [warehouseSignatureDataUrl, setWarehouseSignatureDataUrl] = useState<string | null>(null);
   const [showWarehouseSignatureModal, setShowWarehouseSignatureModal] = useState(false);
   const [savingDispatch, setSavingDispatch] = useState(false);
+
+  const [fulfillRebateReturnLines, setFulfillRebateReturnLines] = useState<
+    Array<{
+      brand_name: string;
+      variant_name: string;
+      variant_type: string;
+      disputed_quantity: number;
+      warehouse_location_id: string | null;
+      warehouse_location_name: string;
+    }>
+  >([]);
+  const [loadingFulfillRebateReturnLines, setLoadingFulfillRebateReturnLines] = useState(false);
 
   // Track fulfillment status for current user's warehouse location
   const [myLocationStatuses, setMyLocationStatuses] = useState<Record<string, string>>({});
@@ -518,6 +530,89 @@ export default function PurchaseOrdersPage() {
     }
     setFulfillDialogOpen(true);
   };
+
+  useEffect(() => {
+    if (!fulfillDialogOpen || !orderToFulfill?.id) return;
+    if (String(orderToFulfill.po_order_kind || '') !== 'rebate_fulfillment' || !orderToFulfill.source_rebate_id) {
+      setFulfillRebateReturnLines([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingFulfillRebateReturnLines(true);
+    void (async () => {
+      try {
+        const { data: linesData, error: linesErr } = await supabase
+          .from('key_account_po_rebate_lines')
+          .select(
+            `
+            disputed_quantity,
+            purchase_order_item:purchase_order_items (
+              warehouse_location_id
+            ),
+            variant:variants (
+              name,
+              variant_type,
+              brand:brands ( name )
+            )
+          `
+          )
+          .eq('rebate_id', orderToFulfill.source_rebate_id);
+        if (linesErr) throw linesErr;
+        if (cancelled) return;
+
+        const raw = (linesData || []) as any[];
+        const locationIds = [
+          ...new Set(
+            raw
+              .map((r) => r?.purchase_order_item?.warehouse_location_id ?? null)
+              .filter((x) => !!x)
+          ),
+        ] as string[];
+
+        const hubCompanyId =
+          (orderToFulfill.warehouse_company_id as string | null | undefined) ?? user?.company_id ?? null;
+        let locNameById: Record<string, string> = {};
+        if (hubCompanyId && locationIds.length > 0) {
+          const { data: locRows } = await supabase
+            .from('warehouse_locations')
+            .select('id,name')
+            .eq('company_id', hubCompanyId)
+            .in('id', locationIds);
+          locNameById = Object.fromEntries(((locRows as any[]) || []).map((r) => [r.id, r.name]));
+        }
+
+        const mapped = raw.map((r) => {
+          const whId = r?.purchase_order_item?.warehouse_location_id ?? null;
+          return {
+            brand_name: r?.variant?.brand?.name ?? '—',
+            variant_name: r?.variant?.name ?? '—',
+            variant_type: r?.variant?.variant_type ?? '—',
+            disputed_quantity: Number(r?.disputed_quantity) || 0,
+            warehouse_location_id: whId,
+            warehouse_location_name: whId ? locNameById[whId] || '—' : '—',
+          };
+        });
+
+        setFulfillRebateReturnLines(mapped);
+      } catch {
+        if (!cancelled) setFulfillRebateReturnLines([]);
+      } finally {
+        if (!cancelled) setLoadingFulfillRebateReturnLines(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    fulfillDialogOpen,
+    orderToFulfill?.id,
+    orderToFulfill?.po_order_kind,
+    orderToFulfill?.source_rebate_id,
+    orderToFulfill?.warehouse_company_id,
+    user?.company_id,
+  ]);
 
   const handleFulfillOrder = async () => {
     const locId = fulfillLocationId ?? membership.locationId;
@@ -1207,6 +1302,49 @@ export default function PurchaseOrdersPage() {
                 : 'Select a purchase order to fulfill.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          {orderToFulfill?.po_order_kind === 'rebate_fulfillment' && (
+            <div className="space-y-2 pt-2">
+              <div className="text-sm font-medium">Expected return items (disputed lines)</div>
+              <div className="text-xs text-muted-foreground">
+                This fulfillment deducts replacement stock. Returned/disputed items are not automatically added back to
+                inventory until they are physically received.
+              </div>
+              {loadingFulfillRebateReturnLines ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading return items…
+                </div>
+              ) : fulfillRebateReturnLines.length === 0 ? (
+                <div className="text-sm text-muted-foreground">—</div>
+              ) : (
+                <div className="max-h-56 overflow-auto rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Brand</TableHead>
+                        <TableHead>Variant</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>From warehouse</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {fulfillRebateReturnLines.map((l, idx) => (
+                        <TableRow key={`${l.variant_name}-${idx}`}>
+                          <TableCell className="font-medium">{l.brand_name}</TableCell>
+                          <TableCell>{l.variant_name}</TableCell>
+                          <TableCell>{String(l.variant_type).toUpperCase()}</TableCell>
+                          <TableCell className="text-muted-foreground">{l.warehouse_location_name}</TableCell>
+                          <TableCell className="text-right font-semibold">{l.disputed_quantity}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          )}
+
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
@@ -1990,6 +2128,20 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
     replacement_total: number;
   } | null>(null);
 
+  const [rebateReturnLines, setRebateReturnLines] = useState<
+    Array<{
+      brand_name: string;
+      variant_name: string;
+      variant_type: string;
+      disputed_quantity: number;
+      warehouse_location_id: string | null;
+      warehouse_location_name: string;
+    }>
+  >([]);
+  const [loadingRebateReturnLines, setLoadingRebateReturnLines] = useState(false);
+  const [receiveReturnsOpen, setReceiveReturnsOpen] = useState(false);
+  const [returnsAlreadyReceived, setReturnsAlreadyReceived] = useState(false);
+
   useEffect(() => {
     if (order.po_order_kind !== 'rebate_fulfillment' || !order.source_rebate_id) {
       setRebatePricing(null);
@@ -2104,6 +2256,66 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
     }
     return map;
   }, [warehouseLocationMeta]);
+
+  useEffect(() => {
+    if (order.po_order_kind !== 'rebate_fulfillment' || !order.source_rebate_id) {
+      setRebateReturnLines([]);
+      setReturnsAlreadyReceived(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingRebateReturnLines(true);
+    void (async () => {
+      try {
+        const { data: receipt } = await supabase
+          .from('key_account_po_rebate_return_receipts')
+          .select('id')
+          .eq('rebate_id', order.source_rebate_id)
+          .maybeSingle();
+        if (!cancelled) setReturnsAlreadyReceived(!!receipt?.id);
+
+        const { data: linesData, error: linesErr } = await supabase
+          .from('key_account_po_rebate_lines')
+          .select(
+            `
+            disputed_quantity,
+            purchase_order_item:purchase_order_items (
+              warehouse_location_id
+            ),
+            variant:variants (
+              name,
+              variant_type,
+              brand:brands ( name )
+            )
+          `
+          )
+          .eq('rebate_id', order.source_rebate_id);
+        if (linesErr) throw linesErr;
+        if (cancelled) return;
+
+        const raw = (linesData || []) as any[];
+        const mapped = raw.map((r) => {
+          const whId = r?.purchase_order_item?.warehouse_location_id ?? null;
+          return {
+            brand_name: r?.variant?.brand?.name ?? '—',
+            variant_name: r?.variant?.name ?? '—',
+            variant_type: r?.variant?.variant_type ?? '—',
+            disputed_quantity: Number(r?.disputed_quantity) || 0,
+            warehouse_location_id: whId,
+            warehouse_location_name: whId ? warehouseNamesById[whId] || '—' : '—',
+          };
+        });
+        setRebateReturnLines(mapped);
+      } catch {
+        if (!cancelled) setRebateReturnLines([]);
+      } finally {
+        if (!cancelled) setLoadingRebateReturnLines(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [order.po_order_kind, order.source_rebate_id, warehouseNamesById]);
 
   // Use order data if available, otherwise use fetched data
   const client = order.client || kaData.client;
@@ -2279,6 +2491,79 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
           />
         </CardContent>
       </Card>
+
+      {order.po_order_kind === 'rebate_fulfillment' && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Expected return items (disputed lines)</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Rebate replacement fulfillment deducts the replacement items above. Disputed items only go back to
+              inventory once the warehouse physically receives them (not automatic).
+            </p>
+            {loadingRebateReturnLines ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+              </div>
+            ) : rebateReturnLines.length === 0 ? (
+              <div className="text-sm text-muted-foreground">—</div>
+            ) : (
+              <div className="rounded-md border overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Brand</TableHead>
+                      <TableHead>Variant</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>From warehouse</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rebateReturnLines.map((l, idx) => (
+                      <TableRow key={`${l.variant_name}-${idx}`}>
+                        <TableCell className="font-medium">{l.brand_name}</TableCell>
+                        <TableCell>{l.variant_name}</TableCell>
+                        <TableCell>{String(l.variant_type).toUpperCase()}</TableCell>
+                        <TableCell className="text-muted-foreground">{l.warehouse_location_name}</TableCell>
+                        <TableCell className="text-right font-semibold">{l.disputed_quantity}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            {user?.role === 'warehouse' && !returnsAlreadyReceived && (
+              <div className="flex justify-end pt-1">
+                <Button
+                  variant="secondary"
+                  disabled={loadingRebateReturnLines || rebateReturnLines.length === 0}
+                  onClick={() => setReceiveReturnsOpen(true)}
+                >
+                  Receive returns
+                </Button>
+              </div>
+            )}
+            {returnsAlreadyReceived && (
+              <p className="text-sm text-muted-foreground">Returns already received for this rebate.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {order.po_order_kind === 'rebate_fulfillment' && order.source_rebate_id && (
+        <RebateReceiveReturnsDialog
+          open={receiveReturnsOpen}
+          onOpenChange={setReceiveReturnsOpen}
+          fulfillmentPoId={order.id}
+          sourceRebateId={order.source_rebate_id}
+          warehouseNamesById={warehouseNamesById}
+          hubCompanyId={order.warehouse_company_id || user?.company_id}
+          onSuccess={() => setReturnsAlreadyReceived(true)}
+        />
+      )}
 
       {/* Pricing Summary */}
       <RebateReplacementPricingSummary order={order} rebate={rebatePricing} />

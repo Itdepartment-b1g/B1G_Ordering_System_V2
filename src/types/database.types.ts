@@ -45,26 +45,21 @@ export type CompanyAccountType = "Standard Accounts" | "Key Accounts";
 
 export type KeyAccountClientStatus = "active" | "inactive" | "suspended";
 export type TransactionType =
-  | "purchase_order_received"
-  | "allocated_to_agent"
-  | "order_fulfilled"
-  | "adjustment"
-  | "return"
-  | "return_to_main"
-  | "warehouse_transfer_out"
-  | "warehouse_transfer_in";
-export type FinancialTransactionType =
-  | "revenue"
-  | "expense"
-  | "commission"
-  | "refund";
-export type FinancialTransactionStatus = "pending" | "completed" | "cancelled";
-export type StockRequestStatus =
-  | "pending"
-  | "approved_by_leader"
-  | "approved_by_admin"
-  | "rejected"
-  | "fulfilled";
+  | 'purchase_order_received'
+  | 'allocated_to_agent'
+  | 'order_fulfilled'
+  | 'adjustment'
+  | 'return'
+  | 'return_to_main'
+  | 'warehouse_transfer_out'
+  | 'warehouse_transfer_in'
+  | 'warehouse_allocate_to_sub'
+  | 'warehouse_return_from_sub'
+  | 'rebate_return_in'
+  | 'rebate_return_disposed';
+export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
+export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
+export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';
 export type NotificationType =
   | "order_created"
   | "order_approved"
@@ -413,8 +408,8 @@ export type PurchaseOrderFulfillmentType = "supplier" | "warehouse_transfer";
 
 export type PurchaseOrderKind = 'standard' | 'rebate_fulfillment';
 
-export type KeyAccountPoPaymentMode = "full" | "split";
-export type KeyAccountPoPaymentStatus = "unpaid" | "partial" | "paid";
+export type KeyAccountPoPaymentMode = 'full' | 'split';
+export type KeyAccountPoPaymentStatus = 'unpaid' | 'partial' | 'paid';
 
 export interface PurchaseOrderKeyAccountPayment {
   id: string;
