@@ -86,6 +86,7 @@ export default function ClientsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
+  const [totalClientCount, setTotalClientCount] = useState(0);
   const [allClientsRevenue, setAllClientsRevenue] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
@@ -497,9 +498,31 @@ export default function ClientsPage() {
         clientsQuery = clientsQuery.eq('agent_id', user.id); // Default to self if empty team
       }
 
-      const { data, error } = await clientsQuery;
+      let countQuery = supabase
+        .from('clients')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', user?.company_id)
+        .neq('status', 'inactive');
+
+      if (isAdmin) {
+        // same scope as list query
+      } else if (isAgent && user?.id) {
+        countQuery = countQuery.eq('agent_id', user.id);
+      } else if (isManager && teamAgentIds.length > 0) {
+        countQuery = countQuery.in('agent_id', teamAgentIds);
+      } else if (isManager && user?.id) {
+        countQuery = countQuery.eq('agent_id', user.id);
+      }
+
+      const [{ data, error }, { count, error: countError }] = await Promise.all([
+        clientsQuery,
+        countQuery,
+      ]);
 
       if (error) throw error;
+      if (!countError) {
+        setTotalClientCount(count ?? 0);
+      }
 
 
       // Prefer aggregated stats from view for accuracy and performance
@@ -3461,7 +3484,7 @@ export default function ClientsPage() {
             <Building className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{clients.length}</div>
+            <div className="text-2xl font-bold">{totalClientCount.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card>
@@ -3520,7 +3543,7 @@ export default function ClientsPage() {
             </div>
             {(searchQuery || (cityFilter && cityFilter !== 'all')) && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>Showing {filteredClients.length} of {clients.length} clients</span>
+                <span>Showing {filteredClients.length} of {totalClientCount.toLocaleString()} clients</span>
                 {cityFilter && cityFilter !== 'all' && (
                   <Badge variant="secondary" className="text-xs">
                     City: {cityFilter}
