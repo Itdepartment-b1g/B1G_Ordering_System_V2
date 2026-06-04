@@ -240,6 +240,17 @@ export function KeyAccountPurchaseOrdersPage() {
     replacement_total: number;
   } | null>(null);
 
+  const [rebateReturnLines, setRebateReturnLines] = useState<
+    Array<{
+      brand_name: string;
+      variant_name: string;
+      variant_type: string;
+      disputed_quantity: number;
+      warehouse_location_id: string | null;
+    }>
+  >([]);
+  const [rebateReturnLinesLoading, setRebateReturnLinesLoading] = useState(false);
+
   const role = user?.role;
   const isKAM = role === 'key_account_manager';
   const isDirector = role === 'sales_director';
@@ -591,6 +602,44 @@ export function KeyAccountPurchaseOrdersPage() {
       } catch {
         setRebateSource(null);
       }
+      setRebateReturnLinesLoading(true);
+      try {
+        const { data: linesData, error: linesErr } = await supabase
+          .from('key_account_po_rebate_lines')
+          .select(
+            `
+            disputed_quantity,
+            purchase_order_item:purchase_order_items (
+              warehouse_location_id
+            ),
+            variant:variants (
+              name,
+              variant_type,
+              brand:brands ( name )
+            )
+          `
+          )
+          .eq('rebate_id', po.source_rebate_id);
+        if (linesErr) throw linesErr;
+        const raw = (linesData || []) as any[];
+        setRebateReturnLines(
+          raw.map((r) => ({
+            brand_name: r?.variant?.brand?.name ?? '—',
+            variant_name: r?.variant?.name ?? '—',
+            variant_type: r?.variant?.variant_type ?? '—',
+            disputed_quantity: Number(r?.disputed_quantity) || 0,
+            warehouse_location_id: r?.purchase_order_item?.warehouse_location_id ?? null,
+          }))
+        );
+      } catch {
+        setRebateReturnLines([]);
+      } finally {
+        setRebateReturnLinesLoading(false);
+      }
+    } else {
+      setRebateSource(null);
+      setRebateReturnLines([]);
+      setRebateReturnLinesLoading(false);
     }
 
     if (isDoneWorkflow(po)) {
@@ -1480,6 +1529,58 @@ export function KeyAccountPurchaseOrdersPage() {
                     )}
                   </CardContent>
                 </Card>
+
+                {String(active.po_order_kind || '') === 'rebate_fulfillment' && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Expected return items (disputed lines)</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        Replacement fulfillment deducts the replacement items. Disputed items only go back to inventory
+                        once the warehouse physically receives them (not automatic).
+                      </p>
+                      {rebateReturnLinesLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                          <Loader2 className="h-4 w-4 animate-spin" /> Loading return items…
+                        </div>
+                      ) : rebateReturnLines.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">—</div>
+                      ) : (
+                        <div className="w-full overflow-x-auto rounded-md border">
+                          <Table className="min-w-[720px]">
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="whitespace-nowrap">Brand</TableHead>
+                                <TableHead className="whitespace-nowrap">Variant</TableHead>
+                                <TableHead className="whitespace-nowrap">Warehouse</TableHead>
+                                <TableHead className="whitespace-nowrap">Type</TableHead>
+                                <TableHead className="text-right whitespace-nowrap">Qty</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {rebateReturnLines.map((l, idx) => (
+                                <TableRow key={`${l.variant_name}-${idx}`}>
+                                  <TableCell className="font-medium whitespace-nowrap">{l.brand_name}</TableCell>
+                                  <TableCell className="whitespace-nowrap">{l.variant_name}</TableCell>
+                                  <TableCell className="text-sm whitespace-nowrap">
+                                    {l.warehouse_location_id
+                                      ? linkedWarehouseNamesById[l.warehouse_location_id] || '—'
+                                      : '—'}
+                                  </TableCell>
+                                  <TableCell className="whitespace-nowrap">{String(l.variant_type || '—').toUpperCase()}</TableCell>
+                                  <TableCell className="text-right whitespace-nowrap font-semibold">
+                                    {l.disputed_quantity}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
 
                 <RebateReplacementPricingSummary order={active} rebate={rebateSource} />
 

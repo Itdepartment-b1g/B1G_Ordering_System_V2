@@ -51,11 +51,16 @@ type PoItemRow = {
   quantity: number;
   unit_price: number;
   total_price: number;
+  warehouse_location_id: string | null;
   variant?: { name: string; brand?: { name: string } | null } | null;
 };
 
+type WarehouseOption = { id: string; name: string };
+
 type BrandRow = { id: string; name: string };
-type VariantRow = { id: string; name: string; brand_id: string };
+type VariantRow = { id: string; name: string; brand_id: string; variant_type: string };
+
+type LinkedWarehouseLocation = { id: string; is_main?: boolean };
 
 type DisputedLine = {
   purchase_order_item_id: string;
@@ -63,6 +68,8 @@ type DisputedLine = {
   maxQty: number;
   unitPrice: number;
   disputedQty: number;
+  shippedFromWarehouseId: string | null;
+  shippedFromWarehouseName: string;
 };
 
 type ReplacementLine = {
@@ -83,6 +90,7 @@ type SupabasePoItemRaw = {
   quantity: number;
   unit_price: number;
   total_price: number;
+  warehouse_location_id?: string | null;
   variant?: SupabaseVariantEmbed | SupabaseVariantEmbed[] | null;
 };
 
@@ -121,8 +129,13 @@ function normalizePoItemRow(it: SupabasePoItemRaw): PoItemRow {
     quantity: it.quantity,
     unit_price: it.unit_price,
     total_price: it.total_price,
+    warehouse_location_id: it.warehouse_location_id ?? null,
     variant: variantRaw ? { name: variantRaw.name, brand } : null,
   };
+}
+
+function uniqueWarehouseIdsFromItems(items: PoItemRow[]): string[] {
+  return [...new Set(items.map((it) => it.warehouse_location_id).filter((id): id is string => !!id))];
 }
 
 export function KeyAccountCreateRebatePage() {
@@ -151,6 +164,11 @@ export function KeyAccountCreateRebatePage() {
   const [repUnitPrice, setRepUnitPrice] = useState('');
   const [replacements, setReplacements] = useState<ReplacementLine[]>([]);
   const [warehouseLocationId, setWarehouseLocationId] = useState<string | null>(null);
+  const [warehouseOptions, setWarehouseOptions] = useState<WarehouseOption[]>([]);
+  const [showShippedFromColumn, setShowShippedFromColumn] = useState(false);
+  const [linkedWarehouseCompanyId, setLinkedWarehouseCompanyId] = useState<string | null>(null);
+  const [mainWarehouseLocationId, setMainWarehouseLocationId] = useState('');
+  const [stockMap, setStockMap] = useState<Record<string, number>>({});
 
   const disputedTotal = useMemo(
     () => lines.reduce((sum, l) => sum + l.disputedQty * l.unitPrice, 0),
@@ -216,15 +234,53 @@ export function KeyAccountCreateRebatePage() {
         return;
       }
       setPo(row);
-      setWarehouseLocationId(row.warehouse_location_id);
 
       const { data: itemData, error: itemErr } = await supabase
         .from('purchase_order_items')
-        .select('id, variant_id, quantity, unit_price, total_price, variant:variants(name, brand:brands(name))')
+        .select(
+          'id, variant_id, quantity, unit_price, total_price, warehouse_location_id, variant:variants(name, brand:brands(name))'
+        )
         .eq('purchase_order_id', poId);
       if (itemErr) throw itemErr;
 
       const itemRows = (itemData || []).map(normalizePoItemRow);
+      const itemWarehouseIds = uniqueWarehouseIdsFromItems(itemRows);
+      const multiWarehousePo = !row.warehouse_location_id || itemWarehouseIds.length > 1;
+      setShowShippedFromColumn(multiWarehousePo);
+
+      const warehouseIdsToLoad = [
+        ...new Set([
+          ...itemWarehouseIds,
+          ...(row.warehouse_location_id ? [row.warehouse_location_id] : []),
+        ]),
+      ];
+      let whNameById: Record<string, string> = {};
+      let loadedWarehouses: WarehouseOption[] = [];
+      if (warehouseIdsToLoad.length > 0) {
+        const { data: whRows, error: whErr } = await supabase
+          .from('warehouse_locations')
+          .select('id, name')
+          .in('id', warehouseIdsToLoad)
+          .order('name');
+        if (whErr) throw whErr;
+        loadedWarehouses = (whRows as WarehouseOption[]) || [];
+        whNameById = Object.fromEntries(loadedWarehouses.map((w) => [w.id, w.name]));
+      }
+
+      let resolvedWarehouseId = row.warehouse_location_id;
+      if (!resolvedWarehouseId && itemWarehouseIds.length === 1) {
+        resolvedWarehouseId = itemWarehouseIds[0];
+      }
+      setWarehouseLocationId(resolvedWarehouseId);
+
+      if (!row.warehouse_location_id && itemWarehouseIds.length > 0) {
+        setWarehouseOptions(
+          loadedWarehouses.filter((w) => itemWarehouseIds.includes(w.id))
+        );
+      } else {
+        setWarehouseOptions([]);
+      }
+
       const nextLines: DisputedLine[] = [];
       for (const it of itemRows) {
         const { data: rebatedQty } = await supabase.rpc('key_account_rebated_qty_for_po_item', {
@@ -235,12 +291,15 @@ export function KeyAccountCreateRebatePage() {
         if (remaining <= 0) continue;
         const brandName = it.variant?.brand?.name || '';
         const variantName = it.variant?.name || 'Item';
+        const lineWhId = it.warehouse_location_id ?? row.warehouse_location_id;
         nextLines.push({
           purchase_order_item_id: it.id,
           label: brandName ? `${brandName} — ${variantName}` : variantName,
           maxQty: remaining,
           unitPrice: Number(it.unit_price) || 0,
           disputedQty: remaining,
+          shippedFromWarehouseId: lineWhId,
+          shippedFromWarehouseName: lineWhId ? whNameById[lineWhId] || 'Unknown location' : '—',
         });
       }
       setLines(nextLines);
@@ -250,13 +309,29 @@ export function KeyAccountCreateRebatePage() {
       setRemainingCap(Math.max(0, Number(row.total_amount) - committedNum));
 
       const { data: hubId } = await supabase.rpc('get_linked_warehouse_company_id', {});
-      if (hubId) {
-        const [{ data: brandsData }, { data: variantsData }] = await Promise.all([
-          supabase.from('brands').select('id, name').eq('company_id', hubId).eq('is_active', true).order('name'),
-          supabase.from('variants').select('id, name, brand_id').eq('company_id', hubId).eq('is_active', true).order('name'),
+      const hubCompanyId = (hubId as string | null) ?? null;
+      setLinkedWarehouseCompanyId(hubCompanyId);
+      if (hubCompanyId) {
+        const [{ data: brandsData }, { data: variantsData }, { data: locations }] = await Promise.all([
+          supabase.from('brands').select('id, name').eq('company_id', hubCompanyId).eq('is_active', true).order('name'),
+          supabase
+            .from('variants')
+            .select('id, name, variant_type, brand_id')
+            .eq('company_id', hubCompanyId)
+            .eq('is_active', true)
+            .order('name'),
+          supabase.rpc('get_linked_warehouse_locations', {}),
         ]);
         setBrands((brandsData as BrandRow[]) || []);
         setVariants((variantsData as VariantRow[]) || []);
+        const locRows = ((locations as LinkedWarehouseLocation[]) || []).filter((l) => l.id);
+        const mainLoc = locRows.find((l) => l.is_main) ?? locRows[0];
+        setMainWarehouseLocationId(mainLoc?.id ?? '');
+      } else {
+        setBrands([]);
+        setVariants([]);
+        setMainWarehouseLocationId('');
+        setStockMap({});
       }
     } catch (e: unknown) {
       toast({
@@ -279,14 +354,176 @@ export function KeyAccountCreateRebatePage() {
     }
   }, [resolutionType, disputedTotal, creditAmount]);
 
-  const filteredVariants = useMemo(
-    () => variants.filter((v) => !selectedBrandId || v.brand_id === selectedBrandId),
-    [variants, selectedBrandId]
+  useEffect(() => {
+    setSelectedVariantId('');
+  }, [selectedBrandId]);
+
+  useEffect(() => {
+    setSelectedVariantId('');
+  }, [warehouseLocationId]);
+
+  const stockViewLocationId = warehouseLocationId;
+
+  const stockBadgeClass = (stock: number) => {
+    if (stock <= 0) return 'bg-destructive text-destructive-foreground';
+    if (stock <= 10) return 'bg-amber-400 text-amber-950 dark:bg-amber-500 dark:text-amber-950';
+    return 'bg-emerald-600 text-white';
+  };
+
+  const getVariantStock = useCallback(
+    (variantId: string, locationId: string) => {
+      if (!variantId || !locationId) return null;
+      const key = `${variantId}::${locationId}`;
+      return stockMap[key] ?? null;
+    },
+    [stockMap]
   );
 
+  useEffect(() => {
+    if (!linkedWarehouseCompanyId || variants.length === 0) {
+      setStockMap({});
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const variantIds = variants.map((v) => v.id).filter(Boolean);
+        if (variantIds.length === 0) {
+          if (!cancelled) setStockMap({});
+          return;
+        }
+
+        const [{ data: mainInvData, error: mainInvErr }, { data: locInvData, error: locInvErr }] =
+          await Promise.all([
+            supabase
+              .from('main_inventory')
+              .select('variant_id, stock, allocated_stock')
+              .eq('company_id', linkedWarehouseCompanyId)
+              .in('variant_id', variantIds),
+            supabase
+              .from('warehouse_location_inventory')
+              .select('variant_id, location_id, stock')
+              .eq('company_id', linkedWarehouseCompanyId)
+              .in('variant_id', variantIds),
+          ]);
+
+        if (mainInvErr) throw mainInvErr;
+        if (locInvErr) throw locInvErr;
+        if (cancelled) return;
+
+        const next: Record<string, number> = {};
+
+        if (mainWarehouseLocationId && mainInvData) {
+          for (const row of mainInvData) {
+            const stock = row.stock || 0;
+            const allocated = row.allocated_stock || 0;
+            const available = Math.max(0, stock - allocated);
+            next[`${row.variant_id}::${mainWarehouseLocationId}`] = available;
+          }
+        }
+
+        if (locInvData) {
+          for (const row of locInvData) {
+            next[`${row.variant_id}::${row.location_id}`] = row.stock || 0;
+          }
+        }
+
+        setStockMap(next);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setStockMap({});
+          toast({
+            variant: 'destructive',
+            title: 'Error loading warehouse stock',
+            description: e instanceof Error ? e.message : 'Failed to load warehouse stock',
+          });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [linkedWarehouseCompanyId, variants, mainWarehouseLocationId, toast]);
+
+  const needsWarehousePicker = Boolean(po && !po.warehouse_location_id && warehouseOptions.length > 1);
+
+  const disputedWarehouseIds = useMemo(
+    () => [
+      ...new Set(
+        lines
+          .filter((l) => l.disputedQty > 0 && l.shippedFromWarehouseId)
+          .map((l) => l.shippedFromWarehouseId as string)
+      ),
+    ],
+    [lines]
+  );
+
+  useEffect(() => {
+    if (!needsWarehousePicker || disputedWarehouseIds.length !== 1) return;
+    setWarehouseLocationId(disputedWarehouseIds[0]);
+  }, [needsWarehousePicker, disputedWarehouseIds]);
+
+  const stockedVariantIdsAtShipFrom = useMemo(() => {
+    if (!stockViewLocationId) return new Set<string>();
+    const ids = new Set<string>();
+    for (const v of variants) {
+      if (getVariantStock(v.id, stockViewLocationId) !== null) {
+        ids.add(v.id);
+      }
+    }
+    return ids;
+  }, [variants, stockViewLocationId, getVariantStock]);
+
+  const variantsAtShipFrom = useMemo(() => {
+    if (!stockViewLocationId) return [];
+    return variants.filter((v) => stockedVariantIdsAtShipFrom.has(v.id));
+  }, [variants, stockedVariantIdsAtShipFrom, stockViewLocationId]);
+
+  const visibleBrands = useMemo(() => {
+    if (!stockViewLocationId) return [];
+    const brandIds = new Set(variantsAtShipFrom.map((v) => v.brand_id));
+    return brands.filter((b) => brandIds.has(b.id));
+  }, [brands, variantsAtShipFrom, stockViewLocationId]);
+
+  const filteredVariants = useMemo(
+    () => (selectedBrandId ? variantsAtShipFrom.filter((v) => v.brand_id === selectedBrandId) : []),
+    [variantsAtShipFrom, selectedBrandId]
+  );
+
+  useEffect(() => {
+    if (!selectedBrandId || visibleBrands.length === 0) return;
+    if (!visibleBrands.some((b) => b.id === selectedBrandId)) {
+      setSelectedBrandId('');
+    }
+  }, [visibleBrands, selectedBrandId]);
+
+  const selectedWarehouseLabel = useMemo(() => {
+    if (!warehouseLocationId) return null;
+    const fromOptions = warehouseOptions.find((w) => w.id === warehouseLocationId)?.name;
+    if (fromOptions) return fromOptions;
+    if (po?.warehouse_location_id) return 'Same as source PO (inherited)';
+    return null;
+  }, [warehouseLocationId, warehouseOptions, po?.warehouse_location_id]);
+
   const addReplacement = () => {
+    if (!selectedVariantId) {
+      toast({ variant: 'destructive', title: 'Select a replacement SKU' });
+      return;
+    }
+    if (!warehouseLocationId) {
+      toast({
+        variant: 'destructive',
+        title: needsWarehousePicker ? 'Select a warehouse' : 'Warehouse not set',
+        description: needsWarehousePicker
+          ? 'This PO ships from multiple warehouses. Choose which location replacement stock comes from.'
+          : 'This purchase order has no warehouse location. Contact support or use a PO with a warehouse assigned.',
+      });
+      return;
+    }
     const variant = variants.find((v) => v.id === selectedVariantId);
-    if (!variant || !warehouseLocationId) {
+    if (!variant) {
       toast({ variant: 'destructive', title: 'Select a replacement SKU' });
       return;
     }
@@ -445,11 +682,16 @@ export function KeyAccountCreateRebatePage() {
               <span className="font-medium">{formatRebateCurrency(remainingCap)}</span>
             </div>
           )}
-          {warehouseLocationId && (
+          {selectedWarehouseLabel && (
             <div>
               <span className="text-muted-foreground">Warehouse: </span>
-              <span className="font-medium">Same as source PO (inherited)</span>
+              <span className="font-medium">{selectedWarehouseLabel}</span>
             </div>
+          )}
+          {!warehouseLocationId && needsWarehousePicker && (
+            <Badge variant="outline" className="text-amber-700 border-amber-300">
+              Select warehouse below for replacements
+            </Badge>
           )}
         </CardContent>
       </Card>
@@ -457,6 +699,11 @@ export function KeyAccountCreateRebatePage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Disputed lines</CardTitle>
+          {showShippedFromColumn && (
+            <p className="text-sm text-muted-foreground font-normal">
+              Each line shows which warehouse originally shipped that product on this PO.
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           {lines.length === 0 ? (
@@ -466,6 +713,7 @@ export function KeyAccountCreateRebatePage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Product</TableHead>
+                  {showShippedFromColumn && <TableHead>Shipped from</TableHead>}
                   <TableHead className="text-right">Max qty</TableHead>
                   <TableHead className="text-right">Unit price</TableHead>
                   <TableHead className="text-right w-28">Dispute qty</TableHead>
@@ -476,6 +724,9 @@ export function KeyAccountCreateRebatePage() {
                 {lines.map((line) => (
                   <TableRow key={line.purchase_order_item_id}>
                     <TableCell>{line.label}</TableCell>
+                    {showShippedFromColumn && (
+                      <TableCell className="text-muted-foreground">{line.shippedFromWarehouseName}</TableCell>
+                    )}
                     <TableCell className="text-right">{line.maxQty}</TableCell>
                     <TableCell className="text-right">{formatRebateCurrency(line.unitPrice)}</TableCell>
                     <TableCell className="text-right">
@@ -570,18 +821,66 @@ export function KeyAccountCreateRebatePage() {
           {(resolutionType === 'replacement' || resolutionType === 'mixed') && (
             <div className="space-y-4 border-t pt-4">
               <Label className="text-base">Replacement items</Label>
-              <p className="text-xs text-muted-foreground">
-                Items ship from the same warehouse as the original PO.
+              <p className="text-xs text-muted-foreground max-w-2xl">
+                {needsWarehousePicker ? (
+                  <>
+                    Replacement SKUs can be any product from the catalog (they do not have to match the disputed
+                    line). Ship from warehouse is where stock will be taken from when the rebate is approved—usually
+                    the same location that shipped the items you are disputing (see Shipped from column above). If you
+                    dispute lines from more than one warehouse, choose which location should fulfill this replacement
+                    shipment.
+                  </>
+                ) : (
+                  <>
+                    Replacement SKUs can be any product from the catalog. When approved, replacement stock is shipped
+                    from the same warehouse as this PO
+                    {selectedWarehouseLabel ? ` (${selectedWarehouseLabel})` : ''}.
+                  </>
+                )}
               </p>
+              {needsWarehousePicker && (
+                <div className="space-y-2 max-w-md">
+                  <Label>Ship from warehouse (fulfillment location)</Label>
+                  <Select
+                    value={warehouseLocationId || ''}
+                    onValueChange={(v) => setWarehouseLocationId(v || null)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select warehouse" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {warehouseOptions.map((w) => (
+                        <SelectItem key={w.id} value={w.id}>
+                          {w.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {disputedWarehouseIds.length > 1 && (
+                    <p className="text-xs text-amber-700">
+                      You are disputing items from multiple warehouses. Confirm ship-from matches where you want
+                      replacements picked.
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="grid gap-3 md:grid-cols-4 items-end">
                 <div className="space-y-2">
                   <Label>Brand</Label>
-                  <Select value={selectedBrandId} onValueChange={setSelectedBrandId}>
+                  <Select
+                    value={selectedBrandId}
+                    onValueChange={setSelectedBrandId}
+                    disabled={!stockViewLocationId}
+                  >
                     <SelectTrigger>
-                      <SelectValue placeholder="Brand" />
+                      <SelectValue
+                        placeholder={
+                          !stockViewLocationId ? 'Select ship-from warehouse first' : 'Brand'
+                        }
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      {brands.map((b) => (
+                      {visibleBrands.map((b) => (
                         <SelectItem key={b.id} value={b.id}>
                           {b.name}
                         </SelectItem>
@@ -591,18 +890,59 @@ export function KeyAccountCreateRebatePage() {
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>Variant</Label>
-                  <Select value={selectedVariantId} onValueChange={setSelectedVariantId}>
+                  <Select
+                    value={selectedVariantId}
+                    onValueChange={setSelectedVariantId}
+                    disabled={!selectedBrandId || !stockViewLocationId}
+                  >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select SKU" />
+                      <SelectValue
+                        placeholder={
+                          !selectedBrandId
+                            ? 'Choose brand first'
+                            : !stockViewLocationId
+                              ? 'Select ship-from warehouse first'
+                              : 'Select SKU'
+                        }
+                      />
                     </SelectTrigger>
                     <SelectContent>
-                      {filteredVariants.map((v) => (
-                        <SelectItem key={v.id} value={v.id}>
-                          {v.name}
-                        </SelectItem>
-                      ))}
+                      {filteredVariants.length === 0 ? (
+                        <p className="px-2 py-3 text-sm text-muted-foreground">
+                          {selectedBrandId
+                            ? 'No SKUs in stock at this warehouse for this brand.'
+                            : 'Choose a brand to see available SKUs.'}
+                        </p>
+                      ) : (
+                        filteredVariants.map((variant) => {
+                          const stock = getVariantStock(variant.id, stockViewLocationId!) ?? 0;
+                          return (
+                            <SelectItem key={variant.id} value={variant.id}>
+                              <div className="flex items-center justify-between gap-3 w-full">
+                                <span className="min-w-0 truncate">
+                                  {variant.name} ({variant.variant_type})
+                                </span>
+                                <span
+                                  className={[
+                                    'shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold tabular-nums min-w-[2.75rem] text-center',
+                                    stockBadgeClass(stock),
+                                  ].join(' ')}
+                                  title="Available stock at ship-from warehouse"
+                                >
+                                  {stock}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          );
+                        })
+                      )}
                     </SelectContent>
                   </Select>
+                  {stockViewLocationId && visibleBrands.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      No catalog items are stocked at this warehouse location.
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Qty</Label>
