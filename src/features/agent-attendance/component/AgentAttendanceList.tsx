@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEventHandler } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -219,7 +218,7 @@ function readFileAsJpegBlob(file: File): Promise<Blob> {
 export default function AgentAttendanceList() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const businessDate = useMemo(() => manilaCalendarDateString(), []);
 
@@ -339,6 +338,9 @@ export default function AgentAttendanceList() {
 
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [showCamera, setShowCamera] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraStarting, setCameraStarting] = useState(false);
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
@@ -357,7 +359,20 @@ export default function AgentAttendanceList() {
     [loading, hubs.length, todayRow?.status, todayRow?.time_in]
   );
 
+  const stopCamera = useCallback(() => {
+    setCameraStream(prev => {
+      prev?.getTracks().forEach(track => track.stop());
+      return null;
+    });
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setShowCamera(false);
+    setCameraStarting(false);
+  }, []);
+
   const resetFlow = useCallback(() => {
+    stopCamera();
     setPhotoFile(null);
     setPhotoPreview(prev => {
       if (prev) URL.revokeObjectURL(prev);
@@ -368,7 +383,13 @@ export default function AgentAttendanceList() {
     setGeoLoading(false);
     setNote('');
     setDistanceM(null);
-  }, []);
+  }, [stopCamera]);
+
+  useEffect(() => {
+    return () => {
+      cameraStream?.getTracks().forEach(track => track.stop());
+    };
+  }, [cameraStream]);
 
   const requestLocation = useCallback(() => {
     setGeoError(null);
@@ -496,24 +517,88 @@ export default function AgentAttendanceList() {
     },
   });
 
-  const onPickPhoto: ChangeEventHandler<HTMLInputElement> = e => {
-    const f = e.target.files?.[0];
-    e.target.value = '';
-    if (!f) return;
-    if (!f.type.startsWith('image/')) {
-      toast.error('Please choose an image');
-      return;
-    }
-    setPhotoFile(f);
+  const clearCapturedPhoto = useCallback(() => {
+    setPhotoFile(null);
     setPhotoPreview(prev => {
       if (prev) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(f);
+      return null;
     });
     setCoords(null);
     setDistanceM(null);
     setGeoError(null);
     setGeoLoading(false);
-  };
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error('This device does not support the camera.');
+      return;
+    }
+    clearCapturedPhoto();
+    setShowCamera(true);
+    setCameraStarting(true);
+    try {
+      let mediaStream: MediaStream | null = null;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        });
+      } catch {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+      setCameraStream(mediaStream);
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = mediaStream;
+          void videoRef.current.play().catch(() => undefined);
+        }
+        setCameraStarting(false);
+      }, 100);
+    } catch (error) {
+      console.error('Camera error:', error);
+      setShowCamera(false);
+      setCameraStarting(false);
+      toast.error('Could not access the camera. Check permissions and try again.');
+    }
+  }, [clearCapturedPhoto]);
+
+  const capturePhoto = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
+      toast.error('Camera is not ready yet. Wait a moment and try again.');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      toast.error('Could not capture photo');
+      return;
+    }
+    ctx.drawImage(video, 0, 0);
+    canvas.toBlob(
+      blob => {
+        if (!blob) {
+          toast.error('Could not capture photo');
+          return;
+        }
+        const file = new File([blob], `time-in-${Date.now()}.jpg`, { type: 'image/jpeg' });
+        setPhotoFile(file);
+        setPhotoPreview(prev => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(blob);
+        });
+        setCoords(null);
+        setDistanceM(null);
+        setGeoError(null);
+        setGeoLoading(false);
+        stopCamera();
+      },
+      'image/jpeg',
+      0.85
+    );
+  }, [stopCamera]);
 
   const canSubmitTimeIn =
     !!photoFile &&
@@ -666,26 +751,49 @@ export default function AgentAttendanceList() {
               </div>
             ) : null}
 
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={onPickPhoto}
-            />
-
-            {!photoPreview ? (
-              <Button type="button" variant="outline" className="w-full" onClick={() => fileInputRef.current?.click()}>
+            {showCamera ? (
+              <div className="space-y-3">
+                <div className="relative overflow-hidden rounded-lg border bg-black aspect-video">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="h-full w-full object-cover"
+                  />
+                  {cameraStarting ? (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                      <Loader2 className="h-8 w-8 animate-spin text-white" aria-hidden />
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    className="flex-1 min-w-[8rem]"
+                    disabled={cameraStarting}
+                    onClick={capturePhoto}
+                  >
+                    <Camera className="h-4 w-4 mr-2" />
+                    Capture photo
+                  </Button>
+                  <Button type="button" variant="outline" onClick={stopCamera}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : !photoPreview ? (
+              <Button type="button" variant="outline" className="w-full" onClick={() => void startCamera()}>
                 <Camera className="h-4 w-4 mr-2" />
-                Take time-in photo
+                Open camera for time-in photo
               </Button>
             ) : (
               <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Preview your photo before submitting.</p>
                 <div className="rounded-lg border overflow-hidden bg-muted aspect-video flex items-center justify-center">
-                  <img src={photoPreview} alt="Preview" className="max-h-56 object-contain" />
+                  <img src={photoPreview} alt="Time-in preview" className="max-h-56 object-contain" />
                 </div>
-                <Button type="button" variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()}>
+                <Button type="button" variant="ghost" size="sm" onClick={() => void startCamera()}>
                   Retake photo
                 </Button>
               </div>

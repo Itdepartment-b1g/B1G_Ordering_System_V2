@@ -25,8 +25,10 @@ export type AttendanceOverviewExportFilters = {
   businessDateFrom: string;
   businessDateTo: string;
   statusFilter: 'all' | OverviewAttendanceStatus;
-  /** Optional substring match on agent name or email (case-insensitive). */
-  agentSearch?: string;
+  /** Optional substring match on agent full name (case-insensitive). */
+  agentNameSearch?: string;
+  /** Optional substring match on agent email (case-insensitive). */
+  agentEmailSearch?: string;
 };
 
 function applyOverviewFilters<
@@ -53,17 +55,21 @@ function applyOverviewFilters<
   return q;
 }
 
+/** Applies active name / email filters to export rows (AND when both are set). */
 export function filterAttendanceOverviewExportRows(
   rows: AttendanceOverviewExportRow[],
-  agentSearch?: string
+  filters: Pick<AttendanceOverviewExportFilters, 'agentNameSearch' | 'agentEmailSearch'>
 ): AttendanceOverviewExportRow[] {
-  const searchNorm = (agentSearch ?? '').trim().toLowerCase();
-  if (!searchNorm) return rows;
+  const nameNorm = (filters.agentNameSearch ?? '').trim().toLowerCase();
+  const emailNorm = (filters.agentEmailSearch ?? '').trim().toLowerCase();
+  if (!nameNorm && !emailNorm) return rows;
 
   return rows.filter(row => {
     const name = row.agent?.full_name?.toLowerCase() ?? '';
     const email = row.agent?.email?.toLowerCase() ?? '';
-    return name.includes(searchNorm) || email.includes(searchNorm);
+    if (nameNorm && !name.includes(nameNorm)) return false;
+    if (emailNorm && !email.includes(emailNorm)) return false;
+    return true;
   });
 }
 
@@ -111,7 +117,7 @@ export async function exportFilteredAttendanceOverviewExcel(
   fileNameDate = new Date().toISOString().split('T')[0]
 ): Promise<number> {
   let rows = await fetchAttendanceOverviewForExport(filters);
-  rows = filterAttendanceOverviewExportRows(rows, filters.agentSearch);
+  rows = filterAttendanceOverviewExportRows(rows, filters);
 
   if (rows.length === 0) return 0;
 
