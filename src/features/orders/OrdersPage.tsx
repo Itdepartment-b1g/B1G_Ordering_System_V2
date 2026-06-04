@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -13,14 +13,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, FileText, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw } from 'lucide-react';
+import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
 import { useAuth } from '@/features/auth';
 import { canApproveFinance } from '@/lib/roleUtils';
 import { supabase } from '@/lib/supabase';
-import { exportClientsToExcel } from '@/lib/excel.helpers';
+import {
+  buildOrdersListExportFilename,
+  computeOrderListExportSummary,
+  exportOrdersListExcel,
+  mapOrderToListExportRow,
+} from '@/features/orders/utils/exportOrdersListExcel';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,6 +62,10 @@ export default function OrdersPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  type OrderListTab = 'pending' | 'approved' | 'rejected' | 'all';
+  const [activeOrderTab, setActiveOrderTab] = useState<OrderListTab>('all');
+  const [isExportingOrdersFiltered, setIsExportingOrdersFiltered] = useState(false);
+  const [isExportingOrdersAll, setIsExportingOrdersAll] = useState(false);
 
   const orderDateRange = useMemo(() => {
     return getDateRangeFromPreset(
@@ -582,76 +591,140 @@ export default function OrdersPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleExportOrders = async () => {
+  const orderListTabLabels: Record<OrderListTab, string> = {
+    pending: 'Pending (Finance Review)',
+    approved: 'Approved',
+    rejected: 'Rejected',
+    all: 'All Orders',
+  };
+
+  const getFilteredOrdersForExport = (): Order[] => {
+    if (activeOrderTab === 'all') return filterOrders();
+    return filterOrders(activeOrderTab);
+  };
+
+  const paymentMethodLabels: Record<string, string> = {
+    all: 'All payment methods',
+    BANK_TRANSFER: 'Bank Transfer',
+    CASH: 'Cash',
+    CHEQUE: 'Cheque',
+    GCASH: 'GCash',
+  };
+
+  const hasActiveOrderFilters =
+    dateRangeFilter.preset !== 'all' ||
+    searchQuery.trim().length > 0 ||
+    selectedPaymentMethod !== 'all' ||
+    activeOrderTab !== 'all';
+
+  const filteredOrdersForExport = getFilteredOrdersForExport();
+  const canExportFiltered =
+    hasActiveOrderFilters &&
+    filteredOrdersForExport.length > 0 &&
+    !isExportingOrdersFiltered &&
+    !isExportingOrdersAll;
+  const canExportAll =
+    visibleOrders.length > 0 && !isExportingOrdersFiltered && !isExportingOrdersAll;
+
+  const runOrdersListExport = async (
+    ordersToExport: Order[],
+    exportType: 'filtered' | 'all'
+  ) => {
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+    const tabLabel = orderListTabLabels[activeOrderTab];
+    const paymentLabel =
+      paymentMethodLabels[selectedPaymentMethod] ?? selectedPaymentMethod;
+    const searchLabel = searchQuery.trim() ? searchQuery.trim() : null;
+
+    const exportRows = ordersToExport.map((o) => mapOrderToListExportRow(o));
+    const filenamePrefix = buildOrdersListExportFilename(
+      dateRangeFilter,
+      activeOrderTab,
+      exportType
+    );
+    const summary = computeOrderListExportSummary(ordersToExport);
+    await exportOrdersListExcel(exportRows, filenamePrefix, {
+      exportType,
+      tabLabel,
+      dateLabel,
+      paymentLabel,
+      searchLabel: exportType === 'filtered' ? searchLabel : null,
+      orderCount: ordersToExport.length,
+      summary,
+    });
+
+    const scopeNote =
+      exportType === 'filtered'
+        ? `${tabLabel} · ${dateLabel}`
+        : 'All statuses · All time · No filters';
+    toast({
+      title: 'Export successful',
+      description: `Exported ${ordersToExport.length} order(s) · ${scopeNote}.`,
+    });
+  };
+
+  const handleExportOrdersFiltered = async () => {
+    const ordersToExport = filteredOrdersForExport;
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+    const tabLabel = orderListTabLabels[activeOrderTab];
+
+    if (!ordersToExport.length) {
+      toast({
+        title: 'No data to export',
+        description: hasActiveOrderFilters
+          ? `No orders in ${tabLabel} for ${dateLabel}.`
+          : 'Apply a tab, date, search, or payment filter to export filtered orders.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsExportingOrdersFiltered(true);
+    try {
+      await runOrdersListExport(ordersToExport, 'filtered');
+    } catch (error) {
+      console.error('Order list export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingOrdersFiltered(false);
+    }
+  };
+
+  const handleExportOrdersAll = async () => {
     if (!visibleOrders.length) {
       toast({
-        title: 'No Data',
+        title: 'No data to export',
         description: 'There are no orders to export.',
         variant: 'destructive',
       });
       return;
     }
 
-    // One row per order item, including brand/variant, quantity, and pricing strategy
-    const exportData = visibleOrders.flatMap((o) => {
-      // Format payment method for export
-      let paymentMethodStr = o.paymentMethod || '';
-      if (o.paymentMode === 'SPLIT' && o.paymentSplits) {
-        const parts = o.paymentSplits.map(s => {
-          if (s.method === 'BANK_TRANSFER') return s.bank ? `Bank Transfer (${s.bank})` : 'Bank Transfer';
-          if (s.method === 'GCASH') return 'GCash';
-          if (s.method === 'CASH') return 'Cash';
-          if (s.method === 'CHEQUE') return 'Cheque';
-          return s.method;
-        });
-        paymentMethodStr = `Split: ${parts.join(' + ')}`;
-      } else if (o.paymentMethod === 'BANK_TRANSFER' && o.bankType) {
-        paymentMethodStr = `Bank Transfer (${o.bankType})`;
-      } else if (o.paymentMethod === 'GCASH') {
-        paymentMethodStr = 'GCash';
-      } else if (o.paymentMethod === 'CASH') {
-        paymentMethodStr = 'Cash';
-      } else if (o.paymentMethod === 'CHEQUE') {
-        paymentMethodStr = 'Cheque';
-      }
-
-      return o.items.map((item, index) => ({
-        order_number: o.orderNumber,
-        order_item_index: index + 1,
-        agent_id: o.agentId,
-        agent_name: o.agentName,
-        client_id: o.clientId,
-        client_name: o.clientName,
-        order_date: o.date,
-        subtotal: o.subtotal,
-        tax: o.tax,
-        discount: o.discount,
-        total_amount: o.total,
-        status: o.status,
-        stage: o.stage || '',
-        payment_method: paymentMethodStr,
-        bank_type: o.bankType || '',
-        deposit_id: o.depositId || '',
-        notes: o.notes || '',
-        item_brand_name: item.brandName,
-        item_variant_name: item.variantName,
-        item_variant_type: item.variantType,
-        item_quantity: item.quantity,
-        item_unit_price: item.unitPrice,
-        item_pricing_strategy: o.pricingStrategy || '',
-      }));
-    });
-
-    await exportClientsToExcel(
-      exportData,
-      undefined,
-      `orders_export_${new Date().toISOString().split('T')[0]}.csv`,
-    );
-
-    toast({
-      title: 'Export Successful',
-      description: `Successfully exported ${visibleOrders.length} order(s).`,
-    });
+    setIsExportingOrdersAll(true);
+    try {
+      await runOrdersListExport(visibleOrders, 'all');
+    } catch (error) {
+      console.error('Order list export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingOrdersAll(false);
+    }
   };
 
   const handleImportOrders = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1616,10 +1689,10 @@ export default function OrdersPage() {
         </div>
         {(isAdmin || canApproveAsFinance) && (
           <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
-            <Button variant="outline" onClick={handleDownloadOrderTemplate} className="gap-2">
+            {/* <Button variant="outline" onClick={handleDownloadOrderTemplate} className="gap-2">
               <Download className="h-4 w-4" />
               Template
-            </Button>
+            </Button> */}
             <div className="relative">
               <input
                 type="file"
@@ -1628,18 +1701,40 @@ export default function OrdersPage() {
                 accept=".csv,.xlsx,.xls"
                 className="hidden"
               />
-              <Button
+              {/* <Button
                 variant="outline"
                 className="gap-2"
                 onClick={() => importOrdersInputRef.current?.click()}
               >
                 <Upload className="h-4 w-4" />
                 Import
-              </Button>
+              </Button> */}
             </div>
-            <Button variant="outline" onClick={handleExportOrders} className="gap-2">
-              <FileText className="h-4 w-4" />
-              Export
+            <Button
+              variant="outline"
+              onClick={handleExportOrdersFiltered}
+              disabled={!canExportFiltered}
+              className="gap-2"
+            >
+              {isExportingOrdersFiltered ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4" />
+              )}
+              {isExportingOrdersFiltered ? 'Exporting...' : 'Export filtered'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleExportOrdersAll}
+              disabled={!canExportAll}
+              className="gap-2"
+            >
+              {isExportingOrdersAll ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4" />
+              )}
+              {isExportingOrdersAll ? 'Exporting...' : 'Export all'}
             </Button>
             {canApproveAsFinance && (
               <Button onClick={handleOpenBulkApprove} className="gap-2">
@@ -1743,7 +1838,7 @@ export default function OrdersPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="all" className="w-full">
+          <Tabs value={activeOrderTab} onValueChange={(v) => setActiveOrderTab(v as OrderListTab)} className="w-full">
             <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto p-1 bg-muted">
               <TabsTrigger value="pending" className="data-[state=active]:bg-background">
                 <div className="flex flex-col items-center gap-1 py-1">
