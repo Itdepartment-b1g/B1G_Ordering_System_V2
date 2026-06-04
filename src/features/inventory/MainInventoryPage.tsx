@@ -1202,7 +1202,7 @@ export default function MainInventoryPage() {
                               <TableHead className="text-blue-800 text-center">Flavor Name</TableHead>
                               <TableHead className="text-blue-800 text-center">Total Stock</TableHead>
                               {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated Pending</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated (Remaing)</TableHead>}
                               {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Available</TableHead>}
                               {!isWarehouse && <TableHead className="text-blue-800 text-center">Selling Price</TableHead>}
                               {!isWarehouse && <TableHead className="text-blue-800 text-center">DSP</TableHead>}
