@@ -25,6 +25,20 @@ export type DeliveredPoOption = {
   client?: { client_name: string } | null;
 };
 
+/** PostgREST may return embedded FK rows as an object or a one-element array. */
+function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (value == null) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
+type DeliveredPoQueryRow = Omit<DeliveredPoOption, 'client'> & {
+  client?: { client_name: string } | { client_name: string }[] | null;
+};
+
+function mapDeliveredPoOption(row: DeliveredPoQueryRow): DeliveredPoOption {
+  return { ...row, client: unwrapRelation(row.client) };
+}
+
 interface SelectDeliveredPoForRebateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -61,9 +75,9 @@ export function SelectDeliveredPoForRebateDialog({ open, onOpenChange }: SelectD
 
       const { data, error } = await query;
       if (error) throw error;
-      const rows = ((data || []) as DeliveredPoOption[]).filter(
-        (po) => !isRebateDerivedPurchaseOrder(po)
-      );
+      const rows = (data ?? [])
+        .map((row) => mapDeliveredPoOption(row as DeliveredPoQueryRow))
+        .filter((po) => !isRebateDerivedPurchaseOrder(po));
       setOptions(rows);
     } catch (e: unknown) {
       const message =

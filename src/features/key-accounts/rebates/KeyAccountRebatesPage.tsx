@@ -60,6 +60,32 @@ type RebateRow = {
   top_up_po?: { po_number: string } | null;
 };
 
+/** PostgREST may return embedded FK rows as an object or a one-element array. */
+function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (value == null) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
+type RebateQueryRow = Omit<
+  RebateRow,
+  'purchase_order' | 'client' | 'fulfillment_po' | 'top_up_po'
+> & {
+  purchase_order?: { po_number: string; total_amount: number } | { po_number: string; total_amount: number }[] | null;
+  client?: { client_name: string } | { client_name: string }[] | null;
+  fulfillment_po?: { po_number: string } | { po_number: string }[] | null;
+  top_up_po?: { po_number: string } | { po_number: string }[] | null;
+};
+
+function mapRebateRow(row: RebateQueryRow): RebateRow {
+  return {
+    ...row,
+    purchase_order: unwrapRelation(row.purchase_order),
+    client: unwrapRelation(row.client),
+    fulfillment_po: unwrapRelation(row.fulfillment_po),
+    top_up_po: unwrapRelation(row.top_up_po),
+  };
+}
+
 type RebateLine = {
   id: string;
   disputed_quantity: number;
@@ -73,6 +99,46 @@ type RebateReplacement = {
   total_price: number;
   variant?: { name: string; brand?: { name: string } | null } | null;
 };
+
+type VariantQueryEmbed =
+  | { name: string; brand?: { name: string } | { name: string }[] | null }
+  | { name: string; brand?: { name: string } | { name: string }[] | null }[]
+  | null
+  | undefined;
+
+function mapVariantEmbed(raw: VariantQueryEmbed): RebateLine['variant'] {
+  const variant = unwrapRelation(raw);
+  if (!variant) return null;
+  return { name: variant.name, brand: unwrapRelation(variant.brand) };
+}
+
+function mapRebateLine(row: {
+  id: string;
+  disputed_quantity: number;
+  line_total: number;
+  variant?: VariantQueryEmbed;
+}): RebateLine {
+  return {
+    id: row.id,
+    disputed_quantity: row.disputed_quantity,
+    line_total: row.line_total,
+    variant: mapVariantEmbed(row.variant),
+  };
+}
+
+function mapRebateReplacement(row: {
+  id: string;
+  quantity: number;
+  total_price: number;
+  variant?: VariantQueryEmbed;
+}): RebateReplacement {
+  return {
+    id: row.id,
+    quantity: row.quantity,
+    total_price: row.total_price,
+    variant: mapVariantEmbed(row.variant),
+  };
+}
 
 const REBATES_PER_PAGE = 10;
 
@@ -137,7 +203,7 @@ export function KeyAccountRebatesPage() {
         .eq('company_id', user.company_id)
         .order('created_at', { ascending: false });
       if (error) throw error;
-      setRows((data as RebateRow[]) || []);
+      setRows((data ?? []).map((row) => mapRebateRow(row as RebateQueryRow)));
     } catch (e: unknown) {
       const message =
         e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string'
@@ -222,8 +288,8 @@ export function KeyAccountRebatesPage() {
       ]);
       if (linesRes.error) throw linesRes.error;
       if (repRes.error) throw repRes.error;
-      setLines((linesRes.data as RebateLine[]) || []);
-      setReplacements((repRes.data as RebateReplacement[]) || []);
+      setLines((linesRes.data ?? []).map(mapRebateLine));
+      setReplacements((repRes.data ?? []).map(mapRebateReplacement));
     } catch (e: unknown) {
       toast({
         variant: 'destructive',
