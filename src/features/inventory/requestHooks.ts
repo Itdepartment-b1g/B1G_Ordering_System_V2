@@ -170,7 +170,7 @@ export function useLeaderInventorySummary(leaderId: string | null) {
                     formattedVariants.push({
                         ...v,
                         brand: v.brand,
-                        stock: item.stock // Include the stock from the leader's inventory
+                        stock: Number(item.stock) || 0,
                     });
                 }
 
@@ -204,16 +204,31 @@ export function useLeaderInventorySummary(leaderId: string | null) {
     return query;
 }
 
+/** Available units from a main_inventory row (stock minus allocated). */
+export function mainInventoryAvailableStock(row: {
+    stock?: unknown;
+    allocated_stock?: unknown;
+}): number {
+    const stock = Number(row.stock) || 0;
+    const allocated = Number(row.allocated_stock) || 0;
+    return Math.max(0, stock - allocated);
+}
+
 export function useMainInventorySummary() {
+    const { user } = useAuth();
+
     return useQuery({
-        queryKey: ['main_inventory_summary'],
+        queryKey: ['main_inventory_summary', user?.company_id],
+        enabled: !!user?.company_id,
         queryFn: async () => {
-            // Fetch main inventory items (stock > 0)
+            if (!user?.company_id) return { brands: [], variants: [] };
+
             const { data: inventoryData, error: inventoryError } = await supabase
                 .from('main_inventory')
                 .select(`
                     variant_id,
                     stock,
+                    allocated_stock,
                     variants (
                         id,
                         name,
@@ -222,24 +237,30 @@ export function useMainInventorySummary() {
                         brand:brands(id, name)
                     )
                 `)
+                .eq('company_id', user.company_id)
                 .gt('stock', 0);
 
             if (inventoryError) throw inventoryError;
 
-            // Extract unique brands and variants
-            const brandsMap = new Map();
-            const variantsSet = new Set();
-            const formattedVariants: any[] = [];
+            const brandsMap = new Map<string, { id: string; name: string }>();
+            const variantsMap = new Map<string, any>();
 
             inventoryData?.forEach((item: any) => {
-                const v = item.variants;
-                if (!v) return;
+                const v = Array.isArray(item.variants) ? item.variants[0] : item.variants;
+                if (!v?.id) return;
 
-                if (!variantsSet.has(v.id)) {
-                    variantsSet.add(v.id);
-                    formattedVariants.push({
+                const available = mainInventoryAvailableStock(item);
+                const existing = variantsMap.get(v.id);
+                if (existing) {
+                    variantsMap.set(v.id, {
+                        ...existing,
+                        stock: (Number(existing.stock) || 0) + available,
+                    });
+                } else {
+                    variantsMap.set(v.id, {
                         ...v,
-                        brand: v.brand
+                        brand: v.brand,
+                        stock: available,
                     });
                 }
 
@@ -247,6 +268,8 @@ export function useMainInventorySummary() {
                     brandsMap.set(v.brand.id, v.brand);
                 }
             });
+
+            const formattedVariants = Array.from(variantsMap.values());
 
             return {
                 brands: Array.from(brandsMap.values()).sort((a, b) => a.name.localeCompare(b.name)),

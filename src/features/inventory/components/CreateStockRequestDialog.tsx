@@ -33,6 +33,12 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 
+function resolveProductStock(stock: unknown): number | null {
+    if (stock === undefined || stock === null || stock === '') return null;
+    const n = Number(stock);
+    return Number.isFinite(n) ? n : null;
+}
+
 // Matching the props passed from LeaderStockRequestPage
 interface Brand {
     id: string;
@@ -128,13 +134,12 @@ export function CreateStockRequestDialog({
             if (!existing) {
                 map.set(p.id, p);
             } else {
-                // If we have multiple rows for the same variant, keep one entry
-                // and, for mobile requests, sum their stock for a clearer view.
+                // If we have multiple rows for the same variant, keep one entry and sum stock.
                 const combinedStock =
-                    (existing.stock ?? 0) + (p.stock ?? 0);
+                    (resolveProductStock(existing.stock) ?? 0) + (resolveProductStock(p.stock) ?? 0);
                 map.set(p.id, {
                     ...existing,
-                    stock: combinedStock || undefined,
+                    stock: combinedStock,
                 });
             }
         });
@@ -342,7 +347,7 @@ export function CreateStockRequestDialog({
         if (isMobileRequest) {
             const item = items[index];
             const product = products.find(p => p.id === item.variant_id);
-            const maxStock = product?.stock || 0;
+            const maxStock = resolveProductStock(product?.stock) ?? 0;
             
             if (newQty > maxStock) {
                 toast({
@@ -411,13 +416,14 @@ export function CreateStockRequestDialog({
                                                 </p>
                                                 <div className="space-y-1.5">
                                                     {group.items.map(product => {
-                                                        const hasStock = isMobileRequest ? (product.stock || 0) > 0 : true;
-                                                        const stockDisplay = isMobileRequest ? product.stock || 0 : null;
+                                                        const stockDisplay = resolveProductStock(product.stock);
+                                                        const hasStock = stockDisplay !== null && stockDisplay > 0;
+                                                        const stockLabel = isMobileRequest ? 'Stock' : 'Available';
 
                                                         return (
                                                             <div
                                                                 key={product.id}
-                                                                className={`flex items-center justify-between p-2.5 bg-background rounded-md border ${!hasStock && isMobileRequest ? 'opacity-60 bg-muted' : ''}`}
+                                                                className={`flex items-center justify-between p-2.5 bg-background rounded-md border ${isMobileRequest && stockDisplay !== null && !hasStock ? 'opacity-60 bg-muted' : ''}`}
                                                             >
                                                                 <div className="flex-1 mr-3 min-w-0">
                                                                     <p
@@ -426,12 +432,12 @@ export function CreateStockRequestDialog({
                                                                     >
                                                                         {product.name}
                                                                     </p>
-                                                                    {isMobileRequest && (
+                                                                    {stockDisplay !== null && (
                                                                         <div className="flex items-center gap-2 mt-1 text-xs">
                                                                             <span
                                                                                 className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${hasStock ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}
                                                                             >
-                                                                                Stock: {stockDisplay}
+                                                                                {stockLabel}: {stockDisplay}
                                                                             </span>
                                                                         </div>
                                                                     )}
@@ -439,15 +445,14 @@ export function CreateStockRequestDialog({
                                                                 <Input 
                                                                     type="number" 
                                                                     min="0"
-                                                                    max={isMobileRequest ? stockDisplay : undefined}
+                                                                    max={isMobileRequest && stockDisplay !== null ? stockDisplay : undefined}
                                                                     placeholder="0"
                                                                     className="w-20 text-right h-8"
                                                                     value={brandQuantities[product.id] || ''}
-                                                                    disabled={isMobileRequest && !hasStock}
+                                                                    disabled={isMobileRequest && stockDisplay !== null && !hasStock}
                                                                     onChange={e => {
                                                                         const val = parseInt(e.target.value) || 0;
                                                                         if (isMobileRequest && stockDisplay !== null && val > stockDisplay) {
-                                                                            // Don't allow entering more than available
                                                                             return;
                                                                         }
                                                                         handleQuantityChange(product.id, e.target.value);
@@ -490,7 +495,9 @@ export function CreateStockRequestDialog({
                                 <div className="max-h-[200px] overflow-y-auto divide-y">
                                     {items.map((item, index) => {
                                         const product = products.find(p => p.id === item.variant_id);
-                                        const maxStock = isMobileRequest ? (product?.stock || 0) : undefined;
+                                        const stockDisplay = resolveProductStock(product?.stock);
+                                        const maxStock = isMobileRequest && stockDisplay !== null ? stockDisplay : undefined;
+                                        const stockBadgeLabel = isMobileRequest ? 'Max' : 'Available';
                                         
                                         return (
                                         <div key={index} className="flex justify-between items-center p-3 hover:bg-muted/50 transition-colors">
@@ -502,9 +509,9 @@ export function CreateStockRequestDialog({
                                                     <p className="font-medium text-sm truncate">{item.product_name}</p>
                                                     <div className="flex items-center gap-2">
                                                         <p className="text-xs text-muted-foreground">{item.brand_name}</p>
-                                                        {isMobileRequest && maxStock !== undefined && (
+                                                        {stockDisplay !== null && (
                                                             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">
-                                                                Max: {maxStock}
+                                                                {stockBadgeLabel}: {stockDisplay}
                                                             </span>
                                                         )}
                                                     </div>
