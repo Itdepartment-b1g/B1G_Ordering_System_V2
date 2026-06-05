@@ -38,7 +38,7 @@ import ManagementPortal from "@/features/system-admin/ManagementPortal";
 import { WarRoomPage } from "@/features/war-room";
 import { KeyAccountsDashboardWrapper, ClientHierarchyPage, ClientAssignmentPage, KeyAccountTeamPage, KeyAccountPurchaseOrderPage, KeyAccountPurchaseOrdersPage, KeyAccountAnalyticsPage, KeyAccountClientAnalyticsPage, KeyAccountRebatesPage, KeyAccountCreateRebatePage } from "@/features/key-accounts";
 import NotFound from "@/features/shared/NotFound";
-import { AgentRemittanceReminder } from "@/features/shared/components";
+import { AgentRemittanceReminder } from "@/features/shared/components/AgentRemittanceReminder";
 import { SupportWidget } from "@/components/SupportWidget";
 
 import { PrefetchController } from "@/features/core/PrefetchController";

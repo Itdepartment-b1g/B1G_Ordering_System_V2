@@ -12,9 +12,10 @@ import { useCompanyTeamLeaders, type RecipientRole } from '@/features/sales-agen
 import { useSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 import {
   DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
   type PageSize,
-  SuperAdminAllocationHistoryPagination,
-} from '@/features/sales-agents/components/super-admin-allocation-history/pagination/Pagination';
+} from '@/features/shared/components/ListPagination';
 import { SuperAdminAllocationHistoryTable } from '@/features/sales-agents/components/super-admin-allocation-history/table/TableHeader';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
 import {
@@ -82,10 +83,11 @@ export default function LeaderAllocationHistoryList() {
     setPage(0);
   }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter]);
 
-  const pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
-  const safePage = Math.min(page, pageCount - 1);
-  const startIndex = safePage * pageSize;
-  const pagedGroups = filteredGroups.slice(startIndex, startIndex + pageSize);
+  const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
+    filteredGroups,
+    page,
+    pageSize,
+  );
 
   const summary = useMemo(() => {
     const sessionCount = filteredGroups.length;
@@ -221,7 +223,7 @@ export default function LeaderAllocationHistoryList() {
 
           <SuperAdminAllocationHistoryTable isLoading={isLoading} pagedGroups={pagedGroups} />
 
-          <SuperAdminAllocationHistoryPagination
+          <ListPagination
             pageSize={pageSize}
             safePage={safePage}
             pageCount={pageCount}

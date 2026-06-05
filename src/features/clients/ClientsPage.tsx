@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, ChevronLeft, ChevronRight, BarChart3, Tag } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Loader2, Filter, Eye, Users, ArrowRightLeft, Upload, X, MapPin, RefreshCw, Download, MoreHorizontal, CheckCircle, BarChart3, Tag } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
@@ -44,6 +44,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
 import * as XLSX from 'xlsx';
 
 const SUPABASE_PAGE_SIZE = 1000;
@@ -326,8 +332,8 @@ export default function ClientsPage() {
   const [isExportingClientsAll, setIsExportingClientsAll] = useState(false);
 
   // Pagination states
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   // Resolve role first
   useEffect(() => {
@@ -1128,16 +1134,13 @@ export default function ClientsPage() {
     });
   }, [clients, searchQuery, cityFilter, clientCreatedDateRange]);
 
-  // Pagination calculations
-  const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const paginatedClients = filteredClients.slice(startIndex, endIndex);
+  const { pageCount, safePage, startIndex, endIndex, pagedItems: paginatedClients } =
+    getListPaginationSlice(filteredClients, page, pageSize);
 
-  // Reset to page 1 when filters change
+  // Reset to first page when filters or page size change
   useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery, cityFilter, dateRangeFilter]);
+    setPage(0);
+  }, [searchQuery, cityFilter, dateRangeFilter, pageSize]);
 
   const getApprovalStatusBadge = (status: Client['approval_status']) => {
     switch (status) {
@@ -3737,13 +3740,9 @@ export default function ClientsPage() {
                 )}
               </div>
             )}
-            {/* Pagination Info */}
             {filteredClients.length > 0 && (
-              <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>
-                  Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
-                </span>
-                <span>Page {currentPage} of {totalPages}</span>
+              <div className="text-sm text-muted-foreground">
+                Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
               </div>
             )}
           </div>
@@ -4044,66 +4043,16 @@ export default function ClientsPage() {
             </Table>
           </div>
 
-          {/* Pagination Controls */}
-          {filteredClients.length > itemsPerPage && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t">
-              <div className="text-xs sm:text-sm text-muted-foreground">
-                Showing {startIndex + 1}-{Math.min(endIndex, filteredClients.length)} of {filteredClients.length} clients
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                  className="h-8 px-2 sm:px-4"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  <span className="hidden sm:inline ml-1">Previous</span>
-                </Button>
-                <div className="flex items-center gap-1">
-                  {Array.from({ length: totalPages }, (_, i) => i + 1)
-                    .filter(page => {
-                      // Show first page, last page, current page, and pages around current
-                      return (
-                        page === 1 ||
-                        page === totalPages ||
-                        (page >= currentPage - 1 && page <= currentPage + 1)
-                      );
-                    })
-                    .map((page, index, array) => {
-                      // Add ellipsis if there's a gap
-                      const prevPage = array[index - 1];
-                      const showEllipsis = prevPage && page - prevPage > 1;
-
-                      return (
-                        <div key={page} className="flex items-center gap-1">
-                          {showEllipsis && (
-                            <span className="px-2 text-muted-foreground">...</span>
-                          )}
-                          <Button
-                            variant={currentPage === page ? "default" : "outline"}
-                            size="sm"
-                            className="w-10"
-                            onClick={() => setCurrentPage(page)}
-                          >
-                            {page}
-                          </Button>
-                        </div>
-                      );
-                    })}
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                  disabled={currentPage === totalPages}
-                  className="h-8 px-2 sm:px-4"
-                >
-                  <span className="hidden sm:inline mr-1">Next</span>
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
+          {filteredClients.length > 0 && (
+            <div className="mt-4 pt-4 border-t">
+              <ListPagination
+                pageSize={pageSize}
+                safePage={safePage}
+                pageCount={pageCount}
+                onPageSizeChange={setPageSize}
+                onPrevious={() => setPage((value) => Math.max(0, value - 1))}
+                onNext={() => setPage((value) => Math.min(pageCount - 1, value + 1))}
+              />
             </div>
           )}
         </CardContent>
