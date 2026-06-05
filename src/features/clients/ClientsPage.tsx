@@ -1,5 +1,4 @@
-//v1.0.2
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,18 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { useAuth } from '@/features/auth';
-import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
-import {
-  DateRangeFilterPopover,
-  type DateRangeFilterValue,
-} from '@/features/shared/components/DateRangeFilterPopover';
-import {
-  buildClientApprovalLabel,
-  buildClientsListExportFilename,
-  computeClientListExportSummary,
-  exportClientsListExcel,
-  mapClientToListExportRow,
-} from '@/features/clients/utils/exportClientsListExcel';
+import { exportClientsToExcel } from '@/lib/excel.helpers';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -46,6 +34,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import * as XLSX from 'xlsx';
+
+const SUPABASE_PAGE_SIZE = 1000;
 
 interface Client {
   id: string;
@@ -107,9 +97,6 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [cityFilter, setCityFilter] = useState<string>('');
-  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
-    preset: 'all',
-  });
 
   // Edit Dialog States
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -321,8 +308,8 @@ export default function ClientsPage() {
 
 
   // Export states
-  const [isExportingClientsFiltered, setIsExportingClientsFiltered] = useState(false);
-  const [isExportingClientsAll, setIsExportingClientsAll] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState({ current: 0, total: 0 });
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -486,32 +473,30 @@ export default function ClientsPage() {
         }
       }
 
-      let clientsQuery = supabase
-        .from('clients')
-        .select(`
-          *,
-          profiles: agent_id (full_name, email),
-          visit_logs (count)
-        `)
-        .eq('company_id', user?.company_id)
-        .neq('status', 'inactive')
-        .order('created_at', { ascending: false });
+      const buildClientsQuery = () => {
+        let query = supabase
+          .from('clients')
+          .select(`
+            *,
+            profiles: agent_id (full_name, email),
+            visit_logs (count)
+          `)
+          .eq('company_id', user?.company_id)
+          .neq('status', 'inactive')
+          .order('created_at', { ascending: false });
 
-      // IMPORTANT: Admins (including super_admin) see ALL clients in the company
-      // No agent_id filter is applied when isAdmin = true, ensuring team leader clients are visible
-      if (isAdmin) {
-        // Super admin/admin: Show all clients in company (no agent_id filter)
-        // This includes clients created by team leaders, mobile sales, and other agents
-      } else if (isAgent && user?.id) {
-        // Regular agents (including team_leader): Show only their own clients
-        clientsQuery = clientsQuery.eq('agent_id', user.id);
-      } else if (isManager && teamAgentIds.length > 0) {
-        // Manager: Show clients of team members
-        clientsQuery = clientsQuery.in('agent_id', teamAgentIds);
-      } else if (isManager && teamAgentIds.length === 0) {
-        // Manager with no team => see nothing (or just self if allowed)
-        clientsQuery = clientsQuery.eq('agent_id', user.id); // Default to self if empty team
-      }
+        if (isAdmin) {
+          // Super admin/admin: all company clients (no agent_id filter)
+        } else if (isAgent && user?.id) {
+          query = query.eq('agent_id', user.id);
+        } else if (isManager && teamAgentIds.length > 0) {
+          query = query.in('agent_id', teamAgentIds);
+        } else if (isManager && teamAgentIds.length === 0) {
+          query = query.eq('agent_id', user.id);
+        }
+
+        return query;
+      };
 
       let countQuery = supabase
         .from('clients')
@@ -529,38 +514,61 @@ export default function ClientsPage() {
         countQuery = countQuery.eq('agent_id', user.id);
       }
 
-      const [{ data, error }, { count, error: countError }] = await Promise.all([
-        clientsQuery,
-        countQuery,
-      ]);
+      const { count, error: countError } = await countQuery;
 
-      if (error) throw error;
       if (!countError) {
         setTotalClientCount(count ?? 0);
       }
 
+      // PostgREST returns at most 1000 rows per request — paginate to load all clients.
+      const allClientRows: any[] = [];
+      let clientOffset = 0;
+      while (true) {
+        const { data: clientBatch, error: clientBatchError } = await buildClientsQuery().range(
+          clientOffset,
+          clientOffset + SUPABASE_PAGE_SIZE - 1
+        );
+        if (clientBatchError) throw clientBatchError;
 
-      // Prefer aggregated stats from view for accuracy and performance
-      let ordersByClient: Record<string, { count: number; total: number; last?: string }> = {};
-
-      // Calculate order stats manually since view is optional/removed
-      // Grouped aggregation per client from approved orders
-
-      // Calculate order stats manually
-      let ordersQuery = supabase
-        .from('client_orders')
-        .select('client_id, total_amount, stage, status, order_date, agent_id')
-        .or('stage.eq.admin_approved,status.eq.approved');
-
-      if (isAgent && user?.id) {
-        ordersQuery = ordersQuery.eq('agent_id', user.id);
-      } else if (isManager && teamAgentIds.length > 0) {
-        ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
-      } else if (isManager) {
-        ordersQuery = ordersQuery.eq('agent_id', user.id);
+        const batch = clientBatch || [];
+        allClientRows.push(...batch);
+        if (batch.length < SUPABASE_PAGE_SIZE) break;
+        clientOffset += SUPABASE_PAGE_SIZE;
       }
 
-      const { data: approvedOrders } = await ordersQuery;
+      let ordersByClient: Record<string, { count: number; total: number; last?: string }> = {};
+
+      const buildOrdersQuery = () => {
+        let query = supabase
+          .from('client_orders')
+          .select('client_id, total_amount, stage, status, order_date, agent_id')
+          .or('stage.eq.admin_approved,status.eq.approved');
+
+        if (isAgent && user?.id) {
+          query = query.eq('agent_id', user.id);
+        } else if (isManager && teamAgentIds.length > 0) {
+          query = query.in('agent_id', teamAgentIds);
+        } else if (isManager) {
+          query = query.eq('agent_id', user.id);
+        }
+
+        return query;
+      };
+
+      const approvedOrders: any[] = [];
+      let orderOffset = 0;
+      while (true) {
+        const { data: orderBatch, error: orderBatchError } = await buildOrdersQuery().range(
+          orderOffset,
+          orderOffset + SUPABASE_PAGE_SIZE - 1
+        );
+        if (orderBatchError) throw orderBatchError;
+
+        const batch = orderBatch || [];
+        approvedOrders.push(...batch);
+        if (batch.length < SUPABASE_PAGE_SIZE) break;
+        orderOffset += SUPABASE_PAGE_SIZE;
+      }
       ordersByClient = (approvedOrders || []).reduce((acc: any, o: any) => {
         const cid = o.client_id;
         if (!acc[cid]) {
@@ -579,18 +587,7 @@ export default function ClientsPage() {
 
 
 
-      // Convert photo URLs to signed URLs
-      const clientsWithSignedPhotos = await Promise.all(
-        (data || []).map(async (client: any) => {
-          const signedPhotoUrl = await getSignedPhotoUrl(client.photo_url);
-          return {
-            ...client,
-            photo_url: signedPhotoUrl
-          };
-        })
-      );
-
-      const formattedClients: Client[] = clientsWithSignedPhotos.map((client: any) => ({
+      const formattedClients: Client[] = allClientRows.map((client: any) => ({
         id: client.id,
         company_id: client.company_id,
         agent_id: client.agent_id,
@@ -1051,8 +1048,19 @@ export default function ClientsPage() {
         if (isAgent && user?.id) {
           sumQuery = sumQuery.eq('agent_id', user.id);
         }
-        const { data: approvedOrdersAll } = await sumQuery;
-        totalRevenue = (approvedOrdersAll || []).reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+        let offset = 0;
+        while (true) {
+          const { data: batch, error: batchError } = await sumQuery.range(
+            offset,
+            offset + SUPABASE_PAGE_SIZE - 1
+          );
+          if (batchError) throw batchError;
+
+          const rows = batch || [];
+          totalRevenue += rows.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+          if (rows.length < SUPABASE_PAGE_SIZE) break;
+          offset += SUPABASE_PAGE_SIZE;
+        }
       }
 
       setAllClientsRevenue(totalRevenue);
@@ -1062,49 +1070,16 @@ export default function ClientsPage() {
     }
   };
 
-  const clientCreatedDateRange = useMemo(
-    () =>
-      getDateRangeFromPreset(
-        dateRangeFilter.preset,
-        dateRangeFilter.customStart,
-        dateRangeFilter.customEnd
-      ),
-    [dateRangeFilter]
-  );
+  const filteredClients = clients.filter(client => {
+    const matchesSearch = client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (client.email && client.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (client.company && client.company.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (client.agent_name && client.agent_name.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  const dateRangeLabel = useMemo(() => {
-    if (dateRangeFilter.preset === 'custom') {
-      if (dateRangeFilter.customStart && dateRangeFilter.customEnd) {
-        const start = dateRangeFilter.customStart.toLocaleDateString();
-        const end = dateRangeFilter.customEnd.toLocaleDateString();
-        return `${start} – ${end}`;
-      }
-      return 'Custom range';
-    }
-    return getDatePresetLabel(dateRangeFilter.preset);
-  }, [dateRangeFilter]);
+    const matchesCity = !cityFilter || cityFilter === 'all' || client.city === cityFilter;
 
-  const filteredClients = useMemo(() => {
-    return clients.filter(client => {
-      const matchesSearch = client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (client.email && client.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (client.company && client.company.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (client.agent_name && client.agent_name.toLowerCase().includes(searchQuery.toLowerCase()));
-
-      const matchesCity = !cityFilter || cityFilter === 'all' || client.city === cityFilter;
-
-      const createdDate = client.created_at?.includes('T')
-        ? client.created_at.split('T')[0]
-        : client.created_at;
-      const matchesDate = isDateInRange(
-        createdDate,
-        clientCreatedDateRange.start,
-        clientCreatedDateRange.end
-      );
-
-      return matchesSearch && matchesCity && matchesDate;
-    });
-  }, [clients, searchQuery, cityFilter, clientCreatedDateRange]);
+    return matchesSearch && matchesCity;
+  });
 
   // Pagination calculations
   const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
@@ -1115,7 +1090,7 @@ export default function ClientsPage() {
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, cityFilter, dateRangeFilter]);
+  }, [searchQuery, cityFilter]);
 
   const getApprovalStatusBadge = (status: Client['approval_status']) => {
     switch (status) {
@@ -2747,129 +2722,67 @@ export default function ClientsPage() {
     closeCamera();
   };
 
-  const hasActiveClientFilters =
-    dateRangeFilter.preset !== 'all' ||
-    searchQuery.trim().length > 0 ||
-    (cityFilter && cityFilter !== 'all');
-
-  const canExportClientsFiltered =
-    hasActiveClientFilters &&
-    filteredClients.length > 0 &&
-    !isExportingClientsFiltered &&
-    !isExportingClientsAll;
-  const canExportClientsAll =
-    clients.length > 0 && !isExportingClientsFiltered && !isExportingClientsAll;
-
-  const mapClientsToExportRows = (clientsToExport: Client[]) =>
-    clientsToExport.map((client) => {
-      const agentLabel = isClientUnassigned(client)
-        ? 'No Agent'
-        : (client.agent_name || 'Unassigned');
-
-      return mapClientToListExportRow({
-        photo_url: client.photo_url,
-        name: client.name,
-        company: client.company,
-        email: client.email,
-        phone: client.phone,
-        agentLabel,
-        city: client.city,
-        account_type: client.account_type || 'Standard Accounts',
-        category: client.category || 'Open',
-        total_orders: client.total_orders || 0,
-        total_spent: client.total_spent || 0,
-        visit_count: client.visit_count ?? 0,
-        approvalLabel: buildClientApprovalLabel(client.approval_status || 'approved'),
-      });
-    });
-
-  const runClientsListExport = async (
-    clientsToExport: Client[],
-    exportType: 'filtered' | 'all'
-  ) => {
-    const citySlug = cityFilter && cityFilter !== 'all' ? cityFilter : 'all';
-    const exportRows = mapClientsToExportRows(clientsToExport);
-    const totalOrders = clientsToExport.reduce((sum, c) => sum + (c.total_orders || 0), 0);
-    const summary = computeClientListExportSummary(
-      clientsToExport.map((c) => ({
-        total_spent: c.total_spent || 0,
-        approval_status: c.approval_status || 'approved',
-      }))
-    );
-
-    await exportClientsListExcel(
-      exportRows,
-      buildClientsListExportFilename(dateRangeFilter, citySlug, exportType),
-      {
-        exportType,
-        dateLabel: dateRangeLabel,
-        cityLabel: cityFilter && cityFilter !== 'all' ? cityFilter : 'All Cities',
-        searchLabel: exportType === 'filtered' ? (searchQuery.trim() || null) : null,
-        clientCount: clientsToExport.length,
-        totalOrders,
-        summary,
-      }
-    );
-
-    const scopeNote =
-      exportType === 'filtered'
-        ? `${dateRangeLabel} · ${cityFilter && cityFilter !== 'all' ? cityFilter : 'All Cities'}`
-        : 'All clients · All time · No filters';
-    toast({
-      title: 'Export Successful',
-      description: `Exported ${clientsToExport.length} client(s) · ${scopeNote}.`,
-    });
-  };
-
-  const handleExportClientsFiltered = async () => {
-    if (!filteredClients.length) {
-      toast({
-        title: 'No data to export',
-        description: hasActiveClientFilters
-          ? `No clients match the current filters for ${dateRangeLabel}.`
-          : 'Apply a date, city, or search filter to export filtered clients.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setIsExportingClientsFiltered(true);
-    try {
-      await runClientsListExport(filteredClients, 'filtered');
-    } catch (error: any) {
-      console.error('Error exporting filtered clients:', error);
-      toast({
-        title: 'Export Failed',
-        description: error.message || 'Failed to export clients. Please try again.',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsExportingClientsFiltered(false);
-    }
-  };
-
-  const handleExportClientsAll = async () => {
-    if (!clients.length) {
+  const handleExportToExcel = async () => {
+    if (clients.length === 0) {
       toast({
         title: 'No Data',
         description: 'There are no clients to export.',
-        variant: 'destructive',
+        variant: 'destructive'
       });
       return;
     }
 
-    setIsExportingClientsAll(true);
+    setExporting(true);
+    setExportProgress({ current: 0, total: clients.length });
+
     try {
-      await runClientsListExport(clients, 'all');
+      // Prepare client data for export (column order = CSV order)
+      const exportData = clients.map(client => ({
+        id: client.id,
+        trade_name: client.name,
+        shop_name: client.company || '',
+        contact_person: client.contact_person || '',
+        email: client.email || '',
+        phone: client.phone || '',
+        tin: client.tin || '',
+        address: client.address || '',
+        city: client.city || '',
+        agent_name: client.agent_name || 'Unassigned',
+        account_type: client.account_type || 'Standard Accounts',
+        category: client.category || 'Open',
+        status: client.status || 'active',
+        total_orders: client.total_orders || 0,
+        total_spent: client.total_spent || 0,
+        visit_count: client.visit_count ?? 0,
+        last_order_date: client.last_order_date || '',
+        approval_status: client.approval_status || 'approved',
+        created_at: client.created_at,
+        updated_at: client.updated_at,
+        location_latitude: client.location_latitude ?? '',
+        location_longitude: client.location_longitude ?? '',
+        location_accuracy: client.location_accuracy ?? '',
+        location_captured_at: client.location_captured_at ?? '',
+      }));
+
+      // Export to Excel with progress tracking
+      await exportClientsToExcel(exportData, (current, total) => {
+        setExportProgress({ current, total });
+      });
+
+      toast({
+        title: 'Export Successful',
+        description: `Successfully exported ${clients.length} client(s) to Excel.`,
+      });
     } catch (error: any) {
-      console.error('Error exporting all clients:', error);
+      console.error('Error exporting clients:', error);
       toast({
         title: 'Export Failed',
         description: error.message || 'Failed to export clients. Please try again.',
         variant: 'destructive',
       });
     } finally {
-      setIsExportingClientsAll(false);
+      setExporting(false);
+      setExportProgress({ current: 0, total: 0 });
     }
   };
 
@@ -2988,49 +2901,30 @@ export default function ClientsPage() {
         {/* Desktop Actions */}
         <div className="hidden lg:flex gap-2">
           {isAdmin && (
-            <>
-              <Button
-                variant="outline"
-                onClick={handleExportClientsFiltered}
-                disabled={!canExportClientsFiltered}
-              >
-                {isExportingClientsFiltered ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Exporting...
-                  </>
-                ) : (
-                  <>
-                    <Download className="h-4 w-4 mr-2" />
-                    Export filtered
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleExportClientsAll}
-                disabled={!canExportClientsAll}
-              >
-                {isExportingClientsAll ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Exporting...
-                  </>
-                ) : (
-                  <>
-                    <Download className="h-4 w-4 mr-2" />
-                    Export all
-                  </>
-                )}
-              </Button>
-            </>
+            <Button
+              variant="outline"
+              onClick={handleExportToExcel}
+              disabled={exporting || clients.length === 0}
+            >
+              {exporting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Exporting... ({exportProgress.current}/{exportProgress.total})
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4 mr-2" />
+                  Export to Excel
+                </>
+              )}
+            </Button>
           )}
           {(isAdmin || isSuperAdmin) && (
             <>
-              {/* <Button variant="outline" className="gap-2" onClick={handleDownloadTemplate}>
+              <Button variant="outline" className="gap-2" onClick={handleDownloadTemplate}>
                 <Download className="h-4 w-4" />
                 Template
-              </Button> */}
+              </Button>
               <div className="relative">
                 <input
                   type="file"
@@ -3039,10 +2933,10 @@ export default function ClientsPage() {
                   accept=".csv,.txt,.xlsx,.xls"
                   className="hidden"
                 />
-                {/* <Button variant="outline" className="gap-2" onClick={handleImportClick} disabled={importing}>
+                <Button variant="outline" className="gap-2" onClick={handleImportClick} disabled={importing}>
                   {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                   Import
-                </Button> */}
+                </Button>
               </div>
               <Button variant="outline" onClick={handleOpenCityBulkTransfer}>
                 <Users className="h-4 w-4 mr-2" />
@@ -3075,40 +2969,22 @@ export default function ClientsPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               {isAdmin && (
-                <>
-                  <DropdownMenuItem
-                    onClick={handleExportClientsFiltered}
-                    disabled={!canExportClientsFiltered}
-                  >
-                    {isExportingClientsFiltered ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Exporting filtered...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="h-4 w-4 mr-2" />
-                        Export filtered
-                      </>
-                    )}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={handleExportClientsAll}
-                    disabled={!canExportClientsAll}
-                  >
-                    {isExportingClientsAll ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Exporting all...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="h-4 w-4 mr-2" />
-                        Export all
-                      </>
-                    )}
-                  </DropdownMenuItem>
-                </>
+                <DropdownMenuItem
+                  onClick={handleExportToExcel}
+                  disabled={exporting || clients.length === 0}
+                >
+                  {exporting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4 mr-2" />
+                      Export to Excel
+                    </>
+                  )}
+                </DropdownMenuItem>
               )}
               {(isAdmin || isSuperAdmin) && (
                 <>
@@ -3631,7 +3507,7 @@ export default function ClientsPage() {
             <Building className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{filteredClients.length.toLocaleString()}</div>
+            <div className="text-2xl font-bold">{totalClientCount.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card>
@@ -3661,7 +3537,7 @@ export default function ClientsPage() {
       <Card>
         <CardHeader>
           <div className="space-y-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+            <div className="flex items-center gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -3671,37 +3547,26 @@ export default function ClientsPage() {
                   className="pl-10"
                 />
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <DateRangeFilterPopover
-                  value={dateRangeFilter}
-                  onChange={setDateRangeFilter}
-                />
-                <div className="flex items-center gap-2">
-                  <Filter className="h-4 w-4 text-muted-foreground" />
-                  <Select value={cityFilter} onValueChange={setCityFilter}>
-                    <SelectTrigger className="w-[200px]">
-                      <SelectValue placeholder="Filter by city" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Cities</SelectItem>
-                      {getUniqueCities().map(city => (
-                        <SelectItem key={city} value={city}>
-                          {city}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <Select value={cityFilter} onValueChange={setCityFilter}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="Filter by city" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Cities</SelectItem>
+                    {getUniqueCities().map(city => (
+                      <SelectItem key={city} value={city}>
+                        {city}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-            {(searchQuery || (cityFilter && cityFilter !== 'all') || dateRangeFilter.preset !== 'all') && (
-              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            {(searchQuery || (cityFilter && cityFilter !== 'all')) && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span>Showing {filteredClients.length} of {totalClientCount.toLocaleString()} clients</span>
-                {dateRangeFilter.preset !== 'all' && (
-                  <Badge variant="secondary" className="text-xs">
-                    Date: {dateRangeLabel}
-                  </Badge>
-                )}
                 {cityFilter && cityFilter !== 'all' && (
                   <Badge variant="secondary" className="text-xs">
                     City: {cityFilter}
