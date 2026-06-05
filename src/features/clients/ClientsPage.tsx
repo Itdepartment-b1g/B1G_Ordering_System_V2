@@ -2984,7 +2984,7 @@ export default function ClientsPage() {
           <p className="text-sm text-muted-foreground">Manage all your business clients</p>
         </div>
 
-        {/* Desktop Actions */}
+        {/* Desktop Actions (fixing conflict with new code)*/}
         <div className="hidden lg:flex gap-2">
           {isAdmin && (
             <>
@@ -3001,6 +3001,7 @@ export default function ClientsPage() {
                 ) : (
                   <>
                     <Download className="h-4 w-4 mr-2" />
+                    
                     Export filtered
                   </>
                 )}
