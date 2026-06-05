@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,18 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { subscribeToTable, unsubscribe } from '@/lib/realtime.helpers';
 import { useAuth } from '@/features/auth';
-import { exportClientsToExcel } from '@/lib/excel.helpers';
+import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  buildClientApprovalLabel,
+  buildClientsListExportFilename,
+  computeClientListExportSummary,
+  exportClientsListExcel,
+  mapClientToListExportRow,
+} from '@/features/clients/utils/exportClientsListExcel';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -97,6 +108,9 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [cityFilter, setCityFilter] = useState<string>('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
 
   // Edit Dialog States
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -308,8 +322,8 @@ export default function ClientsPage() {
 
 
   // Export states
-  const [exporting, setExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState({ current: 0, total: 0 });
+  const [isExportingClientsFiltered, setIsExportingClientsFiltered] = useState(false);
+  const [isExportingClientsAll, setIsExportingClientsAll] = useState(false);
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -1070,16 +1084,49 @@ export default function ClientsPage() {
     }
   };
 
-  const filteredClients = clients.filter(client => {
-    const matchesSearch = client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (client.email && client.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (client.company && client.company.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (client.agent_name && client.agent_name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const clientCreatedDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
 
-    const matchesCity = !cityFilter || cityFilter === 'all' || client.city === cityFilter;
+  const dateRangeLabel = useMemo(() => {
+    if (dateRangeFilter.preset === 'custom') {
+      if (dateRangeFilter.customStart && dateRangeFilter.customEnd) {
+        const start = dateRangeFilter.customStart.toLocaleDateString();
+        const end = dateRangeFilter.customEnd.toLocaleDateString();
+        return `${start} – ${end}`;
+      }
+      return 'Custom range';
+    }
+    return getDatePresetLabel(dateRangeFilter.preset);
+  }, [dateRangeFilter]);
 
-    return matchesSearch && matchesCity;
-  });
+  const filteredClients = useMemo(() => {
+    return clients.filter(client => {
+      const matchesSearch = client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (client.email && client.email.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (client.company && client.company.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (client.agent_name && client.agent_name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+      const matchesCity = !cityFilter || cityFilter === 'all' || client.city === cityFilter;
+
+      const createdDate = client.created_at?.includes('T')
+        ? client.created_at.split('T')[0]
+        : client.created_at;
+      const matchesDate = isDateInRange(
+        createdDate,
+        clientCreatedDateRange.start,
+        clientCreatedDateRange.end
+      );
+
+      return matchesSearch && matchesCity && matchesDate;
+    });
+  }, [clients, searchQuery, cityFilter, clientCreatedDateRange]);
 
   // Pagination calculations
   const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
@@ -1090,7 +1137,7 @@ export default function ClientsPage() {
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, cityFilter]);
+  }, [searchQuery, cityFilter, dateRangeFilter]);
 
   const getApprovalStatusBadge = (status: Client['approval_status']) => {
     switch (status) {
@@ -2722,67 +2769,129 @@ export default function ClientsPage() {
     closeCamera();
   };
 
-  const handleExportToExcel = async () => {
-    if (clients.length === 0) {
+  const hasActiveClientFilters =
+    dateRangeFilter.preset !== 'all' ||
+    searchQuery.trim().length > 0 ||
+    (cityFilter && cityFilter !== 'all');
+
+  const canExportClientsFiltered =
+    hasActiveClientFilters &&
+    filteredClients.length > 0 &&
+    !isExportingClientsFiltered &&
+    !isExportingClientsAll;
+  const canExportClientsAll =
+    clients.length > 0 && !isExportingClientsFiltered && !isExportingClientsAll;
+
+  const mapClientsToExportRows = (clientsToExport: Client[]) =>
+    clientsToExport.map((client) => {
+      const agentLabel = isClientUnassigned(client)
+        ? 'No Agent'
+        : (client.agent_name || 'Unassigned');
+
+      return mapClientToListExportRow({
+        photo_url: client.photo_url,
+        name: client.name,
+        company: client.company,
+        email: client.email,
+        phone: client.phone,
+        agentLabel,
+        city: client.city,
+        account_type: client.account_type || 'Standard Accounts',
+        category: client.category || 'Open',
+        total_orders: client.total_orders || 0,
+        total_spent: client.total_spent || 0,
+        visit_count: client.visit_count ?? 0,
+        approvalLabel: buildClientApprovalLabel(client.approval_status || 'approved'),
+      });
+    });
+
+  const runClientsListExport = async (
+    clientsToExport: Client[],
+    exportType: 'filtered' | 'all'
+  ) => {
+    const citySlug = cityFilter && cityFilter !== 'all' ? cityFilter : 'all';
+    const exportRows = mapClientsToExportRows(clientsToExport);
+    const totalOrders = clientsToExport.reduce((sum, c) => sum + (c.total_orders || 0), 0);
+    const summary = computeClientListExportSummary(
+      clientsToExport.map((c) => ({
+        total_spent: c.total_spent || 0,
+        approval_status: c.approval_status || 'approved',
+      }))
+    );
+
+    await exportClientsListExcel(
+      exportRows,
+      buildClientsListExportFilename(dateRangeFilter, citySlug, exportType),
+      {
+        exportType,
+        dateLabel: dateRangeLabel,
+        cityLabel: cityFilter && cityFilter !== 'all' ? cityFilter : 'All Cities',
+        searchLabel: exportType === 'filtered' ? (searchQuery.trim() || null) : null,
+        clientCount: clientsToExport.length,
+        totalOrders,
+        summary,
+      }
+    );
+
+    const scopeNote =
+      exportType === 'filtered'
+        ? `${dateRangeLabel} · ${cityFilter && cityFilter !== 'all' ? cityFilter : 'All Cities'}`
+        : 'All clients · All time · No filters';
+    toast({
+      title: 'Export Successful',
+      description: `Exported ${clientsToExport.length} client(s) · ${scopeNote}.`,
+    });
+  };
+
+  const handleExportClientsFiltered = async () => {
+    if (!filteredClients.length) {
       toast({
-        title: 'No Data',
-        description: 'There are no clients to export.',
-        variant: 'destructive'
+        title: 'No data to export',
+        description: hasActiveClientFilters
+          ? `No clients match the current filters for ${dateRangeLabel}.`
+          : 'Apply a date, city, or search filter to export filtered clients.',
+        variant: 'destructive',
       });
       return;
     }
 
-    setExporting(true);
-    setExportProgress({ current: 0, total: clients.length });
-
+    setIsExportingClientsFiltered(true);
     try {
-      // Prepare client data for export (column order = CSV order)
-      const exportData = clients.map(client => ({
-        id: client.id,
-        trade_name: client.name,
-        shop_name: client.company || '',
-        contact_person: client.contact_person || '',
-        email: client.email || '',
-        phone: client.phone || '',
-        tin: client.tin || '',
-        address: client.address || '',
-        city: client.city || '',
-        agent_name: client.agent_name || 'Unassigned',
-        account_type: client.account_type || 'Standard Accounts',
-        category: client.category || 'Open',
-        status: client.status || 'active',
-        total_orders: client.total_orders || 0,
-        total_spent: client.total_spent || 0,
-        visit_count: client.visit_count ?? 0,
-        last_order_date: client.last_order_date || '',
-        approval_status: client.approval_status || 'approved',
-        created_at: client.created_at,
-        updated_at: client.updated_at,
-        location_latitude: client.location_latitude ?? '',
-        location_longitude: client.location_longitude ?? '',
-        location_accuracy: client.location_accuracy ?? '',
-        location_captured_at: client.location_captured_at ?? '',
-      }));
-
-      // Export to Excel with progress tracking
-      await exportClientsToExcel(exportData, (current, total) => {
-        setExportProgress({ current, total });
-      });
-
-      toast({
-        title: 'Export Successful',
-        description: `Successfully exported ${clients.length} client(s) to Excel.`,
-      });
+      await runClientsListExport(filteredClients, 'filtered');
     } catch (error: any) {
-      console.error('Error exporting clients:', error);
+      console.error('Error exporting filtered clients:', error);
       toast({
         title: 'Export Failed',
         description: error.message || 'Failed to export clients. Please try again.',
         variant: 'destructive',
       });
     } finally {
-      setExporting(false);
-      setExportProgress({ current: 0, total: 0 });
+      setIsExportingClientsFiltered(false);
+    }
+  };
+
+  const handleExportClientsAll = async () => {
+    if (!clients.length) {
+      toast({
+        title: 'No Data',
+        description: 'There are no clients to export.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsExportingClientsAll(true);
+    try {
+      await runClientsListExport(clients, 'all');
+    } catch (error: any) {
+      console.error('Error exporting all clients:', error);
+      toast({
+        title: 'Export Failed',
+        description: error.message || 'Failed to export clients. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingClientsAll(false);
     }
   };
 
@@ -2898,33 +3007,53 @@ export default function ClientsPage() {
           <p className="text-sm text-muted-foreground">Manage all your business clients</p>
         </div>
 
-        {/* Desktop Actions */}
+        {/* Desktop Actions (fixing conflict with new code)*/}
         <div className="hidden lg:flex gap-2">
           {isAdmin && (
-            <Button
-              variant="outline"
-              onClick={handleExportToExcel}
-              disabled={exporting || clients.length === 0}
-            >
-              {exporting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Exporting... ({exportProgress.current}/{exportProgress.total})
-                </>
-              ) : (
-                <>
-                  <Download className="h-4 w-4 mr-2" />
-                  Export to Excel
-                </>
-              )}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={handleExportClientsFiltered}
+                disabled={!canExportClientsFiltered}
+              >
+                {isExportingClientsFiltered ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4 mr-2" />
+                    
+                    Export filtered
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleExportClientsAll}
+                disabled={!canExportClientsAll}
+              >
+                {isExportingClientsAll ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4 mr-2" />
+                    Export all
+                  </>
+                )}
+              </Button>
+            </>
           )}
           {(isAdmin || isSuperAdmin) && (
             <>
-              <Button variant="outline" className="gap-2" onClick={handleDownloadTemplate}>
+              {/* <Button variant="outline" className="gap-2" onClick={handleDownloadTemplate}>
                 <Download className="h-4 w-4" />
                 Template
-              </Button>
+              </Button> */}
               <div className="relative">
                 <input
                   type="file"
@@ -2933,10 +3062,10 @@ export default function ClientsPage() {
                   accept=".csv,.txt,.xlsx,.xls"
                   className="hidden"
                 />
-                <Button variant="outline" className="gap-2" onClick={handleImportClick} disabled={importing}>
+                {/* <Button variant="outline" className="gap-2" onClick={handleImportClick} disabled={importing}>
                   {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                   Import
-                </Button>
+                </Button> */}
               </div>
               <Button variant="outline" onClick={handleOpenCityBulkTransfer}>
                 <Users className="h-4 w-4 mr-2" />
@@ -2969,22 +3098,40 @@ export default function ClientsPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               {isAdmin && (
-                <DropdownMenuItem
-                  onClick={handleExportToExcel}
-                  disabled={exporting || clients.length === 0}
-                >
-                  {exporting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Exporting...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="h-4 w-4 mr-2" />
-                      Export to Excel
-                    </>
-                  )}
-                </DropdownMenuItem>
+                <>
+                  <DropdownMenuItem
+                    onClick={handleExportClientsFiltered}
+                    disabled={!canExportClientsFiltered}
+                  >
+                    {isExportingClientsFiltered ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Exporting filtered...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        Export filtered
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleExportClientsAll}
+                    disabled={!canExportClientsAll}
+                  >
+                    {isExportingClientsAll ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Exporting all...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        Export all
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                </>
               )}
               {(isAdmin || isSuperAdmin) && (
                 <>
@@ -3537,7 +3684,7 @@ export default function ClientsPage() {
       <Card>
         <CardHeader>
           <div className="space-y-4">
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -3547,26 +3694,37 @@ export default function ClientsPage() {
                   className="pl-10"
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-muted-foreground" />
-                <Select value={cityFilter} onValueChange={setCityFilter}>
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="Filter by city" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Cities</SelectItem>
-                    {getUniqueCities().map(city => (
-                      <SelectItem key={city} value={city}>
-                        {city}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="flex flex-wrap items-center gap-2">
+                <DateRangeFilterPopover
+                  value={dateRangeFilter}
+                  onChange={setDateRangeFilter}
+                />
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <Select value={cityFilter} onValueChange={setCityFilter}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="Filter by city" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Cities</SelectItem>
+                      {getUniqueCities().map(city => (
+                        <SelectItem key={city} value={city}>
+                          {city}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
-            {(searchQuery || (cityFilter && cityFilter !== 'all')) && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            {(searchQuery || (cityFilter && cityFilter !== 'all') || dateRangeFilter.preset !== 'all') && (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                 <span>Showing {filteredClients.length} of {totalClientCount.toLocaleString()} clients</span>
+                {dateRangeFilter.preset !== 'all' && (
+                  <Badge variant="secondary" className="text-xs">
+                    Date: {dateRangeLabel}
+                  </Badge>
+                )}
                 {cityFilter && cityFilter !== 'all' && (
                   <Badge variant="secondary" className="text-xs">
                     City: {cityFilter}
