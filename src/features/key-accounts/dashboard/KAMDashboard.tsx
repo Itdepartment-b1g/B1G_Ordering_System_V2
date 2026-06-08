@@ -311,13 +311,13 @@ export function KAMDashboard() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">KAM Dashboard</h1>
-          <p className="text-muted-foreground">
-            Welcome, {user?.full_name}
-            <Badge variant="outline" className="ml-2">
+          <div className="text-muted-foreground flex items-center flex-wrap gap-2">
+            <span>Welcome, {user?.full_name}</span>
+            <Badge variant="outline">
               <User className="h-3 w-3 mr-1" />
               Key Account Manager
             </Badge>
-          </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(parseInt(v, 10))}>

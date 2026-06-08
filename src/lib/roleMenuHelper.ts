@@ -183,6 +183,7 @@ const warehouseMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', description: 'Create sub-warehouses and allocate stock from main.' },
       { title: 'Main Inventory', url: '/inventory/main', description: 'Stock levels for your warehouse company.' },
+      { title: 'Disposal Log', url: '/inventory/disposals', description: 'Damaged or unsellable units from rebate returns.' },
     ],
   },
   { title: 'Profile', url: '/profile', description: 'Warehouse user profile and settings.' },

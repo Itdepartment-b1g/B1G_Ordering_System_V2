@@ -75,6 +75,7 @@ export function usePermissions() {
         '/inventory/board',
         '/inventory/main',
         '/inventory/sub-warehouses',
+        '/inventory/disposals',
         '/profile',
       ];
       return warehouseRoutes.includes(route);
