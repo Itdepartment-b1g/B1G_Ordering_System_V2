@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { isKeyAccountAnalyticsEligibleOrder } from './keyAccountAnalyticsShared';
 
 type MonthValue = 'all' | `${number}`;
 
@@ -34,6 +35,8 @@ interface ClientOrderRow {
   total_amount: number | null;
   status: string | null;
   workflow_status: string | null;
+  po_order_kind?: string | null;
+  source_rebate_id?: string | null;
 }
 
 interface ItemRow {
@@ -121,7 +124,7 @@ export default function KeyAccountClientAnalyticsPage() {
           .single(),
         supabase
           .from('purchase_orders')
-          .select('id, po_number, order_date, total_amount, status, workflow_status')
+          .select('id, po_number, order_date, total_amount, status, workflow_status, po_order_kind, source_rebate_id')
           .eq('company_id', user.company_id)
           .eq('company_account_type', 'Key Accounts')
           .eq('key_account_client_id', clientId)
@@ -133,7 +136,9 @@ export default function KeyAccountClientAnalyticsPage() {
       if (clientError) throw clientError;
       if (ordersResult.error) throw ordersResult.error;
 
-      const nextOrders = (ordersResult.data || []) as ClientOrderRow[];
+      const nextOrders = ((ordersResult.data || []) as ClientOrderRow[]).filter(
+        isKeyAccountAnalyticsEligibleOrder
+      );
       const deliveredIds = nextOrders.filter(isDeliveredRevenue).map((order) => order.id);
       let nextItems: ItemRow[] = [];
 

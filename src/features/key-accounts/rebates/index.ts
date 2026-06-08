@@ -4,3 +4,4 @@ export { SelectDeliveredPoForRebateDialog } from './SelectDeliveredPoForRebateDi
 export * from './keyAccountRebateShared';
 export { RebateReplacementPricingSummary } from './RebateReplacementPricingSummary';
 export { RebateReceiveReturnsDialog } from './RebateReceiveReturnsDialog';
+export { KeyAccountRebateDetailDialog } from './KeyAccountRebateDetailDialog';

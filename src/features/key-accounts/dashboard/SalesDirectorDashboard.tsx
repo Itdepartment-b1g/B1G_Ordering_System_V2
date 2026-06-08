@@ -393,13 +393,13 @@ export function SalesDirectorDashboard() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Sales Director Dashboard</h1>
-          <p className="text-muted-foreground">
-            Welcome, {user?.full_name}
-            <Badge variant="secondary" className="ml-2">
+          <div className="text-muted-foreground flex items-center flex-wrap gap-2">
+            <span>Welcome, {user?.full_name}</span>
+            <Badge variant="secondary">
               <UserCheck className="h-3 w-3 mr-1" />
               Sales Director
             </Badge>
-          </p>
+          </div>
         </div>
         <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(parseInt(v))}>
           <SelectTrigger className="w-[140px]">

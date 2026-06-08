@@ -65,6 +65,7 @@ import {
   rebateStatusBadgeClass,
   rebateStatusLabel,
   RebateReplacementPricingSummary,
+  KeyAccountRebateDetailDialog,
 } from '@/features/key-accounts/rebates';
 
 type KeyAccountWorkflowStatus =
@@ -250,8 +251,33 @@ export function KeyAccountPurchaseOrdersPage() {
     }>
   >([]);
   const [rebateReturnLinesLoading, setRebateReturnLinesLoading] = useState(false);
+  const [rebateDetailOpen, setRebateDetailOpen] = useState(false);
+  const [rebateDetailId, setRebateDetailId] = useState<string | null>(null);
 
   const role = user?.role;
+  const openRebateDetail = (rebateId: string) => {
+    setRebateDetailId(rebateId);
+    setRebateDetailOpen(true);
+  };
+
+  const refreshPoRebatesForActive = async () => {
+    if (!active?.id || !isDeliveredKeyAccountOrder(active)) return;
+    setPoRebatesLoading(true);
+    try {
+      const { data: rebateRows, error: rebateErr } = await supabase
+        .from('key_account_po_rebates')
+        .select('id, rebate_number, status, disputed_total, resolution_type')
+        .eq('purchase_order_id', active.id)
+        .order('created_at', { ascending: false });
+      if (rebateErr) throw rebateErr;
+      setPoRebates(rebateRows || []);
+    } catch {
+      setPoRebates([]);
+    } finally {
+      setPoRebatesLoading(false);
+    }
+  };
+
   const isKAM = role === 'key_account_manager';
   const isDirector = role === 'sales_director';
   const isSalesHead = isKeyAccountSalesHead(role);
@@ -1107,11 +1133,20 @@ export function KeyAccountPurchaseOrdersPage() {
                     {rebateSource ? (
                       <>
                         <div className="text-xs text-muted-foreground">Source PO</div>
-                        <div className="text-lg font-bold font-mono break-all">
-                          {rebateSource.source_po_number}{' '}
-                          <Badge variant="outline" className="ml-2 align-middle">
-                            {rebateSource.rebate_number}
-                          </Badge>
+                        <div className="text-lg font-bold font-mono break-all flex flex-wrap items-center gap-2">
+                          <span>{rebateSource.source_po_number}</span>
+                          <Badge variant="outline">{rebateSource.rebate_number}</Badge>
+                          {active.source_rebate_id ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 gap-1"
+                              onClick={() => openRebateDetail(active.source_rebate_id!)}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              View rebate
+                            </Button>
+                          ) : null}
                         </div>
                       </>
                     ) : null}
@@ -1185,6 +1220,15 @@ export function KeyAccountPurchaseOrdersPage() {
                                   <Badge variant="outline" className={rebateStatusBadgeClass(r.status)}>
                                     {rebateStatusLabel(r.status)}
                                   </Badge>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 gap-1"
+                                    onClick={() => openRebateDetail(r.id)}
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                    View
+                                  </Button>
                                 </div>
                               </div>
                             ))}
@@ -1765,6 +1809,16 @@ export function KeyAccountPurchaseOrdersPage() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <KeyAccountRebateDetailDialog
+        open={rebateDetailOpen}
+        onOpenChange={(open) => {
+          setRebateDetailOpen(open);
+          if (!open) setRebateDetailId(null);
+        }}
+        rebateId={rebateDetailOpen ? rebateDetailId : null}
+        onRebateUpdated={() => void refreshPoRebatesForActive()}
+      />
     </div>
   );
 }

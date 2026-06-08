@@ -3,7 +3,24 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Package, Loader2, Search, ChevronLeft, ChevronRight, FileDown } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Package,
+  Loader2,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  FileDown,
+  TrendingUp,
+  TrendingDown,
+} from 'lucide-react';
 import {
   BarChart,
   Bar,
@@ -12,21 +29,22 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  Legend,
 } from 'recharts';
 import { useAuth } from '@/features/auth';
-import { useOrders, type Order } from '@/features/orders/OrderContext';
+import { supabase } from '@/lib/supabase';
 import {
   formatDateForInput,
   getDatePresetLabel,
   getDateRangeFromPreset,
-  isDateInRange,
 } from '@/lib/dateRangePresets';
-import { exportClientsToExcel } from '@/lib/excel.helpers';
+import { exportProductAnalyticsExcel } from '@/features/analytics/exportProductAnalyticsExcel';
 import { useToast } from '@/hooks/use-toast';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import { startOfDay, endOfDay, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 
 interface ProductPerformance {
   brand: string;
@@ -34,61 +52,42 @@ interface ProductPerformance {
   orders: number;
   quantity: number;
   revenue: number;
-}
-
-interface RawOrderItemRow {
-  brand: string;
-  variant: string;
-  quantity: number;
-  unitPrice: number;
-  orderDate: string;
+  approvedOrders: number;
+  approvedQuantity: number;
+  approvedRevenue: number;
+  pendingOrders: number;
+  pendingQuantity: number;
+  pendingRevenue: number;
+  trend: 'up' | 'down' | 'stable';
 }
 
 const PRODUCTS_PER_PAGE = 10;
 
-/** Same approved definition as Order List → Approved tab */
-function isApprovedOrder(order: Order): boolean {
-  return order.status === 'approved' || order.stage === 'admin_approved';
-}
-
-function aggregateProducts(items: RawOrderItemRow[]): ProductPerformance[] {
-  const productMap = new Map<
-    string,
-    { brand: string; variant: string; orders: number; quantity: number; revenue: number }
-  >();
-
-  items.forEach((item) => {
-    const key = `${item.brand}|${item.variant}`;
-    if (!productMap.has(key)) {
-      productMap.set(key, {
-        brand: item.brand,
-        variant: item.variant,
-        orders: 0,
-        quantity: 0,
-        revenue: 0,
-      });
-    }
-    const productData = productMap.get(key)!;
-    productData.orders += 1;
-    productData.quantity += item.quantity;
-    productData.revenue += item.quantity * item.unitPrice;
-  });
-
-  const result = Array.from(productMap.values());
-  result.sort((a, b) => b.revenue - a.revenue);
-  return result;
-}
+/** Match Order List: approved via status or final admin stage */
+const getProductOrderStatusBucket = (
+  status?: string,
+  stage?: string
+): 'approved' | 'pending' | null => {
+  if (status === 'approved' || stage === 'admin_approved') return 'approved';
+  if (status === 'pending') return 'pending';
+  return null;
+};
 
 export default function ProductAnalyticsPage() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const { orders, loading } = useOrders();
   const [exporting, setExporting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [productPerformance, setProductPerformance] = useState<ProductPerformance[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [revenueDialogOpen, setRevenueDialogOpen] = useState(false);
+  const [selectedProductRevenue, setSelectedProductRevenue] = useState<ProductPerformance | null>(
+    null
+  );
 
   const orderDateRange = useMemo(
     () =>
@@ -100,30 +99,178 @@ export default function ProductAnalyticsPage() {
     [dateRangeFilter]
   );
 
-  /** Approved orders in the selected period — same filters as Order List */
-  const approvedInRange = useMemo(() => {
-    return orders.filter(
-      (o) =>
-        isApprovedOrder(o) &&
-        isDateInRange(o.date, orderDateRange.start, orderDateRange.end)
-    );
-  }, [orders, orderDateRange.start, orderDateRange.end]);
+  const dateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
 
-  const productPerformance = useMemo(() => {
-    const rows: RawOrderItemRow[] = [];
-    for (const order of approvedInRange) {
-      for (const item of order.items) {
-        rows.push({
-          brand: item.brandName,
-          variant: item.variantName,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          orderDate: order.date,
-        });
+  const fetchProductPerformance = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { start, end } = orderDateRange;
+
+      let orderItemsQuery = supabase
+        .from('client_order_items')
+        .select(`
+          quantity,
+          unit_price,
+          client_orders!inner(status, stage, created_at, agent_id, company_id),
+          variants!inner(
+            name,
+            variant_type,
+            brands!inner(name)
+          )
+        `);
+
+      if (start) {
+        orderItemsQuery = orderItemsQuery.gte(
+          'client_orders.created_at',
+          startOfDay(start).toISOString()
+        );
       }
+      if (end) {
+        orderItemsQuery = orderItemsQuery.lte(
+          'client_orders.created_at',
+          endOfDay(end).toISOString()
+        );
+      }
+
+      const { data: orderItems, error } = await orderItemsQuery;
+      if (error) throw error;
+
+      let filteredOrderItems = (orderItems || []).filter((item: any) => {
+        const bucket = getProductOrderStatusBucket(
+          item.client_orders?.status,
+          item.client_orders?.stage
+        );
+        return bucket !== null;
+      });
+
+      if (user?.company_id) {
+        filteredOrderItems = filteredOrderItems.filter(
+          (item: any) => item.client_orders?.company_id === user.company_id
+        );
+      }
+
+      const currentMonthStart = startOfMonth(new Date());
+      const prevMonthStart = startOfMonth(subMonths(new Date(), 1));
+      const prevMonthEnd = endOfMonth(subMonths(new Date(), 1));
+
+      const productMap = new Map<
+        string,
+        {
+          brand: string;
+          variant: string;
+          approvedOrders: number;
+          approvedQuantity: number;
+          approvedRevenue: number;
+          pendingOrders: number;
+          pendingQuantity: number;
+          pendingRevenue: number;
+          currentMonthOrders: number;
+          prevMonthOrders: number;
+        }
+      >();
+
+      filteredOrderItems.forEach((item: any) => {
+        const brand = item.variants?.brands?.name || 'Unknown';
+        const variant = item.variants?.name || 'Unknown';
+        const key = `${brand}|${variant}`;
+        const qty = item.quantity || 0;
+        const lineRevenue = qty * (item.unit_price || 0);
+        const status = item.client_orders?.status as string | undefined;
+        const stage = item.client_orders?.stage as string | undefined;
+        const createdAt = item.client_orders?.created_at as string | undefined;
+        const bucket = getProductOrderStatusBucket(status, stage);
+
+        if (!productMap.has(key)) {
+          productMap.set(key, {
+            brand,
+            variant,
+            approvedOrders: 0,
+            approvedQuantity: 0,
+            approvedRevenue: 0,
+            pendingOrders: 0,
+            pendingQuantity: 0,
+            pendingRevenue: 0,
+            currentMonthOrders: 0,
+            prevMonthOrders: 0,
+          });
+        }
+
+        const productData = productMap.get(key)!;
+
+        if (bucket === 'approved') {
+          productData.approvedOrders += 1;
+          productData.approvedQuantity += qty;
+          productData.approvedRevenue += lineRevenue;
+        } else if (bucket === 'pending') {
+          productData.pendingOrders += 1;
+          productData.pendingQuantity += qty;
+          productData.pendingRevenue += lineRevenue;
+        }
+
+        if (createdAt) {
+          const orderDate = new Date(createdAt);
+          if (orderDate >= currentMonthStart) {
+            productData.currentMonthOrders += 1;
+          } else if (orderDate >= prevMonthStart && orderDate <= prevMonthEnd) {
+            productData.prevMonthOrders += 1;
+          }
+        }
+      });
+
+      const productPerformanceData: ProductPerformance[] = Array.from(productMap.values()).map(
+        (data) => {
+          const orders = data.approvedOrders + data.pendingOrders;
+          const quantity = data.approvedQuantity + data.pendingQuantity;
+          const revenue = data.approvedRevenue + data.pendingRevenue;
+
+          let trend: 'up' | 'down' | 'stable' = 'stable';
+          if (data.currentMonthOrders > data.prevMonthOrders) trend = 'up';
+          else if (data.currentMonthOrders < data.prevMonthOrders) trend = 'down';
+
+          return {
+            brand: data.brand,
+            variant: data.variant,
+            orders,
+            quantity,
+            revenue,
+            approvedOrders: data.approvedOrders,
+            approvedQuantity: data.approvedQuantity,
+            approvedRevenue: data.approvedRevenue,
+            pendingOrders: data.pendingOrders,
+            pendingQuantity: data.pendingQuantity,
+            pendingRevenue: data.pendingRevenue,
+            trend,
+          };
+        }
+      );
+
+      productPerformanceData.sort((a, b) => b.revenue - a.revenue);
+      setProductPerformance(productPerformanceData);
+    } catch (error) {
+      console.error('Error fetching product performance:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load product analytics',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
     }
-    return aggregateProducts(rows);
-  }, [approvedInRange]);
+  }, [orderDateRange, user?.company_id, toast]);
+
+  useEffect(() => {
+    if (user?.role === 'accounting') {
+      fetchProductPerformance();
+    }
+  }, [user?.role, fetchProductPerformance]);
 
   const filteredProducts = useMemo(() => {
     if (!searchQuery.trim()) return productPerformance;
@@ -135,67 +282,27 @@ export default function ProductAnalyticsPage() {
     );
   }, [productPerformance, searchQuery]);
 
-  const dateRangeLabel = useMemo(
-    () =>
-      getDatePresetLabel(
-        dateRangeFilter.preset,
-        dateRangeFilter.customStart,
-        dateRangeFilter.customEnd
-      ),
-    [dateRangeFilter]
-  );
-
-  const handleExportCsv = useCallback(async () => {
+  const handleExportExcel = useCallback(async () => {
     if (!filteredProducts.length) {
       toast({
         title: 'No data to export',
-        description: 'No approved product data for the selected date range.',
+        description: 'No product data for the selected date range.',
         variant: 'destructive',
       });
       return;
     }
 
-    const periodStart = orderDateRange.start
-      ? formatDateForInput(orderDateRange.start)
-      : 'all';
-    const periodEnd = orderDateRange.end ? formatDateForInput(orderDateRange.end) : 'all';
-
-    const exportData = filteredProducts.map((p) => ({
-      date_range: dateRangeLabel,
-      period_start: periodStart,
-      period_end: periodEnd,
-      brand: p.brand,
-      product: p.variant,
-      orders: p.orders,
-      quantity: p.quantity,
-      revenue: p.revenue,
-    }));
-
-    const exportUnits = filteredProducts.reduce((sum, p) => sum + p.quantity, 0);
-    const exportLineRevenue = filteredProducts.reduce((sum, p) => sum + p.revenue, 0);
-    exportData.push({
-      date_range: dateRangeLabel,
-      period_start: periodStart,
-      period_end: periodEnd,
-      brand: '',
-      product: 'TOTAL',
-      orders: filteredProducts.reduce((sum, p) => sum + p.orders, 0),
-      quantity: exportUnits,
-      revenue: exportLineRevenue,
-    });
-
-    const slug =
-      dateRangeFilter.preset === 'custom'
-        ? `${periodStart}_to_${periodEnd}`
-        : dateRangeFilter.preset;
+    const { start, end } = orderDateRange;
+    const periodStart = start ? formatDateForInput(start) : 'all';
+    const periodEnd = end ? formatDateForInput(end) : 'all';
 
     setExporting(true);
     try {
-      await exportClientsToExcel(
-        exportData,
-        undefined,
-        `product_analytics_${slug}_${new Date().toISOString().split('T')[0]}.csv`
-      );
+      await exportProductAnalyticsExcel(filteredProducts, {
+        dateRangeLabel,
+        periodStart,
+        periodEnd,
+      });
       toast({
         title: 'Export successful',
         description: `Exported ${filteredProducts.length} product row(s) for ${dateRangeLabel}.`,
@@ -204,20 +311,13 @@ export default function ProductAnalyticsPage() {
       console.error('Product analytics export failed:', error);
       toast({
         title: 'Export failed',
-        description: 'Could not generate the CSV file.',
+        description: 'Could not generate the Excel file.',
         variant: 'destructive',
       });
     } finally {
       setExporting(false);
     }
-  }, [
-    filteredProducts,
-    dateRangeLabel,
-    orderDateRange.start,
-    orderDateRange.end,
-    dateRangeFilter.preset,
-    toast,
-  ]);
+  }, [filteredProducts, dateRangeLabel, orderDateRange, toast]);
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE));
   const startIndex = (currentPage - 1) * PRODUCTS_PER_PAGE;
@@ -243,7 +343,7 @@ export default function ProductAnalyticsPage() {
     );
   }
 
-  if (loading) {
+  if (loading && productPerformance.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -252,8 +352,9 @@ export default function ProductAnalyticsPage() {
   }
 
   const totalUnits = productPerformance.reduce((sum, p) => sum + p.quantity, 0);
-  /** Sum of order totals (tax/discount included) — matches Order List approved rows */
-  const totalRevenue = approvedInRange.reduce((sum, o) => sum + o.total, 0);
+  const totalRevenue = productPerformance.reduce((sum, p) => sum + p.revenue, 0);
+  const totalApprovedRevenue = productPerformance.reduce((sum, p) => sum + p.approvedRevenue, 0);
+  const totalPendingRevenue = productPerformance.reduce((sum, p) => sum + p.pendingRevenue, 0);
 
   return (
     <div className="p-4 md:p-8 space-y-6">
@@ -265,8 +366,7 @@ export default function ProductAnalyticsPage() {
           <div>
             <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Product Analytics</h1>
             <p className="text-muted-foreground mt-1">
-              Approved orders by brand and variant. Revenue matches Order List totals for the same
-              date range.
+              Approved and pending client orders by line item — {dateRangeLabel}
             </p>
           </div>
         </div>
@@ -280,7 +380,7 @@ export default function ProductAnalyticsPage() {
           <Button
             variant="outline"
             className="h-10 gap-2"
-            onClick={handleExportCsv}
+            onClick={handleExportExcel}
             disabled={exporting || loading || filteredProducts.length === 0}
           >
             {exporting ? (
@@ -288,7 +388,7 @@ export default function ProductAnalyticsPage() {
             ) : (
               <FileDown className="h-4 w-4" />
             )}
-            Export CSV
+            Export Excel
           </Button>
         </div>
       </div>
@@ -305,6 +405,7 @@ export default function ProductAnalyticsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Units Sold</CardTitle>
+            <CardDescription className="text-xs">Approved + pending line items</CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">{totalUnits.toLocaleString()}</p>
@@ -314,8 +415,8 @@ export default function ProductAnalyticsPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Revenue</CardTitle>
             <CardDescription className="text-xs">
-              Sum of approved order totals ({approvedInRange.length} order
-              {approvedInRange.length === 1 ? '' : 's'})
+              Approved ₱{totalApprovedRevenue.toLocaleString()} · Pending ₱
+              {totalPendingRevenue.toLocaleString()}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -328,12 +429,18 @@ export default function ProductAnalyticsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Top Products by Revenue</CardTitle>
-            <CardDescription>Line-item revenue from approved orders in selected period</CardDescription>
+            <CardDescription>
+              Approved vs pending revenue (order status) — top 10 products
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            {productPerformance.length === 0 ? (
+            {loading ? (
+              <div className="flex justify-center items-center h-[300px]">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : productPerformance.length === 0 ? (
               <p className="text-center py-12 text-muted-foreground">
-                No approved orders with line items in this period.
+                No product data for the selected period
               </p>
             ) : (
               <ResponsiveContainer width="100%" height={300}>
@@ -346,8 +453,50 @@ export default function ProductAnalyticsPage() {
                     tick={{ fontSize: 11 }}
                     width={120}
                   />
-                  <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
-                  <Bar dataKey="revenue" fill="#10b981" name="Revenue (₱)" />
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null;
+                      const approved =
+                        (payload.find((p) => p.dataKey === 'approvedRevenue')?.value as number) ||
+                        0;
+                      const pending =
+                        (payload.find((p) => p.dataKey === 'pendingRevenue')?.value as number) ||
+                        0;
+                      const total = approved + pending;
+                      return (
+                        <div className="bg-background border rounded-lg p-3 shadow-lg">
+                          <p className="font-semibold text-sm mb-2">{label}</p>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full bg-blue-500" />
+                              <span className="text-muted-foreground">Approved:</span>
+                              <span className="font-medium">₱{approved.toLocaleString()}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full bg-orange-500" />
+                              <span className="text-muted-foreground">Pending:</span>
+                              <span className="font-medium">₱{pending.toLocaleString()}</span>
+                            </div>
+                            <div className="border-t pt-1 mt-2 flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full bg-green-500" />
+                              <span className="font-semibold">Total:</span>
+                              <span className="font-bold text-green-600 dark:text-green-400">
+                                ₱{total.toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: '12px' }}
+                    formatter={(value: string) =>
+                      value === 'approvedRevenue' ? 'Approved' : 'Pending'
+                    }
+                  />
+                  <Bar dataKey="approvedRevenue" fill="#3b82f6" name="approvedRevenue" />
+                  <Bar dataKey="pendingRevenue" fill="#f97316" name="pendingRevenue" />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -358,7 +507,9 @@ export default function ProductAnalyticsPage() {
           <CardHeader className="space-y-4">
             <div>
               <CardTitle>Product Performance Details</CardTitle>
-              <CardDescription>Breakdown by brand and variant</CardDescription>
+              <CardDescription>
+                Line-item counts; click total revenue for approved / pending breakdown
+              </CardDescription>
             </div>
             <div className="relative max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -371,21 +522,28 @@ export default function ProductAnalyticsPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {filteredProducts.length === 0 ? (
+            {loading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : filteredProducts.length === 0 ? (
               <p className="text-center py-8 text-muted-foreground">
-                {searchQuery ? 'No products match your search.' : 'No product data available.'}
+                {searchQuery ? 'No products match your search.' : 'No product data available'}
               </p>
             ) : (
               <>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto border rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Brand</TableHead>
                         <TableHead>Product</TableHead>
                         <TableHead className="text-right">Orders</TableHead>
-                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right">Units Sold</TableHead>
+                        <TableHead className="text-right">Pending Orders</TableHead>
+                        <TableHead className="text-right">Pending Sold</TableHead>
                         <TableHead className="text-right">Revenue</TableHead>
+                        <TableHead className="text-center">Trend</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -397,8 +555,40 @@ export default function ProductAnalyticsPage() {
                           <TableCell className="text-right">
                             {product.quantity.toLocaleString()}
                           </TableCell>
-                          <TableCell className="text-right">
-                            ₱{product.revenue.toLocaleString()}
+                          <TableCell className="text-right text-orange-600 dark:text-orange-400">
+                            {product.pendingOrders}
+                          </TableCell>
+                          <TableCell className="text-right text-orange-600 dark:text-orange-400">
+                            {product.pendingQuantity}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold">
+                            <button
+                              type="button"
+                              className="text-primary hover:underline underline-offset-2"
+                              onClick={() => {
+                                setSelectedProductRevenue(product);
+                                setRevenueDialogOpen(true);
+                              }}
+                            >
+                              ₱{product.revenue.toLocaleString()}
+                            </button>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {product.trend === 'up' && (
+                              <Badge className="bg-green-100 text-green-800">
+                                <TrendingUp className="h-3 w-3 mr-1" />
+                                Rising
+                              </Badge>
+                            )}
+                            {product.trend === 'down' && (
+                              <Badge className="bg-red-100 text-red-800">
+                                <TrendingDown className="h-3 w-3 mr-1" />
+                                Falling
+                              </Badge>
+                            )}
+                            {product.trend === 'stable' && (
+                              <Badge variant="outline">Stable</Badge>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -436,6 +626,66 @@ export default function ProductAnalyticsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={revenueDialogOpen} onOpenChange={setRevenueDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Revenue breakdown</DialogTitle>
+            <DialogDescription>
+              {selectedProductRevenue
+                ? `${selectedProductRevenue.brand} — ${selectedProductRevenue.variant} (${dateRangeLabel})`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedProductRevenue && (
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
+                  Approved revenue
+                </span>
+                <span className="font-semibold">
+                  ₱{selectedProductRevenue.approvedRevenue.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <span className="h-2.5 w-2.5 rounded-full bg-orange-500" />
+                  Pending revenue
+                </span>
+                <span className="font-semibold">
+                  ₱{selectedProductRevenue.pendingRevenue.toLocaleString()}
+                </span>
+              </div>
+              <div className="border-t pt-3 flex items-center justify-between gap-3">
+                <span className="flex items-center gap-2 font-medium">
+                  <span className="h-2.5 w-2.5 rounded-full bg-green-500" />
+                  Total revenue
+                </span>
+                <span className="text-lg font-bold text-green-600 dark:text-green-400">
+                  ₱{selectedProductRevenue.revenue.toLocaleString()}
+                </span>
+              </div>
+              <div className="border-t pt-3 space-y-1.5 text-muted-foreground text-xs">
+                <div className="flex justify-between">
+                  <span>Approved line items / units</span>
+                  <span>
+                    {selectedProductRevenue.approvedOrders} /{' '}
+                    {selectedProductRevenue.approvedQuantity}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Pending line items / units</span>
+                  <span>
+                    {selectedProductRevenue.pendingOrders} /{' '}
+                    {selectedProductRevenue.pendingQuantity}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

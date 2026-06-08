@@ -35,7 +35,8 @@ import {
   Network,
   Plus,
   Package2Icon,
-  RotateCcw
+  RotateCcw,
+  PackageX
 } from 'lucide-react';
 import {
   Sidebar,
@@ -348,6 +349,7 @@ const warehouseMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', icon: Building2 },
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
+      { title: 'Disposal Log', url: '/inventory/disposals', icon: PackageX },
     ],
   },
   { title: 'Profile', url: '/profile', icon: UserCircle },

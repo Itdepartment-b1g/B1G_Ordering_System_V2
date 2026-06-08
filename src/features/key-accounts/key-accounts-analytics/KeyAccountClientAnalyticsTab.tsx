@@ -10,7 +10,29 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Building2, CalendarIcon, Check, ChevronsUpDown, Eye, Filter, Loader2, ShoppingCart, TrendingUp, X } from 'lucide-react';
+import {
+  Building2,
+  CalendarIcon,
+  Check,
+  ChevronsUpDown,
+  Eye,
+  FileDown,
+  Filter,
+  Loader2,
+  ShoppingCart,
+  TrendingUp,
+  X,
+} from 'lucide-react';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  formatDateForInput,
+  getDatePresetLabel,
+  getDateRangeFromPreset,
+} from '@/lib/dateRangePresets';
+import { exportKeyAccountClientAnalyticsExcel } from './exportKeyAccountClientAnalyticsExcel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,6 +62,7 @@ import {
   AnalyticsTablePagination,
   paginateAnalyticsRows,
 } from './AnalyticsTablePagination';
+import { getKeyAccountOrderRevenueBreakdown } from './keyAccountAnalyticsShared';
 
 interface ClientOption {
   id: string;
@@ -90,13 +113,25 @@ interface PoLineItem {
   variantType: string;
 }
 
+interface ChartDateRange {
+  from?: Date;
+  to?: Date;
+}
+
 interface KeyAccountClientAnalyticsTabProps {
   orders: ClientAnalyticsOrder[];
   items: ClientAnalyticsItem[];
   clients: ClientOption[];
   brands: string[];
   formatCurrency: (value: number) => string;
+  chartDateRange?: ChartDateRange;
+  usePageDateFilter?: boolean;
+  dateRangeFilter?: DateRangeFilterValue;
+  onDateRangeFilterChange?: (value: DateRangeFilterValue) => void;
+  rebateCreditByPurchaseOrderId?: Map<string, number>;
 }
+
+const EMPTY_REBATE_CREDIT_MAP = new Map<string, number>();
 
 type DatePreset = 'all' | 'this_month' | 'last_month' | 'last_3_months' | 'last_6_months' | 'this_year' | 'last_year' | 'custom';
 
@@ -294,10 +329,16 @@ export default function KeyAccountClientAnalyticsTab({
   clients,
   brands,
   formatCurrency,
+  chartDateRange,
+  usePageDateFilter = false,
+  dateRangeFilter,
+  onDateRangeFilterChange,
+  rebateCreditByPurchaseOrderId = EMPTY_REBATE_CREDIT_MAP,
 }: KeyAccountClientAnalyticsTabProps) {
   const { toast } = useToast();
   const [selectedClient, setSelectedClient] = useState('all');
   const [selectedBrand, setSelectedBrand] = useState('all');
+  const [exporting, setExporting] = useState(false);
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
   const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
   const [customStartDate, setCustomStartDate] = useState<Date | undefined>(undefined);
@@ -336,20 +377,51 @@ export default function KeyAccountClientAnalyticsTab({
     return ids;
   }, [items, selectedBrand]);
 
+  const pageOrderDateRange = useMemo(() => {
+    if (!dateRangeFilter) return undefined;
+    return getDateRangeFromPreset(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+  }, [dateRangeFilter]);
+
+  const dateRangeLabel = useMemo(() => {
+    if (!dateRangeFilter) {
+      if (!dateRange?.from) return 'All time';
+      const start = formatDateForInput(dateRange.from);
+      const end = dateRange.to ? formatDateForInput(dateRange.to) : start;
+      return `${start} – ${end}`;
+    }
+    return getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+  }, [dateRange, dateRangeFilter]);
+
+  const effectiveDateRange = useMemo(() => {
+    if (usePageDateFilter && pageOrderDateRange) {
+      return { from: pageOrderDateRange.start, to: pageOrderDateRange.end };
+    }
+    if (usePageDateFilter) return chartDateRange;
+    return dateRange;
+  }, [chartDateRange, dateRange, pageOrderDateRange, usePageDateFilter]);
+
   const baseOrders = useMemo(
     () =>
       orders.filter((order) => {
         if (order.analytics_only) return false;
-        if (!inRange(order.order_date, dateRange)) return false;
+        if (!usePageDateFilter && !inRange(order.order_date, dateRange)) return false;
         if (selectedClient !== 'all' && order.key_account_client_id !== selectedClient) return false;
         if (orderIdsByBrand && !orderIdsByBrand.has(order.id)) return false;
         return true;
       }),
-    [dateRange, orderIdsByBrand, orders, selectedClient]
+    [dateRange, orderIdsByBrand, orders, selectedClient, usePageDateFilter]
   );
 
   const monthlySalesData = useMemo(() => {
-    const periods = buildMonthlyPeriods(orders, dateRange);
+    const periods = buildMonthlyPeriods(orders, effectiveDateRange);
     const delivered = baseOrders.filter(isDeliveredRevenue);
     return periods.map((period) => {
       const sales = delivered
@@ -357,10 +429,17 @@ export default function KeyAccountClientAnalyticsTab({
           const d = new Date(order.order_date);
           return d >= period.start && d <= period.end;
         })
-        .reduce((sum, order) => sum + Number(order.total_amount || 0), 0);
+        .reduce((sum, order) => {
+          const { net } = getKeyAccountOrderRevenueBreakdown(
+            order.id,
+            order.total_amount,
+            rebateCreditByPurchaseOrderId
+          );
+          return sum + net;
+        }, 0);
       return { month: period.label, sales: Math.round(sales) };
     });
-  }, [baseOrders, dateRange, orders]);
+  }, [baseOrders, effectiveDateRange, orders, rebateCreditByPurchaseOrderId]);
 
   const poHistory = useMemo(
     () =>
@@ -381,22 +460,42 @@ export default function KeyAccountClientAnalyticsTab({
     poHistory.length,
     selectedClient,
     selectedBrand,
+    usePageDateFilter,
     datePreset,
     dateRange?.from,
     dateRange?.to,
+    chartDateRange?.from,
+    chartDateRange?.to,
+    dateRangeFilter?.preset,
+    dateRangeFilter?.customStart,
+    dateRangeFilter?.customEnd,
   ]);
 
   const summary = useMemo(() => {
     const delivered = baseOrders.filter(isDeliveredRevenue);
-    const deliveredRevenue = delivered.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+    let grossDeliveredRevenue = 0;
+    let rebatedDeliveredRevenue = 0;
+    let deliveredRevenue = 0;
+    delivered.forEach((order) => {
+      const breakdown = getKeyAccountOrderRevenueBreakdown(
+        order.id,
+        order.total_amount,
+        rebateCreditByPurchaseOrderId
+      );
+      grossDeliveredRevenue += breakdown.gross;
+      rebatedDeliveredRevenue += breakdown.rebated;
+      deliveredRevenue += breakdown.net;
+    });
     const paidCount = baseOrders.filter((o) => o.key_account_payment_status === 'paid').length;
     return {
       totalPos: baseOrders.length,
       deliveredPos: delivered.length,
+      grossDeliveredRevenue,
+      rebatedDeliveredRevenue,
       deliveredRevenue,
       paidCount,
     };
-  }, [baseOrders]);
+  }, [baseOrders, rebateCreditByPurchaseOrderId]);
 
   const clientOptions = useMemo(() => {
     const map = new Map<string, ClientOption>();
@@ -533,6 +632,93 @@ export default function KeyAccountClientAnalyticsTab({
     [dialogLineItems]
   );
 
+  const exportPeriodBounds = useMemo(() => {
+    if (usePageDateFilter && pageOrderDateRange) {
+      return {
+        periodStart: pageOrderDateRange.start ? formatDateForInput(pageOrderDateRange.start) : 'all',
+        periodEnd: pageOrderDateRange.end ? formatDateForInput(pageOrderDateRange.end) : 'all',
+      };
+    }
+    if (dateRange?.from) {
+      return {
+        periodStart: formatDateForInput(dateRange.from),
+        periodEnd: dateRange.to ? formatDateForInput(dateRange.to) : formatDateForInput(dateRange.from),
+      };
+    }
+    return { periodStart: 'all', periodEnd: 'all' };
+  }, [dateRange, pageOrderDateRange, usePageDateFilter]);
+
+  const handleExportExcel = async () => {
+    if (!poHistory.length) {
+      toast({
+        title: 'No data to export',
+        description: 'No purchase orders for the selected filters.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setExporting(true);
+    try {
+      await exportKeyAccountClientAnalyticsExcel(
+        poHistory.map((order) => {
+          const client = firstRelation(order.client);
+          const clientOption = clientOptions.find((c) => c.id === order.key_account_client_id);
+          const breakdown = getKeyAccountOrderRevenueBreakdown(
+            order.id,
+            order.total_amount,
+            rebateCreditByPurchaseOrderId
+          );
+          const poKind = String(order.po_order_kind || '');
+          let poKindLabel = 'Standard';
+          if (poKind === 'rebate_fulfillment') poKindLabel = 'Rebate replacement';
+          else if (poKind === 'rebate_topup') poKindLabel = 'Rebate top-up';
+
+          return {
+            poNumber: order.po_number,
+            orderDate: order.order_date
+              ? new Date(order.order_date).toLocaleDateString()
+              : '—',
+            clientName: client?.client_name || clientOption?.client_name || '—',
+            clientCode: clientOption?.client_code || '',
+            grossAmount: breakdown.gross,
+            rebatedAmount: breakdown.rebated,
+            netAmount: breakdown.net,
+            paymentStatus: String(order.key_account_payment_status || 'unpaid').replace(/_/g, ' '),
+            workflowStatus: String(order.workflow_status || order.status || '—').replace(/_/g, ' '),
+            poKind: poKindLabel,
+          };
+        }),
+        {
+          dateRangeLabel,
+          periodStart: exportPeriodBounds.periodStart,
+          periodEnd: exportPeriodBounds.periodEnd,
+          clientLabel: selectedClientLabel,
+          brandLabel: selectedBrand === 'all' ? 'All brands' : selectedBrand,
+          totalPos: summary.totalPos,
+          deliveredPos: summary.deliveredPos,
+          grossDeliveredRevenue: summary.grossDeliveredRevenue,
+          rebatedDeliveredRevenue: summary.rebatedDeliveredRevenue,
+          deliveredRevenue: summary.deliveredRevenue,
+          paidCount: summary.paidCount,
+        }
+      );
+      toast({
+        title: 'Export successful',
+        description: `Exported ${poHistory.length} PO row(s) for ${dateRangeLabel}.`,
+      });
+    } catch (error) {
+      console.error('Key Account client analytics export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-4">
@@ -551,12 +737,20 @@ export default function KeyAccountClientAnalyticsTab({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Delivered sales
+              Delivered sales (net)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(summary.deliveredRevenue)}</div>
             <p className="text-xs text-muted-foreground mt-1">{summary.deliveredPos} delivered POs</p>
+            {summary.rebatedDeliveredRevenue > 0 && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Gross {formatCurrency(summary.grossDeliveredRevenue)} · Rebated{' '}
+                <span className="text-amber-700 dark:text-amber-400">
+                  −{formatCurrency(summary.rebatedDeliveredRevenue)}
+                </span>
+              </p>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -682,6 +876,19 @@ export default function KeyAccountClientAnalyticsTab({
                   </Select>
                 </div>
 
+                {usePageDateFilter && dateRangeFilter && onDateRangeFilterChange && (
+                  <div className="space-y-2 pt-2 border-t">
+                    <Label>Date range</Label>
+                    <DateRangeFilterPopover
+                      value={dateRangeFilter}
+                      onChange={onDateRangeFilterChange}
+                      triggerClassName="w-full justify-between h-10"
+                      align="start"
+                    />
+                  </div>
+                )}
+
+                {!usePageDateFilter && (
                 <div className="space-y-2 pt-2 border-t">
                   <Label>Date Range</Label>
                   <Popover>
@@ -808,12 +1015,29 @@ export default function KeyAccountClientAnalyticsTab({
                     </PopoverContent>
                   </Popover>
                 </div>
+                )}
+
+                <Button
+                  variant="outline"
+                  className="w-full h-10 gap-2"
+                  onClick={() => void handleExportExcel()}
+                  disabled={exporting || poHistory.length === 0}
+                >
+                  {exporting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  Export Excel
+                </Button>
               </CardContent>
             </Card>
 
             <div className="space-y-6 min-w-0">
               <div>
-                <p className="text-sm font-medium text-muted-foreground mb-3">Total sales by month</p>
+                <p className="text-sm font-medium text-muted-foreground mb-3">
+                  Net delivered sales by month (after rebate credits)
+                </p>
                 <div className="h-[320px]">
                   {monthlySalesData.some((row) => row.sales > 0) ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -844,7 +1068,8 @@ export default function KeyAccountClientAnalyticsTab({
         <CardHeader>
           <CardTitle>Client PO History</CardTitle>
           <CardDescription>
-            Purchase orders for the selected client and filters, including payment status.
+            Purchase orders for the selected client and filters. Amounts show net after money/credit
+            rebates; change-item replacements at the same value are not deducted.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -855,7 +1080,7 @@ export default function KeyAccountClientAnalyticsTab({
                   <TableHead>PO #</TableHead>
                   <TableHead>Order date</TableHead>
                   <TableHead>Client</TableHead>
-                  <TableHead className="text-right">Total amount</TableHead>
+                  <TableHead className="text-right">Net amount</TableHead>
                   <TableHead>Payment status</TableHead>
                   <TableHead>Workflow</TableHead>
                   <TableHead className="text-right w-[100px]">Actions</TableHead>
@@ -872,6 +1097,11 @@ export default function KeyAccountClientAnalyticsTab({
                   paginatedPoHistory.map((order) => {
                     const client = firstRelation(order.client);
                     const paymentStatus = order.key_account_payment_status || 'unpaid';
+                    const amountBreakdown = getKeyAccountOrderRevenueBreakdown(
+                      order.id,
+                      order.total_amount,
+                      rebateCreditByPurchaseOrderId
+                    );
                     return (
                       <TableRow key={order.id}>
                         <TableCell className="font-medium">
@@ -895,7 +1125,12 @@ export default function KeyAccountClientAnalyticsTab({
                         </TableCell>
                         <TableCell>{client?.client_name || '—'}</TableCell>
                         <TableCell className="text-right font-medium">
-                          {formatCurrency(Number(order.total_amount || 0))}
+                          <div>{formatCurrency(amountBreakdown.net)}</div>
+                          {amountBreakdown.rebated > 0 && (
+                            <p className="text-xs text-amber-700 dark:text-amber-400 font-normal">
+                              −{formatCurrency(amountBreakdown.rebated)} rebated
+                            </p>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge className={paymentStatusBadgeClass(String(paymentStatus))}>
