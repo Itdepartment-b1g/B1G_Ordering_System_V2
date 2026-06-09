@@ -28,6 +28,7 @@ import {
   ArrowDownRight,
   Eye,
   CalendarIcon,
+  Search,
   X,
   Trash2,
   FileDown
@@ -62,6 +63,12 @@ import {
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { formatDateForInput, getDateRangeFromPreset, getDatePresetLabel } from '@/lib/dateRangePresets';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
 import { exportProductAnalyticsExcel } from './exportProductAnalyticsExcel';
 
 // Types
@@ -91,6 +98,7 @@ interface ProductPerformance {
 }
 
 const KPI_SALES_ROLES = ['mobile_sales', 'team_leader'] as const;
+type AgentKpiRoleFilter = 'all' | (typeof KPI_SALES_ROLES)[number];
 
 /** Match Order List: approved via status or final admin stage */
 const getProductOrderStatusBucket = (
@@ -349,6 +357,10 @@ export default function AnalyticsPage() {
   const [agentKpiDateTo, setAgentKpiDateTo] = useState<Date | undefined>(undefined);
   const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
   const [showOverallView, setShowOverallView] = useState(false);
+  const [agentKpiPage, setAgentKpiPage] = useState(0);
+  const [agentKpiPageSize, setAgentKpiPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [agentKpiSearch, setAgentKpiSearch] = useState('');
+  const [agentKpiRoleFilter, setAgentKpiRoleFilter] = useState<AgentKpiRoleFilter>('all');
   const [agentOverviewDateRange, setAgentOverviewDateRange] = useState<
     { from?: Date; to?: Date } | undefined
   >(undefined);
@@ -497,6 +509,32 @@ export default function AnalyticsPage() {
     
     return 'custom';
   };
+
+  useEffect(() => {
+    setAgentKpiPage(0);
+  }, [agentKpiDateFrom, agentKpiDateTo, showOverallView, agentKpiSearch, agentKpiRoleFilter]);
+
+  const filteredAgentKPIs = useMemo(() => {
+    const query = agentKpiSearch.trim().toLowerCase();
+    return agentKPIs.filter(agent => {
+      if (agentKpiRoleFilter !== 'all' && agent.role !== agentKpiRoleFilter) return false;
+      if (query && !agent.name.toLowerCase().includes(query)) return false;
+      return true;
+    });
+  }, [agentKPIs, agentKpiSearch, agentKpiRoleFilter]);
+
+  const agentKpiFiltersActive =
+    agentKpiSearch.trim().length > 0 || agentKpiRoleFilter !== 'all';
+
+  const {
+    pageCount: agentKpiPageCount,
+    safePage: agentKpiSafePage,
+    startIndex: agentKpiStartIndex,
+    pagedItems: pagedAgentKPIs,
+  } = useMemo(
+    () => getListPaginationSlice(filteredAgentKPIs, agentKpiPage, agentKpiPageSize),
+    [filteredAgentKPIs, agentKpiPage, agentKpiPageSize],
+  );
   
   // Target Management State
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
@@ -2710,6 +2748,69 @@ export default function AnalyticsPage() {
                             </Badge>
                           )}
                         </div>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                          <div className="relative min-w-[12rem] flex-1">
+                            <Search
+                              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                              aria-hidden
+                            />
+                            <Input
+                              id="agent-kpi-search"
+                              placeholder="Search Agent/Leader name..."
+                              value={agentKpiSearch}
+                              onChange={e => setAgentKpiSearch(e.target.value)}
+                              className="h-9 pl-9 text-sm"
+                            />
+                          </div>
+                          <div className="min-w-[10rem] space-y-1.5">
+                            <label
+                              htmlFor="agent-kpi-role"
+                              className="text-xs font-medium text-muted-foreground"
+                            >
+                              Role
+                            </label>
+                            <Select
+                              value={agentKpiRoleFilter}
+                              onValueChange={value => {
+                                if (
+                                  value === 'all' ||
+                                  value === 'mobile_sales' ||
+                                  value === 'team_leader'
+                                ) {
+                                  setAgentKpiRoleFilter(value);
+                                }
+                              }}
+                            >
+                              <SelectTrigger id="agent-kpi-role" className="h-9 text-sm">
+                                <SelectValue placeholder="All roles" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">All roles</SelectItem>
+                                <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                                <SelectItem value="team_leader">Team Leader</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-9 shrink-0"
+                            disabled={!agentKpiFiltersActive}
+                            onClick={() => {
+                              setAgentKpiSearch('');
+                              setAgentKpiRoleFilter('all');
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        </div>
+                        {agentKpiFiltersActive ? (
+                          <p className="text-xs text-muted-foreground">
+                            Showing {filteredAgentKPIs.length} of {agentKPIs.length} agent
+                            {agentKPIs.length === 1 ? '' : 's'}
+                          </p>
+                        ) : null}
                       </div>
                     </CardHeader>
                     <CardContent>
@@ -2759,15 +2860,16 @@ export default function AnalyticsPage() {
                             </TableHeader>
                             <TableBody>
                               {/* Always show individual agents - Overall button just indicates viewing all agents */}
-                              {agentKPIs.map((agent, index) => {
+                              {pagedAgentKPIs.map((agent, index) => {
                                 const showTargets = isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo);
+                                const globalIndex = agentKpiStartIndex + index;
                                 
                                 return (
                                   <TableRow key={agent.id}>
                                     <TableCell className="font-medium text-center">
                                       <div className="flex flex-col items-center justify-center gap-1">
                                         <div className="flex items-center justify-center gap-2">
-                                          {index < 3 && <Award className="h-4 w-4 text-yellow-500" />}
+                                          {globalIndex < 3 && <Award className="h-4 w-4 text-yellow-500" />}
                                           {agent.name}
                                         </div>
                                         {agent.role === 'team_leader' && (
@@ -2848,7 +2950,7 @@ export default function AnalyticsPage() {
                                   </TableRow>
                                 );
                               })}
-                              {agentKPIs.length === 0 && (
+                              {pagedAgentKPIs.length === 0 && (
                                 <TableRow>
                                   <TableCell 
                                     colSpan={
@@ -2858,13 +2960,28 @@ export default function AnalyticsPage() {
                                     } 
                                     className="text-center py-8 text-muted-foreground"
                                   >
-                                    No agent data available
+                                    {agentKPIs.length > 0
+                                      ? 'No agents match your search or role filter.'
+                                      : 'No agent data available'}
                                   </TableCell>
                                 </TableRow>
                               )}
                             </TableBody>
                           </Table>
                         </div>
+                      </div>
+                      <div className="mt-4">
+                        <ListPagination
+                          pageSize={agentKpiPageSize}
+                          safePage={agentKpiSafePage}
+                          pageCount={agentKpiPageCount}
+                          onPageSizeChange={value => {
+                            setAgentKpiPageSize(value);
+                            setAgentKpiPage(0);
+                          }}
+                          onPrevious={() => setAgentKpiPage(p => Math.max(0, p - 1))}
+                          onNext={() => setAgentKpiPage(p => Math.min(agentKpiPageCount - 1, p + 1))}
+                        />
                       </div>
                     </CardContent>
                   </Card>
