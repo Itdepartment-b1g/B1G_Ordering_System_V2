@@ -24,24 +24,17 @@ export type OrderListExportRow = {
   statusSubKind: OrderStatusSubKind | null;
 };
 
-/** Matches Badge variants in OrdersPage (primary purple, pending secondary, rejected red). */
-const PRIMARY_BADGE_STYLES: Record<
-  OrderStatusPrimaryVariant,
-  { fill: string; font: string }
-> = {
-  default: { fill: 'FF472160', font: 'FFFFFFFF' },
-  secondary: { fill: 'FFEDE8F5', font: 'FF1A0F2E' },
-  destructive: { fill: 'FFEF4444', font: 'FFFFFFFF' },
+/** Text colors aligned with OrdersPage badge variants (no cell fill — print-friendly). */
+const PRIMARY_STATUS_TEXT_COLORS: Record<OrderStatusPrimaryVariant, string> = {
+  default: 'FF472160',
+  secondary: 'FF1A0F2E',
+  destructive: 'FFEF4444',
 };
 
-/** Matches outline deposit badges (bg-*-50 text-*-700). */
-const SUB_BADGE_STYLES: Record<
-  OrderStatusSubKind,
-  { fill: string; font: string; border: string }
-> = {
-  deposit_recorded: { fill: 'FFEFF6FF', font: 'FF1D4ED8', border: 'FFBFDBFE' },
-  awaiting_slip: { fill: 'FFFFF7ED', font: 'FFC2410C', border: 'FFFED7AA' },
-  awaiting_remittance: { fill: 'FFFFFBEB', font: 'FFB45309', border: 'FFFDE68A' },
+const SUB_STATUS_TEXT_COLORS: Record<OrderStatusSubKind, string> = {
+  deposit_recorded: 'FF1D4ED8',
+  awaiting_slip: 'FFC2410C',
+  awaiting_remittance: 'FFB45309',
 };
 
 export type OrderListExportSummary = {
@@ -179,40 +172,27 @@ export function mapOrderToListExportRow(order: Order): OrderListExportRow {
 }
 
 function applyStatusCellStyle(cell: ExcelJS.Cell, row: OrderListExportRow) {
-  const primary = PRIMARY_BADGE_STYLES[row.statusPrimaryVariant];
+  const primaryColor = PRIMARY_STATUS_TEXT_COLORS[row.statusPrimaryVariant];
   cell.alignment = { wrapText: true, vertical: 'middle', horizontal: 'left' };
 
   if (!row.statusSub || !row.statusSubKind) {
     cell.value = row.statusPrimary;
-    cell.font = { bold: true, color: { argb: primary.font }, size: 10 };
-    cell.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: primary.fill },
-    };
+    cell.font = { bold: true, color: { argb: primaryColor }, size: 10 };
     return;
   }
 
-  const sub = SUB_BADGE_STYLES[row.statusSubKind];
+  const subColor = SUB_STATUS_TEXT_COLORS[row.statusSubKind];
   cell.value = {
     richText: [
       {
         text: row.statusPrimary,
-        font: { bold: true, size: 10, color: { argb: primary.font } },
+        font: { bold: true, size: 10, color: { argb: primaryColor } },
       },
       {
         text: `\n${row.statusSub}`,
-        font: { bold: true, size: 9, color: { argb: sub.font } },
+        font: { bold: true, size: 9, color: { argb: subColor } },
       },
     ],
-  };
-  cell.fill = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: primary.fill },
-  };
-  cell.border = {
-    bottom: { style: 'thin', color: { argb: sub.border } },
   };
 }
 
