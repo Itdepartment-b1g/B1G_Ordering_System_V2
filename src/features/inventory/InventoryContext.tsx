@@ -58,7 +58,7 @@ const calculateStatus = (stock: number, reorderLevel: number = LOW_STOCK_THRESHO
   return 'in-stock';
 };
 
-const groupBrands = (brandsData: any[]): Brand[] => {
+export const groupBrands = (brandsData: any[]): Brand[] => {
   const transformedBrands: Brand[] = (brandsData || []).map(brand => {
     // Process all variants
     const allVariants: Variant[] = (brand.variants || [])
