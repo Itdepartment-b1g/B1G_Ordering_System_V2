@@ -6,6 +6,7 @@ import {
   Camera,
   ChevronLeft,
   ChevronRight,
+  Eye,
   LayoutGrid,
   List,
   Loader2,
@@ -39,6 +40,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { AgentAttendanceLocationMap } from '@/features/agent-attendance/component/AgentAttendanceLocationMap';
+import {
+  AttendanceViewDialog,
+  canViewAttendanceDetails,
+} from '@/features/agent-attendance/component/AttendanceViewDialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
@@ -93,11 +98,14 @@ function attendanceStatusLabel(status: AgentAttendanceStatus): string {
 function AttendanceHistoryCardRow({
   row,
   manilaTodayDate,
+  onView,
 }: {
   row: AgentAttendance;
   manilaTodayDate: string;
+  onView: (row: AgentAttendance) => void;
 }) {
   const isToday = row.business_date === manilaTodayDate;
+
   return (
     <li className="rounded-lg border bg-card px-3 py-3 text-sm shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -135,6 +143,18 @@ function AttendanceHistoryCardRow({
       ) : (
         <p className="mt-2 text-xs text-muted-foreground">No check-in recorded for this day.</p>
       )}
+      {canViewAttendanceDetails(row) ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2 h-8 gap-1.5"
+          onClick={() => onView(row)}
+        >
+          <Eye className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>View</span>
+        </Button>
+      ) : null}
     </li>
   );
 }
@@ -142,11 +162,14 @@ function AttendanceHistoryCardRow({
 function AttendanceHistoryTableRow({
   row,
   manilaTodayDate,
+  onView,
 }: {
   row: AgentAttendance;
   manilaTodayDate: string;
+  onView: (row: AgentAttendance) => void;
 }) {
   const isToday = row.business_date === manilaTodayDate;
+
   return (
     <tr className="border-b border-border last:border-0">
       <td className="px-3 py-2.5 align-top">
@@ -160,7 +183,9 @@ function AttendanceHistoryTableRow({
         </div>
       </td>
       <td className="max-w-[140px] px-2 py-2.5 align-top text-xs text-muted-foreground sm:max-w-none sm:text-sm">
-        <span className="break-words">{row.status === 'present' ? formatManilaDateTime(row.time_in) : '—'}</span>
+        <span className="break-words">
+          {row.status === 'present' ? formatManilaDateTime(row.time_in) : '—'}
+        </span>
       </td>
       <td className="max-w-[140px] px-2 py-2.5 align-top text-xs text-muted-foreground sm:max-w-none sm:text-sm">
         <span className="break-words">{row.status === 'present' ? formatManilaDateTime(row.time_out) : '—'}</span>
@@ -172,6 +197,22 @@ function AttendanceHistoryTableRow({
         <Badge variant={attendanceBadgeVariant(row.status)} className="shrink-0">
           {attendanceStatusLabel(row.status)}
         </Badge>
+      </td>
+      <td className="px-3 py-2.5 text-right align-top">
+        {canViewAttendanceDetails(row) ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => onView(row)}
+          >
+            <Eye className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>View</span>
+          </Button>
+        ) : (
+          <span className="text-sm text-muted-foreground">—</span>
+        )}
       </td>
     </tr>
   );
@@ -323,6 +364,13 @@ export default function AgentAttendanceList() {
   }, [historyLoading, historyPageData, historyPage, historyPageSize]);
 
   const [historyLayout, setHistoryLayout] = useState<AgentAttendanceHistoryLayout>('cards');
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [viewDialogRow, setViewDialogRow] = useState<AgentAttendance | null>(null);
+
+  const openAttendanceView = useCallback((row: AgentAttendance) => {
+    setViewDialogRow(row);
+    setViewDialogOpen(true);
+  }, []);
 
   const [selectedHubId, setSelectedHubId] = useState<string>('');
   useEffect(() => {
@@ -684,11 +732,17 @@ export default function AgentAttendanceList() {
                 </div>
               </>
             ) : null}
-            {todayRow.note ? (
-              <div className="grid gap-1">
-                <span className="text-muted-foreground">Note</span>
-                <span>{todayRow.note}</span>
-              </div>
+            {canViewAttendanceDetails(todayRow) ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => openAttendanceView(todayRow)}
+              >
+                <Eye className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span>View</span>
+              </Button>
             ) : null}
             {!todayRow.time_out ? (
               <Button
@@ -1038,6 +1092,9 @@ export default function AgentAttendanceList() {
                     <th scope="col" className="px-3 py-2.5 text-right font-medium">
                       Status
                     </th>
+                    <th scope="col" className="px-3 py-2.5 text-right font-medium">
+                      <span className="sr-only">Details</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1046,6 +1103,7 @@ export default function AgentAttendanceList() {
                       key={row.id}
                       row={row}
                       manilaTodayDate={businessDate}
+                      onView={openAttendanceView}
                     />
                   ))}
                 </tbody>
@@ -1054,7 +1112,12 @@ export default function AgentAttendanceList() {
               ) : (
             <ul className="space-y-2">
               {historyRows.map(row => (
-                <AttendanceHistoryCardRow key={row.id} row={row} manilaTodayDate={businessDate} />
+                <AttendanceHistoryCardRow
+                  key={row.id}
+                  row={row}
+                  manilaTodayDate={businessDate}
+                  onView={openAttendanceView}
+                />
               ))}
             </ul>
               )}
@@ -1121,6 +1184,20 @@ export default function AgentAttendanceList() {
           )}
         </TabsContent>
       </Tabs>
+
+      <AttendanceViewDialog
+        open={viewDialogOpen}
+        onOpenChange={open => {
+          setViewDialogOpen(open);
+          if (!open) setViewDialogRow(null);
+        }}
+        agentLabel={user.full_name ?? 'You'}
+        businessDateLabel={
+          viewDialogRow ? formatManilaBusinessDateLabel(viewDialogRow.business_date) : ''
+        }
+        photoPath={viewDialogRow?.photo}
+        note={viewDialogRow?.note}
+      />
     </div>
   );
 }
