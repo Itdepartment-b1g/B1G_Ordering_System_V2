@@ -41,6 +41,7 @@ export type OrderListExportSummary = {
   totalAmount: number;
   approvedAmount: number;
   pendingFinanceReviewAmount: number;
+  rejectedAmount: number;
   approvedAndPendingAmount: number;
 };
 
@@ -63,22 +64,30 @@ function isPendingFinanceReviewOrder(order: Order): boolean {
   return order.stage === 'finance_pending' || order.status === 'pending';
 }
 
+/** Same queue as Rejected tab / filterOrders('rejected'). */
+function isRejectedOrder(order: Order): boolean {
+  return order.status === 'rejected' || order.stage === 'admin_rejected';
+}
+
 export function computeOrderListExportSummary(orders: Order[]): OrderListExportSummary {
   let totalAmount = 0;
   let approvedAmount = 0;
   let pendingFinanceReviewAmount = 0;
+  let rejectedAmount = 0;
 
   for (const order of orders) {
     const amount = Number(order.total) || 0;
     totalAmount += amount;
     if (isApprovedOrder(order)) approvedAmount += amount;
     if (isPendingFinanceReviewOrder(order)) pendingFinanceReviewAmount += amount;
+    if (isRejectedOrder(order)) rejectedAmount += amount;
   }
 
   return {
     totalAmount,
     approvedAmount,
     pendingFinanceReviewAmount,
+    rejectedAmount,
     approvedAndPendingAmount: approvedAmount + pendingFinanceReviewAmount,
   };
 }
@@ -314,6 +323,12 @@ function writeMetaRows(worksheet: ExcelJS.Worksheet, meta: OrderListExportMeta):
     rowIndex,
     'Pending Finance Review amount',
     summary.pendingFinanceReviewAmount
+  );
+  rowIndex = writeAmountSummaryRow(
+    worksheet,
+    rowIndex,
+    'Rejected amount',
+    summary.rejectedAmount
   );
   rowIndex = writeAmountSummaryRow(
     worksheet,
