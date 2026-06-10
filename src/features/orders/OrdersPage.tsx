@@ -105,6 +105,8 @@ export default function OrdersPage() {
   const canApproveAsFinance = canApproveFinance(user?.role);
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
+  /** Same order list visibility as tabs/table — export uses `visibleOrders` / `filterOrders`. */
+  const canExportOrderList = canViewCompanyOrders || isLeader;
   
   // Team member IDs for leader filtering
   const [teamMemberIds, setTeamMemberIds] = useState<string[]>([]);
@@ -1687,55 +1689,49 @@ export default function OrdersPage() {
                 : 'Review and approve purchase orders from sales agents'}
           </p>
         </div>
-        {(isAdmin || canApproveAsFinance) && (
+        {(canExportOrderList || isAdmin || canApproveAsFinance) && (
           <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
-            {/* <Button variant="outline" onClick={handleDownloadOrderTemplate} className="gap-2">
-              <Download className="h-4 w-4" />
-              Template
-            </Button> */}
-            <div className="relative">
-              <input
-                type="file"
-                ref={importOrdersInputRef}
-                onChange={handleImportOrders}
-                accept=".csv,.xlsx,.xls"
-                className="hidden"
-              />
-              {/* <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => importOrdersInputRef.current?.click()}
-              >
-                <Upload className="h-4 w-4" />
-                Import
-              </Button> */}
-            </div>
-            <Button
-              variant="outline"
-              onClick={handleExportOrdersFiltered}
-              disabled={!canExportFiltered}
-              className="gap-2"
-            >
-              {isExportingOrdersFiltered ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileDown className="h-4 w-4" />
-              )}
-              {isExportingOrdersFiltered ? 'Exporting...' : 'Export filtered'}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleExportOrdersAll}
-              disabled={!canExportAll}
-              className="gap-2"
-            >
-              {isExportingOrdersAll ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileDown className="h-4 w-4" />
-              )}
-              {isExportingOrdersAll ? 'Exporting...' : 'Export all'}
-            </Button>
+            {(isAdmin || canApproveAsFinance) && (
+              <div className="relative">
+                <input
+                  type="file"
+                  ref={importOrdersInputRef}
+                  onChange={handleImportOrders}
+                  accept=".csv,.xlsx,.xls"
+                  className="hidden"
+                />
+              </div>
+            )}
+            {canExportOrderList ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={handleExportOrdersFiltered}
+                  disabled={!canExportFiltered}
+                  className="gap-2"
+                >
+                  {isExportingOrdersFiltered ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  {isExportingOrdersFiltered ? 'Exporting...' : 'Export filtered'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleExportOrdersAll}
+                  disabled={!canExportAll}
+                  className="gap-2"
+                >
+                  {isExportingOrdersAll ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  {isExportingOrdersAll ? 'Exporting...' : 'Export all'}
+                </Button>
+              </>
+            ) : null}
             {canApproveAsFinance && (
               <Button onClick={handleOpenBulkApprove} className="gap-2">
                 <CheckSquare className="h-4 w-4" />
