@@ -18,7 +18,7 @@ export function HubListTableHeader() {
         <TableHead className={cn(th, 'min-w-[140px]')}>Team leader</TableHead>
         <TableHead className={cn(th, 'min-w-[168px]')}>Created by</TableHead>
         <TableHead className={cn(th, 'min-w-[128px] whitespace-nowrap')}>Created</TableHead>
-        <TableHead className={cn(th, 'w-[108px] pr-6 text-right')}>Actions</TableHead>
+        <TableHead className={cn(th, 'w-[72px] pr-6 text-right')}>Actions</TableHead>
       </TableRow>
     </TableHeader>
   );

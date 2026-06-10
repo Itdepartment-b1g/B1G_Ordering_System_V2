@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Eye, FileDown, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Eye, FileDown, Loader2, MoreHorizontal, Pencil, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useAuth } from '@/features/auth';
@@ -10,6 +10,12 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   AttendanceViewDialog,
   canViewAttendanceDetails,
@@ -42,6 +48,10 @@ import {
   formatAttendanceTotalHours,
   formatTotalHoursDisplay,
 } from '@/lib/agentAttendanceTotalHours';
+import {
+  AdminAttendanceEditDialog,
+  canSuperAdminEditAttendance,
+} from '@/features/sales-agents/components/agent-attendance-overview/AdminAttendanceEditDialog';
 import { exportFilteredAttendanceOverviewExcel } from '@/features/sales-agents/components/agent-attendance-overview/exportAttendanceOverview';
 
 const PAGE_SIZES = [5, 10, 15, 25, 50, 100] as const;
@@ -96,7 +106,8 @@ export default function AgentAttendanceOverviewList() {
   const companyId = user?.company_id ?? null;
   /** Team leaders already have SELECT on `agent_attendances` via RLS (`leader_teams`); UI must not block them. */
   const isTeamLeader = user?.role === 'team_leader';
-  const isTenantAdmin = user?.role === 'super_admin' || user?.role === 'admin';
+  const isSuperAdmin = user?.role === 'super_admin';
+  const isTenantAdmin = isSuperAdmin || user?.role === 'admin';
   const canAccess = isTeamLeader || (isTenantAdmin && !!companyId);
 
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
@@ -108,6 +119,8 @@ export default function AgentAttendanceOverviewList() {
   const [isExporting, setIsExporting] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewDialogRow, setViewDialogRow] = useState<AttendanceAgentRow | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editDialogRow, setEditDialogRow] = useState<AttendanceAgentRow | null>(null);
 
   const { fromDate: businessDateFrom, toDate: businessDateTo } = useMemo(
     () => getAttendanceOverviewDateBounds(dateRangeFilter),
@@ -496,20 +509,45 @@ export default function AgentAttendanceOverviewList() {
                           </TableCell>
 
                           <TableCell className="text-right">
-                            {canViewAttendanceDetails(row) ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1.5"
-                                onClick={() => {
-                                  setViewDialogRow(row);
-                                  setViewDialogOpen(true);
-                                }}
-                              >
-                                <Eye className="h-3.5 w-3.5 shrink-0" />
-                                <span>View</span>
-                              </Button>
+                            {canSuperAdminEditAttendance(isSuperAdmin, row) ||
+                            canViewAttendanceDetails(row) ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                  >
+                                    <MoreHorizontal className="h-4 w-4" />
+                                    <span className="sr-only">Actions</span>
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-44">
+                                  {canViewAttendanceDetails(row) ? (
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setViewDialogRow(row);
+                                        setViewDialogOpen(true);
+                                      }}
+                                    >
+                                      <Eye className="mr-2 h-4 w-4" />
+                                      View
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                  {canSuperAdminEditAttendance(isSuperAdmin, row) ? (
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setEditDialogRow(row);
+                                        setEditDialogOpen(true);
+                                      }}
+                                    >
+                                      <Pencil className="mr-2 h-4 w-4" />
+                                      Edit
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             ) : (
                               <span className="text-sm text-muted-foreground">—</span>
                             )}
@@ -604,6 +642,16 @@ export default function AgentAttendanceOverviewList() {
         }
         photoPath={viewDialogRow?.photo}
         note={viewDialogRow?.note}
+      />
+
+      <AdminAttendanceEditDialog
+        open={editDialogOpen}
+        onOpenChange={open => {
+          setEditDialogOpen(open);
+          if (!open) setEditDialogRow(null);
+        }}
+        row={editDialogRow}
+        companyId={companyId}
       />
     </div>
   );

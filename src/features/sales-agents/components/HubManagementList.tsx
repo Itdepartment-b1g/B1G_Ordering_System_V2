@@ -20,6 +20,9 @@ import { cn } from "@/lib/utils";
 
 import { AssignHubDialog } from "./hub-management/AssignHubDialog";
 import { CreateHubDialog } from "./hub-management/CreateHubDialog";
+import { DeleteHubDialog } from "./hub-management/DeleteHubDialog";
+import { EditHubDialog } from "./hub-management/EditHubDialog";
+import { ViewHubLocationDialog } from "./hub-management/ViewHubLocationDialog";
 import { fetchHubsPage } from "./hub-management/fetchHubsPage";
 import { DEFAULT_PAGE_SIZE } from "./hub-management/hubListPagination";
 import { HubListPaginationFooter } from "./hub-management/HubListPaginationFooter";
@@ -32,6 +35,9 @@ import { useDebouncedHubSearch } from "./hub-management/useDebouncedHubSearch";
 export default function HubManagementList() {
   const [createOpen, setCreateOpen] = useState(false);
   const [assignHub, setAssignHub] = useState<HubRow | null>(null);
+  const [viewHub, setViewHub] = useState<HubRow | null>(null);
+  const [editHub, setEditHub] = useState<HubRow | null>(null);
+  const [deleteHub, setDeleteHub] = useState<HubRow | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const { searchInput, setSearchInput, debouncedSearch, clearSearch } =
@@ -59,9 +65,13 @@ export default function HubManagementList() {
     }
   }, [page, totalPages]);
 
+  const refreshHubs = () => {
+    void queryClient.invalidateQueries({ queryKey: ["hubs"] });
+  };
+
   const handleCreated = () => {
     setPage(1);
-    void queryClient.invalidateQueries({ queryKey: ["hubs"] });
+    refreshHubs();
   };
 
   return (
@@ -188,7 +198,14 @@ export default function HubManagementList() {
                 <HubListTableHeader />
                 <TableBody>
                   {hubs.map((row) => (
-                    <HubListRow key={row.id} row={row} onAssign={setAssignHub} />
+                    <HubListRow
+                      key={row.id}
+                      row={row}
+                      onAssign={setAssignHub}
+                      onViewLocation={setViewHub}
+                      onEdit={setEditHub}
+                      onDelete={setDeleteHub}
+                    />
                   ))}
                 </TableBody>
               </Table>
@@ -220,9 +237,33 @@ export default function HubManagementList() {
         onOpenChange={(next) => {
           if (!next) setAssignHub(null);
         }}
-        onAssigned={() => {
-          void queryClient.invalidateQueries({ queryKey: ["hubs"] });
+        onAssigned={refreshHubs}
+      />
+
+      <ViewHubLocationDialog
+        hub={viewHub}
+        open={viewHub !== null}
+        onOpenChange={(next) => {
+          if (!next) setViewHub(null);
         }}
+      />
+
+      <EditHubDialog
+        hub={editHub}
+        open={editHub !== null}
+        onOpenChange={(next) => {
+          if (!next) setEditHub(null);
+        }}
+        onUpdated={refreshHubs}
+      />
+
+      <DeleteHubDialog
+        hub={deleteHub}
+        open={deleteHub !== null}
+        onOpenChange={(next) => {
+          if (!next) setDeleteHub(null);
+        }}
+        onDeleted={refreshHubs}
       />
     </div>
   );

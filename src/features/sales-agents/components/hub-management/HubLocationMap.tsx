@@ -85,7 +85,9 @@ type HubLocationMapProps = {
   /** Geofence radius in meters around the pin (matches `hubs.radius_meter`). Omit or ≤0 to hide the circle. */
   radiusMeter?: number | null;
   /** Fires when the user picks a search result or finishes dragging the pin. */
-  onPinChange: (update: HubPinUpdate) => void;
+  onPinChange?: (update: HubPinUpdate) => void;
+  /** Read-only map: no search bar, pin not draggable. */
+  readOnly?: boolean;
   /** When true (e.g. dialog just opened), Leaflet recomputes layout after becoming visible. */
   active?: boolean;
   /** Increment when a geocode result is applied so the map flies to the pin (not used for drag). */
@@ -185,6 +187,7 @@ export function HubLocationMap({
   longitude,
   radiusMeter,
   onPinChange,
+  readOnly = false,
   active = true,
   flyToTrigger = 0,
 }: HubLocationMapProps) {
@@ -198,6 +201,7 @@ export function HubLocationMap({
     hasPin && radiusMeter != null && Number.isFinite(radiusMeter) && radiusMeter > 0;
 
   const handleGeocode = (result: OsmSearchResult) => {
+    if (readOnly || !onPinChange) return;
     const [lat, lng] = clampLatLngToPhilippines(result.y, result.x);
     onPinChange({
       latitude: lat,
@@ -229,7 +233,7 @@ export function HubLocationMap({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <MapResize active={active} />
-        <GeosearchIntegration onResult={handleGeocode} />
+        {!readOnly ? <GeosearchIntegration onResult={handleGeocode} /> : null}
         {hasPin && (
           <>
             <FlyToPin
@@ -251,26 +255,32 @@ export function HubLocationMap({
             ) : null}
             <Marker
               position={[latitude!, longitude!]}
-              draggable
-              eventHandlers={{
-                dragend: (e) => {
-                  const ll = e.target.getLatLng();
-                  const [lat, lng] = clampLatLngToPhilippines(ll.lat, ll.lng);
-                  e.target.setLatLng([lat, lng]);
-                  onPinChange({
-                    latitude: lat,
-                    longitude: lng,
-                    source: 'drag',
-                  });
-                },
-              }}
+              draggable={!readOnly}
+              eventHandlers={
+                readOnly || !onPinChange
+                  ? undefined
+                  : {
+                      dragend: (e) => {
+                        const ll = e.target.getLatLng();
+                        const [lat, lng] = clampLatLngToPhilippines(ll.lat, ll.lng);
+                        e.target.setLatLng([lat, lng]);
+                        onPinChange({
+                          latitude: lat,
+                          longitude: lng,
+                          source: 'drag',
+                        });
+                      },
+                    }
+              }
             />
           </>
         )}
       </MapContainer>
-      <p className="pointer-events-none absolute bottom-2 left-2 right-2 rounded bg-background/90 px-2 py-1 text-center text-[11px] leading-snug text-muted-foreground shadow-sm sm:text-xs">
-        Philippines only (Nominatim). Suite numbers and some towers are not always in the map—search street + city if needed, then drag the pin.
-      </p>
+      {!readOnly ? (
+        <p className="pointer-events-none absolute bottom-2 left-2 right-2 rounded bg-background/90 px-2 py-1 text-center text-[11px] leading-snug text-muted-foreground shadow-sm sm:text-xs">
+          Philippines only (Nominatim). Suite numbers and some towers are not always in the map—search street + city if needed, then drag the pin.
+        </p>
+      ) : null}
     </div>
   );
 }

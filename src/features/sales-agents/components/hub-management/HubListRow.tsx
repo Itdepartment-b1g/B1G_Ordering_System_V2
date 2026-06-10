@@ -1,7 +1,14 @@
 import { format } from "date-fns";
-import { Calendar, MapPin, UserPlus, Warehouse } from "lucide-react";
+import { Calendar, MapPin, MoreHorizontal, Pencil, Trash2, UserPlus, Warehouse } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { TableCell, TableRow } from "@/components/ui/table";
 import {
   Tooltip,
@@ -15,9 +22,18 @@ import type { HubRow } from "./types";
 type HubListRowProps = {
   row: HubRow;
   onAssign: (row: HubRow) => void;
+  onViewLocation: (row: HubRow) => void;
+  onEdit: (row: HubRow) => void;
+  onDelete: (row: HubRow) => void;
 };
 
-export function HubListRow({ row, onAssign }: HubListRowProps) {
+export function HubListRow({
+  row,
+  onAssign,
+  onViewLocation,
+  onEdit,
+  onDelete,
+}: HubListRowProps) {
   const locationText = row.hub_location?.trim() ?? "";
   const hasLocation = Boolean(locationText);
   const creatorName = row.profiles?.full_name ?? null;
@@ -121,21 +137,36 @@ export function HubListRow({ row, onAssign }: HubListRowProps) {
       </TableCell>
 
       <TableCell className="py-4 pr-6 text-right align-middle">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className={cn(
-            "h-9 gap-1.5 rounded-full px-4 font-medium shadow-sm",
-            "border border-border/60 bg-background/80 transition-all",
-            "hover:border-primary/30 hover:bg-primary/5 hover:text-foreground",
-            "disabled:pointer-events-none disabled:opacity-50",
-          )}
-          onClick={() => onAssign(row)}
-        >
-          <UserPlus className="h-3.5 w-3.5" aria-hidden />
-          Assign
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="icon" className="h-8 w-8">
+              <MoreHorizontal className="h-4 w-4" />
+              <span className="sr-only">Actions</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem onClick={() => onViewLocation(row)}>
+              <MapPin className="mr-2 h-4 w-4" />
+              View location
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onEdit(row)}>
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit hub
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onAssign(row)}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              Assign team leader
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => onDelete(row)}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete hub
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </TableCell>
     </TableRow>
   );
