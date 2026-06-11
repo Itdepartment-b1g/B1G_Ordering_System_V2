@@ -112,11 +112,24 @@ const financeMenuItems: MenuItem[] = [
   { title: 'Profile', url: '/profile', description: 'Update your finance user profile.' },
 ];
 
+const accountingMenuItems: MenuItem[] = [
+  { title: 'Dashboard', url: '/dashboard', description: 'Finance snapshot and pending items overview.' },
+  { title: 'Finance', url: '/finance-section', description: 'View finance tools (read-only).', hasSubmenu: true, submenu: [
+    { title: 'Finance Page', url: '/finance', description: 'Revenue and deposit summaries.' },
+    { title: 'Order List', url: '/orders', description: 'View orders without approval actions.' },
+    { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Track cash and cheque deposits.' },
+  ]},
+  { title: 'Product Analytics', url: '/product-analytics', description: 'Product sales from approved orders by brand and variant.' },
+  { title: 'System History', url: '/system-history', description: 'Transaction and order activity history.' },
+  { title: 'Profile', url: '/profile', description: 'Update your profile.' },
+];
+
 const superAdminMenuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/super-admin-dashboard', description: 'Super admin overview across all companies and tenants.' },
   { title: 'Member Management', url: '/member-management', description: 'Global control of users and teams.', hasSubmenu: true, submenu: [
     { title: 'User Management', url: '/sales-agents', description: 'Manage all users across the tenant.' },
     { title: 'Team Management', url: '/team-management', description: 'Design and maintain global team hierarchies.' },
+    { title: 'Hub Management', url: '/hub-management', description: 'Create and manage hub locations with map-backed coordinates.' },
   ]},
   { title: 'Inventory', url: '/inventory', description: 'Tenant-wide inventory oversight and control.', hasSubmenu: true, submenu: [
     { title: 'Main Inventory', url: '/inventory/main', description: 'Manage central warehouse stock and costs.' },
@@ -170,6 +183,7 @@ const warehouseMenuItems: MenuItem[] = [
     submenu: [
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', description: 'Create sub-warehouses and allocate stock from main.' },
       { title: 'Main Inventory', url: '/inventory/main', description: 'Stock levels for your warehouse company.' },
+      { title: 'Disposal Log', url: '/inventory/disposals', description: 'Damaged or unsellable units from rebate returns.' },
     ],
   },
   { title: 'Profile', url: '/profile', description: 'Warehouse user profile and settings.' },
@@ -193,6 +207,8 @@ export function getMenuItemsForRole(role: string | undefined): MenuItem[] {
       return leaderMenuItems;
     case 'finance':
       return financeMenuItems;
+    case 'accounting':
+      return accountingMenuItems;
     case 'mobile_sales':
       return agentMenuItems;
     default:

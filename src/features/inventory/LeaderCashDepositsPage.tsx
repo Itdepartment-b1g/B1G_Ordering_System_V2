@@ -202,7 +202,7 @@ export default function LeaderCashDepositsPage() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const isFinanceOnly = user?.role === 'finance';
+  const isFinanceViewOnly = user?.role === 'finance' || user?.role === 'accounting';
 
   // Agent selection helpers
   const toggleAgentSelection = (dateKey: string, agentId: string) => {
@@ -322,7 +322,7 @@ export default function LeaderCashDepositsPage() {
 
   // Initial Fetch & Realtime
   useEffect(() => {
-    if (!user?.id || !['team_leader', 'super_admin', 'system_administrator', 'finance', 'manager', 'admin'].includes(user.role)) return;
+    if (!user?.id || !['team_leader', 'super_admin', 'system_administrator', 'finance', 'accounting', 'manager', 'admin'].includes(user.role)) return;
 
     // Initial fetch
     fetchData();
@@ -465,7 +465,7 @@ export default function LeaderCashDepositsPage() {
         .gte('remittance_date', V1_IMPORT_ORDER_DATE_CUTOFF)
         .order('remittance_date', { ascending: false });
 
-      if (['finance', 'admin', 'super_admin'].includes(user?.role || '') && user?.company_id) {
+      if (['finance', 'accounting', 'admin', 'super_admin'].includes(user?.role || '') && user?.company_id) {
         remittanceQuery = remittanceQuery.eq('company_id', user.company_id);
       }
 
@@ -850,7 +850,7 @@ export default function LeaderCashDepositsPage() {
 
 
   const handleOpenDepositModal = (pendingDeposit: CashDeposit) => {
-    if (isFinanceOnly) return;
+    if (isFinanceViewOnly) return;
     setSelectedPendingDeposit(pendingDeposit);
     setSelectedDepositIds([pendingDeposit.id]);
     setBankAccount('');
@@ -1143,7 +1143,7 @@ export default function LeaderCashDepositsPage() {
   };
 
   const handleOpenDayDeposit = (dateKey: string) => {
-    if (isFinanceOnly) return;
+    if (isFinanceViewOnly) return;
     const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
     if (!group) return;
     
@@ -1817,7 +1817,7 @@ export default function LeaderCashDepositsPage() {
                                     )}
                                     
                                     {/* Checkbox - only show if agent has pending deposits and day is pending */}
-                                    {hasPendingOrders && day.depositStatus === 'pending' && !isFinanceOnly && (
+                                    {hasPendingOrders && day.depositStatus === 'pending' && !isFinanceViewOnly && (
                                       <div onClick={(e) => e.stopPropagation()}>
                                         <input
                                           type="checkbox"
@@ -1994,7 +1994,7 @@ export default function LeaderCashDepositsPage() {
 
                         <div className="flex flex-col sm:flex-row gap-2">
                           {/* Select All / Clear buttons */}
-                          {day.depositStatus === 'pending' && !isFinanceOnly && (
+                          {day.depositStatus === 'pending' && !isFinanceViewOnly && (
                             <div className="flex items-center gap-2">
                               <Button
                                 variant="outline"
@@ -2025,7 +2025,7 @@ export default function LeaderCashDepositsPage() {
                           )}
                           
                           {day.depositStatus === 'pending' ? (
-                            isFinanceOnly ? null : (
+                            isFinanceViewOnly ? null : (
                               <Button
                                 className="gap-2 bg-green-600 hover:bg-green-700"
                                 onClick={() => handleOpenDayDeposit(day.date)}

@@ -1,0 +1,293 @@
+================================================================================
+  MOBILE SALES ROLE — WORKFLOW OVERVIEW
+  B1G Ordering System
+================================================================================
+
+This document describes how the Mobile Sales role (mobile_sales) works in the
+B1G Ordering System: navigation, daily operations, integrations with team
+leaders, finance, and admins.
+
+Related: docs/order-correction-options.md
+
+
+--------------------------------------------------------------------------------
+ROLE IDENTITY
+--------------------------------------------------------------------------------
+
+  Database role ............... mobile_sales
+  Display name .............. Mobile Sales Agent
+  Hierarchy level ........... 40 (lowest operational sales role)
+  Has personal inventory .... Yes
+  Reports to ................ Team Leader (leader_teams: agent_id -> leader_id)
+
+Legacy role "sales_agent" is still handled like mobile_sales in some code;
+production accounts should use mobile_sales.
+
+
+--------------------------------------------------------------------------------
+NAVIGATION (SIDEBAR)
+--------------------------------------------------------------------------------
+
+Mobile sales use the agent menu in the app sidebar.
+
+  Screen              Route                      Purpose
+  ------------------  -------------------------  --------------------------------
+  Dashboard           /dashboard                 Personal KPIs: orders, clients, sales
+  My Inventory        /my-inventory              Stock, remittance, returns
+  Request Inventory   /inventory/mobile-request  Request stock from team leader
+  My Clients          /my-clients                Register and manage clients
+  My Orders           /my-orders                 Create and track orders
+  My Activity         /system-history            Own audit / history
+  Calendar            /calendar                  Tasks, visits, follow-ups
+  Profile             /profile                   Account settings
+  Attendance          /attendance                Hub check-in / check-out
+
+NOT in sidebar (leader/admin only or no access):
+  - Team management
+  - Admin client database
+  - Finance order list (/orders)
+  - Analytics, War Room
+  - Leader remittances
+  - Pending client approval (admin)
+  - Manager dashboards
+
+Note: /tasks exists in the app but Calendar is the main task screen in the
+menu. Stock requests for mobile sales use /inventory/mobile-request (not the
+leader route /inventory/request).
+
+
+--------------------------------------------------------------------------------
+ORGANIZATION MODEL
+--------------------------------------------------------------------------------
+
+  Admin / Super Admin
+    - Assigns mobile sales agent to a team leader
+    - Approves stock from main inventory to team leader
+    - Approves client registrations outside assigned cities
+
+  Finance
+    - Approves bank transfer and GCash orders
+
+  Team Leader
+    - Linked to agents via leader_teams
+    - Forwards stock requests to admin
+    - Receives end-of-day cash remittance from agents
+    - Handles cash/cheque order path before finance
+    - Assigns field tasks to mobile sales
+
+  Mobile Sales Agent
+    - Manages own clients, visits, and orders
+    - Requests stock from team leader
+    - Submits cash proceeds to team leader at end of day
+
+  Client / Store
+    - Registered and served by the assigned agent
+
+Other details:
+  - Assignment table: leader_teams (agent_id -> leader_id)
+  - Hubs used for attendance geofencing (agent reads leader's hub)
+  - If no leader is assigned: stock request and remittance show warnings
+
+
+--------------------------------------------------------------------------------
+TYPICAL DAY — END TO END
+--------------------------------------------------------------------------------
+
+1. START OF DAY — ATTENDANCE (/attendance)
+   ----------------------------------------
+   Only mobile_sales users use the check-in flow.
+
+   Steps:
+   1) Select a hub
+   2) Time in: selfie photo + GPS location
+      - Must be within hub radius, or add a note if outside range
+   3) Record saved in agent_attendances (Manila business date)
+   4) Time out: agent can update time_out on their own record only
+   5) If no check-in: system may mark absent (Mon-Sat) or non-working (Sun)
+
+   Team leaders see team attendance at /team-attendances. Mobile sales only
+   manage their own attendance.
+
+
+2. FIELD WORK — CLIENTS (/my-clients)
+   -----------------------------------
+   Agents only see and manage clients assigned to them (agent_id = their user).
+
+   Adding a client:
+   - Includes photos, location, shop type, brands, COR, etc.
+   - AUTO-APPROVED if client city is in the agent's assigned cities
+   - PENDING APPROVAL if city is outside assigned cities
+     -> Admin must approve before orders can be placed
+     -> Team leader gets a notification
+   - Mobile sales CANNOT delete clients
+
+   Managing clients:
+   - View and edit own clients
+   - Visit history tied to each client
+
+
+3. TASKS AND VISITS — CALENDAR (/calendar)
+   ----------------------------------------
+   - Agent sees only their own tasks
+   - Team leader or manager assigns tasks
+   - Only mobile sales can mark their assigned tasks as completed on calendar
+   - Can create daily tasks (date/time set automatically)
+   - Record visit: photo, GPS, notes (often linked to client or task)
+
+   Alternative: /tasks page (same data filter) but not in the sidebar menu.
+
+
+4. STOCK — REQUEST AND HOLD
+   -------------------------
+
+   Request stock (/inventory/mobile-request):
+   1) Agent requests products from TEAM LEADER inventory (not main warehouse)
+   2) Request statuses: pending -> approved_by_leader -> approved_by_admin
+      -> fulfilled (or rejected)
+   3) Team leader may add extra quantity when sending request to admin
+   4) After approval and distribution, stock appears in agent inventory
+
+   My Inventory (/my-inventory):
+   - View stock levels (available, low, out of stock)
+   - Creating an order deducts from agent inventory
+   - Return unused stock to team leader
+   - Track return requests
+   - "Return to Main" is for team leaders only, not mobile sales
+
+
+5. SELLING — ORDERS (/my-orders)
+   ------------------------------
+   Agent only sees their own orders.
+
+   Creating an order (approved clients only):
+   - Line items from agent inventory
+   - Pricing: set by company (mobile_sales_allowed_pricing; often RSP only)
+   - Payment: Cash, Cheque, Bank Transfer, GCash, or Split
+   - Client signature and payment proof as required
+
+   Where the order goes first (by payment type):
+
+     Payment type                          First stage        Next approver
+     ------------------------------------  -----------------  ------------------
+     Cash or Cheque only                   agent_pending      Team leader
+     Bank Transfer or GCash                finance_pending    Finance
+     Split (includes bank/GCash)           finance_pending    Finance
+
+   Full approval path (simplified):
+
+     agent_pending
+       -> team leader review
+       -> leader_approved OR leader_rejected
+       -> finance_pending (if applicable)
+       -> admin_approved (final) OR admin_rejected OR needs_revision
+
+   Status labels shown in app:
+     Pending, Approved by Leader, Approved, Rejected, Needs Revision
+
+   Dashboard sales numbers:
+     - Overall sales: all agent orders
+     - Approved sales: admin_approved stage only
+     - Pending sales: agent_pending, finance_pending, leader_approved, etc.
+
+
+6. END OF DAY — CASH REMITTANCE (/my-inventory)
+   ---------------------------------------------
+   - Reminder at 6:30 PM daily (mobile sales only)
+   - "End of Day Cash Remittance" on My Inventory page
+
+   Steps:
+   1) Confirm unsold stock (stays with the agent)
+   2) Confirm sold orders / cash for the day
+   3) Sign and submit CASH PROCEEDS to team leader
+   4) Unsold inventory is NOT sent with the remittance — only cash
+   5) Requires an assigned team leader or manager
+
+   Team leader processes remittance on their inventory screens.
+
+
+--------------------------------------------------------------------------------
+DASHBOARD (/dashboard)
+--------------------------------------------------------------------------------
+
+Shows for the logged-in agent:
+  - My orders count
+  - My clients count
+  - Overall, approved, and pending sales
+  - Recent activity notifications
+  - Company top performers (read-only)
+
+Managers and other roles go to different dashboards; mobile sales stay here.
+
+
+--------------------------------------------------------------------------------
+PERMISSIONS: MOBILE SALES vs TEAM LEADER
+--------------------------------------------------------------------------------
+
+  Capability                         Mobile Sales    Team Leader
+  ---------------------------------  --------------  -------------------------
+  See only own orders/clients        Yes             No (team + own)
+  Auto-approve own new clients       City match      Always
+  Delete clients                     No              Yes
+  Assign tasks to agents             No              Yes
+  Forward stock requests to admin    No              Yes
+  Receive agent cash remittance      No              Yes
+  View team attendance               No              Yes
+  Analytics / War Room               No              Partial
+  Finance order list (/orders)       No              No
+  Pricing options                    mobile_sales    team_leader
+                                     _allowed_       _allowed_
+                                     pricing         pricing
+
+
+--------------------------------------------------------------------------------
+DATA AND SECURITY (SUMMARY)
+--------------------------------------------------------------------------------
+
+  - Data scoped to the logged-in user (orders, clients, inventory, attendance)
+  - Team link via leader_teams and sub_teams
+  - Stock requests and inventory update in near real time
+
+
+--------------------------------------------------------------------------------
+HAPPY PATH CHECKLIST
+--------------------------------------------------------------------------------
+
+  1. Check in at hub (photo + GPS)
+  2. Review calendar / tasks; complete visits with proof
+  3. Register or visit clients; wait for admin if outside territory
+  4. Request stock if low; wait for leader -> admin -> fulfillment
+  5. Create orders (stock deducted on submit; payment sets approval path)
+  6. Track orders on My Orders and Dashboard
+  7. Return unused stock to leader if needed
+  8. End of day: remit cash to team leader; keep unsold stock
+  9. Check out attendance when done
+
+
+--------------------------------------------------------------------------------
+MAIN CODE LOCATIONS (FOR DEVELOPERS)
+--------------------------------------------------------------------------------
+
+  Sidebar / routes ........ AppSidebar.tsx, App.tsx
+  Role helpers ............ roleUtils.ts, roleMenuHelper.ts
+  Dashboard ............... DashboardPage.tsx, dashboardHooks.ts
+  Attendance .............. features/agent-attendance/
+  Clients ................. MyClientsPage.tsx
+  Calendar / tasks ........ CalendarPage.tsx, TasksPage.tsx
+  Stock request ........... MobileSalesStockRequestPage.tsx, requestHooks.ts
+  Inventory / remit ....... MyInventoryPage.tsx, AgentInventoryContext.tsx
+  Orders .................. MyOrdersPage.tsx, OrderContext.tsx
+  Remittance reminder ..... AgentRemittanceReminder.tsx
+  Pricing config .......... SystemSettingsPage.tsx
+
+
+--------------------------------------------------------------------------------
+KNOWN GAPS / NOTES
+--------------------------------------------------------------------------------
+
+  - Dashboard commission is not implemented yet (shows zero)
+  - Order reject may not restore agent inventory without server-side changes;
+    see docs/order-correction-options.md
+
+================================================================================
+  End of document
+================================================================================

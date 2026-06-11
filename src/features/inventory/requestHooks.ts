@@ -170,7 +170,7 @@ export function useLeaderInventorySummary(leaderId: string | null) {
                     formattedVariants.push({
                         ...v,
                         brand: v.brand,
-                        stock: item.stock // Include the stock from the leader's inventory
+                        stock: Number(item.stock) || 0,
                     });
                 }
 
@@ -204,16 +204,31 @@ export function useLeaderInventorySummary(leaderId: string | null) {
     return query;
 }
 
+/** Available units from a main_inventory row (stock minus allocated). */
+export function mainInventoryAvailableStock(row: {
+    stock?: unknown;
+    allocated_stock?: unknown;
+}): number {
+    const stock = Number(row.stock) || 0;
+    const allocated = Number(row.allocated_stock) || 0;
+    return Math.max(0, stock - allocated);
+}
+
 export function useMainInventorySummary() {
+    const { user } = useAuth();
+
     return useQuery({
-        queryKey: ['main_inventory_summary'],
+        queryKey: ['main_inventory_summary', user?.company_id],
+        enabled: !!user?.company_id,
         queryFn: async () => {
-            // Fetch main inventory items (stock > 0)
+            if (!user?.company_id) return { brands: [], variants: [] };
+
             const { data: inventoryData, error: inventoryError } = await supabase
                 .from('main_inventory')
                 .select(`
                     variant_id,
                     stock,
+                    allocated_stock,
                     variants (
                         id,
                         name,
@@ -222,24 +237,30 @@ export function useMainInventorySummary() {
                         brand:brands(id, name)
                     )
                 `)
+                .eq('company_id', user.company_id)
                 .gt('stock', 0);
 
             if (inventoryError) throw inventoryError;
 
-            // Extract unique brands and variants
-            const brandsMap = new Map();
-            const variantsSet = new Set();
-            const formattedVariants: any[] = [];
+            const brandsMap = new Map<string, { id: string; name: string }>();
+            const variantsMap = new Map<string, any>();
 
             inventoryData?.forEach((item: any) => {
-                const v = item.variants;
-                if (!v) return;
+                const v = Array.isArray(item.variants) ? item.variants[0] : item.variants;
+                if (!v?.id) return;
 
-                if (!variantsSet.has(v.id)) {
-                    variantsSet.add(v.id);
-                    formattedVariants.push({
+                const available = mainInventoryAvailableStock(item);
+                const existing = variantsMap.get(v.id);
+                if (existing) {
+                    variantsMap.set(v.id, {
+                        ...existing,
+                        stock: (Number(existing.stock) || 0) + available,
+                    });
+                } else {
+                    variantsMap.set(v.id, {
                         ...v,
-                        brand: v.brand
+                        brand: v.brand,
+                        stock: available,
                     });
                 }
 
@@ -248,6 +269,8 @@ export function useMainInventorySummary() {
                 }
             });
 
+            const formattedVariants = Array.from(variantsMap.values());
+
             return {
                 brands: Array.from(brandsMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
                 variants: formattedVariants.sort((a, b) => a.name.localeCompare(b.name))
@@ -255,6 +278,125 @@ export function useMainInventorySummary() {
         },
         staleTime: 1000 * 60 * 5, // 5 minutes
     });
+}
+
+/** One line item from a mobile_sales order not yet approved by finance. */
+export interface PendingMobileSalesAllocation {
+    id: string;
+    variant_id: string;
+    quantity: number;
+    order_id: string;
+    order_number?: string | null;
+    created_at: string;
+    stage: string;
+    status: string;
+    payment_method?: string | null;
+    order_notes?: string | null;
+    agent?: { full_name: string } | null;
+    client?: { name: string } | null;
+}
+
+const PENDING_FINANCE_STAGES = ['agent_pending', 'finance_pending', 'leader_approved', 'needs_revision'] as const;
+
+function isPendingFinanceOrder(order: { status: string; stage: string | null }) {
+    if (order.status !== 'pending') return false;
+    const stage = order.stage || 'finance_pending';
+    return (PENDING_FINANCE_STAGES as readonly string[]).includes(stage);
+}
+
+/** Mobile sales client orders awaiting finance approval (by variant line item). */
+export function usePendingMobileSalesAllocations(enabled: boolean) {
+    const { user } = useAuth();
+    const queryClient = useQueryClient();
+
+    const query = useQuery({
+        queryKey: ['pending_mobile_sales_allocations', user?.company_id],
+        enabled: enabled && !!user?.company_id,
+        queryFn: async () => {
+            const companyId = user!.company_id!;
+
+            const { data: agents, error: agentsError } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('company_id', companyId)
+                .eq('role', 'mobile_sales');
+
+            if (agentsError) throw agentsError;
+
+            const agentIds = (agents || []).map((a) => a.id);
+            if (agentIds.length === 0) return [];
+
+            const { data: orders, error: ordersError } = await supabase
+                .from('client_orders')
+                .select(`
+          id,
+          order_number,
+          agent_id,
+          stage,
+          status,
+          created_at,
+          payment_method,
+          notes,
+          agent:profiles!client_orders_agent_id_fkey(full_name),
+          client:clients(name),
+          items:client_order_items(id, variant_id, quantity)
+        `)
+                .eq('company_id', companyId)
+                .eq('status', 'pending')
+                .in('agent_id', agentIds)
+                .order('created_at', { ascending: false });
+
+            if (ordersError) throw ordersError;
+
+            const rows: PendingMobileSalesAllocation[] = [];
+
+            for (const order of orders || []) {
+                if (!isPendingFinanceOrder(order)) continue;
+
+                const agent = Array.isArray(order.agent) ? order.agent[0] : order.agent;
+                const client = Array.isArray(order.client) ? order.client[0] : order.client;
+                const items = Array.isArray(order.items) ? order.items : [];
+
+                for (const item of items) {
+                    if (!item?.variant_id || !item?.quantity) continue;
+                    rows.push({
+                        id: item.id,
+                        variant_id: item.variant_id,
+                        quantity: item.quantity ?? 0,
+                        order_id: order.id,
+                        order_number: order.order_number,
+                        created_at: order.created_at,
+                        stage: order.stage || 'finance_pending',
+                        status: order.status,
+                        payment_method: order.payment_method,
+                        order_notes: order.notes,
+                        agent: agent ?? null,
+                        client: client ?? null,
+                    });
+                }
+            }
+
+            return rows;
+        },
+        staleTime: 1000 * 60 * 2,
+    });
+
+    useEffect(() => {
+        if (!enabled || !user?.company_id) return;
+
+        const channels = [
+            subscribeToTable('client_orders', () => {
+                queryClient.invalidateQueries({ queryKey: ['pending_mobile_sales_allocations', user.company_id] });
+            }),
+            subscribeToTable('client_order_items', () => {
+                queryClient.invalidateQueries({ queryKey: ['pending_mobile_sales_allocations', user.company_id] });
+            }),
+        ];
+
+        return () => channels.forEach(unsubscribe);
+    }, [enabled, user?.company_id, queryClient]);
+
+    return query;
 }
 
 export function useMyLeader() {

@@ -126,7 +126,14 @@ export default function LeaderStockRequestPage() {
             Request inventory from Head Office (Admin)
           </p>
         </div>
-        <Button size="lg" className="shadow-sm gap-2 w-full sm:w-auto" onClick={() => setFormOpen(true)}>
+        <Button
+          size="lg"
+          className="shadow-sm gap-2 w-full sm:w-auto"
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['main_inventory_summary'] });
+            setFormOpen(true);
+          }}
+        >
           <Plus className="h-4 w-4" />
           <span className="hidden sm:inline">New Stock Request</span>
           <span className="sm:hidden">New Request</span>

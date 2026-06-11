@@ -31,14 +31,17 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { canLeadTeam } from '@/lib/roleUtils';
+import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 import IncomingTLRequestsSection from './components/IncomingTLRequestsSection';
 import ReturnRequestsSection from './components/ReturnRequestsSection';
 
 export default function LeaderInventoryPage() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [leaderInventory, setLeaderInventory] = useState<any[]>([]);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(false);
@@ -118,8 +121,9 @@ export default function LeaderInventoryPage() {
           variants!inner(
             id,
             name,
+            brand_id,
             variant_type,
-            brands!inner(name)
+            brands!inner(id, name)
           )
         `)
         .gt('stock', 0);  // Only fetch items with stock > 0
@@ -140,8 +144,9 @@ export default function LeaderInventoryPage() {
             variants!inner(
               id,
               name,
+              brand_id,
               variant_type,
-              brands!inner(name)
+              brands!inner(id, name)
             ),
             profiles!agent_inventory_agent_id_fkey(
               id,
@@ -160,6 +165,7 @@ export default function LeaderInventoryPage() {
           variantId: item.variants.id,
           variantName: item.variants.name,
           variantType: item.variants.variant_type,
+          brandId: item.variants.brand_id || item.variants.brands?.id,
           brandName: item.variants.brands.name,
           stock: item.stock,
           allocatedStock: 0,
@@ -184,6 +190,7 @@ export default function LeaderInventoryPage() {
         variantId: item.variants.id,
         variantName: item.variants.name,
         variantType: item.variants.variant_type,
+        brandId: item.variants.brand_id || item.variants.brands?.id,
         brandName: item.variants.brands.name,
         stock: item.stock,
         allocatedStock: 0,
@@ -717,6 +724,7 @@ export default function LeaderInventoryPage() {
           variant_id: variantId,
           variant_name: variant.variantName,
           variant_type: variant.variantType,
+          brand_id: variant.brandId ?? null,
           brand_name: variant.brandName,
           quantity: quantity,
           price: variant.allocatedPrice,
@@ -750,40 +758,38 @@ export default function LeaderInventoryPage() {
       console.log('Agent ID:', allocation.agentId);
       console.log('Allocation items:', itemsToAllocate);
 
-      // Create allocation records for team member using UPSERT function
-      const allocationPromises = itemsToAllocate.map(async (item) => {
-        console.log(`Allocating ${item.quantity} units of variant ${item.variant_id} to agent ${allocation.agentId}`);
-        console.log(`Allocation params: agent=${allocation.agentId}, variant=${item.variant_id}, qty=${item.quantity}, price=${item.price}`);
+      const selectedBrandIds = new Set(
+        itemsToAllocate.map((i: any) => i.brand_id).filter(Boolean)
+      );
+      const batchBrandId = selectedBrandIds.size === 1 ? [...selectedBrandIds][0] : null;
 
-        // Use the new UPSERT function to handle both insert and update cases atomically
-        const { data, error } = await supabase.rpc('allocate_to_agent', {
+      const { data: allocationResult, error: allocationError } = await supabase.rpc(
+        'allocate_batch_to_agent',
+        {
           p_agent_id: allocation.agentId,
-          p_variant_id: item.variant_id,
-          p_quantity: item.quantity,
-          p_allocated_price: item.price,
-          p_dsp_price: item.dspPrice,
-          p_rsp_price: item.rspPrice,
-          p_performed_by: user?.id
-        });
-
-        if (error) {
-          console.error('Allocation error for item:', item, 'Error:', error);
-          throw error;
+          p_items: itemsToAllocate.map((item) => ({
+            variant_id: item.variant_id,
+            quantity: item.quantity,
+            allocated_price: item.price,
+            dsp_price: item.dspPrice ?? null,
+            rsp_price: item.rspPrice ?? null,
+          })),
+          p_performed_by: user?.id,
+          // Only set brand when the batch is a single brand.
+          p_brand_id: batchBrandId,
         }
+      );
 
-        console.log('Allocation success for item:', item, 'Result:', data);
+      if (allocationError) {
+        console.error('Batch allocation error:', allocationError);
+        throw allocationError;
+      }
 
-        // Check if the function returned success: false
-        if (data && data.success === false) {
-          console.error('Allocation failed:', data.message, data.error);
-          throw new Error(data.message || 'Failed to allocate inventory');
-        }
+      if (!allocationResult?.success) {
+        throw new Error(allocationResult?.error || 'Failed to allocate inventory');
+      }
 
-        return data;
-      });
-
-      const results = await Promise.all(allocationPromises);
-      console.log('All allocation results:', results);
+      const allocationHistoryId = allocationResult?.data?.allocation_id || allocationResult?.allocation_id;
 
       // If we allocated multiple variants, create a consolidated event
       if (itemsToAllocate.length > 1) {
@@ -843,9 +849,11 @@ export default function LeaderInventoryPage() {
           title: 'Stock Allocated',
           message: `Your leader ${user.full_name} has allocated ${totalQty} units to you: ${productSummary}`,
           referenceType: 'allocation',
-          referenceId: results[0]?.id // Using first allocation ID as reference
+          referenceId: allocationHistoryId
         });
       }
+
+      await refetchSuperAdminAllocationHistory(queryClient, user);
 
       // Update leader inventory immediately (optimistic update)
       // IMPORTANT: Also update the actual stock field, not just availableStock

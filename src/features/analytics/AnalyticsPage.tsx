@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,8 +28,10 @@ import {
   ArrowDownRight,
   Eye,
   CalendarIcon,
+  Search,
   X,
-  Trash2
+  Trash2,
+  FileDown
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -56,6 +58,18 @@ import { format, subMonths, startOfMonth, endOfMonth, startOfDay, endOfDay, isSa
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/features/auth';
 import AgentAnalyticsTab from './AgentAnalyticsTab';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import { formatDateForInput, getDateRangeFromPreset, getDatePresetLabel } from '@/lib/dateRangePresets';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import { exportProductAnalyticsExcel } from './exportProductAnalyticsExcel';
 
 // Types
 interface CityPerformance {
@@ -74,14 +88,63 @@ interface ProductPerformance {
   orders: number;
   quantity: number;
   revenue: number;
+  approvedOrders: number;
+  approvedQuantity: number;
+  approvedRevenue: number;
+  pendingOrders: number;
+  pendingQuantity: number;
+  pendingRevenue: number;
   trend: 'up' | 'down' | 'stable';
 }
+
+const KPI_SALES_ROLES = ['mobile_sales', 'team_leader'] as const;
+type AgentKpiRoleFilter = 'all' | (typeof KPI_SALES_ROLES)[number];
+
+/** Match Order List: approved via status or final admin stage */
+const getProductOrderStatusBucket = (
+  status?: string,
+  stage?: string
+): 'approved' | 'pending' | null => {
+  if (status === 'approved' || stage === 'admin_approved') return 'approved';
+  if (status === 'pending') return 'pending';
+  return null;
+};
+
+const bucketKpiOrdersByStatus = (
+  orders: { status?: string; total_amount?: number }[] | null
+) => {
+  let approvedRevenue = 0;
+  let pendingRevenue = 0;
+  let approvedOrders = 0;
+  let pendingOrders = 0;
+  (orders || []).forEach((order) => {
+    const amount = Number(order.total_amount) || 0;
+    if (order.status === 'approved') {
+      approvedRevenue += amount;
+      approvedOrders += 1;
+    } else if (order.status === 'pending') {
+      pendingRevenue += amount;
+      pendingOrders += 1;
+    }
+  });
+  return {
+    approvedRevenue,
+    pendingRevenue,
+    approvedOrders,
+    pendingOrders,
+    totalRevenue: approvedRevenue + pendingRevenue,
+    totalOrders: approvedOrders + pendingOrders,
+  };
+};
 
 interface AgentKPI {
   id: string;
   name: string;
+  role: string;
   orders: number;
   revenue: number;
+  approvedRevenue: number;
+  pendingRevenue: number;
   clients: number;
   avgOrderValue: number;
   conversionRate: number;
@@ -156,6 +219,13 @@ export default function AnalyticsPage() {
   // Analytics Data
   const [cityPerformance, setCityPerformance] = useState<CityPerformance[]>([]);
   const [productPerformance, setProductPerformance] = useState<ProductPerformance[]>([]);
+  const [productDateRangeFilter, setProductDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+  const [productLoading, setProductLoading] = useState(false);
+  const [productRevenueDialogOpen, setProductRevenueDialogOpen] = useState(false);
+  const [selectedProductRevenue, setSelectedProductRevenue] = useState<ProductPerformance | null>(null);
+  const [productExporting, setProductExporting] = useState(false);
   const [agentKPIs, setAgentKPIs] = useState<AgentKPI[]>([]);
   const [clientPerformance, setClientPerformance] = useState<{ id: string; name: string; revenue: number; lastOrder: string | null }[]>([]);
 
@@ -163,6 +233,8 @@ export default function AnalyticsPage() {
   
   // Summary Stats
   const [totalRevenue, setTotalRevenue] = useState(0);
+  const [summaryApprovedRevenue, setSummaryApprovedRevenue] = useState(0);
+  const [summaryPendingRevenue, setSummaryPendingRevenue] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
   const [avgOrderValue, setAvgOrderValue] = useState(0);
   const [revenueGrowth, setRevenueGrowth] = useState(0);
@@ -285,6 +357,31 @@ export default function AnalyticsPage() {
   const [agentKpiDateTo, setAgentKpiDateTo] = useState<Date | undefined>(undefined);
   const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
   const [showOverallView, setShowOverallView] = useState(false);
+  const [agentKpiPage, setAgentKpiPage] = useState(0);
+  const [agentKpiPageSize, setAgentKpiPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [agentKpiSearch, setAgentKpiSearch] = useState('');
+  const [agentKpiRoleFilter, setAgentKpiRoleFilter] = useState<AgentKpiRoleFilter>('all');
+  const [agentOverviewDateRange, setAgentOverviewDateRange] = useState<
+    { from?: Date; to?: Date } | undefined
+  >(undefined);
+  const [agentRevenueKPIs, setAgentRevenueKPIs] = useState<AgentKPI[]>([]);
+  const [agentRevenueLoading, setAgentRevenueLoading] = useState(false);
+
+  const handleAgentOverviewDateRangeChange = useCallback(
+    (range: { from?: Date; to?: Date } | undefined) => {
+      setAgentOverviewDateRange(range);
+    },
+    []
+  );
+
+  const getAgentOverviewDateLabel = () => {
+    if (!agentOverviewDateRange?.from) return 'All time';
+    const start = format(agentOverviewDateRange.from, 'MMM d, yyyy');
+    const end = agentOverviewDateRange.to
+      ? format(agentOverviewDateRange.to, 'MMM d, yyyy')
+      : start;
+    return `${start} – ${end}`;
+  };
   
   // Function to fetch oldest order date and set overall view
   const handleOverallView = async () => {
@@ -412,6 +509,32 @@ export default function AnalyticsPage() {
     
     return 'custom';
   };
+
+  useEffect(() => {
+    setAgentKpiPage(0);
+  }, [agentKpiDateFrom, agentKpiDateTo, showOverallView, agentKpiSearch, agentKpiRoleFilter]);
+
+  const filteredAgentKPIs = useMemo(() => {
+    const query = agentKpiSearch.trim().toLowerCase();
+    return agentKPIs.filter(agent => {
+      if (agentKpiRoleFilter !== 'all' && agent.role !== agentKpiRoleFilter) return false;
+      if (query && !agent.name.toLowerCase().includes(query)) return false;
+      return true;
+    });
+  }, [agentKPIs, agentKpiSearch, agentKpiRoleFilter]);
+
+  const agentKpiFiltersActive =
+    agentKpiSearch.trim().length > 0 || agentKpiRoleFilter !== 'all';
+
+  const {
+    pageCount: agentKpiPageCount,
+    safePage: agentKpiSafePage,
+    startIndex: agentKpiStartIndex,
+    pagedItems: pagedAgentKPIs,
+  } = useMemo(
+    () => getListPaginationSlice(filteredAgentKPIs, agentKpiPage, agentKpiPageSize),
+    [filteredAgentKPIs, agentKpiPage, agentKpiPageSize],
+  );
   
   // Target Management State
   const [targetDialogOpen, setTargetDialogOpen] = useState(false);
@@ -452,6 +575,45 @@ export default function AnalyticsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.role, teamAgentIds, agentKpiDateFrom, agentKpiDateTo]);
 
+  useEffect(() => {
+    const shouldFetch =
+      user &&
+      (isAdmin || ((isLeader || isManager) && teamAgentIds !== undefined && teamAgentIds.length >= 0));
+    if (shouldFetch) {
+      fetchAgentRevenueKPIs();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.role, teamAgentIds, agentOverviewDateRange]);
+
+  const productOrderDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        productDateRangeFilter.preset,
+        productDateRangeFilter.customStart,
+        productDateRangeFilter.customEnd
+      ),
+    [productDateRangeFilter]
+  );
+
+  const productDateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
+        productDateRangeFilter.preset,
+        productDateRangeFilter.customStart,
+        productDateRangeFilter.customEnd
+      ),
+    [productDateRangeFilter]
+  );
+
+  useEffect(() => {
+    const shouldFetch =
+      user && (isAdmin || ((isLeader || isManager) && teamAgentsResolved));
+    if (shouldFetch) {
+      fetchProductPerformance();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productDateRangeFilter, teamAgentIds, teamAgentsResolved, user?.id, user?.role]);
+
   // Fetch team agents for Leaders and Managers
   const fetchTeamAgents = async () => {
     if (!user?.id) {
@@ -479,12 +641,15 @@ export default function AnalyticsPage() {
             variant: 'destructive'
           });
           setTeamAgentIds([]);
+          setTeamAgentsResolved(true);
           return;
         }
         
         const agentIds = (teamData || []).map((member: any) => member.agent_id).filter(Boolean);
-        console.log('Leader team agents loaded (sub-team only):', agentIds.length);
-        setTeamAgentIds(agentIds);
+        // Include the leader so their own orders appear in team analytics (not only sub-agents)
+        const scopedIds = Array.from(new Set([user.id, ...agentIds]));
+        console.log('Leader team scope loaded:', { agents: agentIds.length, includingLeader: true });
+        setTeamAgentIds(scopedIds);
         setTeamAgentsResolved(true);
       } catch (error) {
         console.error('Error fetching team agents for leader:', error);
@@ -508,6 +673,7 @@ export default function AnalyticsPage() {
             variant: 'destructive'
           });
           setTeamAgentIds([]);
+          setTeamAgentsResolved(true);
           return;
         }
 
@@ -519,6 +685,7 @@ export default function AnalyticsPage() {
         if (directReports.length === 0) {
           console.log('Manager has no team leaders assigned');
           setTeamAgentIds([]);
+          setTeamAgentsResolved(true);
           return;
         }
 
@@ -561,7 +728,6 @@ export default function AnalyticsPage() {
       if (isAdmin || isLeader || isManager) {
         await Promise.all([
           fetchCityPerformance(),
-          fetchProductPerformance(),
           fetchAgentKPIs(),
           fetchClientPerformance(),
           fetchSummaryStats()
@@ -592,13 +758,13 @@ export default function AnalyticsPage() {
       const prevMonthStart = startOfMonth(subMonths(new Date(), 1));
       const prevMonthEnd = endOfMonth(subMonths(new Date(), 1));
 
-      // Build query for current month orders
+      // Build query for current month orders (approved + pending — same as agent KPI / product analytics)
       let currentOrdersQuery = supabase
         .from('client_orders')
-        .select('total_amount, agent_id')
+        .select('total_amount, agent_id, status')
         .gte('created_at', currentMonthStart.toISOString())
         .lte('created_at', currentMonthEnd.toISOString())
-        .eq('stage', 'admin_approved');
+        .in('status', ['approved', 'pending']);
 
       // Filter by team agents if Leader or Manager
       if ((isLeader || isManager) && teamAgentIds.length > 0) {
@@ -612,10 +778,10 @@ export default function AnalyticsPage() {
       // Build query for previous month orders
       let prevOrdersQuery = supabase
         .from('client_orders')
-        .select('total_amount, agent_id')
+        .select('total_amount, agent_id, status')
         .gte('created_at', prevMonthStart.toISOString())
         .lte('created_at', prevMonthEnd.toISOString())
-        .eq('stage', 'admin_approved');
+        .in('status', ['approved', 'pending']);
 
       // Filter by team agents if Leader or Manager
       if ((isLeader || isManager) && teamAgentIds.length > 0) {
@@ -626,14 +792,18 @@ export default function AnalyticsPage() {
 
       if (prevError) throw prevError;
 
-      const currentRevenue = currentOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
-      const prevRevenue = prevOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
-      const currentOrderCount = currentOrders?.length || 0;
+      const currentBuckets = bucketKpiOrdersByStatus(currentOrders);
+      const prevBuckets = bucketKpiOrdersByStatus(prevOrders);
+      const currentRevenue = currentBuckets.totalRevenue;
+      const prevRevenue = prevBuckets.totalRevenue;
+      const currentOrderCount = currentBuckets.totalOrders;
 
       const growth = prevRevenue > 0 ? ((currentRevenue - prevRevenue) / prevRevenue) * 100 : 0;
       const avgValue = currentOrderCount > 0 ? currentRevenue / currentOrderCount : 0;
 
       setTotalRevenue(currentRevenue);
+      setSummaryApprovedRevenue(currentBuckets.approvedRevenue);
+      setSummaryPendingRevenue(currentBuckets.pendingRevenue);
       setTotalOrders(currentOrderCount);
       setAvgOrderValue(avgValue);
       setRevenueGrowth(growth);
@@ -834,98 +1004,207 @@ export default function AnalyticsPage() {
   };
 
   const fetchProductPerformance = async () => {
+    setProductLoading(true);
     try {
-      // Get all order items with variant and brand info from approved orders only
-      const { data: orderItems, error } = await supabase
+      const { start, end } = productOrderDateRange;
+
+      let orderItemsQuery = supabase
         .from('client_order_items')
         .select(`
           quantity,
           unit_price,
-          client_orders!inner(stage, created_at, agent_id),
+          client_orders!inner(status, stage, created_at, agent_id, company_id),
           variants!inner(
             name,
             variant_type,
             brands!inner(name)
           )
-        `)
-        .eq('client_orders.stage', 'admin_approved');
+        `);
+
+      if (start) {
+        orderItemsQuery = orderItemsQuery.gte(
+          'client_orders.created_at',
+          startOfDay(start).toISOString()
+        );
+      }
+      if (end) {
+        orderItemsQuery = orderItemsQuery.lte(
+          'client_orders.created_at',
+          endOfDay(end).toISOString()
+        );
+      }
+
+      const { data: orderItems, error } = await orderItemsQuery;
 
       if (error) throw error;
 
-      // Filter by team agents if Leader or Manager
-      let filteredOrderItems = orderItems;
-      if ((isLeader || isManager) && teamAgentIds.length > 0) {
-        filteredOrderItems = orderItems?.filter((item: any) => 
+      let filteredOrderItems = (orderItems || []).filter((item: any) => {
+        const bucket = getProductOrderStatusBucket(
+          item.client_orders?.status,
+          item.client_orders?.stage
+        );
+        return bucket !== null;
+      });
+
+      if (user?.company_id) {
+        filteredOrderItems = filteredOrderItems.filter(
+          (item: any) => item.client_orders?.company_id === user.company_id
+        );
+      }
+
+      if (isLeader || isManager) {
+        if (teamAgentIds.length === 0) {
+          setProductPerformance([]);
+          return;
+        }
+        filteredOrderItems = filteredOrderItems.filter((item: any) =>
           teamAgentIds.includes(item.client_orders?.agent_id)
         );
       }
 
-      // Get previous month date for trend calculation
+      const currentMonthStart = startOfMonth(new Date());
       const prevMonthStart = startOfMonth(subMonths(new Date(), 1));
+      const prevMonthEnd = endOfMonth(subMonths(new Date(), 1));
 
-      // Group by brand and variant
-      const productMap = new Map<string, {
-        brand: string;
-        variant: string;
-        orders: number;
-        quantity: number;
-        revenue: number;
-        currentMonthOrders: number;
-        prevMonthOrders: number;
-      }>();
+      const productMap = new Map<
+        string,
+        {
+          brand: string;
+          variant: string;
+          approvedOrders: number;
+          approvedQuantity: number;
+          approvedRevenue: number;
+          pendingOrders: number;
+          pendingQuantity: number;
+          pendingRevenue: number;
+          currentMonthOrders: number;
+          prevMonthOrders: number;
+        }
+      >();
 
       filteredOrderItems?.forEach((item: any) => {
         const brand = item.variants?.brands?.name || 'Unknown';
         const variant = item.variants?.name || 'Unknown';
         const key = `${brand}|${variant}`;
+        const qty = item.quantity || 0;
+        const lineRevenue = qty * (item.unit_price || 0);
+        const status = item.client_orders?.status as string | undefined;
+        const stage = item.client_orders?.stage as string | undefined;
+        const createdAt = item.client_orders?.created_at as string | undefined;
+        const bucket = getProductOrderStatusBucket(status, stage);
 
         if (!productMap.has(key)) {
           productMap.set(key, {
             brand,
             variant,
-            orders: 0,
-            quantity: 0,
-            revenue: 0,
+            approvedOrders: 0,
+            approvedQuantity: 0,
+            approvedRevenue: 0,
+            pendingOrders: 0,
+            pendingQuantity: 0,
+            pendingRevenue: 0,
             currentMonthOrders: 0,
-            prevMonthOrders: 0
+            prevMonthOrders: 0,
           });
         }
 
         const productData = productMap.get(key)!;
-        productData.orders += 1;
-        productData.quantity += item.quantity || 0;
-        productData.revenue += (item.quantity || 0) * (item.unit_price || 0);
 
-        const orderDate = new Date(item.client_orders.created_at);
-        if (orderDate >= prevMonthStart) {
-          productData.currentMonthOrders += 1;
-        } else {
-          productData.prevMonthOrders += 1;
+        if (bucket === 'approved') {
+          productData.approvedOrders += 1;
+          productData.approvedQuantity += qty;
+          productData.approvedRevenue += lineRevenue;
+        } else if (bucket === 'pending') {
+          productData.pendingOrders += 1;
+          productData.pendingQuantity += qty;
+          productData.pendingRevenue += lineRevenue;
+        }
+
+        if (createdAt) {
+          const orderDate = new Date(createdAt);
+          if (orderDate >= currentMonthStart) {
+            productData.currentMonthOrders += 1;
+          } else if (orderDate >= prevMonthStart && orderDate <= prevMonthEnd) {
+            productData.prevMonthOrders += 1;
+          }
         }
       });
 
-      // Convert to array with trend
-      const productPerformanceData: ProductPerformance[] = Array.from(productMap.values()).map(data => {
-        let trend: 'up' | 'down' | 'stable' = 'stable';
-        if (data.currentMonthOrders > data.prevMonthOrders) trend = 'up';
-        else if (data.currentMonthOrders < data.prevMonthOrders) trend = 'down';
+      const productPerformanceData: ProductPerformance[] = Array.from(productMap.values()).map(
+        (data) => {
+          const orders = data.approvedOrders + data.pendingOrders;
+          const quantity = data.approvedQuantity + data.pendingQuantity;
+          const revenue = data.approvedRevenue + data.pendingRevenue;
 
-        return {
-          brand: data.brand,
-          variant: data.variant,
-          orders: data.orders,
-          quantity: data.quantity,
-          revenue: data.revenue,
-          trend
-        };
-      });
+          let trend: 'up' | 'down' | 'stable' = 'stable';
+          if (data.currentMonthOrders > data.prevMonthOrders) trend = 'up';
+          else if (data.currentMonthOrders < data.prevMonthOrders) trend = 'down';
 
-      // Sort by revenue
+          return {
+            brand: data.brand,
+            variant: data.variant,
+            orders,
+            quantity,
+            revenue,
+            approvedOrders: data.approvedOrders,
+            approvedQuantity: data.approvedQuantity,
+            approvedRevenue: data.approvedRevenue,
+            pendingOrders: data.pendingOrders,
+            pendingQuantity: data.pendingQuantity,
+            pendingRevenue: data.pendingRevenue,
+            trend,
+          };
+        }
+      );
+
       productPerformanceData.sort((a, b) => b.revenue - a.revenue);
-
       setProductPerformance(productPerformanceData);
     } catch (error) {
       console.error('Error fetching product performance:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load product analytics',
+        variant: 'destructive',
+      });
+    } finally {
+      setProductLoading(false);
+    }
+  };
+
+  const handleExportProductAnalytics = async () => {
+    if (!productPerformance.length) {
+      toast({
+        title: 'No data to export',
+        description: 'No product data for the selected date range.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const { start, end } = productOrderDateRange;
+    const periodStart = start ? formatDateForInput(start) : 'all';
+    const periodEnd = end ? formatDateForInput(end) : 'all';
+
+    setProductExporting(true);
+    try {
+      await exportProductAnalyticsExcel(productPerformance, {
+        dateRangeLabel: productDateRangeLabel,
+        periodStart,
+        periodEnd,
+      });
+      toast({
+        title: 'Export successful',
+        description: `Exported ${productPerformance.length} product row(s) for ${productDateRangeLabel}.`,
+      });
+    } catch (error) {
+      console.error('Product analytics export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setProductExporting(false);
     }
   };
 
@@ -992,202 +1271,259 @@ export default function AnalyticsPage() {
            dateTo.getTime() === currentMonthEnd.getTime();
   };
 
-  const fetchAgentKPIs = async () => {
-    try {
-      let agentsQuery = supabase
-        .from('profiles')
-        .select('id, full_name')
-        .eq('role', 'mobile_sales');
+  type AgentKpiFetchOptions = {
+    dateFrom?: Date;
+    dateTo?: Date;
+    allTime?: boolean;
+    defaultToCurrentMonth?: boolean;
+  };
 
-      // Filter by team agents for Leaders and Managers using the teamAgentIds state
-      if ((isLeader || isManager) && teamAgentIds.length > 0) {
-        agentsQuery = agentsQuery.in('id', teamAgentIds);
-      } else if ((isLeader || isManager) && teamAgentIds.length === 0) {
-        // If Leader/Manager has no team agents, return empty
-        setAgentKPIs([]);
-        return;
+  const loadAgentKPIs = async (options: AgentKpiFetchOptions): Promise<AgentKPI[]> => {
+    let agentsQuery = supabase
+      .from('profiles')
+      .select('id, full_name, role')
+      .eq('status', 'active')
+      .in('role', [...KPI_SALES_ROLES]);
+
+    if (isLeader || isManager) {
+      if (teamAgentIds.length === 0) {
+        return [];
       }
+      agentsQuery = agentsQuery.in('id', teamAgentIds);
+    }
 
-      const { data: agents, error: agentsError } = await agentsQuery;
+    const { data: agents, error: agentsError } = await agentsQuery;
 
-      if (agentsError) {
-        console.error('Error fetching agents:', agentsError);
-        throw agentsError;
-      }
+    if (agentsError) {
+      console.error('Error fetching agents:', agentsError);
+      throw agentsError;
+    }
 
-      // If no agents found, return empty
-      if (!agents || agents.length === 0) {
-        setAgentKPIs([]);
-        return;
-      }
+    if (!agents || agents.length === 0) {
+      return [];
+    }
 
-      // Determine date range for filtering
-      const currentMonthStart = startOfMonth(new Date());
-      const currentMonthEnd = endOfMonth(new Date());
-      const currentMonthFirstDay = currentMonthStart.toISOString().split('T')[0]; // Format: YYYY-MM-DD
-      
-      // Use date filter if provided, otherwise use current month
-      const filterStart = agentKpiDateFrom ? startOfDay(agentKpiDateFrom) : currentMonthStart;
-      const filterEnd = agentKpiDateTo ? endOfDay(agentKpiDateTo) : currentMonthEnd;
-      const isFilterCurrentMonth = isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo);
+    const currentMonthStart = startOfMonth(new Date());
+    const currentMonthEnd = endOfMonth(new Date());
+    const currentMonthFirstDay = currentMonthStart.toISOString().split('T')[0];
+    const allTime = options.allTime === true;
 
-      // Only fetch targets if filtering by current month
-      let targetsMap = new Map<string, {
-        targetClients?: number | null;
-        targetRevenue?: number | null;
-        targetQty?: number | null;
-        targetOrders?: number | null;
-      }>();
+    let filterStart: Date | null = null;
+    let filterEnd: Date | null = null;
+    let isFilterCurrentMonth = false;
 
-      if (isFilterCurrentMonth) {
-        // Fetch all targets for current month
-        const agentIds = agents.map(a => a.id);
-        
-        const { data: targets, error: targetsError } = await supabase
-          .from('agent_monthly_targets')
-          .select('agent_id, target_clients, target_revenue, target_qty, target_orders')
-          .eq('target_month', currentMonthFirstDay)
-          .in('agent_id', agentIds);
+    if (allTime) {
+      // No created_at bounds
+    } else if (options.dateFrom) {
+      filterStart = startOfDay(options.dateFrom);
+      filterEnd = endOfDay(options.dateTo ?? options.dateFrom);
+      isFilterCurrentMonth = isCurrentMonth(options.dateFrom, options.dateTo ?? options.dateFrom);
+    } else if (options.defaultToCurrentMonth !== false) {
+      filterStart = currentMonthStart;
+      filterEnd = currentMonthEnd;
+      isFilterCurrentMonth = true;
+    }
 
-        if (targetsError) {
-          console.error('Error fetching targets (continuing without targets):', targetsError);
-          // Continue without targets if there's an error
-        } else {
-          (targets || []).forEach((t: any) => {
-            targetsMap.set(t.agent_id, {
-              targetClients: t.target_clients ?? null,
-              targetRevenue: t.target_revenue ? parseFloat(t.target_revenue) : null,
-              targetQty: t.target_qty ?? null,
-              targetOrders: t.target_orders ?? null
-            });
+    let targetsMap = new Map<string, {
+      targetClients?: number | null;
+      targetRevenue?: number | null;
+      targetQty?: number | null;
+      targetOrders?: number | null;
+    }>();
+
+    if (isFilterCurrentMonth) {
+      const agentIds = agents.map((a) => a.id);
+
+      const { data: targets, error: targetsError } = await supabase
+        .from('agent_monthly_targets')
+        .select('agent_id, target_clients, target_revenue, target_qty, target_orders')
+        .eq('target_month', currentMonthFirstDay)
+        .in('agent_id', agentIds);
+
+      if (targetsError) {
+        console.error('Error fetching targets (continuing without targets):', targetsError);
+      } else {
+        (targets || []).forEach((t: any) => {
+          targetsMap.set(t.agent_id, {
+            targetClients: t.target_clients ?? null,
+            targetRevenue: t.target_revenue ? parseFloat(t.target_revenue) : null,
+            targetQty: t.target_qty ?? null,
+            targetOrders: t.target_orders ?? null,
           });
-        }
+        });
       }
+    }
 
-      // Get orders for each agent
-      const agentKPIsData: AgentKPI[] = await Promise.all(
-        (agents || []).map(async (agent) => {
-          // Get filtered orders based on date range (or all time if no filter)
-          const { data: filteredOrders } = await supabase
-            .from('client_orders')
-            .select('id, total_amount, client_id, created_at')
-            .eq('agent_id', agent.id)
-            .eq('stage', 'admin_approved')
-            .gte('created_at', filterStart.toISOString())
-            .lte('created_at', filterEnd.toISOString());
+    const applyDateFilter = <T extends { gte: (col: string, val: string) => T; lte: (col: string, val: string) => T }>(
+      query: T,
+      column: string
+    ) => {
+      if (allTime || !filterStart || !filterEnd) return query;
+      return query.gte(column, filterStart.toISOString()).lte(column, filterEnd.toISOString());
+    };
 
-          // Get filtered clients (clients created in date range)
-          const { data: filteredClients } = await supabase
-            .from('clients')
-            .select('id')
-            .eq('agent_id', agent.id)
-            .gte('created_at', filterStart.toISOString())
-            .lte('created_at', filterEnd.toISOString());
+    const agentKPIsData: AgentKPI[] = await Promise.all(
+      agents.map(async (agent) => {
+        let statusOrdersQuery = supabase
+          .from('client_orders')
+          .select('id, total_amount, client_id, created_at, status')
+          .eq('agent_id', agent.id)
+          .in('status', ['approved', 'pending']);
 
-          // Get filtered order items to calculate total quantity
-          const { data: filteredOrderItems } = await supabase
-            .from('client_order_items')
-            .select('quantity, client_orders!inner(agent_id, stage, created_at)')
-            .eq('client_orders.agent_id', agent.id)
-            .eq('client_orders.stage', 'admin_approved')
+        statusOrdersQuery = applyDateFilter(statusOrdersQuery, 'created_at');
+
+        const { data: statusOrders } = await statusOrdersQuery;
+
+        const {
+          approvedRevenue,
+          pendingRevenue,
+          totalRevenue,
+          totalOrders,
+        } = bucketKpiOrdersByStatus(statusOrders);
+
+        let filteredClientsQuery = supabase
+          .from('clients')
+          .select('id')
+          .eq('agent_id', agent.id);
+
+        filteredClientsQuery = applyDateFilter(filteredClientsQuery, 'created_at');
+
+        const { data: filteredClients } = await filteredClientsQuery;
+
+        let filteredOrderItemsQuery = supabase
+          .from('client_order_items')
+          .select('quantity, client_orders!inner(agent_id, status, created_at)')
+          .eq('client_orders.agent_id', agent.id)
+          .eq('client_orders.status', 'approved');
+
+        if (!allTime && filterStart && filterEnd) {
+          filteredOrderItemsQuery = filteredOrderItemsQuery
             .gte('client_orders.created_at', filterStart.toISOString())
             .lte('client_orders.created_at', filterEnd.toISOString());
+        }
 
-          // Calculate actual values for filtered period
-          const actualClients = filteredClients?.length || 0;
-          const actualRevenue = filteredOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
-          const actualQty = filteredOrderItems?.reduce((sum, item: any) => sum + (item.quantity || 0), 0) || 0;
+        const { data: filteredOrderItems } = await filteredOrderItemsQuery;
 
-          // Get unique clients from filtered orders
-          const uniqueClients = new Set(filteredOrders?.map(o => o.client_id) || []);
+        const actualClients = filteredClients?.length || 0;
+        const actualRevenue = approvedRevenue;
+        const actualQty =
+          filteredOrderItems?.reduce((sum, item: any) => sum + (item.quantity || 0), 0) || 0;
 
-          // Get total clients assigned to this agent (all time) for conversion rate
-          const { data: totalClients } = await supabase
-            .from('clients')
-            .select('id')
-            .eq('agent_id', agent.id);
+        const uniqueClients = new Set(statusOrders?.map((o) => o.client_id) || []);
 
-          const totalOrders = filteredOrders?.length || 0;
-          const totalRevenue = filteredOrders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
-          const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-          const conversionRate = totalClients && totalClients.length > 0 
-            ? (uniqueClients.size / totalClients.length) * 100 
+        const { data: totalClients } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('agent_id', agent.id);
+
+        const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+        const conversionRate =
+          totalClients && totalClients.length > 0
+            ? (uniqueClients.size / totalClients.length) * 100
             : 0;
 
-          // Get targets (only if filtering by current month)
-          const agentTargets = isFilterCurrentMonth 
-            ? (targetsMap.get(agent.id) || {
-                targetClients: null,
-                targetRevenue: null,
-                targetQty: null,
-                targetOrders: null
-              })
-            : {
-                targetClients: null,
-                targetRevenue: null,
-                targetQty: null,
-                targetOrders: null
-              };
+        const agentTargets = isFilterCurrentMonth
+          ? targetsMap.get(agent.id) || {
+              targetClients: null,
+              targetRevenue: null,
+              targetQty: null,
+              targetOrders: null,
+            }
+          : {
+              targetClients: null,
+              targetRevenue: null,
+              targetQty: null,
+              targetOrders: null,
+            };
 
-          // Calculate achievement percentages (only if filtering by current month and targets exist)
-          const achievementClients = isFilterCurrentMonth && agentTargets.targetClients && agentTargets.targetClients > 0
+        const achievementClients =
+          isFilterCurrentMonth && agentTargets.targetClients && agentTargets.targetClients > 0
             ? (actualClients / agentTargets.targetClients) * 100
             : undefined;
 
-          const achievementRevenue = isFilterCurrentMonth && agentTargets.targetRevenue && agentTargets.targetRevenue > 0
+        const achievementRevenue =
+          isFilterCurrentMonth && agentTargets.targetRevenue && agentTargets.targetRevenue > 0
             ? (actualRevenue / agentTargets.targetRevenue) * 100
             : undefined;
 
-          const achievementQty = isFilterCurrentMonth && agentTargets.targetQty && agentTargets.targetQty > 0
+        const achievementQty =
+          isFilterCurrentMonth && agentTargets.targetQty && agentTargets.targetQty > 0
             ? (actualQty / agentTargets.targetQty) * 100
             : undefined;
 
-          // Legacy achievement calculation (for backward compatibility)
-          const targetOrders = agentTargets.targetOrders;
-          const targetAchievement = isFilterCurrentMonth && targetOrders && targetOrders > 0
+        const targetOrders = agentTargets.targetOrders;
+        const targetAchievement =
+          isFilterCurrentMonth && targetOrders && targetOrders > 0
             ? (totalOrders / targetOrders) * 100
             : undefined;
 
-          // Determine performance
-          let performance: 'excellent' | 'good' | 'average' | 'needs_improvement' = 'average';
-          if (totalRevenue > 100000 && conversionRate > 50) performance = 'excellent';
-          else if (totalRevenue > 50000 && conversionRate > 30) performance = 'good';
-          else if (totalRevenue < 20000 || conversionRate < 15) performance = 'needs_improvement';
+        let performance: 'excellent' | 'good' | 'average' | 'needs_improvement' = 'average';
+        if (totalRevenue > 100000 && conversionRate > 50) performance = 'excellent';
+        else if (totalRevenue > 50000 && conversionRate > 30) performance = 'good';
+        else if (totalRevenue < 20000 || conversionRate < 15) performance = 'needs_improvement';
 
-          return {
-            id: agent.id,
-            name: agent.full_name || 'Unknown',
-            orders: totalOrders,
-            revenue: totalRevenue,
-            clients: uniqueClients.size,
-            avgOrderValue,
-            conversionRate,
-            performance,
-            // Target values (only set if filtering by current month)
-            targetClients: isFilterCurrentMonth ? agentTargets.targetClients : null,
-            targetRevenue: isFilterCurrentMonth ? agentTargets.targetRevenue : null,
-            targetQty: isFilterCurrentMonth ? agentTargets.targetQty : null,
-            // Actual values
-            actualClients,
-            actualRevenue,
-            actualQty,
-            // Achievement percentages
-            achievementClients: achievementClients !== undefined ? Math.round(achievementClients) : undefined,
-            achievementRevenue: achievementRevenue !== undefined ? Math.round(achievementRevenue) : undefined,
-            achievementQty: achievementQty !== undefined ? Math.round(achievementQty) : undefined,
-            // Legacy fields
-            targetOrders,
-            targetAchievement: targetAchievement !== undefined ? Math.round(targetAchievement) : undefined
-          };
-        })
-      );
+        return {
+          id: agent.id,
+          name: agent.full_name || 'Unknown',
+          role: agent.role || 'mobile_sales',
+          orders: totalOrders,
+          revenue: totalRevenue,
+          approvedRevenue,
+          pendingRevenue,
+          clients: uniqueClients.size,
+          avgOrderValue,
+          conversionRate,
+          performance,
+          targetClients: isFilterCurrentMonth ? agentTargets.targetClients : null,
+          targetRevenue: isFilterCurrentMonth ? agentTargets.targetRevenue : null,
+          targetQty: isFilterCurrentMonth ? agentTargets.targetQty : null,
+          actualClients,
+          actualRevenue,
+          actualQty,
+          achievementClients:
+            achievementClients !== undefined ? Math.round(achievementClients) : undefined,
+          achievementRevenue:
+            achievementRevenue !== undefined ? Math.round(achievementRevenue) : undefined,
+          achievementQty: achievementQty !== undefined ? Math.round(achievementQty) : undefined,
+          targetOrders,
+          targetAchievement:
+            targetAchievement !== undefined ? Math.round(targetAchievement) : undefined,
+        };
+      })
+    );
 
-      // Sort by revenue
-      agentKPIsData.sort((a, b) => b.revenue - a.revenue);
+    agentKPIsData.sort((a, b) => b.revenue - a.revenue);
+    return agentKPIsData;
+  };
 
+  const fetchAgentKPIs = async () => {
+    try {
+      const agentKPIsData = await loadAgentKPIs({
+        dateFrom: agentKpiDateFrom,
+        dateTo: agentKpiDateTo,
+        defaultToCurrentMonth: true,
+      });
       setAgentKPIs(agentKPIsData);
     } catch (error) {
       console.error('❌ Error fetching agent KPIs:', error);
+    }
+  };
+
+  const fetchAgentRevenueKPIs = async () => {
+    setAgentRevenueLoading(true);
+    try {
+      const agentKPIsData = await loadAgentKPIs({
+        dateFrom: agentOverviewDateRange?.from,
+        dateTo: agentOverviewDateRange?.to,
+        allTime: !agentOverviewDateRange?.from,
+        defaultToCurrentMonth: false,
+      });
+      setAgentRevenueKPIs(agentKPIsData);
+    } catch (error) {
+      console.error('Error fetching agent revenue KPIs:', error);
+      setAgentRevenueKPIs([]);
+    } finally {
+      setAgentRevenueLoading(false);
     }
   };
 
@@ -1744,6 +2080,10 @@ export default function AnalyticsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">₱{totalRevenue.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Approved ₱{summaryApprovedRevenue.toLocaleString()} · Pending ₱
+                {summaryPendingRevenue.toLocaleString()}
+              </p>
               <div className="flex items-center gap-1 mt-1">
                 {revenueGrowth >= 0 ? (
                   <TrendingUp className="h-4 w-4 text-green-600" />
@@ -1766,7 +2106,7 @@ export default function AnalyticsPage() {
             <CardContent>
               <div className="text-2xl font-bold">{totalOrders.toLocaleString()}</div>
               <div className="text-sm text-muted-foreground mt-1">
-                Completed this month
+                Approved + pending this month
               </div>
             </CardContent>
           </Card>
@@ -1924,28 +2264,107 @@ export default function AnalyticsPage() {
 
         {/* Product Performance Tab */}
         <TabsContent value="products" className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Approved and pending client orders by line item — {productDateRangeLabel}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto shrink-0">
+              <DateRangeFilterPopover
+                value={productDateRangeFilter}
+                onChange={setProductDateRangeFilter}
+                triggerClassName="w-full sm:w-[220px] justify-between h-10"
+                align="end"
+              />
+              <Button
+                variant="outline"
+                className="h-10 gap-2"
+                onClick={handleExportProductAnalytics}
+                disabled={productExporting || productLoading || productPerformance.length === 0}
+              >
+                {productExporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileDown className="h-4 w-4" />
+                )}
+                Export Excel
+              </Button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Product Revenue Chart */}
             <Card className="col-span-1 lg:col-span-2">
               <CardHeader>
                 <CardTitle>Top Products by Revenue</CardTitle>
-                <CardDescription>Best selling items</CardDescription>
+                <CardDescription>
+                  Approved vs pending revenue (order status) — top 10 products
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={productPerformance.slice(0, 10)} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis type="number" tick={{ fontSize: 12 }} />
-                    <YAxis 
-                      type="category" 
-                      dataKey="variant" 
-                      tick={{ fontSize: 11 }} 
-                      width={120}
-                    />
-                    <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
-                    <Bar dataKey="revenue" fill="#10b981" name="Revenue (₱)" />
-                  </BarChart>
-                </ResponsiveContainer>
+                {productLoading ? (
+                  <div className="flex justify-center items-center h-[300px]">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : productPerformance.length === 0 ? (
+                  <div className="flex justify-center items-center h-[300px] text-muted-foreground text-sm">
+                    No product data for the selected period
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={productPerformance.slice(0, 10)} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis type="number" tick={{ fontSize: 12 }} />
+                      <YAxis
+                        type="category"
+                        dataKey="variant"
+                        tick={{ fontSize: 11 }}
+                        width={120}
+                      />
+                      <Tooltip
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          const approved =
+                            (payload.find((p) => p.dataKey === 'approvedRevenue')?.value as number) || 0;
+                          const pending =
+                            (payload.find((p) => p.dataKey === 'pendingRevenue')?.value as number) || 0;
+                          const total = approved + pending;
+                          return (
+                            <div className="bg-background border rounded-lg p-3 shadow-lg">
+                              <p className="font-semibold text-sm mb-2">{label}</p>
+                              <div className="space-y-1 text-sm">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-3 h-3 rounded-full bg-blue-500" />
+                                  <span className="text-muted-foreground">Approved:</span>
+                                  <span className="font-medium">₱{approved.toLocaleString()}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="w-3 h-3 rounded-full bg-orange-500" />
+                                  <span className="text-muted-foreground">Pending:</span>
+                                  <span className="font-medium">₱{pending.toLocaleString()}</span>
+                                </div>
+                                <div className="border-t pt-1 mt-2 flex items-center gap-2">
+                                  <span className="w-3 h-3 rounded-full bg-green-500" />
+                                  <span className="font-semibold">Total:</span>
+                                  <span className="font-bold text-green-600 dark:text-green-400">
+                                    ₱{total.toLocaleString()}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Legend
+                        wrapperStyle={{ fontSize: '12px' }}
+                        formatter={(value: string) =>
+                          value === 'approvedRevenue' ? 'Approved' : 'Pending'
+                        }
+                      />
+                      <Bar dataKey="approvedRevenue" fill="#3b82f6" name="approvedRevenue" />
+                      <Bar dataKey="pendingRevenue" fill="#f97316" name="pendingRevenue" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
 
@@ -1953,10 +2372,17 @@ export default function AnalyticsPage() {
             <Card className="col-span-1 lg:col-span-2">
               <CardHeader>
                 <CardTitle>Product Performance Details</CardTitle>
-                <CardDescription>Comprehensive product metrics</CardDescription>
+                <CardDescription>
+                  Line-item counts; click total revenue for approved / pending breakdown
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="border rounded-lg overflow-hidden">
+                {productLoading ? (
+                  <div className="flex justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : (
+                <div className="border rounded-lg overflow-hidden overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1964,19 +2390,36 @@ export default function AnalyticsPage() {
                         <TableHead>Product</TableHead>
                         <TableHead className="text-right">Orders</TableHead>
                         <TableHead className="text-right">Units Sold</TableHead>
+                        <TableHead className="text-right">Pending Orders</TableHead>
+                        <TableHead className="text-right">Pending Sold</TableHead>
                         <TableHead className="text-right">Revenue</TableHead>
                         <TableHead className="text-center">Trend</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {productPerformance.slice(0, 20).map((product, index) => (
-                        <TableRow key={index}>
+                        <TableRow key={`${product.brand}-${product.variant}-${index}`}>
                           <TableCell className="font-medium">{product.brand}</TableCell>
                           <TableCell>{product.variant}</TableCell>
                           <TableCell className="text-right">{product.orders}</TableCell>
                           <TableCell className="text-right">{product.quantity}</TableCell>
+                          <TableCell className="text-right text-orange-600 dark:text-orange-400">
+                            {product.pendingOrders}
+                          </TableCell>
+                          <TableCell className="text-right text-orange-600 dark:text-orange-400">
+                            {product.pendingQuantity}
+                          </TableCell>
                           <TableCell className="text-right font-semibold">
-                            ₱{product.revenue.toLocaleString()}
+                            <button
+                              type="button"
+                              className="text-primary hover:underline underline-offset-2"
+                              onClick={() => {
+                                setSelectedProductRevenue(product);
+                                setProductRevenueDialogOpen(true);
+                              }}
+                            >
+                              ₱{product.revenue.toLocaleString()}
+                            </button>
                           </TableCell>
                           <TableCell className="text-center">
                             {product.trend === 'up' && (
@@ -1999,7 +2442,7 @@ export default function AnalyticsPage() {
                       ))}
                       {productPerformance.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                             No product data available
                           </TableCell>
                         </TableRow>
@@ -2007,9 +2450,68 @@ export default function AnalyticsPage() {
                     </TableBody>
                   </Table>
                 </div>
+                )}
               </CardContent>
             </Card>
           </div>
+
+          <Dialog open={productRevenueDialogOpen} onOpenChange={setProductRevenueDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Revenue breakdown</DialogTitle>
+                <DialogDescription>
+                  {selectedProductRevenue
+                    ? `${selectedProductRevenue.brand} — ${selectedProductRevenue.variant} (${productDateRangeLabel})`
+                    : ''}
+                </DialogDescription>
+              </DialogHeader>
+              {selectedProductRevenue && (
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
+                      Approved revenue
+                    </span>
+                    <span className="font-semibold">
+                      ₱{selectedProductRevenue.approvedRevenue.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <span className="h-2.5 w-2.5 rounded-full bg-orange-500" />
+                      Pending revenue
+                    </span>
+                    <span className="font-semibold">
+                      ₱{selectedProductRevenue.pendingRevenue.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="border-t pt-3 flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 font-medium">
+                      <span className="h-2.5 w-2.5 rounded-full bg-green-500" />
+                      Total revenue
+                    </span>
+                    <span className="text-lg font-bold text-green-600 dark:text-green-400">
+                      ₱{selectedProductRevenue.revenue.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="border-t pt-3 space-y-1.5 text-muted-foreground text-xs">
+                    <div className="flex justify-between">
+                      <span>Approved line items / units</span>
+                      <span>
+                        {selectedProductRevenue.approvedOrders} / {selectedProductRevenue.approvedQuantity}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Pending line items / units</span>
+                      <span>
+                        {selectedProductRevenue.pendingOrders} / {selectedProductRevenue.pendingQuantity}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
             {/* Agent KPIs Tab */}
@@ -2022,31 +2524,85 @@ export default function AnalyticsPage() {
                 isManager={isManager}
                 onViewAgentDetails={handleViewAgentDetails}
                 onOpenTargetDialog={handleOpenTargetDialog}
+                onDateRangeChange={handleAgentOverviewDateRangeChange}
                 agentKPIs={agentKPIs}
               />
 
-              {/* V1 Agent KPI Section - Agent Revenue Performance & Key Performance Indicators */}
+              {/* Agent Revenue Performance — follows Agent Performance Overview date filter */}
+              <Card className="col-span-1 lg:col-span-2">
+                <CardHeader>
+                  <CardTitle>Agent Revenue Performance</CardTitle>
+                  <CardDescription>
+                    Top 10 mobile sales &amp; team leaders — approved vs pending revenue (order status) ·{' '}
+                    {getAgentOverviewDateLabel()}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {agentRevenueLoading ? (
+                    <div className="flex justify-center items-center h-[320px]">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  ) : agentRevenueKPIs.length === 0 ? (
+                    <div className="flex justify-center items-center h-[320px] text-muted-foreground text-sm">
+                      No revenue data for the selected period
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <BarChart data={agentRevenueKPIs.slice(0, 10)}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" height={100} />
+                        <YAxis tick={{ fontSize: 12 }} />
+                        <Tooltip
+                          content={({ active, payload, label }) => {
+                            if (!active || !payload?.length) return null;
+                            const approved =
+                              (payload.find((p) => p.dataKey === 'approvedRevenue')?.value as number) || 0;
+                            const pending =
+                              (payload.find((p) => p.dataKey === 'pendingRevenue')?.value as number) || 0;
+                            const total = approved + pending;
+                            return (
+                              <div className="bg-background border rounded-lg p-3 shadow-lg">
+                                <p className="font-semibold text-sm mb-2">{label}</p>
+                                <div className="space-y-1 text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-3 h-3 rounded-full bg-blue-500" />
+                                    <span className="text-muted-foreground">Approved:</span>
+                                    <span className="font-medium">₱{approved.toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-3 h-3 rounded-full bg-orange-500" />
+                                    <span className="text-muted-foreground">Pending:</span>
+                                    <span className="font-medium">₱{pending.toLocaleString()}</span>
+                                  </div>
+                                  <div className="border-t pt-1 mt-2 flex items-center gap-2">
+                                    <span className="w-3 h-3 rounded-full bg-green-500" />
+                                    <span className="font-semibold">Total:</span>
+                                    <span className="font-bold text-green-600 dark:text-green-400">
+                                      ₱{total.toLocaleString()}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        />
+                        <Legend
+                          wrapperStyle={{ fontSize: '12px' }}
+                          formatter={(value: string) =>
+                            value === 'approvedRevenue' ? 'Approved' : 'Pending'
+                          }
+                        />
+                        <Bar dataKey="approvedRevenue" fill="#3b82f6" name="approvedRevenue" />
+                        <Bar dataKey="pendingRevenue" fill="#f97316" name="pendingRevenue" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* V1 Agent KPI Section - Key Performance Indicators */}
               {agentKPIs && agentKPIs.length > 0 ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Agent Revenue Performance Chart */}
-                  <Card className="col-span-1 lg:col-span-2">
-                    <CardHeader>
-                      <CardTitle>Agent Revenue Performance</CardTitle>
-                      <CardDescription>Top performing sales agents</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={agentKPIs.slice(0, 10)}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-45} textAnchor="end" height={80} />
-                          <YAxis tick={{ fontSize: 12 }} />
-                          <Tooltip formatter={(value: number) => `₱${value.toLocaleString()}`} />
-                          <Bar dataKey="revenue" fill="#8b5cf6" name="Revenue (₱)" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </CardContent>
-                  </Card>
-
                   {/* Agent Key Performance Indicators Table */}
                   <Card className="col-span-1 lg:col-span-2">
                     <CardHeader>
@@ -2054,7 +2610,10 @@ export default function AnalyticsPage() {
                         <div className="flex items-center justify-between">
                           <div>
                             <CardTitle>Agent Key Performance Indicators</CardTitle>
-                            <CardDescription>Comprehensive agent metrics and ratings</CardDescription>
+                            <CardDescription>
+                              Comprehensive agent metrics and ratings. Revenue shows approved and pending
+                              (order status); achievement % uses approved revenue only.
+                            </CardDescription>
                           </div>
                           {/* Only Admin and Leader can set targets, Manager is view-only */}
                           {(isAdmin || isLeader) && (
@@ -2189,6 +2748,69 @@ export default function AnalyticsPage() {
                             </Badge>
                           )}
                         </div>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                          <div className="relative min-w-[12rem] flex-1">
+                            <Search
+                              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                              aria-hidden
+                            />
+                            <Input
+                              id="agent-kpi-search"
+                              placeholder="Search Agent/Leader name..."
+                              value={agentKpiSearch}
+                              onChange={e => setAgentKpiSearch(e.target.value)}
+                              className="h-9 pl-9 text-sm"
+                            />
+                          </div>
+                          <div className="min-w-[10rem] space-y-1.5">
+                            <label
+                              htmlFor="agent-kpi-role"
+                              className="text-xs font-medium text-muted-foreground"
+                            >
+                              Role
+                            </label>
+                            <Select
+                              value={agentKpiRoleFilter}
+                              onValueChange={value => {
+                                if (
+                                  value === 'all' ||
+                                  value === 'mobile_sales' ||
+                                  value === 'team_leader'
+                                ) {
+                                  setAgentKpiRoleFilter(value);
+                                }
+                              }}
+                            >
+                              <SelectTrigger id="agent-kpi-role" className="h-9 text-sm">
+                                <SelectValue placeholder="All roles" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">All roles</SelectItem>
+                                <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                                <SelectItem value="team_leader">Team Leader</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-9 shrink-0"
+                            disabled={!agentKpiFiltersActive}
+                            onClick={() => {
+                              setAgentKpiSearch('');
+                              setAgentKpiRoleFilter('all');
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        </div>
+                        {agentKpiFiltersActive ? (
+                          <p className="text-xs text-muted-foreground">
+                            Showing {filteredAgentKPIs.length} of {agentKPIs.length} agent
+                            {agentKPIs.length === 1 ? '' : 's'}
+                          </p>
+                        ) : null}
                       </div>
                     </CardHeader>
                     <CardContent>
@@ -2197,13 +2819,13 @@ export default function AnalyticsPage() {
                           <Table>
                             <TableHeader>
                               <TableRow>
-                                <TableHead rowSpan={2} className="text-center align-middle">Agent</TableHead>
+                                <TableHead rowSpan={2} className="text-center align-middle">Agent / Team Leader</TableHead>
                                 {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
                                   <>
                                     <TableHead colSpan={3} className="text-center bg-blue-50">Target</TableHead>
                                   </>
                                 )}
-                                <TableHead colSpan={3} className="text-center bg-green-50">Actual</TableHead>
+                                <TableHead colSpan={5} className="text-center bg-green-50">Actual</TableHead>
                                 {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
                                   <>
                                     <TableHead colSpan={3} className="text-center bg-yellow-50">Achievement</TableHead>
@@ -2222,7 +2844,9 @@ export default function AnalyticsPage() {
                                 )}
                                 {/* Actual columns - always show */}
                                 <TableHead className="text-center bg-green-50">Clients</TableHead>
-                                <TableHead className="text-center bg-green-50">Revenue</TableHead>
+                                <TableHead className="text-center bg-green-50">Approved</TableHead>
+                                <TableHead className="text-center bg-green-50">Pending</TableHead>
+                                <TableHead className="text-center bg-green-50">Total</TableHead>
                                 <TableHead className="text-center bg-green-50">Qty</TableHead>
                                 {/* Achievement columns - only show if current month */}
                                 {(isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) && (
@@ -2236,15 +2860,23 @@ export default function AnalyticsPage() {
                             </TableHeader>
                             <TableBody>
                               {/* Always show individual agents - Overall button just indicates viewing all agents */}
-                              {agentKPIs.map((agent, index) => {
+                              {pagedAgentKPIs.map((agent, index) => {
                                 const showTargets = isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo);
+                                const globalIndex = agentKpiStartIndex + index;
                                 
                                 return (
                                   <TableRow key={agent.id}>
                                     <TableCell className="font-medium text-center">
-                                      <div className="flex items-center justify-center gap-2">
-                                        {index < 3 && <Award className="h-4 w-4 text-yellow-500" />}
-                                        {agent.name}
+                                      <div className="flex flex-col items-center justify-center gap-1">
+                                        <div className="flex items-center justify-center gap-2">
+                                          {globalIndex < 3 && <Award className="h-4 w-4 text-yellow-500" />}
+                                          {agent.name}
+                                        </div>
+                                        {agent.role === 'team_leader' && (
+                                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                            Team Leader
+                                          </Badge>
+                                        )}
                                       </div>
                                     </TableCell>
                                     {/* Target values - only show if current month */}
@@ -2272,8 +2904,18 @@ export default function AnalyticsPage() {
                                       <span className="text-sm">{agent.actualClients ?? 0}</span>
                                     </TableCell>
                                     <TableCell className="text-center bg-green-50/30">
+                                      <span className="text-sm font-medium text-blue-700 dark:text-blue-400">
+                                        ₱{Math.floor(agent.approvedRevenue || 0).toLocaleString()}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-center bg-green-50/30">
+                                      <span className="text-sm font-medium text-orange-700 dark:text-orange-400">
+                                        ₱{Math.floor(agent.pendingRevenue || 0).toLocaleString()}
+                                      </span>
+                                    </TableCell>
+                                    <TableCell className="text-center bg-green-50/30">
                                       <span className="text-sm font-semibold">
-                                        ₱{agent.actualRevenue ? Math.floor(agent.actualRevenue).toLocaleString() : '0'}
+                                        ₱{Math.floor(agent.revenue || 0).toLocaleString()}
                                       </span>
                                     </TableCell>
                                     <TableCell className="text-center bg-green-50/30">
@@ -2308,23 +2950,38 @@ export default function AnalyticsPage() {
                                   </TableRow>
                                 );
                               })}
-                              {agentKPIs.length === 0 && (
+                              {pagedAgentKPIs.length === 0 && (
                                 <TableRow>
                                   <TableCell 
                                     colSpan={
                                       (isCurrentMonth(agentKpiDateFrom, agentKpiDateTo) || (!agentKpiDateFrom && !agentKpiDateTo)) 
-                                        ? 10  // Agent + 3 Target + 3 Achievement + 3 Actual + Actions
-                                        : 5   // Agent + 3 Actual + Actions
+                                        ? 12  // Agent + 3 Target + 5 Actual + 3 Achievement + Actions
+                                        : 7   // Agent + 5 Actual + Actions
                                     } 
                                     className="text-center py-8 text-muted-foreground"
                                   >
-                                    No agent data available
+                                    {agentKPIs.length > 0
+                                      ? 'No agents match your search or role filter.'
+                                      : 'No agent data available'}
                                   </TableCell>
                                 </TableRow>
                               )}
                             </TableBody>
                           </Table>
                         </div>
+                      </div>
+                      <div className="mt-4">
+                        <ListPagination
+                          pageSize={agentKpiPageSize}
+                          safePage={agentKpiSafePage}
+                          pageCount={agentKpiPageCount}
+                          onPageSizeChange={value => {
+                            setAgentKpiPageSize(value);
+                            setAgentKpiPage(0);
+                          }}
+                          onPrevious={() => setAgentKpiPage(p => Math.max(0, p - 1))}
+                          onNext={() => setAgentKpiPage(p => Math.min(agentKpiPageCount - 1, p + 1))}
+                        />
                       </div>
                     </CardContent>
                   </Card>
@@ -2333,7 +2990,7 @@ export default function AnalyticsPage() {
                 <Card className="bg-yellow-50 border-2 border-yellow-400">
                   <CardContent className="pt-6">
                     <p className="text-center text-sm text-yellow-800">
-                      ⚠️ Agent KPIs data is empty. The chart and table will appear when data is loaded.
+                      ⚠️ Agent KPI data is empty for the selected KPI date range. The table will appear when data is loaded.
                     </p>
                   </CardContent>
                 </Card>
@@ -2369,7 +3026,10 @@ export default function AnalyticsPage() {
                 <Card>
                   <CardContent className="pt-6">
                     <div className="text-2xl font-bold">₱{selectedAgent.revenue.toLocaleString()}</div>
-                    <p className="text-xs text-muted-foreground">Total Revenue</p>
+                    <p className="text-xs text-muted-foreground">
+                      Total revenue · Approved ₱{selectedAgent.approvedRevenue.toLocaleString()} · Pending ₱
+                      {selectedAgent.pendingRevenue.toLocaleString()}
+                    </p>
                   </CardContent>
                 </Card>
                 <Card>
@@ -2868,7 +3528,7 @@ export default function AnalyticsPage() {
             <div className="p-2 sm:p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p className="text-xs sm:text-sm text-blue-800">
                 <strong>Note:</strong> Targets are set for the current month ({format(startOfMonth(new Date()), 'MMMM yyyy')}). 
-                Achievement is calculated based on approved orders for this month.
+                Achievement is calculated based on approved order revenue (status: approved) for this month.
               </p>
             </div>
 
@@ -2903,7 +3563,16 @@ export default function AnalyticsPage() {
                       
                       return (
                         <TableRow key={agent.id}>
-                          <TableCell className="font-medium text-xs sm:text-sm whitespace-nowrap">{agent.name}</TableCell>
+                          <TableCell className="font-medium text-xs sm:text-sm whitespace-nowrap">
+                            <div className="flex flex-col gap-0.5">
+                              <span>{agent.name}</span>
+                              {agent.role === 'team_leader' && (
+                                <Badge variant="secondary" className="text-[10px] w-fit px-1.5 py-0">
+                                  Team Leader
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
                           {/* Current Targets */}
                           <TableCell className="text-right bg-blue-50/30">
                             <span className="text-xs sm:text-sm text-muted-foreground">

@@ -335,7 +335,9 @@ export default function MyInventory() {
 
       // Filter out orders with verified cash deposits (approved deposits should not appear in remittance)
       // Also exclude v1 imports: order_date before threshold (sold tab only shows orders from 2026-02-17 onward)
+      // FOC orders (total_amount = 0) are auto-remitted at creation and have nothing to physically remit/deposit.
       const unremittedOrders = (data || []).filter((order: any) => {
+        if ((order.total_amount ?? 0) === 0) return false;
         if (order.deposit_id && order.cash_deposit) {
           if (order.cash_deposit.status === 'verified') return false;
         }

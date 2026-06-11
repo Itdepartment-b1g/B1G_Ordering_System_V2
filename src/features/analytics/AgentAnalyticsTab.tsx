@@ -19,7 +19,8 @@ import {
   MapPin,
   Filter,
   Eye,
-  Target
+  Target,
+  FileDown,
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -36,6 +37,10 @@ import {
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import {
+  exportAgentAnalyticsExcel,
+  type AgentAnalyticsExportRow,
+} from '@/features/analytics/exportAgentAnalyticsExcel';
 import { format, startOfDay, endOfDay, startOfYear, endOfYear, startOfMonth, endOfMonth, startOfWeek, endOfWeek, getWeeksInMonth, differenceInDays, subDays, subMonths } from 'date-fns';
 import { DateRange } from 'react-day-picker';
 
@@ -192,7 +197,62 @@ interface DailyVisitData {
 }
 
 type MetricType = 'revenue' | 'clients' | 'orders';
-type RoleType = 'mobile_sales' | 'team_leader';
+type RoleType = 'all' | 'mobile_sales' | 'team_leader';
+
+const SALES_ROLES = ['mobile_sales', 'team_leader'] as const;
+
+const getAllPeopleLabel = (role: RoleType): string => {
+  if (role === 'all') return 'All (Active)';
+  if (role === 'mobile_sales') return 'All Mobile Sales';
+  return 'All Team Leaders';
+};
+
+const orderApprovedKey = (agentId: string) => `${agentId}_approved`;
+const orderPendingKey = (agentId: string) => `${agentId}_pending`;
+
+interface ClickableChartDotProps {
+  cx?: number;
+  cy?: number;
+  payload?: TimeSeriesDataPoint;
+  fill?: string;
+  r?: number;
+  onPeriodClick: (row: TimeSeriesDataPoint) => void;
+}
+
+const ClickableChartDot = ({ cx, cy, payload, fill, r = 5, onPeriodClick }: ClickableChartDotProps) => {
+  if (cx == null || cy == null || !payload) return null;
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={r}
+      fill={fill}
+      stroke={fill}
+      strokeWidth={2}
+      className="cursor-pointer"
+      onClick={(e) => {
+        e.stopPropagation();
+        onPeriodClick(payload);
+      }}
+    />
+  );
+};
+
+const bucketOrdersByStatus = (
+  orders: { status?: string; total_amount?: number }[] | null,
+  metric: 'revenue' | 'orders'
+): { approved: number; pending: number; total: number } => {
+  let approved = 0;
+  let pending = 0;
+  (orders || []).forEach((order) => {
+    if (order.status === 'approved') {
+      approved += metric === 'revenue' ? Number(order.total_amount) || 0 : 1;
+    } else if (order.status === 'pending') {
+      pending += metric === 'revenue' ? Number(order.total_amount) || 0 : 1;
+    }
+  });
+  return { approved, pending, total: approved + pending };
+};
 
 interface AgentAnalyticsTabProps {
   userId: string;
@@ -201,41 +261,70 @@ interface AgentAnalyticsTabProps {
   isManager?: boolean;
   onViewAgentDetails?: (agent: AgentKPI) => Promise<void>;
   onOpenTargetDialog?: () => void;
+  onDateRangeChange?: (range: { from?: Date; to?: Date } | undefined) => void;
   agentKPIs?: AgentKPI[];
 }
 
-const AGENT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#14b8a6'];
+const BASE_CHART_COLORS = [
+  '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
+  '#f97316', '#14b8a6', '#6366f1', '#22c55e', '#eab308', '#e11d48', '#a855f7', '#0ea5e9',
+];
 
-// Custom Legend Component
+/** Distinct color per index; uses golden-angle hues when the team exceeds the base palette */
+const getChartColorForIndex = (index: number): string => {
+  if (index < BASE_CHART_COLORS.length) return BASE_CHART_COLORS[index];
+  const hue = Math.round((index * 137.508) % 360);
+  return `hsl(${hue}, 62%, 42%)`;
+};
+
+/** Stable colors per person id (sorted by name so order is consistent across filters) */
+const buildAgentInfoList = (
+  people: { id: string; full_name?: string | null }[]
+): AgentInfo[] => {
+  const sorted = [...people].sort((a, b) =>
+    (a.full_name || '').localeCompare(b.full_name || '', undefined, { sensitivity: 'base' })
+  );
+  const colorById = new Map<string, string>();
+  sorted.forEach((person, index) => {
+    colorById.set(person.id, getChartColorForIndex(index));
+  });
+  return people.map((person) => ({
+    id: person.id,
+    name: person.full_name || 'Unknown',
+    color: colorById.get(person.id) ?? BASE_CHART_COLORS[0],
+  }));
+};
+
+// Custom Legend Component — colors from agents state so legend always matches lines
 interface CustomLegendProps {
-  payload?: Array<{
-    value: any;
-    color?: string;
-    dataKey?: any;
-    [key: string]: any;
-  }>;
+  payload?: readonly { value?: unknown; color?: string; dataKey?: unknown }[];
+  agents: AgentInfo[];
 }
 
-const CustomLegend = ({ payload }: CustomLegendProps) => {
+const CustomLegend = ({ payload, agents }: CustomLegendProps) => {
   if (!payload || payload.length === 0) return null;
+
+  const colorByAgentId = new Map(agents.map((a) => [a.id, a.color]));
 
   return (
     <div className="pt-6 pb-2">
       <div className="flex flex-wrap items-center gap-3 justify-start">
-        {payload.map((entry, index) => (
-          <div
-            key={`legend-item-${index}`}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted/50 border border-border/50 hover:bg-muted transition-colors shadow-sm"
-          >
+        {payload.map((entry, index) => {
+          const agentId = entry.dataKey != null ? String(entry.dataKey) : '';
+          const lineColor = colorByAgentId.get(agentId) ?? entry.color ?? BASE_CHART_COLORS[0];
+          return (
             <div
-              className="h-3 w-3 rounded-full shrink-0 ring-2 ring-offset-2 ring-offset-background"
-              style={{ 
-                backgroundColor: entry.color
-              }}
-            />
-            <span className="text-sm font-medium text-foreground">{entry.value}</span>
-          </div>
-        ))}
+              key={`legend-item-${agentId || index}`}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted/50 border border-border/50 hover:bg-muted transition-colors shadow-sm"
+            >
+              <div
+                className="h-3 w-3 rounded-full shrink-0 ring-2 ring-offset-2 ring-offset-background"
+                style={{ backgroundColor: lineColor }}
+              />
+              <span className="text-sm font-medium text-foreground">{String(entry.value ?? '')}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -248,6 +337,7 @@ export default function AgentAnalyticsTab({
   isManager = false,
   onViewAgentDetails,
   onOpenTargetDialog,
+  onDateRangeChange,
   agentKPIs = []
 }: AgentAnalyticsTabProps) {
   const { toast } = useToast();
@@ -265,6 +355,11 @@ export default function AgentAnalyticsTab({
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
   const [customStartDate, setCustomStartDate] = useState<Date | undefined>(undefined);
   const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined);
+  const [exporting, setExporting] = useState(false);
+
+  // Performance period detail modal (click chart point or period label)
+  const [periodDetailOpen, setPeriodDetailOpen] = useState(false);
+  const [selectedPeriodRow, setSelectedPeriodRow] = useState<TimeSeriesDataPoint | null>(null);
   
   // Agent Detail Dialog State
   const [agentDetailDialogOpen, setAgentDetailDialogOpen] = useState(false);
@@ -324,6 +419,10 @@ export default function AgentAnalyticsTab({
     }
   }, [datePreset, customStartDate, customEndDate]);
 
+  useEffect(() => {
+    onDateRangeChange?.(chartDateRange);
+  }, [chartDateRange, onDateRangeChange]);
+
   // Handle preset change
   const handlePresetChange = (value: DatePreset) => {
     setDatePreset(value);
@@ -348,36 +447,45 @@ export default function AgentAnalyticsTab({
     return date;
   };
 
+  const fetchActivePeopleProfiles = async () => {
+    let peopleQuery = supabase
+      .from('profiles')
+      .select('id, full_name')
+      .eq('status', 'active')
+      .order('full_name', { ascending: true });
+
+    if (selectedRole === 'all') {
+      peopleQuery = peopleQuery.in('role', SALES_ROLES);
+    } else {
+      peopleQuery = peopleQuery.eq('role', selectedRole);
+    }
+
+    if (isLeader && userId) {
+      let leaderTeamsQuery = supabase
+        .from('leader_teams')
+        .select('agent_id')
+        .eq('leader_id', userId);
+
+      const { data: teamData } = await leaderTeamsQuery;
+
+      const teamAgentIds = (teamData || [])
+        .map((member: { agent_id: string }) => member.agent_id)
+        .filter(Boolean);
+      // Include the leader so they can view their own performance (not only rows in leader_teams as agent_id)
+      const peopleIds = Array.from(new Set([userId, ...teamAgentIds]));
+      peopleQuery = peopleQuery.in('id', peopleIds);
+    }
+
+    const { data, error } = await peopleQuery;
+    if (error) throw error;
+    return data || [];
+  };
+
   const fetchAvailablePeople = async () => {
     try {
-      let peopleQuery = supabase
-        .from('profiles')
-        .select('id, full_name')
-        .eq('role', selectedRole)
-        .order('full_name', { ascending: true });
+      const data = await fetchActivePeopleProfiles();
 
-      if (isLeader && userId) {
-        const { data: teamData } = await supabase
-          .from('leader_teams')
-          .select('agent_id')
-          .eq('leader_id', userId);
-
-        const peopleIds = (teamData || []).map((member: any) => member.agent_id).filter(Boolean);
-        if (peopleIds.length > 0) {
-          peopleQuery = peopleQuery.in('id', peopleIds);
-        }
-      }
-
-      const { data, error } = await peopleQuery;
-      if (error) throw error;
-
-      const peopleList = (data || []).map((person, index) => ({
-        id: person.id,
-        name: person.full_name || 'Unknown',
-        color: AGENT_COLORS[index % AGENT_COLORS.length]
-      }));
-
-      setAvailablePeople(peopleList);
+      setAvailablePeople(buildAgentInfoList(data));
     } catch (error) {
       console.error('Error fetching people:', error);
     }
@@ -386,30 +494,7 @@ export default function AgentAnalyticsTab({
   const fetchPerformanceData = async () => {
     setLoadingPerformance(true);
     try {
-      // Get list based on role
-      let peopleQuery = supabase
-        .from('profiles')
-        .select('id, full_name')
-        .eq('role', selectedRole);
-
-      if (isLeader && userId) {
-        const { data: teamData } = await supabase
-          .from('leader_teams')
-          .select('agent_id')
-          .eq('leader_id', userId);
-
-        const peopleIds = (teamData || []).map((member: any) => member.agent_id).filter(Boolean);
-        if (peopleIds.length === 0) {
-          setTimeSeriesData([]);
-          setAgents([]);
-          setLoadingPerformance(false);
-          return;
-        }
-        peopleQuery = peopleQuery.in('id', peopleIds);
-      }
-
-      const { data: peopleData, error: peopleError } = await peopleQuery;
-      if (peopleError) throw peopleError;
+      const peopleData = await fetchActivePeopleProfiles();
 
       if (!peopleData || peopleData.length === 0) {
         setTimeSeriesData([]);
@@ -418,29 +503,19 @@ export default function AgentAnalyticsTab({
         return;
       }
 
-      // Create person info with colors - filter if specific person selected
+      // Assign distinct stable colors; filter if a specific person is selected
       let personInfoList: AgentInfo[];
       if (selectedPerson !== 'all') {
-        // Show only selected person
-        const selectedPersonData = peopleData.find(p => p.id === selectedPerson);
+        const selectedPersonData = peopleData.find((p) => p.id === selectedPerson);
         if (!selectedPersonData) {
           setTimeSeriesData([]);
           setAgents([]);
           setLoadingPerformance(false);
           return;
         }
-        personInfoList = [{
-          id: selectedPersonData.id,
-          name: selectedPersonData.full_name || 'Unknown',
-          color: AGENT_COLORS[0]
-        }];
+        personInfoList = buildAgentInfoList(peopleData).filter((p) => p.id === selectedPerson);
       } else {
-        // Show all people
-        personInfoList = peopleData.map((person, index) => ({
-          id: person.id,
-          name: person.full_name || 'Unknown',
-          color: AGENT_COLORS[index % AGENT_COLORS.length]
-        }));
+        personInfoList = buildAgentInfoList(peopleData);
       }
       setAgents(personInfoList);
 
@@ -560,47 +635,33 @@ export default function AgentAnalyticsTab({
           const dataPoint: TimeSeriesDataPoint = { period: period.label };
 
           for (const person of personInfoList) {
-            let value = 0;
-
-            let query = supabase.from('client_orders').select('total_amount, id, created_at');
-
-            // Apply filters
-            if (selectedMetric === 'revenue') {
-              query = query.select('total_amount');
-            } else if (selectedMetric === 'orders') {
-              query = query.select('id');
-            } else if (selectedMetric === 'clients') {
-               // For clients, we query the 'clients' table, handled below
-               query = supabase.from('clients').select('id, created_at') as any;
-            }
-
-            // Apply metric specific logic
             if (selectedMetric === 'clients') {
-               const { data: clients } = await supabase
+              const { data: clients } = await supabase
                 .from('clients')
                 .select('id')
                 .eq('agent_id', person.id)
                 .gte('created_at', period.start.toISOString())
                 .lte('created_at', period.end.toISOString());
-              
-              value = clients?.length || 0;
+
+              dataPoint[person.id] = clients?.length || 0;
             } else {
-              // Orders or Revenue
-               const { data: orders } = await supabase
+              const { data: orders } = await supabase
                 .from('client_orders')
-                .select(selectedMetric === 'revenue' ? 'total_amount' : 'id')
+                .select('total_amount, status')
                 .eq('agent_id', person.id)
+                .in('status', ['approved', 'pending'])
                 .gte('created_at', period.start.toISOString())
                 .lte('created_at', period.end.toISOString());
-              
-              if (selectedMetric === 'revenue') {
-                value = orders?.reduce((sum, order: any) => sum + (order.total_amount || 0), 0) || 0;
-              } else {
-                value = orders?.length || 0;
-              }
-            }
 
-            dataPoint[person.id] = value;
+              const { approved, pending, total } = bucketOrdersByStatus(
+                orders,
+                selectedMetric as 'revenue' | 'orders'
+              );
+
+              dataPoint[person.id] = total;
+              dataPoint[orderApprovedKey(person.id)] = approved;
+              dataPoint[orderPendingKey(person.id)] = pending;
+            }
           }
 
           return dataPoint;
@@ -1093,6 +1154,103 @@ export default function AgentAnalyticsTab({
     }
   };
 
+  const getRoleFilterLabel = () => {
+    if (selectedRole === 'all') return 'All Roles';
+    if (selectedRole === 'mobile_sales') return 'Mobile Sales';
+    return 'Team Leaders';
+  };
+
+  const getPersonFilterLabel = () => {
+    if (selectedPerson === 'all') return getAllPeopleLabel(selectedRole);
+    return (
+      availablePeople.find((person) => person.id === selectedPerson)?.name ||
+      agents.find((agent) => agent.id === selectedPerson)?.name ||
+      'Selected person'
+    );
+  };
+
+  const getChartDateRangeLabel = () => {
+    if (!chartDateRange?.from) return 'All time';
+    const start = formatDateForInput(chartDateRange.from);
+    const end = chartDateRange.to ? formatDateForInput(chartDateRange.to) : start;
+    return `${start} to ${end}`;
+  };
+
+  const buildAgentAnalyticsExportRows = (): AgentAnalyticsExportRow[] => {
+    const rows: AgentAnalyticsExportRow[] = [];
+
+    timeSeriesData.forEach((periodRow) => {
+      agents.forEach((agent) => {
+        if (selectedMetric === 'clients') {
+          rows.push({
+            period: periodRow.period,
+            agentName: agent.name,
+            approved: 0,
+            pending: 0,
+            total: Number(periodRow[agent.id] ?? 0),
+          });
+        } else {
+          const approved = Number(periodRow[orderApprovedKey(agent.id)] ?? 0);
+          const pending = Number(periodRow[orderPendingKey(agent.id)] ?? 0);
+          const total = Number(periodRow[agent.id] ?? approved + pending);
+          rows.push({
+            period: periodRow.period,
+            agentName: agent.name,
+            approved,
+            pending,
+            total,
+          });
+        }
+      });
+    });
+
+    return rows;
+  };
+
+  const handleExportExcel = async () => {
+    if (!timeSeriesData.length || !agents.length) {
+      toast({
+        title: 'No data to export',
+        description: 'No agent performance data for the selected filters.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const exportRows = buildAgentAnalyticsExportRows();
+    const periodStart = chartDateRange?.from ? formatDateForInput(chartDateRange.from) : 'all';
+    const periodEnd = chartDateRange?.to
+      ? formatDateForInput(chartDateRange.to)
+      : chartDateRange?.from
+        ? periodStart
+        : 'all';
+
+    setExporting(true);
+    try {
+      await exportAgentAnalyticsExcel(exportRows, {
+        dateRangeLabel: getChartDateRangeLabel(),
+        periodStart,
+        periodEnd,
+        roleLabel: getRoleFilterLabel(),
+        personLabel: getPersonFilterLabel(),
+        metric: selectedMetric,
+      });
+      toast({
+        title: 'Export successful',
+        description: `Exported ${exportRows.length} row(s) for ${getChartDateRangeLabel()}.`,
+      });
+    } catch (error) {
+      console.error('Agent analytics export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const formatValue = (value: number) => {
     if (selectedMetric === 'revenue') {
       return `₱${value.toLocaleString()}`;
@@ -1100,7 +1258,159 @@ export default function AgentAnalyticsTab({
     return value.toLocaleString();
   };
 
+  const formatOrderBreakdownValue = (value: number) => {
+    return selectedMetric === 'revenue' ? `₱${value.toLocaleString()}` : value.toLocaleString();
+  };
 
+  const openPeriodDetail = (row: TimeSeriesDataPoint) => {
+    setSelectedPeriodRow(row);
+    setPeriodDetailOpen(true);
+  };
+
+  const getPeriodDetailMetricTitle = () => {
+    switch (selectedMetric) {
+      case 'revenue': return 'Revenue';
+      case 'orders': return 'Orders';
+      case 'clients': return 'Clients';
+      default: return 'Performance';
+    }
+  };
+
+  const computePeriodAggregateTotals = (row: TimeSeriesDataPoint) => {
+    if (selectedMetric === 'clients') {
+      const total = agents.reduce((sum, agent) => sum + Number(row[agent.id] ?? 0), 0);
+      return { approved: 0, pending: 0, total };
+    }
+    return agents.reduce(
+      (acc, agent) => {
+        const approved = Number(row[orderApprovedKey(agent.id)] ?? 0);
+        const pending = Number(row[orderPendingKey(agent.id)] ?? 0);
+        const agentTotal = Number(row[agent.id] ?? approved + pending);
+        return {
+          approved: acc.approved + approved,
+          pending: acc.pending + pending,
+          total: acc.total + agentTotal,
+        };
+      },
+      { approved: 0, pending: 0, total: 0 }
+    );
+  };
+
+  const renderPeriodSummary = (row: TimeSeriesDataPoint) => {
+    const { approved, pending, total } = computePeriodAggregateTotals(row);
+    const breakdownLabel = selectedMetric === 'revenue' ? 'Revenue' : selectedMetric === 'orders' ? 'Orders' : 'Clients';
+
+    if (selectedMetric === 'clients') {
+      return (
+        <div className="rounded-lg border bg-muted/40 p-4 mb-4">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+            Period total — all agents
+          </p>
+          <p className="text-2xl font-bold">{formatValue(total)}</p>
+          <p className="text-xs text-muted-foreground mt-1">Total new clients in this period</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-lg border bg-muted/40 p-4 mb-4 space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Period total — all agents
+        </p>
+        <div className="grid grid-cols-3 gap-3 text-sm">
+          <div>
+            <p className="text-muted-foreground text-xs">Approved</p>
+            <p className="font-semibold text-blue-600 dark:text-blue-400">
+              {formatOrderBreakdownValue(approved)}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">Pending</p>
+            <p className="font-semibold text-orange-600 dark:text-orange-400">
+              {formatOrderBreakdownValue(pending)}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">Total {breakdownLabel}</p>
+            <p className="text-xl font-bold text-green-600 dark:text-green-400">
+              {formatOrderBreakdownValue(total)}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPeriodDetailContent = (row: TimeSeriesDataPoint) => {
+    if (selectedMetric === 'clients') {
+      return (
+        <>
+          {renderPeriodSummary(row)}
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">By agent</p>
+          <div className="space-y-3 text-sm">
+          {agents.map((agent) => (
+            <div key={agent.id} className="flex items-center justify-between gap-4 py-2 border-b last:border-0">
+              <span className="font-medium flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: agent.color }} />
+                {agent.name}
+              </span>
+              <span className="font-semibold">{formatValue(Number(row[agent.id] ?? 0))}</span>
+            </div>
+          ))}
+          </div>
+        </>
+      );
+    }
+
+    const breakdownLabel = selectedMetric === 'revenue' ? 'Revenue' : 'Orders';
+
+    return (
+      <>
+        {renderPeriodSummary(row)}
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">By agent</p>
+        <div className="space-y-4 text-sm">
+        {agents.map((agent) => {
+          const approved = Number(row[orderApprovedKey(agent.id)] ?? 0);
+          const pending = Number(row[orderPendingKey(agent.id)] ?? 0);
+          const total = Number(row[agent.id] ?? approved + pending);
+          return (
+            <div key={agent.id} className="rounded-lg border p-3 space-y-2">
+              <p className="font-medium flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: agent.color }} />
+                {agent.name}
+              </p>
+              <div className="pl-4 space-y-1.5 text-muted-foreground">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-blue-500" />
+                    Approved:
+                  </span>
+                  <span className="font-medium text-foreground">{formatOrderBreakdownValue(approved)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-orange-500" />
+                    Pending:
+                  </span>
+                  <span className="font-medium text-foreground">{formatOrderBreakdownValue(pending)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t pt-2 mt-1">
+                  <span className="flex items-center gap-1.5 font-medium text-foreground">
+                    <span className="h-2 w-2 rounded-full bg-green-500" />
+                    Total {breakdownLabel}:
+                  </span>
+                  <span className="font-bold text-green-600 dark:text-green-400">
+                    {formatOrderBreakdownValue(total)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        </div>
+      </>
+    );
+  };
 
   return (
     <>
@@ -1109,7 +1419,7 @@ export default function AgentAnalyticsTab({
         <CardHeader>
           <CardTitle>Agent Performance Overview</CardTitle>
           <CardDescription>
-            Compare agent performance across different metrics and time periods
+            Compare agent performance across different metrics and time periods. Click a data point or period label to view details.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1135,6 +1445,7 @@ export default function AgentAnalyticsTab({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="all">All Roles</SelectItem>
                       <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
                       <SelectItem value="team_leader">Team Leaders</SelectItem>
                     </SelectContent>
@@ -1149,7 +1460,7 @@ export default function AgentAnalyticsTab({
                       <SelectValue placeholder="Select person" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All {selectedRole === 'mobile_sales' ? 'Mobile Sales' : 'Team Leaders'}</SelectItem>
+                      <SelectItem value="all">{getAllPeopleLabel(selectedRole)}</SelectItem>
                       {availablePeople.map(person => (
                         <SelectItem key={person.id} value={person.id}>{person.name}</SelectItem>
                       ))}
@@ -1329,6 +1640,20 @@ export default function AgentAnalyticsTab({
                       </PopoverContent>
                     </Popover>
                 </div>
+
+                <Button
+                  variant="outline"
+                  className="w-full h-10 gap-2"
+                  onClick={handleExportExcel}
+                  disabled={exporting || loadingPerformance || timeSeriesData.length === 0 || agents.length === 0}
+                >
+                  {exporting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  Export Excel
+                </Button>
               </CardContent>
             </Card>
 
@@ -1342,22 +1667,37 @@ export default function AgentAnalyticsTab({
                 <ResponsiveContainer width="100%" height={700}>
                   <LineChart data={timeSeriesData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="period" 
-                      tick={{ fontSize: 11 }} 
-                      angle={-45} 
-                      textAnchor="end" 
-                      height={80} 
+                    <XAxis
+                      dataKey="period"
+                      height={80}
+                      tick={(props) => {
+                        const { x, y, payload: tickPayload } = props;
+                        const period = tickPayload?.value as string;
+                        const row = timeSeriesData.find((d) => d.period === period);
+                        return (
+                          <text
+                            x={x}
+                            y={y}
+                            dy={16}
+                            textAnchor="end"
+                            fill="hsl(var(--muted-foreground))"
+                            fontSize={11}
+                            transform={`rotate(-45, ${x}, ${y})`}
+                            className={row ? 'cursor-pointer hover:fill-primary' : undefined}
+                            onClick={() => row && openPeriodDetail(row)}
+                          >
+                            {period}
+                          </text>
+                        );
+                      }}
                     />
                     <YAxis 
                       tick={{ fontSize: 12 }} 
                       domain={[0, 'auto']}
                     />
-                    <Tooltip 
-                      formatter={(value: number) => formatValue(value)}
-                    />
-                    <Legend 
-                      content={(props) => <CustomLegend payload={props.payload} />}
+                    <Tooltip content={() => null} cursor={false} />
+                    <Legend
+                      content={(props) => <CustomLegend payload={props.payload} agents={agents} />}
                     />
                     {agents.map((agent) => (
                       <Line
@@ -1366,8 +1706,33 @@ export default function AgentAnalyticsTab({
                         dataKey={agent.id}
                         stroke={agent.color}
                         strokeWidth={2.5}
-                        dot={{ r: 5, fill: agent.color }}
-                        activeDot={{ r: 7 }}
+                        dot={(dotProps) => {
+                          const { key, cx, cy, payload } = dotProps;
+                          return (
+                            <ClickableChartDot
+                              key={key}
+                              cx={cx}
+                              cy={cy}
+                              payload={payload as TimeSeriesDataPoint | undefined}
+                              fill={agent.color}
+                              onPeriodClick={openPeriodDetail}
+                            />
+                          );
+                        }}
+                        activeDot={(dotProps) => {
+                          const { key, cx, cy, payload } = dotProps;
+                          return (
+                            <ClickableChartDot
+                              key={key}
+                              cx={cx}
+                              cy={cy}
+                              payload={payload as TimeSeriesDataPoint | undefined}
+                              fill={agent.color}
+                              r={7}
+                              onPeriodClick={openPeriodDetail}
+                            />
+                          );
+                        }}
                         name={agent.name}
                         connectNulls
                       />
@@ -1631,6 +1996,25 @@ export default function AgentAnalyticsTab({
           )}
         </CardContent>
       </Card>
+
+      {/* Performance period detail (click chart point or period label) */}
+      <Dialog open={periodDetailOpen} onOpenChange={setPeriodDetailOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
+            <DialogTitle>
+              {selectedPeriodRow?.period} — {getPeriodDetailMetricTitle()}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedMetric === 'clients'
+                ? 'New clients created in this period by agent.'
+                : 'Approved and pending totals by agent (status: approved / pending).'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1 px-6 pb-6 min-h-0">
+            {selectedPeriodRow && renderPeriodDetailContent(selectedPeriodRow)}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Client Visit Dialog */}
       <Dialog open={visitClientDialog} onOpenChange={setVisitClientDialog}>

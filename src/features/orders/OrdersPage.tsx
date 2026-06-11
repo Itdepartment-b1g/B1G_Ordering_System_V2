@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,13 +13,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, FileText, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw } from 'lucide-react';
+import { Search, CheckCircle, XCircle, Eye, Package, ChevronLeft, ChevronRight, CheckSquare, AlertCircle, Filter, Download, Upload, Loader2, RotateCcw, FileDown } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useOrders, type Order } from './OrderContext';
 import { useAuth } from '@/features/auth';
+import { canApproveFinance } from '@/lib/roleUtils';
 import { supabase } from '@/lib/supabase';
-import { exportClientsToExcel } from '@/lib/excel.helpers';
+import {
+  buildOrdersListExportFilename,
+  computeOrderListExportSummary,
+  exportOrdersListExcel,
+  mapOrderToListExportRow,
+} from '@/features/orders/utils/exportOrdersListExcel';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,6 +38,20 @@ import {
 } from "@/components/ui/alert-dialog";
 import * as XLSX from 'xlsx';
 
+/** Zero-value orders skip deposit/remittance requirements (handles "0.00" strings from Supabase). */
+function isZeroValueOrder(order: {
+  total?: number | string | null;
+  subtotal?: number | string | null;
+  tax?: number | string | null;
+  discount?: number | string | null;
+}): boolean {
+  const total = Number(order.total);
+  if (!Number.isNaN(total) && Math.abs(total) < 0.01) return true;
+  const computed =
+    Number(order.subtotal ?? 0) + Number(order.tax ?? 0) - Number(order.discount ?? 0);
+  return !Number.isNaN(computed) && Math.abs(computed) < 0.01;
+}
+
 //orderpage
 export default function OrdersPage() {
   const { getAllOrders, updateOrderStatus } = useOrders();
@@ -34,6 +59,21 @@ export default function OrdersPage() {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("all");
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+  type OrderListTab = 'pending' | 'approved' | 'rejected' | 'all';
+  const [activeOrderTab, setActiveOrderTab] = useState<OrderListTab>('all');
+  const [isExportingOrdersFiltered, setIsExportingOrdersFiltered] = useState(false);
+  const [isExportingOrdersAll, setIsExportingOrdersAll] = useState(false);
+
+  const orderDateRange = useMemo(() => {
+    return getDateRangeFromPreset(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+  }, [dateRangeFilter]);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewingOrder, setViewingOrder] = useState<Order | null>(null);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
@@ -59,9 +99,14 @@ export default function OrdersPage() {
   // Role flags and leader team state
   // Role flags
   const isAdmin = user?.role === 'admin' || user?.role === 'finance' || user?.role === 'super_admin';
-  const isFinance = user?.role === 'finance';
+  /** Sees all company orders (finance, admin, super_admin, accounting) — not the same as approve rights */
+  const canViewCompanyOrders =
+    isAdmin || user?.role === 'accounting';
+  const canApproveAsFinance = canApproveFinance(user?.role);
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
+  /** Same order list visibility as tabs/table — export uses `visibleOrders` / `filterOrders`. */
+  const canExportOrderList = canViewCompanyOrders || isLeader;
   
   // Team member IDs for leader filtering
   const [teamMemberIds, setTeamMemberIds] = useState<string[]>([]);
@@ -191,7 +236,7 @@ export default function OrdersPage() {
 
   // Restrict visible orders based on role
   const visibleOrders = useMemo(() => {
-    if (isAdmin) return orders;
+    if (canViewCompanyOrders) return orders;
     if (isLeader) {
       // Include team leader's own orders + team member orders
       const allAgentIds = user?.id ? [...teamMemberIds, user.id] : teamMemberIds;
@@ -200,7 +245,7 @@ export default function OrdersPage() {
       }
     }
     return [] as Order[];
-  }, [orders, isAdmin, isLeader, teamMemberIds, user?.id]);
+  }, [orders, canViewCompanyOrders, isLeader, teamMemberIds, user?.id]);
 
   // Team summary logic removed
   // Build team agent list (leaders only) from visible orders
@@ -234,6 +279,17 @@ export default function OrdersPage() {
       return d >= start && d < end;
     }).length;
   }, [approvedOrdersAll]);
+
+  /** Approved order value — respects header date filter (matches Product Analytics) */
+  const approvedOrderValueTotal = useMemo(() => {
+    let list = approvedOrdersAll;
+    if (orderDateRange.start || orderDateRange.end) {
+      list = list.filter((o) =>
+        isDateInRange(o.date, orderDateRange.start, orderDateRange.end)
+      );
+    }
+    return list.reduce((sum, o) => sum + o.total, 0);
+  }, [approvedOrdersAll, orderDateRange]);
 
   // Map legacy status + stage to a clearer label for display
   const getStatusLabel = (order: Order) => {
@@ -287,6 +343,19 @@ export default function OrdersPage() {
     if (!orderToApprove) return;
 
     // Safety check: Block approval of cash/cheque orders (FULL or SPLIT) without deposit OR without bank details recorded
+    // Zero-value orders ignore deposit_id (nothing to remit/deposit).
+    let isZeroValue = isZeroValueOrder(orderToApprove);
+    if (!isZeroValue) {
+      const { data: row } = await supabase
+        .from('client_orders')
+        .select('total_amount')
+        .eq('id', orderToApprove.id)
+        .maybeSingle();
+      if (row != null) {
+        isZeroValue = Math.abs(Number(row.total_amount ?? 0)) < 0.01;
+      }
+    }
+
     let hasCashOrCheque = false;
     if (orderToApprove.paymentMode === 'SPLIT' && orderToApprove.paymentSplits) {
       hasCashOrCheque = orderToApprove.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
@@ -294,7 +363,7 @@ export default function OrdersPage() {
       hasCashOrCheque = orderToApprove.paymentMethod === 'CASH' || orderToApprove.paymentMethod === 'CHEQUE';
     }
 
-    if (hasCashOrCheque && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
+    if (!isZeroValue && hasCashOrCheque && (!orderToApprove.depositId || !orderToApprove.depositBankAccount)) {
       toast({
         title: 'Cannot Approve',
         description: orderToApprove.depositId
@@ -491,6 +560,11 @@ export default function OrdersPage() {
     if (selectedPaymentMethod && selectedPaymentMethod !== "all") {
       filtered = filtered.filter(o => orderMatchesPaymentMethod(o, selectedPaymentMethod));
     }
+    if (orderDateRange.start || orderDateRange.end) {
+      filtered = filtered.filter(o =>
+        isDateInRange(o.date, orderDateRange.start, orderDateRange.end)
+      );
+    }
     if (searchQuery) {
       filtered = filtered.filter(o =>
         o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -519,76 +593,140 @@ export default function OrdersPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleExportOrders = async () => {
+  const orderListTabLabels: Record<OrderListTab, string> = {
+    pending: 'Pending (Finance Review)',
+    approved: 'Approved',
+    rejected: 'Rejected',
+    all: 'All Orders',
+  };
+
+  const getFilteredOrdersForExport = (): Order[] => {
+    if (activeOrderTab === 'all') return filterOrders();
+    return filterOrders(activeOrderTab);
+  };
+
+  const paymentMethodLabels: Record<string, string> = {
+    all: 'All payment methods',
+    BANK_TRANSFER: 'Bank Transfer',
+    CASH: 'Cash',
+    CHEQUE: 'Cheque',
+    GCASH: 'GCash',
+  };
+
+  const hasActiveOrderFilters =
+    dateRangeFilter.preset !== 'all' ||
+    searchQuery.trim().length > 0 ||
+    selectedPaymentMethod !== 'all' ||
+    activeOrderTab !== 'all';
+
+  const filteredOrdersForExport = getFilteredOrdersForExport();
+  const canExportFiltered =
+    hasActiveOrderFilters &&
+    filteredOrdersForExport.length > 0 &&
+    !isExportingOrdersFiltered &&
+    !isExportingOrdersAll;
+  const canExportAll =
+    visibleOrders.length > 0 && !isExportingOrdersFiltered && !isExportingOrdersAll;
+
+  const runOrdersListExport = async (
+    ordersToExport: Order[],
+    exportType: 'filtered' | 'all'
+  ) => {
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+    const tabLabel = orderListTabLabels[activeOrderTab];
+    const paymentLabel =
+      paymentMethodLabels[selectedPaymentMethod] ?? selectedPaymentMethod;
+    const searchLabel = searchQuery.trim() ? searchQuery.trim() : null;
+
+    const exportRows = ordersToExport.map((o) => mapOrderToListExportRow(o));
+    const filenamePrefix = buildOrdersListExportFilename(
+      dateRangeFilter,
+      activeOrderTab,
+      exportType
+    );
+    const summary = computeOrderListExportSummary(ordersToExport);
+    await exportOrdersListExcel(exportRows, filenamePrefix, {
+      exportType,
+      tabLabel,
+      dateLabel,
+      paymentLabel,
+      searchLabel: exportType === 'filtered' ? searchLabel : null,
+      orderCount: ordersToExport.length,
+      summary,
+    });
+
+    const scopeNote =
+      exportType === 'filtered'
+        ? `${tabLabel} · ${dateLabel}`
+        : 'All statuses · All time · No filters';
+    toast({
+      title: 'Export successful',
+      description: `Exported ${ordersToExport.length} order(s) · ${scopeNote}.`,
+    });
+  };
+
+  const handleExportOrdersFiltered = async () => {
+    const ordersToExport = filteredOrdersForExport;
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+    const tabLabel = orderListTabLabels[activeOrderTab];
+
+    if (!ordersToExport.length) {
+      toast({
+        title: 'No data to export',
+        description: hasActiveOrderFilters
+          ? `No orders in ${tabLabel} for ${dateLabel}.`
+          : 'Apply a tab, date, search, or payment filter to export filtered orders.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsExportingOrdersFiltered(true);
+    try {
+      await runOrdersListExport(ordersToExport, 'filtered');
+    } catch (error) {
+      console.error('Order list export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingOrdersFiltered(false);
+    }
+  };
+
+  const handleExportOrdersAll = async () => {
     if (!visibleOrders.length) {
       toast({
-        title: 'No Data',
+        title: 'No data to export',
         description: 'There are no orders to export.',
         variant: 'destructive',
       });
       return;
     }
 
-    // One row per order item, including brand/variant, quantity, and pricing strategy
-    const exportData = visibleOrders.flatMap((o) => {
-      // Format payment method for export
-      let paymentMethodStr = o.paymentMethod || '';
-      if (o.paymentMode === 'SPLIT' && o.paymentSplits) {
-        const parts = o.paymentSplits.map(s => {
-          if (s.method === 'BANK_TRANSFER') return s.bank ? `Bank Transfer (${s.bank})` : 'Bank Transfer';
-          if (s.method === 'GCASH') return 'GCash';
-          if (s.method === 'CASH') return 'Cash';
-          if (s.method === 'CHEQUE') return 'Cheque';
-          return s.method;
-        });
-        paymentMethodStr = `Split: ${parts.join(' + ')}`;
-      } else if (o.paymentMethod === 'BANK_TRANSFER' && o.bankType) {
-        paymentMethodStr = `Bank Transfer (${o.bankType})`;
-      } else if (o.paymentMethod === 'GCASH') {
-        paymentMethodStr = 'GCash';
-      } else if (o.paymentMethod === 'CASH') {
-        paymentMethodStr = 'Cash';
-      } else if (o.paymentMethod === 'CHEQUE') {
-        paymentMethodStr = 'Cheque';
-      }
-
-      return o.items.map((item, index) => ({
-        order_number: o.orderNumber,
-        order_item_index: index + 1,
-        agent_id: o.agentId,
-        agent_name: o.agentName,
-        client_id: o.clientId,
-        client_name: o.clientName,
-        order_date: o.date,
-        subtotal: o.subtotal,
-        tax: o.tax,
-        discount: o.discount,
-        total_amount: o.total,
-        status: o.status,
-        stage: o.stage || '',
-        payment_method: paymentMethodStr,
-        bank_type: o.bankType || '',
-        deposit_id: o.depositId || '',
-        notes: o.notes || '',
-        item_brand_name: item.brandName,
-        item_variant_name: item.variantName,
-        item_variant_type: item.variantType,
-        item_quantity: item.quantity,
-        item_unit_price: item.unitPrice,
-        item_pricing_strategy: o.pricingStrategy || '',
-      }));
-    });
-
-    await exportClientsToExcel(
-      exportData,
-      undefined,
-      `orders_export_${new Date().toISOString().split('T')[0]}.csv`,
-    );
-
-    toast({
-      title: 'Export Successful',
-      description: `Successfully exported ${visibleOrders.length} order(s).`,
-    });
+    setIsExportingOrdersAll(true);
+    try {
+      await runOrdersListExport(visibleOrders, 'all');
+    } catch (error) {
+      console.error('Order list export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingOrdersAll(false);
+    }
   };
 
   const handleImportOrders = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -606,7 +744,7 @@ export default function OrdersPage() {
     }
 
     // Only admin / finance / super_admin can import historical orders
-    if (!isAdmin && !isFinance) {
+    if (!isAdmin && !canApproveAsFinance) {
       toast({
         title: 'Not authorized',
         description: 'Only admin or finance can import orders.',
@@ -862,7 +1000,7 @@ export default function OrdersPage() {
       return;
     }
 
-    if (!isAdmin && !isFinance) {
+    if (!isAdmin && !canApproveAsFinance) {
       toast({
         title: 'Not authorized',
         description: 'Only admin or finance can import orders.',
@@ -1246,13 +1384,14 @@ export default function OrdersPage() {
 
     // Check for cash/cheque orders (FULL or SPLIT) without deposits OR without bank details recorded
     const ordersWithoutDeposit = agentOrders.filter(order => {
+      const isZeroValue = isZeroValueOrder(order);
       let hasCashOrCheque = false;
       if (order.paymentMode === 'SPLIT' && order.paymentSplits) {
         hasCashOrCheque = order.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
       } else {
         hasCashOrCheque = order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
       }
-      return hasCashOrCheque && (!order.depositId || !order.depositBankAccount);
+      return !isZeroValue && hasCashOrCheque && (!order.depositId || !order.depositBankAccount);
     });
 
     if (ordersWithoutDeposit.length > 0) {
@@ -1274,6 +1413,7 @@ export default function OrdersPage() {
       for (const order of agentOrders) {
         try {
           // Double-check cash/cheque orders before approval (safety net)
+          const isZeroValue = isZeroValueOrder(order);
           let hasCashOrCheque = false;
           if (order.paymentMode === 'SPLIT' && order.paymentSplits) {
             hasCashOrCheque = order.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE');
@@ -1281,7 +1421,7 @@ export default function OrdersPage() {
             hasCashOrCheque = order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE';
           }
 
-          if (hasCashOrCheque && (!order.depositId || !order.depositBankAccount)) {
+          if (!isZeroValue && hasCashOrCheque && (!order.depositId || !order.depositBankAccount)) {
             console.warn(`Skipping cash/cheque order ${order.orderNumber} - deposit not recorded or bank details missing`);
             skippedCash++;
             continue;
@@ -1355,6 +1495,7 @@ export default function OrdersPage() {
                         {getStatusLabel(order)}
                       </Badge>
                       {(order.stage === 'finance_pending' || order.status === 'pending') && (
+                        !isZeroValueOrder(order) &&
                         (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
                       ) && (
                         order.depositId && order.depositBankAccount ? (
@@ -1434,6 +1575,7 @@ export default function OrdersPage() {
                         <div className="flex flex-col gap-1">
                           <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
                           {(order.stage === 'finance_pending' || (order.status === 'pending' && order.stage !== 'needs_revision')) && (
+                            !isZeroValueOrder(order) &&
                             (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
                           ) && (
                             order.depositId && order.depositBankAccount ? (
@@ -1525,7 +1667,7 @@ export default function OrdersPage() {
       </>
     );
   };
-  if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'super_admin' && user.role !== 'team_leader')) {
+  if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'accounting' && user.role !== 'super_admin' && user.role !== 'team_leader')) {
     return (
       <div className="p-8 text-center">
         <h1 className="text-2xl font-bold text-red-600">Access Denied</h1>
@@ -1540,39 +1682,57 @@ export default function OrdersPage() {
         <div>
           <h1 className="text-3xl font-bold">Order Management</h1>
           <p className="text-muted-foreground">
-            {isLeader 
-              ? 'View and monitor orders from your team members' 
-              : 'Review and approve purchase orders from sales agents'}
+            {isLeader
+              ? 'View and monitor orders from your team members'
+              : user?.role === 'accounting'
+                ? 'View purchase orders from sales agents (read-only)'
+                : 'Review and approve purchase orders from sales agents'}
           </p>
         </div>
-        {(isAdmin || isFinance) && (
+        {(canExportOrderList || isAdmin || canApproveAsFinance) && (
           <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
-            <Button variant="outline" onClick={handleDownloadOrderTemplate} className="gap-2">
-              <Download className="h-4 w-4" />
-              Template
-            </Button>
-            <div className="relative">
-              <input
-                type="file"
-                ref={importOrdersInputRef}
-                onChange={handleImportOrders}
-                accept=".csv,.xlsx,.xls"
-                className="hidden"
-              />
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => importOrdersInputRef.current?.click()}
-              >
-                <Upload className="h-4 w-4" />
-                Import
-              </Button>
-            </div>
-            <Button variant="outline" onClick={handleExportOrders} className="gap-2">
-              <FileText className="h-4 w-4" />
-              Export
-            </Button>
-            {isFinance && (
+            {(isAdmin || canApproveAsFinance) && (
+              <div className="relative">
+                <input
+                  type="file"
+                  ref={importOrdersInputRef}
+                  onChange={handleImportOrders}
+                  accept=".csv,.xlsx,.xls"
+                  className="hidden"
+                />
+              </div>
+            )}
+            {canExportOrderList ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={handleExportOrdersFiltered}
+                  disabled={!canExportFiltered}
+                  className="gap-2"
+                >
+                  {isExportingOrdersFiltered ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  {isExportingOrdersFiltered ? 'Exporting...' : 'Export filtered'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleExportOrdersAll}
+                  disabled={!canExportAll}
+                  className="gap-2"
+                >
+                  {isExportingOrdersAll ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  {isExportingOrdersAll ? 'Exporting...' : 'Export all'}
+                </Button>
+              </>
+            ) : null}
+            {canApproveAsFinance && (
               <Button onClick={handleOpenBulkApprove} className="gap-2">
                 <CheckSquare className="h-4 w-4" />
                 Bulk Approve Orders
@@ -1603,11 +1763,11 @@ export default function OrdersPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <p className="text-sm font-medium">Total Value</p>
+            <p className="text-sm font-medium">Approved Order Value</p>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              ₱{visibleOrders.reduce((sum, o) => sum + o.total, 0).toLocaleString()}
+              ₱{approvedOrderValueTotal.toLocaleString()}
             </div>
           </CardContent>
         </Card>
@@ -1648,11 +1808,16 @@ export default function OrdersPage() {
                 className="pl-10"
               />
             </div>
+            <DateRangeFilterPopover
+              value={dateRangeFilter}
+              onChange={setDateRangeFilter}
+              triggerClassName="w-full md:w-[220px] justify-between h-10 shrink-0"
+            />
             <Select
               value={selectedPaymentMethod}
               onValueChange={setSelectedPaymentMethod}
             >
-              <SelectTrigger className="w-full md:w-[200px]">
+              <SelectTrigger className="w-full md:w-[200px] shrink-0">
                 <div className="flex items-center gap-2">
                   <Filter className="h-4 w-4 text-muted-foreground" />
                   <SelectValue placeholder="Filter Method" />
@@ -1669,7 +1834,7 @@ export default function OrdersPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="all" className="w-full">
+          <Tabs value={activeOrderTab} onValueChange={(v) => setActiveOrderTab(v as OrderListTab)} className="w-full">
             <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto p-1 bg-muted">
               <TabsTrigger value="pending" className="data-[state=active]:bg-background">
                 <div className="flex flex-col items-center gap-1 py-1">
@@ -2139,11 +2304,16 @@ export default function OrdersPage() {
                 ) : null
               )}
 
-              {isFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
+              {canApproveAsFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
                 (() => {
-                  const hasCashOrChequeComponent = viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits
-                    ? viewingOrder.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE')
-                    : viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE';
+                  // Zero-value orders have nothing to remit/deposit, so deposit checks are bypassed.
+                  const isFreeOfCharge = isZeroValueOrder(viewingOrder);
+
+                  const hasCashOrChequeComponent = !isFreeOfCharge && (
+                    viewingOrder.paymentMode === 'SPLIT' && viewingOrder.paymentSplits
+                      ? viewingOrder.paymentSplits.some(s => s.method === 'CASH' || s.method === 'CHEQUE')
+                      : viewingOrder.paymentMethod === 'CASH' || viewingOrder.paymentMethod === 'CHEQUE'
+                  );
 
                   const needsDeposit = hasCashOrChequeComponent && !viewingOrder.depositId;
                   const needsBankDetails = hasCashOrChequeComponent && viewingOrder.depositId && !viewingOrder.depositBankAccount;

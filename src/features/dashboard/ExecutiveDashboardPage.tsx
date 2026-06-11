@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react';
+import { useState, Fragment, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -21,7 +21,9 @@ import {
     Award,
     RefreshCw,
     Calendar,
-    ChevronDown
+    ChevronDown,
+    Package,
+    LayoutGrid,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -48,6 +50,14 @@ import {
     useExecutiveRecentActivity,
     useExecutiveBrandPerformance
 } from './executiveHooks';
+import {
+    useExecutiveMainInventory,
+    useExecutiveLeaderInventory,
+    useExecutiveTeamLeaders,
+    type ExecutiveMainStockMode,
+    type ExecutiveStockLayer,
+} from './executiveInventoryHooks';
+import { ExecutiveInventoryBoard } from './components/ExecutiveInventoryBoard';
 import { useExecutiveRealtime } from './useExecutiveRealtime';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, BarChart, Bar } from 'recharts';
 
@@ -123,6 +133,9 @@ export default function ExecutiveDashboardPage() {
     const [showCustomPicker, setShowCustomPicker] = useState(false);
     const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
     const [selectedBrandFilter, setSelectedBrandFilter] = useState<string | null>(null);
+    const [inventoryStockLayer, setInventoryStockLayer] = useState<ExecutiveStockLayer>('main');
+    const [inventoryMainMode, setInventoryMainMode] = useState<ExecutiveMainStockMode>('available');
+    const [selectedLeaderId, setSelectedLeaderId] = useState<string | null>(null);
 
     // Get date range from preset
     const dateRange = getDateRange(datePreset, customStartDate, customEndDate);
@@ -169,6 +182,32 @@ export default function ExecutiveDashboardPage() {
     const { data: topPerformers, isLoading: performersLoading, refetch: refetchPerformers } = useExecutiveTopPerformers(startDate, endDate, filteredCompanyIds, 10);
     const { data: activity, isLoading: activityLoading, refetch: refetchActivity } = useExecutiveRecentActivity(startDate, endDate, filteredCompanyIds, 15);
     const { data: brandPerformance, isLoading: brandPerformanceLoading, refetch: refetchBrandPerformance } = useExecutiveBrandPerformance(startDate, endDate, filteredCompanyIds, selectedBrandFilter);
+
+    const inventoryCompanyId = selectedCompanyId;
+    const assignedCompanies = companiesData?.companies || [];
+    const selectedCompany = assignedCompanies.find((c) => c.id === inventoryCompanyId);
+    const { data: mainInventoryBrands = [], isLoading: mainInventoryLoading, refetch: refetchMainInventory } = useExecutiveMainInventory(inventoryCompanyId);
+    const { data: teamLeaders = [], isLoading: teamLeadersLoading, refetch: refetchTeamLeaders } = useExecutiveTeamLeaders(inventoryCompanyId);
+    const { data: leaderInventoryBrands = [], isLoading: leaderInventoryLoading, refetch: refetchLeaderInventory } = useExecutiveLeaderInventory(
+        inventoryCompanyId,
+        inventoryStockLayer === 'team_leader' ? selectedLeaderId : null
+    );
+
+    useEffect(() => {
+        setSelectedLeaderId(null);
+    }, [inventoryCompanyId]);
+
+    useEffect(() => {
+        if (inventoryStockLayer !== 'team_leader') return;
+        if (selectedLeaderId || teamLeaders.length === 0) return;
+        setSelectedLeaderId(teamLeaders[0].id);
+    }, [inventoryStockLayer, selectedLeaderId, teamLeaders]);
+
+    const inventoryBrands = inventoryStockLayer === 'main' ? mainInventoryBrands : leaderInventoryBrands;
+    const inventoryLoading =
+        inventoryStockLayer === 'main'
+            ? mainInventoryLoading
+            : teamLeadersLoading || leaderInventoryLoading;
 
     // Calculate pie chart data
     const pieData = stats ? [
@@ -339,7 +378,10 @@ export default function ExecutiveDashboardPage() {
                 refetchTrends(),
                 refetchPerformers(),
                 refetchActivity(),
-                refetchBrandPerformance()
+                refetchBrandPerformance(),
+                inventoryCompanyId ? refetchMainInventory() : Promise.resolve(),
+                inventoryCompanyId ? refetchTeamLeaders() : Promise.resolve(),
+                inventoryCompanyId && selectedLeaderId ? refetchLeaderInventory() : Promise.resolve(),
             ]);
         } finally {
             setIsRefreshing(false);
@@ -628,6 +670,41 @@ export default function ExecutiveDashboardPage() {
                             ))}
                         </div>
                     </div>
+                </CardContent>
+            </Card>
+
+            {/* Inventory Stock Board */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <Package className="h-5 w-5" />
+                        Inventory Stock
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    {!inventoryCompanyId ? (
+                        <div className="rounded-lg border border-dashed border-border bg-muted/30 py-12 text-center text-muted-foreground">
+                            <LayoutGrid className="mx-auto mb-3 h-10 w-10 opacity-40" aria-hidden />
+                            <p className="font-medium text-foreground">Select a company above to view inventory</p>
+                            <p className="mt-1 text-sm">
+                                Main stock (available / overall) and team leader hub stock are shown per company.
+                            </p>
+                        </div>
+                    ) : (
+                        <ExecutiveInventoryBoard
+                            companyName={selectedCompany?.company_name ?? 'Selected company'}
+                            brands={inventoryBrands}
+                            loading={inventoryLoading}
+                            stockLayer={inventoryStockLayer}
+                            onStockLayerChange={setInventoryStockLayer}
+                            mainMode={inventoryMainMode}
+                            onMainModeChange={setInventoryMainMode}
+                            teamLeaders={teamLeaders}
+                            loadingTeamLeaders={teamLeadersLoading}
+                            selectedLeaderId={selectedLeaderId}
+                            onLeaderChange={setSelectedLeaderId}
+                        />
+                    )}
                 </CardContent>
             </Card>
 

@@ -108,7 +108,8 @@ Provide a helpful response:`;
         throw new Error('Gemini API key not configured');
       }
 
-      const modelNames = ["gemini-2.5-flash"] as const;
+      // const modelNames = ["gemini-2.5-flash"] as const;
+      const modelNames = ["gemini-3-flash-preview"] as const;
       const modelName = modelNames[0];
 
       const response = await fetch(

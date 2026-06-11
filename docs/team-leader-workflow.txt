@@ -1,0 +1,384 @@
+================================================================================
+  TEAM LEADER ROLE — WORKFLOW OVERVIEW
+  B1G Ordering System
+================================================================================
+
+This document describes how the Team Leader role (team_leader) works: navigation,
+daily operations, team oversight, inventory, orders, remittances, and how the
+leader connects mobile sales agents to admin and finance.
+
+Related: docs/mobile-sales-workflow.txt, docs/order-correction-options.md
+
+
+--------------------------------------------------------------------------------
+ROLE IDENTITY
+--------------------------------------------------------------------------------
+
+  Database role ............... team_leader
+  Display name .............. Team Leader
+  Hierarchy level ........... 50 (above mobile_sales, below manager)
+  Has personal inventory .... Yes (same as mobile_sales and manager)
+  Can lead a team ........... Yes (canLeadTeam)
+  Reports to ................ Manager (via leader_teams) or Admin assignment
+
+Team leaders supervise mobile_sales agents assigned in leader_teams
+(agent_id -> leader_id). Admins assign agents to leaders (Team Management);
+leaders do not add/remove agents themselves in normal UI.
+
+
+--------------------------------------------------------------------------------
+NAVIGATION (SIDEBAR)
+--------------------------------------------------------------------------------
+
+Team leaders use the leader menu in the app sidebar.
+
+  Screen                    Route                         Purpose
+  ------------------------  ----------------------------  -------------------------
+  Dashboard                 /dashboard                    Team KPIs and pending actions
+  My Team                   /my-team                      Assigned mobile sales agents
+  Analytics                 /analytics                    Team performance reports
+  My Inventory              /my-inventory                 Leader's own stock
+  Request Stock             /leader-inventory/request     Request stock from admin/main
+  Teams Inventory           /leader-inventory             Team + leader stock overview
+  Pending Requests          /inventory/pending-requests   Approve/deny agent stock requests
+  Team Remittances          /inventory/team-remittances   Agent end-of-day remittances
+  Cash Deposits             /inventory/cash-deposits      Record bank deposits for cash/cheque orders
+  Today's Tasks             /tasks                        Assign and monitor field tasks
+  Archive Tasks             /tasks/archive                Historical tasks
+  My Clients                /my-clients                   Leader's own clients
+  My Team's Clients         /my-teams                     All clients held by team agents
+  My Team's Attendance      /team-attendances             View agent check-in/out (read-only)
+  My Orders                 /my-orders                    Orders the leader created
+  Order Management          /leader-orders                View/monitor team orders (no finance approve)
+  Team Activity             /system-history               Audit log for team actions
+  Calendar                  /calendar                     Team tasks on shared calendar
+  Profile                   /profile                      Account settings
+
+Extra route (not always in sidebar submenu):
+  TL Stock Requests         /inventory/tl-stock-requests  Request stock from another team leader
+                              (team_leader role only)
+
+NOT available to team leaders:
+  - Admin client database (/clients), pending client approval page
+  - Finance global order list with bulk approve (/orders) — finance/admin use that
+  - Main inventory admin screens, stock allocations, war room
+  - Team Management (assign agents) — admin/super_admin
+  - Manager dashboards and manager-only inventory/remittance pages
+
+
+--------------------------------------------------------------------------------
+ORGANIZATION MODEL
+--------------------------------------------------------------------------------
+
+  Admin / Super Admin
+    - Assigns mobile_sales agents TO this team leader (leader_teams)
+    - Allocates stock from main inventory to team leader
+    - Approves combined stock requests forwarded by leader
+    - Approves clients registered outside city rules (same as for agents)
+
+  Manager (if used)
+    - Parent of team leader in hierarchy
+    - May assign team leaders under manager
+
+  Team Leader (you)
+    - Supervises mobile_sales agents on My Team
+    - Approves or forwards agent stock requests
+    - Distributes stock to agents after admin fulfillment
+    - Receives end-of-day cash remittances from agents
+    - Records cash/cheque bank deposits so finance can approve orders
+    - Assigns tasks; views team attendance, clients, orders, analytics
+
+  Mobile Sales Agent
+    - Reports to you via leader_teams
+    - Requests stock, remits cash, creates orders for clients
+
+  Finance
+    - Approves bank/GCash orders and final order approval (admin_approved path)
+    - Needs deposit recorded by YOU before cash/cheque orders can be approved
+
+
+--------------------------------------------------------------------------------
+TYPICAL DAY — END TO END
+--------------------------------------------------------------------------------
+
+1. MORNING — DASHBOARD & TEAM PULSE (/dashboard)
+   --------------------------------------------
+   Leader dashboard (useLeaderStats) shows:
+   - Team member count
+   - Team orders, clients, revenue (today / week)
+   - Pending stock requests from agents (status = pending)
+   - Recent agent remittances
+   - Pending leader-side order counts
+
+   Use this to prioritize: agent stock requests, unprocessed remittances,
+   agents with pending cash orders needing deposits.
+
+
+2. TEAM OVERSIGHT — MY TEAM (/my-team)
+   ------------------------------------
+   - List of mobile_sales assigned via leader_teams
+   - Per-agent stats: orders, sales, contact info, region
+   - Assigned hub names (hubs linked to leader for attendance)
+   - View-only for roster; assignment changes are done by Admin in Team Management
+
+
+3. ATTENDANCE — MY TEAM'S ATTENDANCE (/team-attendances)
+   ------------------------------------------------------
+   - Read-only view of each agent's agent_attendances rows
+   - Present / absent / non-working, time in/out, total hours
+   - Leaders do NOT check in on behalf of agents; agents use /attendance
+
+
+4. TASKS — TASK MANAGEMENT (/tasks, /tasks/archive)
+   -------------------------------------------------
+   - Create tasks assigned to a team member (mobile_sales)
+   - Set priority, due date/time, optional client link, notes, attachment
+   - View today's tasks grouped by agent; filter by status/priority
+   - Archive for historical tasks
+   - Calendar (/calendar) shows team tasks with color per agent; leaders see
+     team view; only agents mark their own tasks completed on calendar
+
+
+5. CLIENTS
+   ----------
+   My Clients (/my-clients):
+   - Leader's own client portfolio (same rules as agents)
+   - New clients auto-approved for team_leader (no city pending gate)
+   - Can delete clients (unlike mobile_sales)
+
+   My Team's Clients (/my-teams):
+   - All clients where agent_id is one of your team members
+   - Filter by agent, city; view/edit team client records
+   - Monitor approval_status for agent-added clients pending admin
+
+
+6. INVENTORY — STOCK FOR LEADER AND TEAM
+   --------------------------------------
+
+   A) Request Stock (/leader-inventory/request)
+      - Leader requests stock from main/admin pool (not from self)
+      - New leader requests auto-set to approved_by_leader so admin can process
+      - Uses CreateStockRequestDialog (isMobileRequest = false)
+
+   B) Pending Requests (/inventory/pending-requests)
+      Tabs / actions for agent requests (status pending):
+      - APPROVE: RPC approve_stock_request_by_leader
+        -> allocates from leader inventory to agent if leader has stock
+        -> notifies agent
+      - FORWARD: RPC forward_stock_request_with_leader_qty
+        -> optional leader_additional_quantity for leader's own need
+        -> sends combined request to admin for approval
+        -> notifies agent
+      - DENY: RPC reject_stock_request
+
+      After admin approves forwarded requests:
+      - "Ready" / fulfilled requests appear for leader to ALLOCATE to agent
+        (distribute agent portion after combined fulfillment)
+
+   C) Teams Inventory (/leader-inventory)
+      - Leader's own stock + per-agent agent_inventory
+      - Allocate stock manually to a team member
+      - Return stock to main (Return to Admin) — reduces allocated_stock
+      - Incoming TL Requests section (stock from other team leaders)
+      - Return Requests section — approve/reject agent returns to leader
+
+   D) My Inventory (/my-inventory)
+      - Leader's personal stock, orders, remittance (if leader sells in field)
+      - Return to Main (leader -> main inventory)
+      - End-of-day remittance if leader operates like an agent (to manager/leader)
+      - Return inventory to upstream (manager) where applicable
+
+   E) TL Stock Requests (/inventory/tl-stock-requests) — optional advanced flow
+      - Request stock from another team leader's inventory via manager path
+      - Receive with signature when fulfilled
+
+
+7. ORDERS — TEAM AND LEADER
+   -------------------------
+
+   My Orders (/my-orders):
+   - Leader can create orders for own clients
+   - Pricing: team_leader_allowed_pricing (System Settings)
+   - Can customize pricing (rsp/dsp/special) unlike mobile_sales-only options
+   - Cash/cheque leader orders auto-create pending cash_deposits records
+
+   Order Management (/leader-orders):
+   - VIEW AND MONITOR only for team leader (not finance final approve)
+   - Sees own orders + all team member orders (leader_teams agent_ids + self)
+   - Summary cards: pending, approved this month, total value
+   - Per-agent order counts panel
+
+   Cash/cheque order pipeline (team agents):
+   1) Agent creates order -> stage agent_pending
+   2) Agent end-of-day remits cash to leader
+   3) Leader records deposit on Cash Deposits (bank account, reference, slip)
+   4) Finance/admin approves on /orders when deposit_id and bank details exist
+
+   Bank/GCash agent orders -> finance_pending (skip leader cash path)
+
+   Leaders do NOT use finance bulk approve on /orders; that is finance/admin.
+
+
+8. CASH DEPOSITS (/inventory/cash-deposits)
+   -----------------------------------------
+   - Record deposits for cash and cheque payments from team (and own orders)
+   - Upload deposit slip, bank account, reference number
+   - Links orders via deposit_id so finance can approve
+   - canViewCashDeposits includes team_leader
+
+   Critical: cash/cheque orders cannot be finance-approved until leader
+   completes deposit details.
+
+
+9. TEAM REMITTANCES (/inventory/team-remittances)
+   -----------------------------------------------
+   - Review remittances_log submitted by mobile_sales at end of day
+   - See agent signature, unsold stock confirmation, cash orders remitted
+   - Accept / process agent remittance packages
+   - Real-time updates when agents submit
+
+   This closes the loop started by AgentRemittanceReminder on agent side (6:30 PM).
+
+
+10. ANALYTICS (/analytics)
+    ----------------------
+    - Team-scoped KPIs: revenue, orders, agents, cities, products
+    - Filtered to agents under this leader (teamAgentIds)
+    - Drill into agent/city/client performance
+    - AI analysis features when enabled for role
+
+
+11. TEAM ACTIVITY (/system-history)
+    --------------------------------
+    - Audit trail focused on team-related actions
+    - Complements dashboard notifications
+
+
+--------------------------------------------------------------------------------
+STOCK REQUEST FLOW (LEADER + AGENT + ADMIN)
+--------------------------------------------------------------------------------
+
+  Mobile Sales                    Team Leader                      Admin
+  -----------                     -----------                      -----
+  Request stock          -->      Pending Requests
+  (mobile-request)                |
+                                  |-- Approve (if leader has stock)
+                                  |     -> stock to agent_inventory
+                                  |
+                                  |-- Forward (+ optional leader qty)
+                                  |     -> approved_by_leader / forwarded
+                                  |                          --> Approve main
+                                  |                          --> Fulfill
+                                  |     Allocate to agent <-- (ready tab)
+                                  |
+                                  |-- Deny -> rejected
+
+  Team Leader own request  -->  leader-inventory/request  -->  Admin approves
+                                (auto approved_by_leader)
+
+
+--------------------------------------------------------------------------------
+ORDER STAGE REFERENCE (WHAT LEADER TOUCHES)
+--------------------------------------------------------------------------------
+
+  Stage / area              Leader role
+  ------------------------  ------------------------------------------
+  agent_pending             Agent cash order; leader receives remittance,
+                            records deposit — does not "approve" stage here
+  finance_pending           Finance approves; leader may view on leader-orders
+  leader_approved           Display status after leader step in chain (if used)
+  admin_approved            Final approved sale
+  needs_revision            Finance/admin may send back; leader views
+
+  leader-orders: monitor. Cash Deposits: operational requirement before finance.
+
+
+--------------------------------------------------------------------------------
+PERMISSIONS: TEAM LEADER vs MOBILE SALES
+--------------------------------------------------------------------------------
+
+  Capability                         Team Leader    Mobile Sales
+  ---------------------------------  -------------  --------------
+  View team orders/clients           Yes            Own only
+  Assign agents to team              No (admin)     N/A
+  Auto-approve own new clients       Always         City match only
+  Delete clients                     Yes            No
+  Assign tasks to agents             Yes            No
+  Approve/forward stock requests     Yes            No
+  Receive agent cash remittance      Yes            No
+  Record cash deposits               Yes            No
+  View team attendance               Yes (read)     Own only
+  Order Management (/leader-orders)  View/monitor   N/A
+  Finance approve orders             No             No
+  Analytics (team scope)             Yes            No
+  Return stock to main               Yes            No (return to leader)
+  Request stock from admin           Yes            From leader only
+  TL-to-TL stock request             Yes            No
+  Customize order pricing            Yes            Company-limited
+
+
+--------------------------------------------------------------------------------
+PERMISSIONS: TEAM LEADER vs MANAGER
+--------------------------------------------------------------------------------
+
+  Managers use /manager-dashboard, /manager-teams, /manager-inventory,
+  /manager-requests, /manager-remittances, /manager-clients — broader multi-team
+  scope. Team leaders operate on a single leader_teams roster only.
+
+
+--------------------------------------------------------------------------------
+HAPPY PATH CHECKLIST (TEAM LEADER)
+--------------------------------------------------------------------------------
+
+  1. Open dashboard — check pending stock requests and remittances.
+  2. Review team attendance and task plan for the day.
+  3. Create/assign tasks on /tasks for field agents.
+  4. Process Pending Requests — approve from leader stock or forward to admin.
+  5. After admin fulfillment, allocate stock to agents on Pending Requests / Teams Inventory.
+  6. Monitor My Team's Clients and assist with pending client approvals (admin).
+  7. Review agent orders on Order Management; ensure cash orders get deposits recorded.
+  8. Receive and review Team Remittances as agents close the day.
+  9. Record Cash Deposits for remitted cash/cheque so finance can approve orders.
+  10. Request own stock from admin if leader inventory is low.
+  11. Use Analytics for weekly team performance review.
+
+
+--------------------------------------------------------------------------------
+MAIN CODE LOCATIONS (FOR DEVELOPERS)
+--------------------------------------------------------------------------------
+
+  Sidebar / routes ........ AppSidebar.tsx (leaderMenuItems), App.tsx
+  Role helpers ............ roleUtils.ts (canLeadTeam, canViewCashDeposits)
+  Dashboard ............... DashboardPage.tsx, dashboardHooks.ts (useLeaderStats)
+  My Team ................. MyTeamPage.tsx
+  Team clients ............ MyTeamsPage.tsx
+  Team attendance ......... team-attendances/TeamAttendancesPage.tsx
+  Tasks ................... TasksPage.tsx, ArchiveTasksPage.tsx
+  Calendar ................ CalendarPage.tsx (hasTeamView for leader)
+  Pending stock requests .. PendingRequestsPage.tsx
+  Leader inventory ........ LeaderInventoryPage.tsx
+  Leader stock request .... LeaderStockRequestPage.tsx
+  TL stock requests ....... TLStockRequestPage.tsx
+  Team remittances ........ LeaderRemittancePage.tsx
+  Cash deposits ........... LeaderCashDepositsPage.tsx
+  Orders (monitor) ........ OrdersPage.tsx (/leader-orders)
+  My orders ............... MyOrdersPage.tsx
+  Analytics ............... AnalyticsPage.tsx
+  Stock pre-order RPC ..... implement_stock_preorder_system.sql
+  Assign agent ............ assign_agent_to_leader (admin only)
+
+
+--------------------------------------------------------------------------------
+KNOWN GAPS / NOTES
+--------------------------------------------------------------------------------
+
+  - Team roster assignment is admin-only (Team Management), not self-service
+    on My Team page.
+  - leader-orders does not let team_leader call finance approve; deposit + finance
+    path required for cash/cheque.
+  - Order reject inventory restore: see order-correction-options.md.
+  - Incoming TL stock transfer is a separate workflow from standard agent requests.
+
+================================================================================
+  End of document
+================================================================================
