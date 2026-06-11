@@ -97,6 +97,8 @@ export default function DashboardPage() {
     overallSales = 0,
     approvedSales = 0,
     pendingSales = 0,
+    pendingSalesPending = 0,
+    pendingSalesNeedsRevision = 0,
     myCommission = 0
   } = agentStats || {};
 
@@ -629,12 +631,21 @@ export default function DashboardPage() {
 
           {/* Sales Breakdown Card */}
           <Card className="border-l-4 border-l-yellow-500">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
-              <Clock className="h-4 w-4 text-yellow-600" />
+            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+              <div className="space-y-1 pr-2">
+                <CardTitle className="text-sm font-medium">Pending Sales</CardTitle>
+        
+              </div>
+              <Clock className="h-4 w-4 text-yellow-600 shrink-0" />
             </CardHeader>
             <CardContent>
               <div className="text-xl md:text-2xl font-bold text-yellow-600">₱{pendingSales.toLocaleString()}</div>
+
+              <p className="text-xs text-muted-foreground leading-snug">
+                  <span className="text-yellow-700/90">Pending ₱{pendingSalesPending.toLocaleString()}</span>
+                  {' + '}
+                  <span className="text-yellow-700/90">Needs revision ₱{pendingSalesNeedsRevision.toLocaleString()}</span>
+                </p>
               <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
             </CardContent>
           </Card>
