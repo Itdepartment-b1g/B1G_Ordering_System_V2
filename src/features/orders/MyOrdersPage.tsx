@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,14 +6,31 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, Calendar, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2 } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, ShoppingCart, X, FileSignature, ChevronLeft, ChevronRight, CreditCard, Camera, RotateCcw, Smartphone, CheckCircle, Split, Pencil, Loader2, FileDown, Filter, Download, ChevronDown } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { useOrders, type OrderItem, type PaymentSplit } from './OrderContext';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { useOrders, type Order, type OrderItem, type PaymentSplit } from './OrderContext';
+import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  buildOrdersListExportFilename,
+  computeOrderListExportSummary,
+  exportOrdersListExcel,
+  mapOrderToListExportRow,
+} from '@/features/orders/utils/exportOrdersListExcel';
 import { useAuth } from '@/features/auth';
 import { useAgentInventory } from '@/features/inventory/hooks';
 import { supabase } from '@/lib/supabase';
@@ -61,6 +78,31 @@ function getVariantTypeStyle(type: string, index: number) {
 
 function formatTypeName(type: string) {
   return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+type MyOrdersStatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'needs_revision';
+
+const MY_ORDERS_STATUS_LABELS: Record<MyOrdersStatusFilter, string> = {
+  all: 'All statuses',
+  pending: 'Pending',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  needs_revision: 'Needs revision',
+};
+
+function orderMatchesStatusFilter(order: Order, filter: MyOrdersStatusFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'needs_revision') return order.stage === 'needs_revision';
+  if (filter === 'pending') {
+    return order.status === 'pending' && order.stage !== 'needs_revision';
+  }
+  if (filter === 'approved') {
+    return order.status === 'approved' || order.stage === 'admin_approved';
+  }
+  if (filter === 'rejected') {
+    return order.status === 'rejected' || order.stage === 'leader_rejected' || order.stage === 'admin_rejected';
+  }
+  return true;
 }
 
 export default function MyOrdersPage() {
@@ -143,9 +185,13 @@ export default function MyOrdersPage() {
     }
   };
 
-  // Date filter state
-  const [dateFilterStart, setDateFilterStart] = useState('');
-  const [dateFilterEnd, setDateFilterEnd] = useState('');
+  // List filters
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+  const [statusFilter, setStatusFilter] = useState<MyOrdersStatusFilter>('all');
+  const [isExportingOrdersFiltered, setIsExportingOrdersFiltered] = useState(false);
+  const [isExportingOrdersAll, setIsExportingOrdersAll] = useState(false);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -357,22 +403,139 @@ export default function MyOrdersPage() {
     }
   }, [user?.company_id, user?.role, toast]);
 
+  const orderDateRange = useMemo(() => {
+    return getDateRangeFromPreset(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+  }, [dateRangeFilter]);
+
   // Apply all filters
   const filteredOrders = myOrders.filter(order => {
-    const searchMatch = order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.clientName.toLowerCase().includes(searchQuery.toLowerCase());
+    const query = searchQuery.trim().toLowerCase();
+    const searchMatch =
+      !query ||
+      order.orderNumber.toLowerCase().includes(query) ||
+      order.clientName.toLowerCase().includes(query);
 
-    // Date filter
-    if (dateFilterStart && dateFilterEnd) {
-      const orderDate = new Date(order.date);
-      const startDate = new Date(dateFilterStart);
-      const endDate = new Date(dateFilterEnd);
-      endDate.setHours(23, 59, 59, 999); // Include the entire end date
-      return searchMatch && orderDate >= startDate && orderDate <= endDate;
+    const dateMatch = isDateInRange(order.date, orderDateRange.start, orderDateRange.end);
+    const statusMatch = orderMatchesStatusFilter(order, statusFilter);
+
+    return searchMatch && dateMatch && statusMatch;
+  });
+
+  const hasActiveOrderFilters =
+    dateRangeFilter.preset !== 'all' ||
+    searchQuery.trim().length > 0 ||
+    statusFilter !== 'all';
+
+  const canExportFiltered =
+    hasActiveOrderFilters &&
+    filteredOrders.length > 0 &&
+    !isExportingOrdersFiltered &&
+    !isExportingOrdersAll;
+
+  const canExportAll =
+    myOrders.length > 0 && !isExportingOrdersFiltered && !isExportingOrdersAll;
+
+  const runOrdersListExport = async (
+    ordersToExport: Order[],
+    exportType: 'filtered' | 'all'
+  ) => {
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+    const searchLabel = searchQuery.trim() ? searchQuery.trim() : null;
+
+    const exportRows = ordersToExport.map((o) => mapOrderToListExportRow(o));
+    const filenamePrefix = buildOrdersListExportFilename(
+      dateRangeFilter,
+      'all',
+      exportType
+    );
+    const summary = computeOrderListExportSummary(ordersToExport);
+    await exportOrdersListExcel(exportRows, filenamePrefix, {
+      exportType,
+      tabLabel: 'My Orders',
+      dateLabel,
+      paymentLabel: 'All payment methods',
+      searchLabel: exportType === 'filtered' ? searchLabel : null,
+      orderCount: ordersToExport.length,
+      summary,
+    });
+
+    const statusLabel = MY_ORDERS_STATUS_LABELS[statusFilter];
+    const scopeNote =
+      exportType === 'filtered'
+        ? `My Orders · ${statusLabel} · ${dateLabel}`
+        : 'All orders · All time · No filters';
+    toast({
+      title: 'Export successful',
+      description: `Exported ${ordersToExport.length} order(s) · ${scopeNote}.`,
+    });
+  };
+
+  const handleExportOrdersFiltered = async () => {
+    const ordersToExport = filteredOrders;
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+
+    if (!ordersToExport.length) {
+      toast({
+        title: 'No data to export',
+        description: hasActiveOrderFilters
+          ? 'No orders match your current filters.'
+          : 'Apply a status, date, or search filter to export filtered orders.',
+        variant: 'destructive',
+      });
+      return;
     }
 
-    return searchMatch;
-  });
+    setIsExportingOrdersFiltered(true);
+    try {
+      await runOrdersListExport(ordersToExport, 'filtered');
+    } catch (error) {
+      console.error('Order list export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingOrdersFiltered(false);
+    }
+  };
+
+  const handleExportOrdersAll = async () => {
+    if (!myOrders.length) {
+      toast({
+        title: 'No data to export',
+        description: 'There are no orders to export.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsExportingOrdersAll(true);
+    try {
+      await runOrdersListExport(myOrders, 'all');
+    } catch (error) {
+      console.error('Order list export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingOrdersAll(false);
+    }
+  };
 
   // Pagination
   const totalPages = Math.ceil(filteredOrders.length / ordersPerPage);
@@ -383,7 +546,7 @@ export default function MyOrdersPage() {
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, dateFilterStart, dateFilterEnd]);
+  }, [searchQuery, dateRangeFilter, statusFilter]);
 
   const selectedBrand = agentBrands.find(b => b.name === selectedBrandName);
 
@@ -2458,49 +2621,98 @@ export default function MyOrdersPage() {
       <Card>
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3">
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
+            {/* Search + filters toolbar */}
+            <div className="flex flex-col lg:flex-row lg:items-center gap-2">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search order # or client..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 h-10"
+                />
+              </div>
 
-            {/* Date Filters */}
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                type="date"
-                value={dateFilterStart}
-                onChange={(e) => setDateFilterStart(e.target.value)}
-                className="w-full"
-                placeholder="From"
-              />
-              <Input
-                type="date"
-                value={dateFilterEnd}
-                onChange={(e) => setDateFilterEnd(e.target.value)}
-                className="w-full"
-                min={dateFilterStart}
-                placeholder="To"
-              />
+              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                <Select
+                  value={statusFilter}
+                  onValueChange={(value) => setStatusFilter(value as MyOrdersStatusFilter)}
+                >
+                  <SelectTrigger className="h-10 w-full sm:w-[150px] gap-2">
+                    <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(MY_ORDERS_STATUS_LABELS) as MyOrdersStatusFilter[]).map((key) => (
+                      <SelectItem key={key} value={key}>
+                        {MY_ORDERS_STATUS_LABELS[key]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <DateRangeFilterPopover
+                  value={dateRangeFilter}
+                  onChange={setDateRangeFilter}
+                  triggerClassName="h-10 w-full sm:w-[160px] justify-between"
+                />
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="h-10 gap-2 w-full sm:w-auto"
+                      disabled={isExportingOrdersFiltered || isExportingOrdersAll}
+                    >
+                      {isExportingOrdersFiltered || isExportingOrdersAll ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      <span className="hidden sm:inline">Export</span>
+                      <ChevronDown className="h-4 w-4 opacity-50" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem
+                      onClick={handleExportOrdersFiltered}
+                      disabled={!canExportFiltered}
+                    >
+                      <FileDown className="h-4 w-4 mr-2" />
+                      Export filtered
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={handleExportOrdersAll}
+                      disabled={!canExportAll}
+                    >
+                      <FileDown className="h-4 w-4 mr-2" />
+                      Export all
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
 
             {/* Results and Actions */}
             <div className="flex justify-between items-center text-sm">
               <span className="text-muted-foreground">
                 {filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}
+                {hasActiveOrderFilters && myOrders.length !== filteredOrders.length && (
+                  <span className="text-muted-foreground/70"> of {myOrders.length}</span>
+                )}
               </span>
-              {(dateFilterStart || dateFilterEnd || searchQuery) && (
-                <Button variant="ghost" size="sm" onClick={() => {
-                  setDateFilterStart('');
-                  setDateFilterEnd('');
-                  setSearchQuery('');
-                }}>
+              {hasActiveOrderFilters && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setDateRangeFilter({ preset: 'all' });
+                    setStatusFilter('all');
+                    setSearchQuery('');
+                  }}
+                >
                   <X className="h-3 w-3 mr-1" />
-                  Clear
+                  Clear filters
                 </Button>
               )}
             </div>

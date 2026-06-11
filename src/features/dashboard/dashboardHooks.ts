@@ -305,12 +305,38 @@ export function useLeaderStats() {
     return query;
 }
 
+type AgentOrderRow = {
+    id: string;
+    total_amount: number | string | null;
+    status: string | null;
+    stage: string | null;
+};
+
+function isNeedsRevisionOrder(order: AgentOrderRow): boolean {
+    return order.stage === 'needs_revision';
+}
+
+/** Pending pipeline: status pending (excl. needs_revision) or known in-flight stages. */
+function isAwaitingApprovalOrder(order: AgentOrderRow): boolean {
+    if (isNeedsRevisionOrder(order)) return false;
+    if (order.status === 'pending') return true;
+    return (
+        order.stage === 'agent_pending' ||
+        order.stage === 'finance_pending' ||
+        order.stage === 'leader_approved'
+    );
+}
+
+function sumAgentOrderAmounts(orders: AgentOrderRow[]): number {
+    return orders.reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
+}
+
 export function useAgentStats() {
     const { user } = useAuth();
     const queryClient = useQueryClient();
 
     const query = useQuery({
-        queryKey: ['agent_stats', user?.id],
+        queryKey: ['agent_stats', user?.id, 'v2'],
         enabled: !!user?.id && (user?.role === 'sales_agent' || user?.role === 'mobile_sales'),
         queryFn: async () => {
             if (!user?.id) {
@@ -352,25 +378,27 @@ export function useAgentStats() {
                 return sum + amount;
             }, 0);
 
-            // Calculate pending sales (orders awaiting approval - not rejected or fully approved)
-            const pendingOrders = (orders || []).filter(order => {
-                const stage = order.stage;
-                // Include agent_pending, finance_pending, leader_approved (waiting for admin)
-                // Exclude admin_approved, leader_rejected, admin_rejected
-                return stage === 'agent_pending' ||
-                    stage === 'finance_pending' ||
-                    stage === 'leader_approved' ||
-                    (!stage && order.status === 'pending'); // Fallback for orders without stage
-            });
-            const pendingSales = pendingOrders.reduce((sum, order) => {
-                const amount = Number(order.total_amount) || 0;
-                return sum + amount;
-            }, 0);
+            // Pending sales split: awaiting approval vs needs revision (by stage)
+            const orderRows = (orders || []) as AgentOrderRow[];
+            const needsRevisionOrders = orderRows.filter(isNeedsRevisionOrder);
+            const awaitingApprovalOrders = orderRows.filter(isAwaitingApprovalOrder);
+
+            const pendingSalesNeedsRevision = sumAgentOrderAmounts(needsRevisionOrders);
+            const pendingSalesPending = sumAgentOrderAmounts(awaitingApprovalOrders);
+            const pendingSales = pendingSalesPending + pendingSalesNeedsRevision;
 
             console.log('💰 Sales calculated:', {
                 overallSales,
                 approvedSales: approvedSales + ' (from ' + approvedOrders.length + ' orders)',
-                pendingSales: pendingSales + ' (from ' + pendingOrders.length + ' orders)'
+                pendingSales:
+                    pendingSales +
+                    ' (pending ₱' +
+                    pendingSalesPending +
+                    ' + needs_revision ₱' +
+                    pendingSalesNeedsRevision +
+                    ' from ' +
+                    (awaitingApprovalOrders.length + needsRevisionOrders.length) +
+                    ' orders)',
             });
 
             return {
@@ -379,6 +407,8 @@ export function useAgentStats() {
                 overallSales,
                 approvedSales,
                 pendingSales,
+                pendingSalesPending,
+                pendingSalesNeedsRevision,
                 myCommission: 0 // Logic not implemented yet as per current code
             };
         },
@@ -388,8 +418,8 @@ export function useAgentStats() {
     useEffect(() => {
         if (!user?.id || (user.role !== 'sales_agent' && user.role !== 'mobile_sales')) return;
 
-        const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id] }));
-        const channel2 = subscribeToTable('clients', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id] }));
+        const channel1 = subscribeToTable('client_orders', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v2'] }));
+        const channel2 = subscribeToTable('clients', () => queryClient.invalidateQueries({ queryKey: ['agent_stats', user.id, 'v2'] }));
 
         return () => {
             unsubscribe(channel1);
