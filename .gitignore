@@ -31,3 +31,6 @@ dist-ssr
 
 # Supabase Edge Functions (contains sensitive code)
 .supabase/*
+
+# Local ops runbooks (prod migration checklists — personal, not for repo)
+docs/local/
