@@ -30,6 +30,108 @@ import { useAuth } from '@/features/auth';
 import { useInventory } from '@/features/inventory/InventoryContext';
 import { unsubscribe } from '@/lib/realtime.helpers';
 
+type LeaderProfile = {
+  id: string;
+  full_name: string;
+  email: string;
+  city?: string | string[] | null;
+};
+
+type LeaderInventoryRow = {
+  id: string;
+  stock: number;
+  allocated_price: number | null;
+  dsp_price: number | null;
+  rsp_price: number | null;
+  variants:
+    | {
+        id: string;
+        name: string;
+        variant_type: string;
+        brand_id: string;
+      }
+    | {
+        id: string;
+        name: string;
+        variant_type: string;
+        brand_id: string;
+      }[]
+    | null;
+};
+
+function resolveInventoryVariant(
+  variants: LeaderInventoryRow['variants'],
+): { id: string; name: string; variant_type: string; brand_id: string } | null {
+  if (!variants) return null;
+  return Array.isArray(variants) ? variants[0] ?? null : variants;
+}
+
+function parseLeaderCities(city: string | string[] | null | undefined): string[] {
+  if (!city) return [];
+  return Array.isArray(city) ? city : city.split(',').map((c) => c.trim()).filter(Boolean);
+}
+
+/** Build leader summary from per-agent rows (same scope as My Inventory / AgentInventoryContext). */
+function buildLeaderInventorySummary(
+  leader: LeaderProfile,
+  inventoryData: LeaderInventoryRow[],
+  brandNameById: Map<string, string>,
+) {
+  const summary = {
+    id: leader.id,
+    name: leader.full_name,
+    email: leader.email,
+    cities: parseLeaderCities(leader.city),
+    totalStock: 0,
+    totalValue: 0,
+    totalDspValue: 0,
+    totalRspValue: 0,
+    items: [] as Array<{
+      id: string;
+      variantId: string;
+      variantName: string;
+      variantType: string;
+      brandName: string;
+      stock: number;
+      allocatedPrice: number;
+      dspPrice: number;
+      rspPrice: number;
+      totalValue: number;
+    }>,
+  };
+
+  for (const item of inventoryData) {
+    if (item.stock <= 0) continue;
+
+    const variant = resolveInventoryVariant(item.variants);
+    if (!variant) continue;
+
+    const unitPrice = item.allocated_price || 0;
+    const dspPrice = item.dsp_price || 0;
+    const rspPrice = item.rsp_price || 0;
+
+    summary.totalStock += item.stock;
+    summary.totalValue += item.stock * unitPrice;
+    summary.totalDspValue += item.stock * dspPrice;
+    summary.totalRspValue += item.stock * rspPrice;
+
+    summary.items.push({
+      id: item.id,
+      variantId: variant.id,
+      variantName: variant.name,
+      variantType: variant.variant_type || 'unknown',
+      brandName: brandNameById.get(variant.brand_id) || 'Unknown',
+      stock: item.stock,
+      allocatedPrice: unitPrice,
+      dspPrice,
+      rspPrice,
+      totalValue: item.stock * unitPrice,
+    });
+  }
+
+  return summary;
+}
+
 export default function StockAllocationsPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -83,106 +185,67 @@ export default function StockAllocationsPage() {
     return variants.filter(variant => getVariantAvailableStock(variant) > 0);
   };
 
-  // Fetch all agents inventory data
+  // Fetch each team leader's inventory separately (matches My Inventory / avoids bulk query row limits)
   const fetchAgentsInventory = async (showLoading = true) => {
     try {
       if (showLoading) {
         setLoadingAllocations(true);
       }
 
-      // Fetch agent inventory for leaders only
-      const { data, error } = await supabase
-        .from('agent_inventory')
-        .select(`
-          id,
-          agent_id,
-          variant_id,
-          stock,
-          allocated_price,
-          dsp_price,
-          rsp_price,
-          profiles!agent_inventory_agent_id_fkey (
-            id,
-            full_name,
-            email,
-            role,
-            city
-          ),
-          variants (
-            id,
-            name,
-            variant_type,
-            brands (
-              name
-            )
-          )
-        `)
-        .eq('profiles.role', 'team_leader');
+      const [{ data: leadersData, error: leadersError }, { data: brandsData, error: brandsError }] =
+        await Promise.all([
+          supabase
+            .from('profiles')
+            .select('id, full_name, email, city, role')
+            .eq('role', 'team_leader')
+            .order('full_name'),
+          supabase.from('brands').select('id, name'),
+        ]);
 
-      if (error) throw error;
+      if (leadersError) throw leadersError;
+      if (brandsError) throw brandsError;
 
-      // Group by agent
-      const agentsMap = new Map();
+      const brandNameById = new Map((brandsData || []).map((brand) => [brand.id, brand.name]));
+      const leaders = leadersData || [];
 
-      data?.forEach((item: any) => {
-        // Skip items where agent data is null or not a leader
-        if (!item.profiles || item.profiles.role !== 'team_leader') {
-          console.warn('Skipping inventory item with null/non-leader agent data:', item);
-          return;
-        }
+      if (leaders.length === 0) {
+        setAgentsInventory([]);
+        return;
+      }
 
-        const agentId = item.profiles.id;
-        const agentName = item.profiles.full_name;
-        const agentEmail = item.profiles.email;
-        const agentCity = item.profiles.city;
+      const leaderInventories = await Promise.all(
+        leaders.map(async (leader) => {
+          const { data: inventoryData, error: inventoryError } = await supabase
+            .from('agent_inventory')
+            .select(`
+              id,
+              stock,
+              allocated_price,
+              dsp_price,
+              rsp_price,
+              variants (
+                id,
+                name,
+                variant_type,
+                brand_id
+              )
+            `)
+            .eq('agent_id', leader.id)
+            .gt('stock', 0);
 
-        if (!agentsMap.has(agentId)) {
-          // Parse city as comma-separated string into array
-          const cities = agentCity
-            ? (Array.isArray(agentCity) ? agentCity : agentCity.split(',').map((c: string) => c.trim()).filter((c: string) => c))
-            : [];
+          if (inventoryError) {
+            console.error(`Error fetching inventory for leader ${leader.full_name}:`, inventoryError);
+            return buildLeaderInventorySummary(leader, [], brandNameById);
+          }
 
-          agentsMap.set(agentId, {
-            id: agentId,
-            name: agentName,
-            email: agentEmail,
-            cities,
-            totalStock: 0,
-            totalValue: 0,
-            totalDspValue: 0,
-            totalRspValue: 0,
-            items: []
-          });
-        }
+          return buildLeaderInventorySummary(leader, inventoryData || [], brandNameById);
+        }),
+      );
 
-        const agent = agentsMap.get(agentId);
-        const unitPrice = item.allocated_price || 0;
-        const dspPrice = item.dsp_price || 0;
-        const rspPrice = item.rsp_price || 0;
-
-        agent.totalStock += item.stock;
-        // Keep totalValue based on unit/allocated price for consistency with other pages
-        agent.totalValue += item.stock * unitPrice;
-        agent.totalDspValue += item.stock * dspPrice;
-        agent.totalRspValue += item.stock * rspPrice;
-
-        agent.items.push({
-          id: item.id,
-          variantId: item.variants?.id,
-          variantName: item.variants?.name || 'Unknown',
-          variantType: item.variants?.variant_type || 'unknown',
-          brandName: item.variants?.brands?.name || 'Unknown',
-          stock: item.stock,
-          allocatedPrice: unitPrice,
-          dspPrice,
-          rspPrice,
-          totalValue: item.stock * unitPrice
-        });
-      });
-
-      const agentsArray = Array.from(agentsMap.values());
-      setAgentsInventory(agentsArray);
-
+      setAgentsInventory(leaderInventories);
+      setSelectedAgent((prev) =>
+        prev ? leaderInventories.find((agent) => agent.id === prev.id) ?? prev : null,
+      );
     } catch (error) {
       console.error('Error fetching agents inventory:', error);
       if (showLoading) {
@@ -380,10 +443,11 @@ export default function StockAllocationsPage() {
     try {
       setLoadingLeaderAgents(true);
 
-      // Fetch team members under this leader
-      const { data: teamData, error: teamError } = await supabase
-        .from('leader_teams')
-        .select(`
+      const [{ data: teamData, error: teamError }, { data: brandsData, error: brandsError }] =
+        await Promise.all([
+          supabase
+            .from('leader_teams')
+            .select(`
           agent_id,
           profiles!leader_teams_agent_id_fkey(
             id,
@@ -396,9 +460,14 @@ export default function StockAllocationsPage() {
             role
           )
         `)
-        .eq('leader_id', leaderId);
+            .eq('leader_id', leaderId),
+          supabase.from('brands').select('id, name'),
+        ]);
 
       if (teamError) throw teamError;
+      if (brandsError) throw brandsError;
+
+      const brandNameById = new Map((brandsData || []).map((brand) => [brand.id, brand.name]));
 
       // Get inventory data for each team member
       const agentsWithInventory = await Promise.all(
@@ -409,10 +478,14 @@ export default function StockAllocationsPage() {
           const { data: inventoryData, error: inventoryError } = await supabase
             .from('agent_inventory')
             .select(`
-              *,
-              variant:variants(
-                *,
-                brand:brands(*)
+              id,
+              stock,
+              allocated_price,
+              variants (
+                id,
+                name,
+                variant_type,
+                brand_id
               )
             `)
             .eq('agent_id', agent.id)
@@ -426,7 +499,7 @@ export default function StockAllocationsPage() {
               email: agent.email,
               phone: agent.phone || '',
               region: agent.region || '',
-              cities: agent.city ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map(c => c.trim()).filter(c => c)) : [],
+              cities: parseLeaderCities(agent.city),
               status: agent.status || 'active',
               role: agent.role || 'mobile_sales',
               totalStock: 0,
@@ -441,14 +514,17 @@ export default function StockAllocationsPage() {
           const items: any[] = [];
 
           (inventoryData || []).forEach((item: any) => {
+            const variant = resolveInventoryVariant(item.variants);
+            if (!variant) return;
+
             totalStock += item.stock;
             totalValue += item.stock * (item.allocated_price || 0);
             items.push({
               id: item.id,
-              variantId: item.variant.id,
-              variantName: item.variant.name,
-              variantType: item.variant.variant_type,
-              brandName: item.variant.brand?.name || 'Unknown',
+              variantId: variant.id,
+              variantName: variant.name,
+              variantType: variant.variant_type,
+              brandName: brandNameById.get(variant.brand_id) || 'Unknown',
               stock: item.stock,
               allocatedPrice: item.allocated_price || 0,
               totalValue: item.stock * (item.allocated_price || 0)
@@ -461,7 +537,7 @@ export default function StockAllocationsPage() {
             email: agent.email,
             phone: agent.phone || '',
             region: agent.region || '',
-            cities: agent.city ? (Array.isArray(agent.city) ? agent.city : agent.city.split(',').map(c => c.trim()).filter(c => c)) : [],
+            cities: parseLeaderCities(agent.city),
             status: agent.status || 'active',
             role: agent.role || 'mobile_sales',
             totalStock,
