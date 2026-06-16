@@ -38,6 +38,8 @@ import {
   Printer,
   Clock,
   Search,
+  Pencil,
+  History,
 } from 'lucide-react';
 
 // Interfaces
@@ -54,6 +56,16 @@ interface CashDeposit {
   depositType?: 'CASH' | 'CHEQUE';
   notes?: string | null;
   createdAt?: string;
+}
+
+interface CashDepositSlipRevision {
+  id: string;
+  cashDepositId: string;
+  previousSlipUrl: string;
+  newSlipUrl: string;
+  reason: string;
+  changedByName: string;
+  createdAt: string;
 }
 
 interface DepositOrderBreakdown {
@@ -119,6 +131,98 @@ const checkDepositRecorded = (depositId: string, deposits: CashDeposit[]): boole
     deposit.bankAccount.trim() !== '';
 };
 
+function SlipRevisionEntry({
+  revision,
+  compact = false,
+}: {
+  revision: CashDepositSlipRevision;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className={`w-full text-left hover:bg-muted/40 transition-colors ${compact ? 'p-2' : 'p-3'}`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2 min-w-0">
+              {open ? (
+                <ChevronDown className={`shrink-0 text-muted-foreground mt-0.5 ${compact ? 'h-3 w-3' : 'h-4 w-4'}`} />
+              ) : (
+                <ChevronRight className={`shrink-0 text-muted-foreground mt-0.5 ${compact ? 'h-3 w-3' : 'h-4 w-4'}`} />
+              )}
+              <div className="min-w-0 space-y-0.5">
+                <div className={`text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                  {format(new Date(revision.createdAt), compact ? 'MMM dd, yyyy • h:mm a' : 'MMMM dd, yyyy • h:mm a')}
+                  {' · '}
+                  <span className="font-medium text-foreground">{revision.changedByName}</span>
+                </div>
+                <p className={`truncate ${compact ? 'text-[11px]' : 'text-sm'}`}>
+                  <span className="text-muted-foreground">Reason: </span>
+                  {revision.reason}
+                </p>
+              </div>
+            </div>
+          </div>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className={`border-t bg-muted/10 ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
+            <div className="space-y-1.5 min-w-0">
+              <p className={`text-center font-semibold text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                Original
+              </p>
+              <div className={`flex justify-center bg-gray-50 rounded-md overflow-hidden ${compact ? 'p-1' : 'p-1.5'}`}>
+                <img
+                  src={revision.previousSlipUrl}
+                  alt="Original deposit slip"
+                  className={`w-full h-auto object-contain ${compact ? 'max-h-[120px]' : 'max-h-[160px]'}`}
+                />
+              </div>
+              <div className="text-center">
+                <a
+                  href={revision.previousSlipUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`text-blue-600 hover:underline ${compact ? 'text-[10px]' : 'text-xs'}`}
+                >
+                  View Full Image
+                </a>
+              </div>
+            </div>
+            <div className="space-y-1.5 min-w-0 border-l pl-2 sm:pl-3">
+              <p className={`text-center font-semibold text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                Replaced
+              </p>
+              <div className={`flex justify-center bg-gray-50 rounded-md overflow-hidden ${compact ? 'p-1' : 'p-1.5'}`}>
+                <img
+                  src={revision.newSlipUrl}
+                  alt="Replaced deposit slip"
+                  className={`w-full h-auto object-contain ${compact ? 'max-h-[120px]' : 'max-h-[160px]'}`}
+                />
+              </div>
+              <div className="text-center">
+                <a
+                  href={revision.newSlipUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`text-blue-600 hover:underline ${compact ? 'text-[10px]' : 'text-xs'}`}
+                >
+                  View Full Image
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 // Orders with order_date before this are v1 imports; exclude from cash deposit views and totals.
 const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
 
@@ -180,6 +284,14 @@ export default function LeaderCashDepositsPage() {
   const [dayTrailDeposits, setDayTrailDeposits] = useState<CashDeposit[]>([]);
   const [dayTrailOrders, setDayTrailOrders] = useState<Record<string, DepositOrderBreakdown[]>>({});
   const [loadingDayTrailOrders, setLoadingDayTrailOrders] = useState(false);
+  const [dayTrailSlipRevisions, setDayTrailSlipRevisions] = useState<Record<string, CashDepositSlipRevision[]>>({});
+
+  // Edit deposit slip (super admin)
+  const [editSlipDialogOpen, setEditSlipDialogOpen] = useState(false);
+  const [editSlipDeposit, setEditSlipDeposit] = useState<CashDeposit | null>(null);
+  const [editSlipFile, setEditSlipFile] = useState<File | null>(null);
+  const [editSlipReason, setEditSlipReason] = useState('');
+  const [submittingSlipEdit, setSubmittingSlipEdit] = useState(false);
 
   // Order Details Modal State
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
@@ -203,6 +315,7 @@ export default function LeaderCashDepositsPage() {
   }, []);
 
   const isFinanceViewOnly = user?.role === 'finance' || user?.role === 'accounting';
+  const canEditDepositSlip = user?.role === 'super_admin';
 
   // Agent selection helpers
   const toggleAgentSelection = (dateKey: string, agentId: string) => {
@@ -1191,6 +1304,209 @@ export default function LeaderCashDepositsPage() {
     setDepositDialogOpen(true);
   };
 
+  const fetchDayTrailRevisions = async (depositIds: string[]) => {
+    if (!depositIds.length) {
+      setDayTrailSlipRevisions({});
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('cash_deposit_slip_revisions')
+        .select(`
+          id,
+          cash_deposit_id,
+          previous_slip_url,
+          new_slip_url,
+          reason,
+          created_at,
+          changer:profiles!cash_deposit_slip_revisions_changed_by_fkey(full_name)
+        `)
+        .in('cash_deposit_id', depositIds)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const grouped: Record<string, CashDepositSlipRevision[]> = {};
+      depositIds.forEach((id) => {
+        grouped[id] = [];
+      });
+
+      (data || []).forEach((row: {
+        id: string;
+        cash_deposit_id: string;
+        previous_slip_url: string;
+        new_slip_url: string;
+        reason: string;
+        created_at: string;
+        changer?: { full_name?: string } | { full_name?: string }[] | null;
+      }) => {
+        const depositId = row.cash_deposit_id;
+        if (!grouped[depositId]) grouped[depositId] = [];
+        const changer = Array.isArray(row.changer) ? row.changer[0] : row.changer;
+        grouped[depositId].push({
+          id: row.id,
+          cashDepositId: depositId,
+          previousSlipUrl: row.previous_slip_url,
+          newSlipUrl: row.new_slip_url,
+          reason: row.reason,
+          changedByName: changer?.full_name || 'Unknown',
+          createdAt: row.created_at,
+        });
+      });
+
+      setDayTrailSlipRevisions(grouped);
+    } catch (error) {
+      console.error('Error fetching slip revisions', error);
+      setDayTrailSlipRevisions({});
+    }
+  };
+
+  const handleOpenEditSlip = (deposit: CashDeposit) => {
+    setEditSlipDeposit(deposit);
+    setEditSlipFile(null);
+    setEditSlipReason('');
+    setEditSlipDialogOpen(true);
+  };
+
+  const handleSubmitSlipEdit = async () => {
+    if (!editSlipDeposit || !editSlipFile) {
+      toast({
+        title: 'Missing file',
+        description: 'Please select a new deposit slip image.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!editSlipReason.trim()) {
+      toast({
+        title: 'Reason required',
+        description: 'Please explain why the slip is being replaced.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSubmittingSlipEdit(true);
+    try {
+      const timestamp = Date.now();
+      const filePath = `${user?.id}/deposits/${timestamp}_${editSlipFile.name}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('cash-deposits')
+        .upload(filePath, editSlipFile);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('cash-deposits')
+        .getPublicUrl(filePath);
+
+      const { data, error } = await supabase.rpc('replace_cash_deposit_slip', {
+        p_deposit_id: editSlipDeposit.id,
+        p_new_slip_url: publicUrl,
+        p_reason: editSlipReason.trim(),
+      });
+
+      if (error) throw error;
+
+      const result = data as { success?: boolean; message?: string } | null;
+      if (!result?.success) {
+        throw new Error(result?.message || 'Failed to replace deposit slip');
+      }
+
+      toast({
+        title: 'Deposit slip updated',
+        description: 'The slip was replaced and the original is kept in revision history.',
+      });
+
+      const updateDepositSlip = (d: CashDeposit) =>
+        d.id === editSlipDeposit.id ? { ...d, depositSlipUrl: publicUrl } : d;
+
+      const updatedTrailDeposits = dayTrailDeposits.map(updateDepositSlip);
+      setDayTrailDeposits(updatedTrailDeposits);
+      setPendingDeposits((prev) => prev.map(updateDepositSlip));
+      setDepositHistory((prev) => prev.map(updateDepositSlip));
+
+      await fetchDayTrailRevisions(updatedTrailDeposits.map((d) => d.id));
+
+      setEditSlipDialogOpen(false);
+      setEditSlipDeposit(null);
+      setEditSlipFile(null);
+      setEditSlipReason('');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to replace deposit slip';
+      console.error('Slip replace error:', error);
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setSubmittingSlipEdit(false);
+    }
+  };
+
+  const renderSlipRevisionHistory = (depositId: string, compact = false) => {
+    const revisions = dayTrailSlipRevisions[depositId] || [];
+    if (!revisions.length) return null;
+
+    return (
+      <div className="mt-1 border rounded-md overflow-hidden">
+        <div className={`bg-muted/30 px-3 text-muted-foreground font-semibold flex items-center gap-1.5 ${compact ? 'py-1 text-[10px]' : 'py-1.5 text-xs'}`}>
+          <History className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+          Slip Revision History ({revisions.length})
+        </div>
+        <div className="divide-y">
+          {revisions.map((revision) => (
+            <SlipRevisionEntry key={revision.id} revision={revision} compact={compact} />
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderDepositSlipBlock = (deposit: CashDeposit, compact = false) => {
+    if (!deposit.depositSlipUrl) return null;
+
+    const hasRevisions = (dayTrailSlipRevisions[deposit.id] || []).length > 0;
+
+    return (
+      <div className="mt-1 border rounded-md overflow-hidden">
+        <div className={`bg-muted/30 px-3 flex items-center justify-between text-muted-foreground font-semibold ${compact ? 'py-1 text-[10px]' : 'py-1.5 text-xs'}`}>
+          <span>Deposit Slip{hasRevisions ? ' (corrected)' : ''}</span>
+          {canEditDepositSlip && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={compact ? 'h-6 px-2 text-[10px]' : 'h-7 px-2 text-xs'}
+              onClick={() => handleOpenEditSlip(deposit)}
+            >
+              <Pencil className={compact ? 'h-2.5 w-2.5 mr-1' : 'h-3 w-3 mr-1'} />
+              Edit
+            </Button>
+          )}
+        </div>
+        <div className={`flex justify-center bg-gray-50 ${compact ? 'p-1.5' : 'p-2'}`}>
+          <img
+            src={deposit.depositSlipUrl}
+            alt="Deposit Slip"
+            className={`w-full h-auto object-contain ${compact ? 'max-h-[200px]' : 'max-h-[220px]'}`}
+          />
+        </div>
+        <div className={`text-center ${compact ? 'py-1' : 'py-1.5'}`}>
+          <a
+            href={deposit.depositSlipUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`text-blue-600 hover:underline ${compact ? 'text-[10px]' : 'text-xs'}`}
+          >
+            View Full Image
+          </a>
+        </div>
+        {renderSlipRevisionHistory(deposit.id, compact)}
+      </div>
+    );
+  };
+
   const handleViewDepositProof = (dateKey: string) => {
     // Collect all recorded deposits for this day (pending + verified), sorted oldest first
     const allForDay = [
@@ -1220,7 +1536,11 @@ export default function LeaderCashDepositsPage() {
     // Open the day trail modal with all deposits
     setDayTrailDeposits(allForDay);
     setDayTrailOrders({});
+    setDayTrailSlipRevisions({});
     setViewDayTrailOpen(true);
+
+    const allIds = allForDay.map((d) => d.id);
+    void fetchDayTrailRevisions(allIds);
 
     // Fetch orders for all those deposits in one go, grouped by deposit_id
     (async () => {
@@ -3174,6 +3494,11 @@ export default function LeaderCashDepositsPage() {
                               <AlertCircle className="h-2 w-2 mr-1" />Pending
                             </Badge>
                           )}
+                          {(dayTrailSlipRevisions[deposit.id] || []).length > 0 && (
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 h-5 text-[10px]">
+                              Slip corrected
+                            </Badge>
+                          )}
                         </div>
                         <span className="text-sm font-bold">₱{totalAmt.toLocaleString()}</span>
                       </div>
@@ -3222,21 +3547,7 @@ export default function LeaderCashDepositsPage() {
                         )}
 
                         {/* Deposit Slip */}
-                        {deposit.depositSlipUrl && (
-                          <div className="mt-1 border rounded-md overflow-hidden">
-                            <img
-                              src={deposit.depositSlipUrl}
-                              alt="Deposit Slip"
-                              className="w-full h-auto object-contain max-h-[200px]"
-                            />
-                            <div className="text-center py-1">
-                              <a href={deposit.depositSlipUrl} target="_blank" rel="noopener noreferrer"
-                                className="text-[10px] text-blue-600 hover:underline">
-                                View Full Image
-                              </a>
-                            </div>
-                          </div>
-                        )}
+                        {renderDepositSlipBlock(deposit, true)}
                       </div>
                     </div>
                   );
@@ -3290,6 +3601,11 @@ export default function LeaderCashDepositsPage() {
                         ) : (
                           <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
                             <AlertCircle className="h-3 w-3 mr-1" />Pending
+                          </Badge>
+                        )}
+                        {(dayTrailSlipRevisions[deposit.id] || []).length > 0 && (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                            Slip corrected
                           </Badge>
                         )}
                       </div>
@@ -3350,26 +3666,7 @@ export default function LeaderCashDepositsPage() {
                       )}
 
                       {/* Deposit Slip */}
-                      {deposit.depositSlipUrl && (
-                        <div className="border rounded-md overflow-hidden">
-                          <div className="bg-muted/30 px-3 py-1.5 text-xs font-semibold text-muted-foreground">
-                            Deposit Slip
-                          </div>
-                          <div className="flex justify-center bg-gray-50 p-2">
-                            <img
-                              src={deposit.depositSlipUrl}
-                              alt="Deposit Slip"
-                              className="w-full h-auto object-contain max-h-[220px]"
-                            />
-                          </div>
-                          <div className="text-center py-1.5">
-                            <a href={deposit.depositSlipUrl} target="_blank" rel="noopener noreferrer"
-                              className="text-xs text-blue-600 hover:underline">
-                              View Full Image
-                            </a>
-                          </div>
-                        </div>
-                      )}
+                      {renderDepositSlipBlock(deposit, false)}
                     </div>
                   </div>
                 );
@@ -3384,6 +3681,121 @@ export default function LeaderCashDepositsPage() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Replace Deposit Slip (Super Admin) */}
+      <Dialog
+        open={editSlipDialogOpen}
+        onOpenChange={(open) => {
+          setEditSlipDialogOpen(open);
+          if (!open) {
+            setEditSlipDeposit(null);
+            setEditSlipFile(null);
+            setEditSlipReason('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Replace Deposit Slip</DialogTitle>
+            <DialogDescription>
+              Upload the correct deposit slip. The original image will be kept in revision history.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editSlipDeposit && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="text-xs text-muted-foreground">Current slip</p>
+                {editSlipDeposit.depositSlipUrl ? (
+                  <img
+                    src={editSlipDeposit.depositSlipUrl}
+                    alt="Current deposit slip"
+                    className="w-full h-auto object-contain max-h-[160px] rounded-md bg-gray-50"
+                  />
+                ) : (
+                  <p className="text-sm text-muted-foreground">No slip on file</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-slip-file" className="text-sm font-medium">
+                  New deposit slip image <span className="text-destructive">*</span>
+                </Label>
+                {editSlipFile ? (
+                  <div className="space-y-2">
+                    <div className="border rounded-lg overflow-hidden bg-gray-50 p-2">
+                      <img
+                        src={URL.createObjectURL(editSlipFile)}
+                        alt="New deposit slip preview"
+                        className="w-full h-auto object-contain max-h-[160px]"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">{editSlipFile.name}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditSlipFile(null)}
+                    >
+                      <X className="h-3 w-3 mr-1" />
+                      Remove
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="relative border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer">
+                    <input
+                      id="edit-slip-file"
+                      type="file"
+                      accept="image/*"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      onChange={(e) => setEditSlipFile(e.target.files?.[0] || null)}
+                    />
+                    <UploadCloud className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">Click to upload replacement image</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-slip-reason" className="text-sm font-medium">
+                  Reason for change <span className="text-destructive">*</span>
+                </Label>
+                <textarea
+                  id="edit-slip-reason"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none"
+                  rows={3}
+                  placeholder="Explain why this deposit slip is being replaced..."
+                  value={editSlipReason}
+                  onChange={(e) => setEditSlipReason(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditSlipDialogOpen(false)}
+              disabled={submittingSlipEdit}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitSlipEdit}
+              disabled={submittingSlipEdit || !editSlipFile || !editSlipReason.trim()}
+            >
+              {submittingSlipEdit ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Replace Slip'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Order Details Modal */}
       <Dialog open={orderDialogOpen} onOpenChange={setOrderDialogOpen}>

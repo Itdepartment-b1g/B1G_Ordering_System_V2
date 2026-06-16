@@ -611,6 +611,17 @@ export interface RemittanceLog {
   updated_at: string;
 }
 
+export interface CashDepositSlipRevision {
+  id: string;
+  company_id: string;
+  cash_deposit_id: string;
+  previous_slip_url: string;
+  new_slip_url: string;
+  reason: string;
+  changed_by: string;
+  created_at: string;
+}
+
 export interface FinancialTransaction {
   id: string;
   company_id: string;
@@ -1044,6 +1055,11 @@ export interface Database {
         Insert: Omit<RemittanceLog, "id" | "created_at" | "updated_at">;
         Update: Partial<Omit<RemittanceLog, "id" | "created_at">>;
       };
+      cash_deposit_slip_revisions: {
+        Row: CashDepositSlipRevision;
+        Insert: Omit<CashDepositSlipRevision, "id" | "created_at">;
+        Update: never;
+      };
       inventory_transactions: {
         Row: InventoryTransaction;
         Insert: Omit<InventoryTransaction, "id" | "created_at">;
@@ -1219,6 +1235,14 @@ export interface Database {
       get_available_stock: {
         Args: { p_variant_id: string; p_company_id: string };
         Returns: number;
+      };
+      replace_cash_deposit_slip: {
+        Args: {
+          p_deposit_id: string;
+          p_new_slip_url: string;
+          p_reason: string;
+        };
+        Returns: FunctionResponse<{ revision_id: string }>;
       };
     };
   };
