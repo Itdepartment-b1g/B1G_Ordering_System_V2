@@ -1202,7 +1202,7 @@ export default function MainInventoryPage() {
                               <TableHead className="text-blue-800 text-center">Flavor Name</TableHead>
                               <TableHead className="text-blue-800 text-center">Total Stock</TableHead>
                               {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated (Remaing)</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated (Remaing stocks)</TableHead>}
                               {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Available</TableHead>}
                               {!isWarehouse && <TableHead className="text-blue-800 text-center">Selling Price</TableHead>}
                               {!isWarehouse && <TableHead className="text-blue-800 text-center">DSP</TableHead>}
@@ -1375,7 +1375,7 @@ export default function MainInventoryPage() {
                               <TableHead className="text-green-800 text-center">Battery Name</TableHead>
                               <TableHead className="text-green-800 text-center">Total Stock</TableHead>
                               {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated (Remaining)</TableHead>}
+                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated (Remaining stocks)</TableHead>}
                               {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Available</TableHead>}
                               {!isWarehouse && <TableHead className="text-green-800 text-center">Selling Price</TableHead>}
                               {!isWarehouse && <TableHead className="text-green-800 text-center">DSP</TableHead>}
@@ -1693,7 +1693,7 @@ export default function MainInventoryPage() {
                                   <TableHead className="text-gray-800 text-center">Name</TableHead>
                                   <TableHead className="text-gray-800 text-center">Total Stock</TableHead>
                                   {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated</TableHead>}
-                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated (Remaining)</TableHead>}
+                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated (Remaining stocks)</TableHead>}
                                   {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Available</TableHead>}
                                   {!isWarehouse && <TableHead className="text-gray-800 text-center">Selling Price</TableHead>}
                                   {!isWarehouse && <TableHead className="text-gray-800 text-center">DSP</TableHead>}
