@@ -1,8 +1,22 @@
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  FileSpreadsheet,
+  FileText,
+  Loader2,
+  MoreVertical,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Table,
   TableBody,
@@ -11,7 +25,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { useToast } from '@/hooks/use-toast';
 
+import { buildAllocationFilenamePrefix } from '../utils/allocationHistoryExportHelpers';
+import { exportAllocationHistoryExcel } from '../utils/exportAllocationHistoryExcel';
+import { exportAllocationHistoryPdf } from '../utils/exportAllocationHistoryPdf';
 import {
   MULTIPLE_BRANDS_LABEL,
   type AllocationHistoryGroup,
@@ -48,8 +66,50 @@ function variantTypeBadgeClass(type: string | null): string {
 }
 
 export function AllocationGroupRow({ group }: { group: AllocationHistoryGroup }) {
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const missingLines = group.lineCount === 0;
+  const isExporting = isExportingExcel || isExportingPdf;
+
+  const onExportExcel = async (e: Event) => {
+    e.stopPropagation();
+    if (isExporting) return;
+
+    try {
+      setIsExportingExcel(true);
+      await exportAllocationHistoryExcel([group], buildAllocationFilenamePrefix(group));
+      toast({ title: 'Export complete', description: 'Allocation record exported to Excel.' });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not export allocation record to Excel.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
+  const onExportPdf = async (e: Event) => {
+    e.stopPropagation();
+    if (isExporting) return;
+
+    try {
+      setIsExportingPdf(true);
+      await exportAllocationHistoryPdf(group);
+      toast({ title: 'Export ready', description: 'Allocation record opened for PDF export.' });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not export allocation record to PDF.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
 
   return (
     <>
@@ -96,10 +156,49 @@ export function AllocationGroupRow({ group }: { group: AllocationHistoryGroup })
         <TableCell className="text-right tabular-nums font-medium">
           {group.totalQuantity.toLocaleString()}
         </TableCell>
+        <TableCell className="text-right">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                disabled={isExporting}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {isExporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <MoreVertical className="h-4 w-4" />
+                )}
+                <span className="sr-only">Actions</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48" onClick={(e) => e.stopPropagation()}>
+              <DropdownMenuItem disabled={isExporting} onSelect={onExportExcel}>
+                {isExportingExcel ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <FileSpreadsheet className="mr-2 h-4 w-4" />
+                )}
+                Export to Excel
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={isExporting} onSelect={onExportPdf}>
+                {isExportingPdf ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <FileText className="mr-2 h-4 w-4" />
+                )}
+                Export to PDF
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </TableCell>
       </TableRow>
       {open && (
         <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-          <TableCell colSpan={8} className="p-4">
+          <TableCell colSpan={9} className="p-4">
             <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Variants in this session
             </p>
