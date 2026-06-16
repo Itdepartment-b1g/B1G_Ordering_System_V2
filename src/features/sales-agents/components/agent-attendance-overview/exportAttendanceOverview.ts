@@ -1,3 +1,4 @@
+import { downloadAttendanceTimeInOutExcel } from '@/lib/attendanceTimeInOutReportExcel';
 import { downloadBusinessHoursReportExcel } from '@/lib/businessHoursReportExcel';
 import { supabase } from '@/lib/supabase';
 
@@ -111,8 +112,8 @@ export async function fetchAttendanceOverviewForExport(
   return all;
 }
 
-/** Fetch rows for the current filters, apply agent search, and download Business Hours Report. */
-export async function exportFilteredAttendanceOverviewExcel(
+/** Fetch rows for the current filters, apply agent search, and download computed hours report. */
+export async function exportFilteredAttendanceComputedHoursExcel(
   filters: AttendanceOverviewExportFilters,
   fileNameDate = new Date().toISOString().split('T')[0]
 ): Promise<number> {
@@ -121,9 +122,23 @@ export async function exportFilteredAttendanceOverviewExcel(
 
   if (rows.length === 0) return 0;
 
-  downloadBusinessHoursReportExcel(rows, {
+  await downloadBusinessHoursReportExcel(rows, {
     businessDateFrom: filters.businessDateFrom.trim(),
     businessDateTo: filters.businessDateTo.trim(),
   }, fileNameDate);
+  return rows.length;
+}
+
+/** Fetch rows for the current filters, apply agent search, and download time in / time out report. */
+export async function exportFilteredAttendanceTimeInOutExcel(
+  filters: AttendanceOverviewExportFilters,
+  fileNameDate = new Date().toISOString().split('T')[0]
+): Promise<number> {
+  let rows = await fetchAttendanceOverviewForExport(filters);
+  rows = filterAttendanceOverviewExportRows(rows, filters);
+
+  if (rows.length === 0) return 0;
+
+  await downloadAttendanceTimeInOutExcel(rows, fileNameDate);
   return rows.length;
 }

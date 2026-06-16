@@ -1,4 +1,6 @@
 
+import ExcelJS from 'exceljs';
+
 /**
  * Exports data to a CSV file which can be opened in Excel.
  * @param data Array of objects to export
@@ -92,4 +94,22 @@ export async function exportClientsToExcel(
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+}
+
+export async function downloadExcelWorkbook(
+    workbook: ExcelJS.Workbook,
+    filename: string
+): Promise<void> {
+    const fileBuffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([fileBuffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(downloadUrl);
 }

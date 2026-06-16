@@ -52,9 +52,10 @@ import {
   AdminAttendanceEditDialog,
   canSuperAdminEditAttendance,
 } from '@/features/sales-agents/components/agent-attendance-overview/AdminAttendanceEditDialog';
-import { exportFilteredAttendanceOverviewExcel } from '@/features/sales-agents/components/agent-attendance-overview/exportAttendanceOverview';
+import { exportFilteredAttendanceComputedHoursExcel, exportFilteredAttendanceTimeInOutExcel } from '@/features/sales-agents/components/agent-attendance-overview/exportAttendanceOverview';
 
 const PAGE_SIZES = [5, 10, 15, 25, 50, 100] as const;
+type AttendanceExportMode = 'computed-hours' | 'time-in-out';
 type PageSize = (typeof PAGE_SIZES)[number];
 const DEFAULT_PAGE_SIZE: PageSize = 25;
 
@@ -281,30 +282,36 @@ export default function AgentAttendanceOverviewList() {
     if (page >= tp) setPage(Math.max(0, tp - 1));
   }, [isLoading, pageData, page, pageSize, total]);
 
-  const handleExportExcel = async () => {
+  const handleExport = async (mode: AttendanceExportMode) => {
     if (!hasAttendanceOverviewDateRangeComplete(dateRangeFilter)) {
-      toast.error('Choose a date range (preset or custom) before exporting the Business Hours Report.');
+      toast.error('Choose a date range (preset or custom) before exporting.');
       return;
     }
     const dateFrom = businessDateFrom;
     const dateTo = businessDateTo;
+    const filters = {
+      businessDateFrom: dateFrom,
+      businessDateTo: dateTo,
+      statusFilter,
+      agentNameSearch,
+      agentEmailSearch,
+    };
 
     setIsExporting(true);
     try {
-      const count = await exportFilteredAttendanceOverviewExcel({
-        businessDateFrom: dateFrom,
-        businessDateTo: dateTo,
-        statusFilter,
-        agentNameSearch,
-        agentEmailSearch,
-      });
+      const count =
+        mode === 'computed-hours'
+          ? await exportFilteredAttendanceComputedHoursExcel(filters)
+          : await exportFilteredAttendanceTimeInOutExcel(filters);
 
       if (count === 0) {
         toast.error('No records to export for the current filters.');
         return;
       }
 
-      toast.success(`Exported ${count} row${count === 1 ? '' : 's'} to Business Hours Report.`);
+      const reportLabel =
+        mode === 'computed-hours' ? 'computed hours report' : 'time in & time out report';
+      toast.success(`Exported ${count} row${count === 1 ? '' : 's'} to ${reportLabel}.`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Export failed';
       toast.error(msg);
@@ -404,20 +411,39 @@ export default function AgentAttendanceOverviewList() {
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-lg">Records</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void handleExportExcel()}
-              disabled={isExporting || isLoading}
-            >
-              {isExporting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileDown className="h-4 w-4" />
-              )}
-              <span className="ml-2 hidden sm:inline">Export to Excel</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isExporting || isLoading}
+                >
+                  {isExporting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  <span className="ml-2 hidden sm:inline">Export</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem
+                  disabled={isExporting || isLoading}
+                  onSelect={() => void handleExport('computed-hours')}
+                >
+                  <FileDown className="mr-2 h-4 w-4" />
+                  Export computed hours
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={isExporting || isLoading}
+                  onSelect={() => void handleExport('time-in-out')}
+                >
+                  <FileDown className="mr-2 h-4 w-4" />
+                  Export time in & time out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               type="button"
               variant="outline"
@@ -563,7 +589,7 @@ export default function AgentAttendanceOverviewList() {
               {agentNameSearch.trim() || agentEmailSearch.trim() ? (
                 <p className="text-xs text-muted-foreground">
                   Name and email filters only hide rows on the current page. Clear them to see every row in the
-                  date range, or narrow the date range. Export to Excel uses the same filters for all matching rows.
+                  date range, or narrow the date range. Exports use the same filters for all matching rows.
                 </p>
               ) : null}
 
