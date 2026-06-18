@@ -103,6 +103,8 @@ export default function OrdersPage() {
   const canViewCompanyOrders =
     isAdmin || user?.role === 'accounting';
   const canApproveAsFinance = canApproveFinance(user?.role);
+  /** Finance role only — order approve/reject in the order list (not super_admin) */
+  const isFinance = user?.role === 'finance';
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
   /** Same order list visibility as tabs/table — export uses `visibleOrders` / `filterOrders`. */
@@ -378,7 +380,7 @@ export default function OrdersPage() {
     }
 
     try {
-      if (isAdmin) {
+      if (isFinance) {
         await updateOrderStatus(orderToApprove.id, 'approved');
 
         // Show appropriate success message
@@ -471,7 +473,7 @@ export default function OrdersPage() {
       }
 
       // ========== STEP 2: REJECT THE ORDER ==========
-      if (isAdmin) {
+      if (isFinance) {
         await updateOrderStatus(orderToReject.id, 'rejected', rejectionReason);
         toast({
           title: 'Order Rejected',
@@ -1381,6 +1383,14 @@ export default function OrdersPage() {
 
   const handleBulkApprove = async () => {
     if (agentOrders.length === 0) return;
+    if (!isFinance) {
+      toast({
+        title: 'Not authorized',
+        description: 'Only the Finance team can approve orders.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     // Check for cash/cheque orders (FULL or SPLIT) without deposits OR without bank details recorded
     const ordersWithoutDeposit = agentOrders.filter(order => {
@@ -1732,7 +1742,7 @@ export default function OrdersPage() {
                 </Button>
               </>
             ) : null}
-            {canApproveAsFinance && (
+            {isFinance && (
               <Button onClick={handleOpenBulkApprove} className="gap-2">
                 <CheckSquare className="h-4 w-4" />
                 Bulk Approve Orders
@@ -2304,7 +2314,7 @@ export default function OrdersPage() {
                 ) : null
               )}
 
-              {canApproveAsFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
+              {(viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
                 (() => {
                   // Zero-value orders have nothing to remit/deposit, so deposit checks are bypassed.
                   const isFreeOfCharge = isZeroValueOrder(viewingOrder);
@@ -2318,9 +2328,37 @@ export default function OrdersPage() {
                   const needsDeposit = hasCashOrChequeComponent && !viewingOrder.depositId;
                   const needsBankDetails = hasCashOrChequeComponent && viewingOrder.depositId && !viewingOrder.depositBankAccount;
                   const depositReady = hasCashOrChequeComponent && viewingOrder.depositId && viewingOrder.depositBankAccount;
+                  const actionsDisabled = !isFinance || needsDeposit || needsBankDetails;
+                  const financeOnlyTitle = 'Only users with the Finance role can approve or reject this order';
+                  const approveTitle = !isFinance
+                    ? financeOnlyTitle
+                    : needsDeposit
+                      ? 'Cannot approve: Order awaiting remittance from agent to leader'
+                      : needsBankDetails
+                        ? 'Cannot approve: Order awaiting deposit slip from team leader'
+                        : undefined;
+                  const denyTitle = !isFinance
+                    ? financeOnlyTitle
+                    : needsDeposit
+                      ? 'Cannot deny: Order awaiting remittance from agent to leader'
+                      : needsBankDetails
+                        ? 'Cannot deny: Order awaiting deposit slip from team leader'
+                        : undefined;
 
                   return (
                     <>
+                      {!isFinance && (
+                        <div className="flex items-start gap-3 p-4 bg-muted border rounded-lg">
+                          <AlertCircle className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-semibold">Finance review required</p>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {financeOnlyTitle}.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Show warning if CASH/CHEQUE component without deposit */}
                       {needsDeposit && (
                         <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
@@ -2367,7 +2405,8 @@ export default function OrdersPage() {
                             setViewDialogOpen(false);
                             handleOpenApprove(viewingOrder);
                           }}
-                          disabled={needsDeposit || needsBankDetails}
+                          disabled={actionsDisabled}
+                          title={approveTitle}
                         >
                           <CheckCircle className="h-4 w-4 mr-2" />
                           {depositReady
@@ -2381,8 +2420,8 @@ export default function OrdersPage() {
                             setViewDialogOpen(false);
                             handleOpenReject(viewingOrder);
                           }}
-                          disabled={needsDeposit || needsBankDetails}
-                          title={needsDeposit ? 'Cannot deny: Order awaiting remittance from agent to leader' : needsBankDetails ? 'Cannot deny: Order awaiting deposit slip from team leader' : undefined}
+                          disabled={actionsDisabled}
+                          title={denyTitle}
                         >
                           <XCircle className="h-4 w-4 mr-2" />
                           Finance Deny
