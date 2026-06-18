@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -52,6 +52,8 @@ interface CashDeposit {
   status: string;
   agentName: string;
   agentId?: string;
+  performedById?: string;
+  performedByName?: string;
   depositSlipUrl?: string;
   depositType?: 'CASH' | 'CHEQUE';
   notes?: string | null;
@@ -131,6 +133,122 @@ const checkDepositRecorded = (depositId: string, deposits: CashDeposit[]): boole
     deposit.bankAccount.trim() !== '';
 };
 
+/** All deposit IDs for a calendar day (pending + verified), for order lookups in Daily Cash Collections. */
+function getDepositIdsForDate(
+  dateKey: string,
+  pendingList: CashDeposit[],
+  historyList: CashDeposit[],
+  options?: { includeUnrecordedPending?: boolean }
+): string[] {
+  const includeUnrecorded = options?.includeUnrecordedPending ?? true;
+  const ids = new Set<string>();
+
+  pendingList.forEach((d) => {
+    if (format(new Date(d.depositDate), 'yyyy-MM-dd') !== dateKey) return;
+    if (includeUnrecorded || checkDepositRecorded(d.id, pendingList)) {
+      ids.add(d.id);
+    }
+  });
+
+  historyList.forEach((d) => {
+    if (format(new Date(d.depositDate), 'yyyy-MM-dd') === dateKey) {
+      ids.add(d.id);
+    }
+  });
+
+  return Array.from(ids);
+}
+
+function isDepositRecordedForDisplay(
+  depositId: string,
+  pendingList: CashDeposit[],
+  historyList: CashDeposit[]
+): boolean {
+  if (historyList.some((d) => d.id === depositId)) return true;
+  return checkDepositRecorded(depositId, pendingList);
+}
+
+type OrderPaymentInput = {
+  total_amount?: number | null;
+  payment_method?: string | null;
+  payment_mode?: string | null;
+  payment_splits?: unknown;
+};
+
+function getOrderPaymentBreakdown(order: OrderPaymentInput) {
+  const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+  const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
+  const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+
+  let cashPortion = 0;
+  let chequePortion = 0;
+  let nonCashPortion = 0;
+  const nonCashLabels: string[] = [];
+
+  if (paymentMode === 'SPLIT') {
+    splits.forEach((s: { method?: string; amount?: number; bank?: string }) => {
+      const amount = s.amount || 0;
+      if (s.method === 'CASH') {
+        cashPortion += amount;
+      } else if (s.method === 'CHEQUE') {
+        chequePortion += amount;
+      } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
+        nonCashPortion += amount;
+        if (s.method === 'BANK_TRANSFER') {
+          if (s.bank && !nonCashLabels.includes(s.bank)) {
+            nonCashLabels.push(s.bank);
+          } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
+            nonCashLabels.push('Bank Transfer');
+          }
+        } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
+          nonCashLabels.push('GCash');
+        }
+      }
+    });
+  } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+    const amt = order.total_amount || 0;
+    if (paymentMethod === 'CASH') {
+      cashPortion = amt;
+    } else {
+      chequePortion = amt;
+    }
+  }
+
+  const remittedAmount = cashPortion + chequePortion;
+
+  return {
+    cashPortion,
+    chequePortion,
+    nonCashPortion,
+    nonCashLabels,
+    remittedAmount,
+    nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
+  };
+}
+
+function toDepositOrderBreakdown(
+  order: OrderPaymentInput & {
+    id: string;
+    order_number: string;
+    clients?: { name?: string } | null;
+  }
+): DepositOrderBreakdown {
+  const { cashPortion, chequePortion, nonCashPortion, nonCashLabel, remittedAmount } =
+    getOrderPaymentBreakdown(order);
+
+  return {
+    orderId: order.id,
+    orderNumber: order.order_number,
+    clientName: order.clients?.name || 'Unknown',
+    remittedAmount,
+    fullOrderTotal: order.total_amount || remittedAmount,
+    cashPortion,
+    chequePortion,
+    nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
+    nonCashLabel,
+  };
+}
+
 function SlipRevisionEntry({
   revision,
   compact = false,
@@ -174,7 +292,7 @@ function SlipRevisionEntry({
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
             <div className="space-y-1.5 min-w-0">
               <p className={`text-center font-semibold text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                Original
+                Original (Previous)
               </p>
               <div className={`flex justify-center bg-gray-50 rounded-md overflow-hidden ${compact ? 'p-1' : 'p-1.5'}`}>
                 <img
@@ -196,7 +314,7 @@ function SlipRevisionEntry({
             </div>
             <div className="space-y-1.5 min-w-0 border-l pl-2 sm:pl-3">
               <p className={`text-center font-semibold text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                Replaced
+                Replaced (Current)
               </p>
               <div className={`flex justify-center bg-gray-50 rounded-md overflow-hidden ${compact ? 'p-1' : 'p-1.5'}`}>
                 <img
@@ -278,6 +396,7 @@ export default function LeaderCashDepositsPage() {
   const [selectedDepositToView, setSelectedDepositToView] = useState<CashDeposit | null>(null);
   const [depositOrders, setDepositOrders] = useState<DepositOrderBreakdown[]>([]);
   const [loadingDepositOrders, setLoadingDepositOrders] = useState(false);
+  const fetchDepositOrdersRequestRef = useRef(0);
 
   // Day Deposits Trail Modal State (shows all deposits for a day as a timeline)
   const [viewDayTrailOpen, setViewDayTrailOpen] = useState(false);
@@ -517,37 +636,10 @@ export default function LeaderCashDepositsPage() {
       const summaries: Record<string, { cashPortion: number; chequePortion: number; nonCashPortion: number }> = {};
 
       (data || []).forEach((order: any) => {
-        if (!order.order_date || order.order_date < V1_IMPORT_ORDER_DATE_CUTOFF) return;
         const depositId = order.deposit_id as string | null;
         if (!depositId) return;
 
-        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
-        const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
-        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
-
-        let cashPortion = 0;
-        let chequePortion = 0;
-        let nonCashPortion = 0;
-
-        if (paymentMode === 'SPLIT') {
-          splits.forEach((s: any) => {
-            const amount = s.amount || 0;
-            if (s.method === 'CASH') {
-              cashPortion += amount;
-            } else if (s.method === 'CHEQUE') {
-              chequePortion += amount;
-            } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
-              nonCashPortion += amount;
-            }
-          });
-        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
-          const amt = order.total_amount || 0;
-          if (paymentMethod === 'CASH') {
-            cashPortion = amt;
-          } else {
-            chequePortion = amt;
-          }
-        }
+        const { cashPortion, chequePortion, nonCashPortion } = getOrderPaymentBreakdown(order);
 
         if (!summaries[depositId]) {
           summaries[depositId] = { cashPortion: 0, chequePortion: 0, nonCashPortion: 0 };
@@ -628,23 +720,7 @@ export default function LeaderCashDepositsPage() {
 
       const orderIdsWithCashOrCheque: string[] = [];
       (ordersData || []).forEach((order: any) => {
-        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
-        const paymentMethod = order.payment_method as string | null;
-        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
-        let cashPortion = 0;
-        let chequePortion = 0;
-        if (paymentMode === 'SPLIT') {
-          splits.forEach((s: any) => {
-            if (s.method === 'CASH') cashPortion += s.amount || 0;
-            else if (s.method === 'CHEQUE') chequePortion += s.amount || 0;
-            // Bank transfer and GCash are excluded - they do not go into cash deposits
-          });
-        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
-          const amt = order.total_amount || 0;
-          if (paymentMethod === 'CASH') cashPortion = amt;
-          else chequePortion = amt;
-        }
-        if (cashPortion > 0 || chequePortion > 0) {
+        if (getOrderPaymentBreakdown(order).remittedAmount > 0) {
           orderIdsWithCashOrCheque.push(order.id);
         }
       });
@@ -671,16 +747,7 @@ export default function LeaderCashDepositsPage() {
           // Filter to only CASH/CHEQUE orders (same logic as above)
           const leaderDepositIds: string[] = [];
           (leaderOrders || []).forEach((order: any) => {
-            const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
-            const paymentMethod = order.payment_method as string | null;
-            const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
-            let hasCashOrCheque = false;
-
-            if (paymentMode === 'SPLIT') {
-              hasCashOrCheque = splits.some((s: any) => s.method === 'CASH' || s.method === 'CHEQUE');
-            } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
-              hasCashOrCheque = true;
-            }
+            const hasCashOrCheque = getOrderPaymentBreakdown(order).remittedAmount > 0;
 
             // Only include if it has cash/cheque AND deposit_id is not already in our list
             if (hasCashOrCheque && order.deposit_id && !depositIdsFromRemittances.includes(order.deposit_id)) {
@@ -707,8 +774,9 @@ export default function LeaderCashDepositsPage() {
       const { data: depositsData, error } = await supabase
         .from('cash_deposits')
         .select(`
-          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, deposit_type, notes, created_at,
-          agent:profiles!cash_deposits_agent_id_fkey(full_name)
+          id, deposit_date, amount, bank_account, reference_number, status, deposit_slip_url, agent_id, performed_by, deposit_type, notes, created_at,
+          agent:profiles!cash_deposits_agent_id_fkey(full_name),
+          performer:profiles!cash_deposits_performed_by_fkey(full_name)
         `)
         .in('id', depositIdsFromRemittances)
         .order('created_at', { ascending: false });
@@ -724,6 +792,8 @@ export default function LeaderCashDepositsPage() {
         status: d.status,
         agentName: d.agent?.full_name || 'Unknown',
         agentId: d.agent_id,
+        performedById: d.performed_by,
+        performedByName: d.performer?.full_name || 'Unknown',
         depositSlipUrl: d.deposit_slip_url,
         depositType: d.deposit_type as 'CASH' | 'CHEQUE' | null,
         notes: d.notes || null,
@@ -735,8 +805,9 @@ export default function LeaderCashDepositsPage() {
 
       // Separate pending and verified deposits
       const pending = deposits.filter(d => d.status === 'pending_verification');
+      const verified = deposits.filter(d => d.status === 'verified');
       setPendingDeposits(pending);
-      setDepositHistory(deposits.filter(d => d.status === 'verified'));
+      setDepositHistory(verified);
 
       // Build daily groups for pending deposits (cash/cheque portions only).
       // Use only the sum of orders currently linked to each deposit (summary).
@@ -777,9 +848,18 @@ export default function LeaderCashDepositsPage() {
 
       const groups = Object.values(dailyMap).sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
 
+      // Clear cached day details so expanded rows stay in sync after verification / reload
+      setDayDetailsByDate({});
+
       // Preload per-day agent/order/unit details so headers show real counts immediately
       try {
-        const allDepositIds = Array.from(new Set(groups.flatMap((g) => g.depositIds)));
+        const allDepositIds = Array.from(
+          new Set(
+            groups.flatMap((g) =>
+              getDepositIdsForDate(g.dateKey, pending, verified, { includeUnrecordedPending: true })
+            )
+          )
+        );
 
         if (allDepositIds.length > 0) {
           const { data: ordersData, error: ordersError } = await supabase
@@ -806,12 +886,14 @@ export default function LeaderCashDepositsPage() {
           // Use all linked orders for day details count (include v1 so we show real agent/order numbers)
           const ordersForDayDetails = ordersData || [];
 
-          // Map each deposit to its date key
+          // Map each deposit to its date key (pending + verified for the day)
           const depositIdToDateKey: Record<string, string> = {};
           groups.forEach((group) => {
-            group.depositIds.forEach((id) => {
-              depositIdToDateKey[id] = group.dateKey;
-            });
+            getDepositIdsForDate(group.dateKey, pending, verified, { includeUnrecordedPending: true }).forEach(
+              (id) => {
+                depositIdToDateKey[id] = group.dateKey;
+              }
+            );
           });
 
           const dayAgentMaps: Record<string, Record<string, DailyAgentGroup>> = {};
@@ -823,45 +905,8 @@ export default function LeaderCashDepositsPage() {
             const dateKey = depositIdToDateKey[depositId];
             if (!dateKey) return;
 
-            const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
-            const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
-            const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
-
-            let cashPortion = 0;
-            let chequePortion = 0;
-            let nonCashPortion = 0;
-            const nonCashLabels: string[] = [];
-
-            if (paymentMode === 'SPLIT') {
-              splits.forEach((s: any) => {
-                const amount = s.amount || 0;
-                if (s.method === 'CASH') {
-                  cashPortion += amount;
-                } else if (s.method === 'CHEQUE') {
-                  chequePortion += amount;
-                } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
-                  nonCashPortion += amount;
-                  if (s.method === 'BANK_TRANSFER') {
-                    if (s.bank && !nonCashLabels.includes(s.bank)) {
-                      nonCashLabels.push(s.bank);
-                    } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
-                      nonCashLabels.push('Bank Transfer');
-                    }
-                  } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
-                    nonCashLabels.push('GCash');
-                  }
-                }
-              });
-            } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
-              const amt = order.total_amount || 0;
-              if (paymentMethod === 'CASH') {
-                cashPortion = amt;
-              } else {
-                chequePortion = amt;
-              }
-            }
-
-            const remittedAmount = cashPortion + chequePortion;
+            const { cashPortion, chequePortion, nonCashPortion, nonCashLabel, remittedAmount } =
+              getOrderPaymentBreakdown(order);
             if (remittedAmount <= 0) return; // Exclude bank-transfer-only orders from cash deposits view
 
             const totalQuantity = (order.items || []).reduce(
@@ -885,7 +930,7 @@ export default function LeaderCashDepositsPage() {
               };
             }
 
-            const depositRecorded = checkDepositRecorded(depositId, pending);
+            const depositRecorded = isDepositRecordedForDisplay(depositId, pending, verified);
 
             const dailyOrder: DailyOrderSummary = {
               agentId,
@@ -899,7 +944,7 @@ export default function LeaderCashDepositsPage() {
               cashPortion,
               chequePortion,
               nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
-              nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
+              nonCashLabel,
               totalQuantity,
               depositRecorded,
             };
@@ -985,13 +1030,30 @@ export default function LeaderCashDepositsPage() {
     }
   };
 
+  const getCachedOrdersForDeposit = (depositId: string): DepositOrderBreakdown[] => {
+    const fromTrail = dayTrailOrders[depositId];
+    if (fromTrail?.length) return fromTrail;
+
+    for (const details of Object.values(dayDetailsByDate)) {
+      const orders = details.agents
+        .flatMap((a) => a.orders)
+        .filter((o) => o.depositId === depositId && o.remittedAmount > 0);
+      if (orders.length > 0) return orders;
+    }
+
+    return [];
+  };
+
   const fetchDepositOrders = async (depositIds: string[]) => {
+    const requestId = ++fetchDepositOrdersRequestRef.current;
+
     try {
       setLoadingDepositOrders(true);
-      setDepositOrders([]);
 
       if (!depositIds || depositIds.length === 0) {
-        setDepositOrders([]);
+        if (requestId === fetchDepositOrdersRequestRef.current) {
+          setDepositOrders([]);
+        }
         return;
       }
 
@@ -1011,73 +1073,47 @@ export default function LeaderCashDepositsPage() {
 
       if (error) throw error;
 
-      const orders: DepositOrderBreakdown[] = (data || []).map((order: any) => {
-        const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
-        const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
-        const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+      const orders: DepositOrderBreakdown[] = (data || [])
+        .map((order: any) => toDepositOrderBreakdown(order))
+        .filter((o) => o.remittedAmount > 0);
 
-        let cashPortion = 0;
-        let chequePortion = 0;
-        let nonCashPortion = 0;
-        const nonCashLabels: string[] = [];
-
-        if (paymentMode === 'SPLIT') {
-          splits.forEach((s: any) => {
-            const amount = s.amount || 0;
-            if (s.method === 'CASH') {
-              cashPortion += amount;
-            } else if (s.method === 'CHEQUE') {
-              chequePortion += amount;
-            } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
-              nonCashPortion += amount;
-              if (s.method === 'BANK_TRANSFER') {
-                if (s.bank && !nonCashLabels.includes(s.bank)) {
-                  nonCashLabels.push(s.bank);
-                } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
-                  nonCashLabels.push('Bank Transfer');
-                }
-              } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
-                nonCashLabels.push('GCash');
-              }
-            }
-          });
-        } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
-          const amt = order.total_amount || 0;
-          if (paymentMethod === 'CASH') {
-            cashPortion = amt;
-          } else {
-            chequePortion = amt;
-          }
-        }
-
-        const remittedAmount = cashPortion + chequePortion;
-
-        return {
-          orderId: order.id,
-          orderNumber: order.order_number,
-          clientName: order.clients?.name || 'Unknown',
-          remittedAmount,
-          fullOrderTotal: order.total_amount || remittedAmount,
-          cashPortion,
-          chequePortion,
-          nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
-          nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
-        };
-      });
-
-      setDepositOrders(orders);
+      if (requestId === fetchDepositOrdersRequestRef.current) {
+        setDepositOrders(orders);
+      }
     } catch (error) {
       console.error('Error fetching deposit orders', error);
-      setDepositOrders([]);
+      if (requestId === fetchDepositOrdersRequestRef.current) {
+        setDepositOrders([]);
+      }
     } finally {
-      setLoadingDepositOrders(false);
+      if (requestId === fetchDepositOrdersRequestRef.current) {
+        setLoadingDepositOrders(false);
+      }
     }
   };
 
   const openViewDeposit = (deposit: CashDeposit) => {
     setSelectedDepositToView(deposit);
     setViewDepositDialogOpen(true);
-    fetchDepositOrders([deposit.id]);
+
+    const cached = getCachedOrdersForDeposit(deposit.id);
+    setDepositOrders(cached);
+    setLoadingDepositOrders(cached.length === 0);
+
+    void fetchDepositOrders([deposit.id]);
+  };
+
+  const openViewDepositFromId = (depositId: string) => {
+    const deposit = findDepositById(depositId);
+    if (!deposit) {
+      toast({
+        title: 'Deposit not found',
+        description: 'Could not load deposit details for this order.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    openViewDeposit(deposit);
   };
 
   const getDisplayDepositType = (depositType?: 'CASH' | 'CHEQUE' | null): string => {
@@ -1117,12 +1153,17 @@ export default function LeaderCashDepositsPage() {
     return "bg-gray-50 text-gray-700 border-gray-200";
   };
 
-  const selectedDepositDisplayType = selectedDepositToView ? getEffectiveDepositType(selectedDepositToView) : null;
-  const selectedDepositDisplayAmount = selectedDepositToView ? getEffectiveDepositAmount(selectedDepositToView) : 0;
-
   const findDepositById = (depositId: string): CashDeposit | undefined => {
     return pendingDeposits.find(d => d.id === depositId) || depositHistory.find(d => d.id === depositId);
   };
+
+  const selectedDepositDisplayType = selectedDepositToView ? getEffectiveDepositType(selectedDepositToView) : null;
+  const selectedDepositDisplayAmount =
+    viewDepositDialogOpen && depositOrders.length > 0
+      ? depositOrders.reduce((sum, o) => sum + o.remittedAmount, 0)
+      : selectedDepositToView
+      ? getEffectiveDepositAmount(selectedDepositToView)
+      : 0;
 
   // For the Record Deposit modal: compute accurate cash/cheque total and order references
   const modalCashAmount =
@@ -1542,17 +1583,20 @@ export default function LeaderCashDepositsPage() {
     const allIds = allForDay.map((d) => d.id);
     void fetchDayTrailRevisions(allIds);
 
-    // Fetch orders for all those deposits in one go, grouped by deposit_id
+    // Fetch orders using the same deposit scope as the expanded day view (recorded + verified)
+    const depositIdsForOrders = getDepositIdsForDate(dateKey, pendingDeposits, depositHistory, {
+      includeUnrecordedPending: false,
+    });
+
     (async () => {
       try {
         setLoadingDayTrailOrders(true);
-        const allIds = allForDay.map(d => d.id);
         const { data, error } = await supabase
           .from('client_orders')
           .select(`
             id, order_number, total_amount, payment_method, payment_mode, payment_splits, deposit_id, clients(name)
           `)
-          .in('deposit_id', allIds);
+          .in('deposit_id', depositIdsForOrders);
 
         if (error) throw error;
 
@@ -1563,44 +1607,10 @@ export default function LeaderCashDepositsPage() {
           const depositId = order.deposit_id as string;
           if (!depositId || !grouped[depositId]) return;
 
-          const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
-          const paymentMethod = order.payment_method as string | null;
-          const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+          const breakdown = toDepositOrderBreakdown(order);
+          if (breakdown.remittedAmount <= 0) return;
 
-          let cashPortion = 0;
-          let chequePortion = 0;
-          let nonCashPortion = 0;
-          const nonCashLabels: string[] = [];
-
-          if (paymentMode === 'SPLIT') {
-            splits.forEach((s: any) => {
-              const amt = s.amount || 0;
-              if (s.method === 'CASH') cashPortion += amt;
-              else if (s.method === 'CHEQUE') chequePortion += amt;
-              else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
-                nonCashPortion += amt;
-                const lbl = s.method === 'BANK_TRANSFER' ? (s.bank || 'Bank Transfer') : 'GCash';
-                if (!nonCashLabels.includes(lbl)) nonCashLabels.push(lbl);
-              }
-            });
-          } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
-            const amt = order.total_amount || 0;
-            if (paymentMethod === 'CASH') cashPortion = amt;
-            else chequePortion = amt;
-          }
-
-          const remittedAmount = cashPortion + chequePortion;
-          grouped[depositId].push({
-            orderId: order.id,
-            orderNumber: order.order_number,
-            clientName: order.clients?.name || 'Unknown',
-            remittedAmount,
-            fullOrderTotal: order.total_amount || remittedAmount,
-            cashPortion,
-            chequePortion,
-            nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
-            nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
-          });
+          grouped[depositId].push(breakdown);
         });
 
         setDayTrailOrders(grouped);
@@ -1615,6 +1625,14 @@ export default function LeaderCashDepositsPage() {
   const handleToggleDay = (group: DailyDepositGroup) => {
     const nextKey = group.dateKey;
     if (!nextKey || dayDetailsByDate[nextKey]) return;
+
+    const depositIdsForDay = getDepositIdsForDate(
+      nextKey,
+      pendingDeposits,
+      depositHistory,
+      { includeUnrecordedPending: true }
+    );
+    if (depositIdsForDay.length === 0) return;
 
     // Lazy-load day details when a date is expanded
     (async () => {
@@ -1638,7 +1656,7 @@ export default function LeaderCashDepositsPage() {
             clients(name),
             items:client_order_items(quantity)
           `)
-          .in('deposit_id', group.depositIds);
+          .in('deposit_id', depositIdsForDay);
 
         if (error) throw error;
 
@@ -1648,45 +1666,8 @@ export default function LeaderCashDepositsPage() {
         const agentMap: Record<string, DailyAgentGroup> = {};
 
         ordersForDayDetails.forEach((order: any) => {
-          const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
-          const paymentMethod = order.payment_method as 'GCASH' | 'BANK_TRANSFER' | 'CASH' | 'CHEQUE' | null;
-          const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
-
-          let cashPortion = 0;
-          let chequePortion = 0;
-          let nonCashPortion = 0;
-          const nonCashLabels: string[] = [];
-
-          if (paymentMode === 'SPLIT') {
-            splits.forEach((s: any) => {
-              const amount = s.amount || 0;
-              if (s.method === 'CASH') {
-                cashPortion += amount;
-              } else if (s.method === 'CHEQUE') {
-                chequePortion += amount;
-              } else if (s.method === 'BANK_TRANSFER' || s.method === 'GCASH') {
-                nonCashPortion += amount;
-                if (s.method === 'BANK_TRANSFER') {
-                  if (s.bank && !nonCashLabels.includes(s.bank)) {
-                    nonCashLabels.push(s.bank);
-                  } else if (!s.bank && !nonCashLabels.includes('Bank Transfer')) {
-                    nonCashLabels.push('Bank Transfer');
-                  }
-                } else if (s.method === 'GCASH' && !nonCashLabels.includes('GCash')) {
-                  nonCashLabels.push('GCash');
-                }
-              }
-            });
-          } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
-            const amt = order.total_amount || 0;
-            if (paymentMethod === 'CASH') {
-              cashPortion = amt;
-            } else {
-              chequePortion = amt;
-            }
-          }
-
-          const remittedAmount = cashPortion + chequePortion;
+          const { cashPortion, chequePortion, nonCashPortion, nonCashLabel, remittedAmount } =
+            getOrderPaymentBreakdown(order);
           if (remittedAmount <= 0) return; // Exclude bank-transfer-only orders from cash deposits view
 
           const totalQuantity = (order.items || []).reduce((sum: number, item: any) => sum + (item.quantity || 0), 0);
@@ -1704,7 +1685,11 @@ export default function LeaderCashDepositsPage() {
             };
           }
 
-          const depositRecorded = checkDepositRecorded(order.deposit_id, pendingDeposits);
+          const depositRecorded = isDepositRecordedForDisplay(
+            order.deposit_id,
+            pendingDeposits,
+            depositHistory
+          );
 
           const dailyOrder: DailyOrderSummary = {
             agentId,
@@ -1718,7 +1703,7 @@ export default function LeaderCashDepositsPage() {
             cashPortion,
             chequePortion,
             nonCashPortion: nonCashPortion > 0 ? nonCashPortion : undefined,
-            nonCashLabel: nonCashLabels.length > 0 ? nonCashLabels.join(' + ') : undefined,
+            nonCashLabel,
             totalQuantity,
             depositRecorded,
           };
@@ -1895,6 +1880,7 @@ export default function LeaderCashDepositsPage() {
           updated_at: new Date().toISOString(),
           deposit_type: depositType,
           notes: depositNotes.trim() || null,
+          performed_by: user?.id,
         })
         .in('id', selectedDepositIds); // <-- FIX: Update all selected deposits for this day group
 
@@ -2221,6 +2207,7 @@ export default function LeaderCashDepositsPage() {
                                             <Button
                                               variant="ghost"
                                               size="sm"
+                                              title="View order breakdown"
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 handleViewOrderBreakdown(order);
@@ -2308,6 +2295,23 @@ export default function LeaderCashDepositsPage() {
                                   </p>
                                 </div>
                               </div>
+                              {(() => {
+                                const recordedDepositIds = Array.from(
+                                  new Set(recordedOrders.map((o) => o.depositId))
+                                );
+                                if (recordedDepositIds.length !== 1) return null;
+                                return (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="mt-3 w-full sm:w-auto gap-1.5 h-8 text-xs border-blue-200 text-blue-700 hover:bg-blue-100"
+                                    onClick={() => openViewDepositFromId(recordedDepositIds[0])}
+                                  >
+                                    <Receipt className="h-3.5 w-3.5" />
+                                    View deposit details
+                                  </Button>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>
@@ -3205,6 +3209,16 @@ export default function LeaderCashDepositsPage() {
                         </div>
                       </div>
 
+                      {/* Deposited by */}
+                      {selectedDepositToView.performedByName && (
+                        <div className="border rounded-lg p-3 bg-background">
+                          <div className="flex justify-between items-center">
+                            <span className="text-muted-foreground text-xs">Deposited by</span>
+                            <span className="text-xs font-medium">{selectedDepositToView.performedByName}</span>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Bank */}
                       <div className="border rounded-lg p-3 bg-background">
                         <div className="flex justify-between items-center">
@@ -3372,6 +3386,13 @@ export default function LeaderCashDepositsPage() {
                     <span className="col-span-2 font-medium">{selectedDepositToView.agentName}</span>
                   </div>
 
+                  {selectedDepositToView.performedByName && (
+                    <div className="grid grid-cols-3 gap-2 py-2 border-b">
+                      <span className="text-muted-foreground">Deposited by</span>
+                      <span className="col-span-2 font-medium">{selectedDepositToView.performedByName}</span>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-3 gap-2 py-2 border-b">
                     <span className="text-muted-foreground">Bank</span>
                     <span className="col-span-2 font-medium truncate">{selectedDepositToView.bankAccount}</span>
@@ -3511,6 +3532,19 @@ export default function LeaderCashDepositsPage() {
                             <span>{format(new Date(deposit.createdAt), 'MMM dd, yyyy • h:mm a')}</span>
                           </div>
                         )}
+                        {deposit.performedByName && (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <User className="h-3 w-3 shrink-0" />
+                            <span>
+                              Deposited by{' '}
+                              <span className="font-medium text-foreground">{deposit.performedByName}</span>
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">Agent</span>
+                          <span className="font-medium truncate ml-2">{deposit.agentName}</span>
+                        </div>
                         {/* Bank */}
                         <div className="flex items-center justify-between">
                           <span className="text-muted-foreground">Bank</span>
@@ -3548,6 +3582,19 @@ export default function LeaderCashDepositsPage() {
 
                         {/* Deposit Slip */}
                         {renderDepositSlipBlock(deposit, true)}
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full h-8 text-xs gap-1.5"
+                          onClick={() => {
+                            setViewDayTrailOpen(false);
+                            openViewDeposit(deposit);
+                          }}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          View deposit details
+                        </Button>
                       </div>
                     </div>
                   );
@@ -3620,6 +3667,19 @@ export default function LeaderCashDepositsPage() {
                           <span className="text-xs">{format(new Date(deposit.createdAt), 'MMMM dd, yyyy • h:mm a')}</span>
                         </div>
                       )}
+                      {deposit.performedByName && (
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <User className="h-3.5 w-3.5 shrink-0" />
+                          <span className="text-xs">
+                            Deposited by{' '}
+                            <span className="font-medium text-foreground">{deposit.performedByName}</span>
+                          </span>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-3 gap-1 text-sm">
+                        <span className="text-muted-foreground">Agent</span>
+                        <span className="col-span-2 font-medium truncate">{deposit.agentName}</span>
+                      </div>
 
                       <div className="grid grid-cols-3 gap-1 text-sm">
                         <span className="text-muted-foreground">Bank</span>
@@ -3667,6 +3727,19 @@ export default function LeaderCashDepositsPage() {
 
                       {/* Deposit Slip */}
                       {renderDepositSlipBlock(deposit, false)}
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full gap-1.5"
+                        onClick={() => {
+                          setViewDayTrailOpen(false);
+                          openViewDeposit(deposit);
+                        }}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        View deposit details
+                      </Button>
                     </div>
                   </div>
                 );
