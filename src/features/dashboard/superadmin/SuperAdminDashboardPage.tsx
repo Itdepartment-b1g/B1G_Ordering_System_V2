@@ -390,6 +390,8 @@ export default function SuperAdminDashboardPage() {
                       const approved = payload.find(p => p.dataKey === 'approvedRevenue')?.value as number || 0;
                       const pending = payload.find(p => p.dataKey === 'pendingRevenue')?.value as number || 0;
                       const total = approved + pending;
+                      const approvedPct = total > 0 ? (approved / total) * 100 : 0;
+                      const pendingPct = total > 0 ? (pending / total) * 100 : 0;
                       return (
                         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg">
                           <p className="font-semibold text-sm mb-2">{label}</p>
@@ -398,11 +400,13 @@ export default function SuperAdminDashboardPage() {
                               <span className="w-3 h-3 rounded-full bg-blue-500"></span>
                               <span className="text-gray-600 dark:text-gray-400">Approved:</span>
                               <span className="font-medium">₱{approved.toLocaleString()}</span>
+                              <span className="text-gray-500 dark:text-gray-500">({approvedPct.toFixed(1)}%)</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="w-3 h-3 rounded-full bg-orange-500"></span>
                               <span className="text-gray-600 dark:text-gray-400">Pending:</span>
                               <span className="font-medium">₱{pending.toLocaleString()}</span>
+                              <span className="text-gray-500 dark:text-gray-500">({pendingPct.toFixed(1)}%)</span>
                             </div>
                             <div className="border-t border-gray-200 dark:border-gray-700 pt-1 mt-2">
                               <div className="flex items-center gap-2">
@@ -411,6 +415,13 @@ export default function SuperAdminDashboardPage() {
                                 <span className="font-bold text-green-600 dark:text-green-400">₱{total.toLocaleString()}</span>
                               </div>
                             </div>
+                            {total > 0 && (
+                              <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2 text-[11px] text-gray-500 dark:text-gray-400 space-y-0.5">
+                                <p className="font-medium text-gray-600 dark:text-gray-300">How % is calculated:</p>
+                                <p>Approved: ₱{approved.toLocaleString()} ÷ ₱{total.toLocaleString()} × 100 = {approvedPct.toFixed(1)}%</p>
+                                <p>Pending: ₱{pending.toLocaleString()} ÷ ₱{total.toLocaleString()} × 100 = {pendingPct.toFixed(1)}%</p>
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
