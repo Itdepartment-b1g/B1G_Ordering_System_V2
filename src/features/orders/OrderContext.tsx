@@ -59,6 +59,9 @@ export interface Order {
   depositSlipUrl?: string; // URL of the deposit slip image uploaded by team leader
   depositReferenceNumber?: string; // Reference number for the cash deposit
   depositNotes?: string | null; // Notes/remarks recorded with the deposit
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedAt?: string;
 }
 
 interface OrderContextType {
@@ -77,12 +80,18 @@ function isZeroOrderTotal(totalAmount: unknown): boolean {
 }
 
 /** Used when Supabase RPC still requires deposit for zero-value cash/cheque orders */
-async function approveZeroValueOrderDirect(orderId: string, companyId: string): Promise<void> {
+async function approveZeroValueOrderDirect(
+  orderId: string,
+  companyId: string,
+  approverId: string
+): Promise<void> {
   const { error: orderError } = await supabase
     .from('client_orders')
     .update({
       status: 'approved',
       stage: 'admin_approved',
+      approved_by: approverId,
+      approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     } as any)
     .eq('id', orderId);
@@ -161,8 +170,11 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           stage,
           pricing_strategy,
           deposit_id,
+          approved_by,
+          approved_at,
           created_at,
           agent:profiles!client_orders_agent_id_fkey(full_name),
+          approver:profiles!client_orders_approved_by_fkey(full_name),
           client:clients(name, email),
           cash_deposit:cash_deposits(status, bank_account, reference_number, deposit_slip_url, notes),
           items:client_order_items(
@@ -339,6 +351,9 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           depositSlipUrl: cashDeposit?.deposit_slip_url || undefined,
           depositReferenceNumber: cashDeposit?.reference_number || undefined,
           depositNotes: cashDeposit?.notes || null,
+          approvedBy: order.approved_by || undefined,
+          approvedByName: order.approver?.full_name || undefined,
+          approvedAt: order.approved_at || undefined,
         };
       });
 
@@ -814,8 +829,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       console.log(`📋 Updating order ${orderId} to status: ${status}`);
 
       // Get current user ID for approver tracking
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not authenticated');
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) throw new Error('User not authenticated');
 
       if (status === 'approved') {
         const { data: orderMeta, error: metaError } = await supabase
@@ -830,6 +845,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
 
         const { data, error } = await supabase.rpc('approve_order_and_verify_deposit', {
           p_order_id: orderId,
+          p_approver_id: authUser.id,
         });
 
         if (error) {
@@ -847,7 +863,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             console.warn(
               'Zero-value order: RPC deposit check failed; approving via direct update. Deploy supabase/migrations/20260525130000_approve_order_zero_value_bypass.sql on Supabase for permanent fix.'
             );
-            await approveZeroValueOrderDirect(orderId, orderMeta.company_id);
+            await approveZeroValueOrderDirect(orderId, orderMeta.company_id, authUser.id);
           } else {
             throw new Error(data?.message || 'Failed to approve order');
           }
@@ -862,7 +878,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         const { data, error } = await supabase
           .rpc('reject_client_order', {
             p_order_id: orderId,
-            p_approver_id: user.id,
+            p_approver_id: authUser.id,
             p_reason: reason || null
           });
 
@@ -939,6 +955,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             ? {
                 ...o,
                 status,
+                ...(status === 'approved' || status === 'rejected'
+                  ? {
+                      approvedBy: authUser.id,
+                      approvedByName: user?.full_name || authUser.email || 'Unknown',
+                      approvedAt: new Date().toISOString(),
+                    }
+                  : {}),
                 ...(status === 'approved' ? { stage: 'admin_approved' as const } : {}),
               }
             : o

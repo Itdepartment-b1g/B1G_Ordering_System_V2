@@ -2056,6 +2056,29 @@ export default function OrdersPage() {
                 </Badge>
               </div>
 
+              {(viewingOrder.status === 'approved' || viewingOrder.status === 'rejected') &&
+                (viewingOrder.approvedBy || viewingOrder.approvedByName) && (
+                <div className="p-4 bg-muted/50 border rounded-lg">
+                  <Label className="text-muted-foreground">
+                    {viewingOrder.status === 'approved' ? 'Approved By' : 'Rejected By'}
+                  </Label>
+                  <p className="font-medium mt-1">
+                    {viewingOrder.approvedByName || '—'}
+                  </p>
+                  {viewingOrder.approvedAt && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {new Date(viewingOrder.approvedAt).toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Client & Agent Info */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
