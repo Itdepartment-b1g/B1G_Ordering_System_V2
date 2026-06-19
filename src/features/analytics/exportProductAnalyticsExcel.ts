@@ -49,32 +49,19 @@ function addMetaRow(
   return rowIndex + 1;
 }
 
-export async function exportProductAnalyticsExcel(
+export function writeProductAnalyticsSection(
+  worksheet: ExcelJS.Worksheet,
   rows: ProductAnalyticsExportRow[],
-  meta: ProductAnalyticsExportMeta
-) {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('Product Analytics');
-
-  worksheet.columns = [
-    { width: 22 },
-    { width: 28 },
-    { width: 14 },
-    { width: 14 },
-    { width: 16 },
-    { width: 14 },
-    { width: 18 },
-    { width: 18 },
-    { width: 18 },
-  ];
-
-  const titleRow = worksheet.getRow(1);
-  worksheet.mergeCells('A1:I1');
+  meta: ProductAnalyticsExportMeta,
+  startRow = 1
+): number {
+  const titleRow = worksheet.getRow(startRow);
+  worksheet.mergeCells(startRow, 1, startRow, 9);
   titleRow.getCell(1).value = 'Product Analytics Export';
   titleRow.getCell(1).font = { bold: true, size: 14 };
   titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
 
-  let cursor = 3;
+  let cursor = startRow + 2;
   cursor = addMetaRow(worksheet, cursor, 'Export', 'Filtered (date range)');
   cursor = addMetaRow(worksheet, cursor, 'Section', 'Product Performance');
   cursor = addMetaRow(
@@ -164,6 +151,30 @@ export async function exportProductAnalyticsExcel(
   [3, 4, 5, 6, 7, 8, 9].forEach((col) => {
     totalRow.getCell(col).alignment = { horizontal: 'right' };
   });
+
+  return cursor + 1;
+}
+
+export async function exportProductAnalyticsExcel(
+  rows: ProductAnalyticsExportRow[],
+  meta: ProductAnalyticsExportMeta
+) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Product Analytics');
+
+  worksheet.columns = [
+    { width: 22 },
+    { width: 28 },
+    { width: 14 },
+    { width: 14 },
+    { width: 16 },
+    { width: 14 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+  ];
+
+  writeProductAnalyticsSection(worksheet, rows, meta);
 
   const fileBuffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([fileBuffer], {

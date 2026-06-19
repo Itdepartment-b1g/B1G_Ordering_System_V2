@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange, formatDateForInput } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -26,6 +26,10 @@ import {
   exportOrdersListExcel,
   mapOrderToListExportRow,
 } from '@/features/orders/utils/exportOrdersListExcel';
+import {
+  buildOrderBreakdownExportFilename,
+  exportOrderBreakdownExcel,
+} from '@/features/orders/utils/exportOrderBreakdownExcel';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -296,6 +300,7 @@ export default function OrdersPage() {
   const [activeOrderTab, setActiveOrderTab] = useState<OrderListTab>('all');
   const [isExportingOrdersFiltered, setIsExportingOrdersFiltered] = useState(false);
   const [isExportingOrdersAll, setIsExportingOrdersAll] = useState(false);
+  const [isExportingOrderBreakdown, setIsExportingOrderBreakdown] = useState(false);
 
   const orderDateRange = useMemo(() => {
     return getDateRangeFromPreset(
@@ -838,9 +843,18 @@ export default function OrdersPage() {
     hasActiveOrderFilters &&
     filteredOrdersForExport.length > 0 &&
     !isExportingOrdersFiltered &&
-    !isExportingOrdersAll;
+    !isExportingOrdersAll &&
+    !isExportingOrderBreakdown;
   const canExportAll =
-    visibleOrders.length > 0 && !isExportingOrdersFiltered && !isExportingOrdersAll;
+    visibleOrders.length > 0 &&
+    !isExportingOrdersFiltered &&
+    !isExportingOrdersAll &&
+    !isExportingOrderBreakdown;
+  const canExportOrderBreakdown =
+    filteredOrdersForExport.length > 0 &&
+    !isExportingOrdersFiltered &&
+    !isExportingOrdersAll &&
+    !isExportingOrderBreakdown;
 
   const runOrdersListExport = async (
     ordersToExport: Order[],
@@ -940,6 +954,57 @@ export default function OrdersPage() {
       });
     } finally {
       setIsExportingOrdersAll(false);
+    }
+  };
+
+  const handleExportOrderBreakdown = async () => {
+    const ordersToExport = filteredOrdersForExport;
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+    const tabLabel = orderListTabLabels[activeOrderTab];
+
+    if (!ordersToExport.length) {
+      toast({
+        title: 'No data to export',
+        description: `No orders in ${tabLabel} for ${dateLabel}.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsExportingOrderBreakdown(true);
+    try {
+      const periodStart =
+        dateRangeFilter.preset === 'all' ? 'all' : formatDateForInput(orderDateRange.start);
+      const periodEnd =
+        dateRangeFilter.preset === 'all' ? 'all' : formatDateForInput(orderDateRange.end);
+      const filenamePrefix = buildOrderBreakdownExportFilename(
+        dateRangeFilter,
+        activeOrderTab
+      );
+      await exportOrderBreakdownExcel(ordersToExport, filenamePrefix, {
+        dateRangeLabel: dateLabel,
+        periodStart,
+        periodEnd,
+        tabLabel,
+        orderCount: ordersToExport.length,
+      });
+      toast({
+        title: 'Order breakdown export successful',
+        description: `Exported ${ordersToExport.length} order(s) · ${tabLabel} · ${dateLabel}.`,
+      });
+    } catch (error) {
+      console.error('Order breakdown export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the order breakdown report. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingOrderBreakdown(false);
     }
   };
 
@@ -1739,6 +1804,19 @@ export default function OrdersPage() {
                     <FileDown className="h-4 w-4" />
                   )}
                   {isExportingOrdersAll ? 'Exporting...' : 'Export all'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleExportOrderBreakdown}
+                  disabled={!canExportOrderBreakdown}
+                  className="gap-2"
+                >
+                  {isExportingOrderBreakdown ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  {isExportingOrderBreakdown ? 'Exporting...' : 'Export order breakdown'}
                 </Button>
               </>
             ) : null}
