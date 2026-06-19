@@ -118,6 +118,38 @@ export function getRebateReplacementPricingTotals(
   };
 }
 
+export type WarehouseReceiveMembership = {
+  isMain: boolean;
+  locationId: string | null;
+};
+
+/** Whether this warehouse user may receive a rebate return at the given ship-from location. */
+export function canWarehouseUserReceiveRebateReturnAtLocation(
+  membership: WarehouseReceiveMembership,
+  warehouseLocationId: string | null | undefined,
+  locationIsMain: boolean
+): boolean {
+  if (!warehouseLocationId) return false;
+  if (locationIsMain) return membership.isMain;
+  return !membership.isMain && String(warehouseLocationId) === String(membership.locationId);
+}
+
+export function filterRebateReturnLinesForWarehouseUser<
+  T extends { warehouse_location_id: string | null | undefined }
+>(
+  lines: T[],
+  membership: WarehouseReceiveMembership,
+  locationIsMainById: Record<string, boolean>
+): T[] {
+  return lines.filter((line) =>
+    canWarehouseUserReceiveRebateReturnAtLocation(
+      membership,
+      line.warehouse_location_id,
+      !!line.warehouse_location_id && !!locationIsMainById[line.warehouse_location_id]
+    )
+  );
+}
+
 export function rebateReplacementOrderTotalLabel(
   totals: RebateReplacementPricingTotals | null
 ): string {

@@ -261,6 +261,9 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       return fetchInventory(companyId);
     },
     enabled: !!user?.company_id,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     select: (data) =>
       data.map((b) => ({
         ...b,
@@ -276,7 +279,16 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       .channel('inventory_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'brands' }, () => qc.invalidateQueries({ queryKey: ['inventory'] }))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'variants' }, () => qc.invalidateQueries({ queryKey: ['inventory'] }))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'main_inventory' }, () => qc.invalidateQueries({ queryKey: ['inventory'] }))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'main_inventory' }, () => {
+        qc.invalidateQueries({ queryKey: ['inventory'] });
+        qc.invalidateQueries({ queryKey: ['variant-batch-lots'] });
+        qc.invalidateQueries({ queryKey: ['warehouse-batch-aging'] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_batch_lots' }, () => {
+        qc.invalidateQueries({ queryKey: ['inventory'] });
+        qc.invalidateQueries({ queryKey: ['variant-batch-lots'] });
+        qc.invalidateQueries({ queryKey: ['warehouse-batch-aging'] });
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_transactions' }, () => qc.invalidateQueries({ queryKey: ['inventory'] }))
       .subscribe();
 
@@ -407,8 +419,15 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       addOrUpdateInventory,
       updateBrandName,
       updateVariant,
-      setBrands: (brands: Brand[]) => qc.setQueryData(['inventory', user?.company_id, user?.id], brands),
-      refreshInventory: () => qc.invalidateQueries({ queryKey: ['inventory'] })
+      setBrands: (brands: Brand[]) =>
+        qc.setQueryData(['inventory', user?.company_id, user?.id, membership.status], brands),
+      refreshInventory: async () => {
+        await Promise.all([
+          qc.refetchQueries({ queryKey: ['inventory'] }),
+          qc.refetchQueries({ queryKey: ['variant-batch-lots'] }),
+          qc.refetchQueries({ queryKey: ['warehouse-batch-aging'] }),
+        ]);
+      },
     }}>
       {children}
     </InventoryContext.Provider>

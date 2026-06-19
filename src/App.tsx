@@ -14,7 +14,7 @@ import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOr
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import { MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, WarehouseDisposalsPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import { MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseStockAdjustmentsPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
 import AdminTLRequestsPage from "@/features/inventory/AdminTLRequestsPage";
 import { ClientsPage, MyClientsPage, MyTeamsPage, PendingClientsPage } from "@/features/clients";
@@ -113,6 +113,30 @@ const App = () => (
                       element={
                         <ProtectedRoute allowedRoles={["warehouse"]}>
                           <WarehouseDisposalsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/stock-requests"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseStockRequestsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/stock-returns"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseStockReturnsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/stock-adjustments"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseStockAdjustmentsPage />
                         </ProtectedRoute>
                       }
                     />

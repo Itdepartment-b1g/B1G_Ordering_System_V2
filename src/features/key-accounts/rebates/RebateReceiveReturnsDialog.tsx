@@ -15,6 +15,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2 } from 'lucide-react';
+import {
+  filterRebateReturnLinesForWarehouseUser,
+  type WarehouseReceiveMembership,
+} from '@/features/key-accounts/rebates/keyAccountRebateShared';
 
 export type RebateReturnInspectLine = {
   rebate_line_id: string;
@@ -44,6 +48,8 @@ type Props = {
   fulfillmentPoId: string;
   sourceRebateId: string;
   warehouseNamesById?: Record<string, string>;
+  warehouseLocationIsMainById?: Record<string, boolean>;
+  warehouseMembership?: WarehouseReceiveMembership;
   hubCompanyId?: string | null;
   onSuccess?: () => void;
 };
@@ -54,6 +60,8 @@ export function RebateReceiveReturnsDialog({
   fulfillmentPoId,
   sourceRebateId,
   warehouseNamesById = {},
+  warehouseLocationIsMainById = {},
+  warehouseMembership = { isMain: true, locationId: null },
   hubCompanyId,
   onSuccess,
 }: Props) {
@@ -120,36 +128,40 @@ export function RebateReceiveReturnsDialog({
         ];
 
         let nameById = { ...warehouseNamesById };
+        let isMainById = { ...warehouseLocationIsMainById };
         if (hubCompanyId && locationIds.length > 0) {
-          const missing = locationIds.filter((id) => !nameById[id]);
+          const missing = locationIds.filter((id) => !nameById[id] || isMainById[id] === undefined);
           if (missing.length > 0) {
             const { data: locRows } = await supabase
               .from('warehouse_locations')
-              .select('id, name')
+              .select('id, name, is_main')
               .eq('company_id', hubCompanyId)
               .in('id', missing);
             for (const row of locRows || []) {
               if (row?.id && row?.name) nameById[row.id] = row.name;
+              if (row?.id) isMainById[row.id] = !!row.is_main;
             }
           }
         }
 
+        const mapped = raw.map((r) => {
+          const whId = r.purchase_order_item?.warehouse_location_id ?? '';
+          const disputed = Number(r.disputed_quantity) || 0;
+          return {
+            rebate_line_id: r.id,
+            brand_name: r.variant?.brand?.name ?? '—',
+            variant_name: r.variant?.name ?? '—',
+            variant_type: r.variant?.variant_type ?? '—',
+            warehouse_location_id: whId,
+            warehouse_location_name: whId ? nameById[whId] || '—' : '—',
+            disputed_quantity: disputed,
+            qty_good: disputed,
+            qty_damaged: 0,
+          };
+        });
+
         setLines(
-          raw.map((r) => {
-            const whId = r.purchase_order_item?.warehouse_location_id ?? '';
-            const disputed = Number(r.disputed_quantity) || 0;
-            return {
-              rebate_line_id: r.id,
-              brand_name: r.variant?.brand?.name ?? '—',
-              variant_name: r.variant?.name ?? '—',
-              variant_type: r.variant?.variant_type ?? '—',
-              warehouse_location_id: whId,
-              warehouse_location_name: whId ? nameById[whId] || '—' : '—',
-              disputed_quantity: disputed,
-              qty_good: disputed,
-              qty_damaged: 0,
-            };
-          })
+          filterRebateReturnLinesForWarehouseUser(mapped, warehouseMembership, isMainById)
         );
         setNotes('');
       } catch (e: unknown) {
@@ -169,7 +181,7 @@ export function RebateReceiveReturnsDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, sourceRebateId, warehouseNamesById, hubCompanyId, toast]);
+  }, [open, sourceRebateId, warehouseNamesById, warehouseLocationIsMainById, warehouseMembership, hubCompanyId, toast]);
 
   const validationError = useMemo(() => {
     for (const l of lines) {

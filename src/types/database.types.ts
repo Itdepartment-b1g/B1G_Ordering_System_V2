@@ -56,7 +56,10 @@ export type TransactionType =
   | 'warehouse_allocate_to_sub'
   | 'warehouse_return_from_sub'
   | 'rebate_return_in'
-  | 'rebate_return_disposed';
+  | 'rebate_return_disposed'
+  | 'warehouse_stock_receive'
+  | 'warehouse_return_in'
+  | 'warehouse_return_disposed';
 export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
 export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
 export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';
@@ -583,6 +586,133 @@ export interface InventoryTransaction {
   created_at: string;
 }
 
+export type InventoryBatchSourceType =
+  | 'opening_balance'
+  | 'stock_request_receive'
+  | 'adjustment_in';
+
+export type InventoryBatchStatus = 'partial' | 'complete';
+
+export type InventoryBatchMovementType =
+  | 'receive'
+  | 'allocate_out'
+  | 'allocate_in'
+  | 'return_out'
+  | 'return_in'
+  | 'fulfill_out'
+  | 'adjustment_in'
+  | 'adjustment_out'
+  | 'opening_balance'
+  | 'rebate_return_in';
+
+export interface InventoryBatch {
+  id: string;
+  company_id: string;
+  batch_number: string;
+  source_type: InventoryBatchSourceType;
+  stock_request_id?: string | null;
+  status: InventoryBatchStatus;
+  received_at: string;
+  notes?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryBatchLot {
+  id: string;
+  company_id: string;
+  batch_id: string;
+  variant_id: string;
+  warehouse_location_id: string;
+  quantity_received: number;
+  quantity_remaining: number;
+  received_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryBatchMovement {
+  id: string;
+  company_id: string;
+  lot_id: string;
+  batch_id: string;
+  variant_id: string;
+  warehouse_location_id: string;
+  movement_type: InventoryBatchMovementType;
+  quantity: number;
+  reference_type?: string | null;
+  reference_id?: string | null;
+  from_location_id?: string | null;
+  to_location_id?: string | null;
+  performed_by?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+/** Lot row with batch metadata for aging reports */
+export type InventoryBatchLotWithBatch = InventoryBatchLot & {
+  batch_number: string;
+  source_type: InventoryBatchSourceType;
+  days_in_warehouse: number;
+};
+
+export type WarehouseStockRequestStatus =
+  | 'pending_receive'
+  | 'partially_received'
+  | 'fully_received'
+  | 'cancelled';
+
+export interface WarehouseStockRequest {
+  id: string;
+  company_id: string;
+  request_number: string;
+  brand_id: string;
+  status: WarehouseStockRequestStatus;
+  expected_delivery_date?: string | null;
+  notes?: string | null;
+  created_by?: string | null;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancellation_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WarehouseStockRequestItem {
+  id: string;
+  request_id: string;
+  variant_id: string;
+  ordered_quantity: number;
+  received_quantity: number;
+  created_at: string;
+}
+
+export interface WarehouseStockRequestReceive {
+  id: string;
+  request_id: string;
+  batch_id: string;
+  received_by?: string | null;
+  received_at: string;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface WarehouseStockAdjustment {
+  id: string;
+  company_id: string;
+  warehouse_location_id: string;
+  variant_id: string;
+  direction: 'in' | 'out';
+  quantity: number;
+  reason: string;
+  notes?: string | null;
+  batch_id?: string | null;
+  lot_id?: string | null;
+  performed_by?: string | null;
+  created_at: string;
+}
+
 export interface AllocationHistory {
   id: string;
   company_id: string;
@@ -1063,6 +1193,41 @@ export interface Database {
       inventory_transactions: {
         Row: InventoryTransaction;
         Insert: Omit<InventoryTransaction, "id" | "created_at">;
+        Update: never;
+      };
+      inventory_batches: {
+        Row: InventoryBatch;
+        Insert: Omit<InventoryBatch, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<InventoryBatch, "id" | "created_at">>;
+      };
+      inventory_batch_lots: {
+        Row: InventoryBatchLot;
+        Insert: Omit<InventoryBatchLot, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<InventoryBatchLot, "id" | "created_at">>;
+      };
+      inventory_batch_movements: {
+        Row: InventoryBatchMovement;
+        Insert: Omit<InventoryBatchMovement, "id" | "created_at">;
+        Update: never;
+      };
+      warehouse_stock_requests: {
+        Row: WarehouseStockRequest;
+        Insert: Omit<WarehouseStockRequest, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<WarehouseStockRequest, "id" | "created_at">>;
+      };
+      warehouse_stock_request_items: {
+        Row: WarehouseStockRequestItem;
+        Insert: Omit<WarehouseStockRequestItem, "id" | "created_at">;
+        Update: Partial<Omit<WarehouseStockRequestItem, "id" | "created_at">>;
+      };
+      warehouse_stock_request_receives: {
+        Row: WarehouseStockRequestReceive;
+        Insert: Omit<WarehouseStockRequestReceive, "id" | "created_at">;
+        Update: never;
+      };
+      warehouse_stock_adjustments: {
+        Row: WarehouseStockAdjustment;
+        Insert: Omit<WarehouseStockAdjustment, "id" | "created_at">;
         Update: never;
       };
       allocation_history: {
