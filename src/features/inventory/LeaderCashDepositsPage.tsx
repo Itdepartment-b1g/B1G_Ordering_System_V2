@@ -121,6 +121,18 @@ interface DailyDepositGroup {
 const formatBankLabel = (name: string, accountNumber: string | null | undefined) =>
   accountNumber ? `${name} - ${accountNumber}` : name;
 
+const MAX_DEPOSIT_SLIP_EDITS = 2;
+
+const getDepositSlipEditCount = (
+  depositId: string,
+  revisions: Record<string, CashDepositSlipRevision[]>,
+): number => (revisions[depositId] || []).length;
+
+const canReplaceDepositSlip = (
+  depositId: string,
+  revisions: Record<string, CashDepositSlipRevision[]>,
+): boolean => getDepositSlipEditCount(depositId, revisions) < MAX_DEPOSIT_SLIP_EDITS;
+
 // Returns true when a deposit has real bank details recorded (not a placeholder from remittance).
 const checkDepositRecorded = (depositId: string, deposits: CashDeposit[]): boolean => {
   const deposit = deposits.find(d => d.id === depositId);
@@ -1363,6 +1375,15 @@ export default function LeaderCashDepositsPage() {
   };
 
   const handleOpenEditSlip = (deposit: CashDeposit) => {
+    if (!canReplaceDepositSlip(deposit.id, dayTrailSlipRevisions)) {
+      toast({
+        title: 'Edit limit reached',
+        description: `This deposit slip can only be edited up to ${MAX_DEPOSIT_SLIP_EDITS} times.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setEditSlipDeposit(deposit);
     setEditSlipFile(null);
     setEditSlipReason('');
@@ -1383,6 +1404,15 @@ export default function LeaderCashDepositsPage() {
       toast({
         title: 'Reason required',
         description: 'Please explain why the slip is being replaced.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!canReplaceDepositSlip(editSlipDeposit.id, dayTrailSlipRevisions)) {
+      toast({
+        title: 'Edit limit reached',
+        description: `This deposit slip can only be edited up to ${MAX_DEPOSIT_SLIP_EDITS} times.`,
         variant: 'destructive',
       });
       return;
@@ -1466,13 +1496,15 @@ export default function LeaderCashDepositsPage() {
   const renderDepositSlipBlock = (deposit: CashDeposit, compact = false) => {
     if (!deposit.depositSlipUrl) return null;
 
-    const hasRevisions = (dayTrailSlipRevisions[deposit.id] || []).length > 0;
+    const editCount = getDepositSlipEditCount(deposit.id, dayTrailSlipRevisions);
+    const hasRevisions = editCount > 0;
+    const slipEditAllowed = canReplaceDepositSlip(deposit.id, dayTrailSlipRevisions);
 
     return (
       <div className="mt-1 border rounded-md overflow-hidden">
         <div className={`bg-muted/30 px-3 flex items-center justify-between text-muted-foreground font-semibold ${compact ? 'py-1 text-[10px]' : 'py-1.5 text-xs'}`}>
           <span>Deposit Slip{hasRevisions ? ' (corrected)' : ''}</span>
-          {canEditDepositSlip && (
+          {canEditDepositSlip && slipEditAllowed && (
             <Button
               type="button"
               variant="ghost"
@@ -1481,8 +1513,13 @@ export default function LeaderCashDepositsPage() {
               onClick={() => handleOpenEditSlip(deposit)}
             >
               <Pencil className={compact ? 'h-2.5 w-2.5 mr-1' : 'h-3 w-3 mr-1'} />
-              Edit
+              Edit ({editCount}/{MAX_DEPOSIT_SLIP_EDITS})
             </Button>
+          )}
+          {canEditDepositSlip && !slipEditAllowed && (
+            <span className={`font-normal text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
+              Max edits reached ({MAX_DEPOSIT_SLIP_EDITS}/{MAX_DEPOSIT_SLIP_EDITS})
+            </span>
           )}
         </div>
         <div className={`flex justify-center bg-gray-50 ${compact ? 'p-1.5' : 'p-2'}`}>
@@ -3699,11 +3736,15 @@ export default function LeaderCashDepositsPage() {
             <DialogTitle>Replace Deposit Slip</DialogTitle>
             <DialogDescription>
               Upload the correct deposit slip. The original image will be kept in revision history.
+              {' '}Each deposit can be edited up to {MAX_DEPOSIT_SLIP_EDITS} times.
             </DialogDescription>
           </DialogHeader>
 
           {editSlipDeposit && (
             <div className="space-y-4 py-2">
+              <p className="text-xs text-muted-foreground">
+                Edits used: {getDepositSlipEditCount(editSlipDeposit.id, dayTrailSlipRevisions)} of {MAX_DEPOSIT_SLIP_EDITS}
+              </p>
               <div className="rounded-lg border p-3 space-y-2">
                 <p className="text-xs text-muted-foreground">Current slip</p>
                 {editSlipDeposit.depositSlipUrl ? (
