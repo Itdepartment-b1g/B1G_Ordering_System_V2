@@ -125,7 +125,9 @@ export function isDateInRange(
   if (!start && !end) return true;
   const d =
     typeof orderDate === 'string'
-      ? parseDateFromInput(orderDate)
+      ? orderDate.includes('T')
+        ? new Date(orderDate)
+        : parseDateFromInput(orderDate)
       : orderDate instanceof Date
         ? new Date(orderDate)
         : undefined;

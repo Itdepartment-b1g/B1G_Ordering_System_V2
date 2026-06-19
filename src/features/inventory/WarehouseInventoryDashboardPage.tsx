@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart3, LayoutGrid, List, RefreshCw, Search } from 'lucide-react';
+import { BarChart3, Clock, LayoutGrid, List, RefreshCw, Search } from 'lucide-react';
 import { useInventory, type Brand, type Variant } from './InventoryContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,7 +13,9 @@ import { useAuth } from '@/features/auth';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
+import { WarehouseBatchAgingPanel } from './components/WarehouseBatchAgingPanel';
 import { WarehouseFsnPanel } from './components/WarehouseFsnPanel';
+import { useWarehouseBatchAging } from './useWarehouseBatchAging';
 import { useWarehouseFsnAnalysis } from './useWarehouseFsnAnalysis';
 import { type FsnPeriodDays } from './warehouseFsnAnalysis';
 
@@ -21,7 +23,7 @@ import { type FsnPeriodDays } from './warehouseFsnAnalysis';
 const TYPE_SORT_ORDER: string[] = ['flavor', 'battery', 'POSM', 'posm'];
 
 type DashboardViewMode = 'available' | 'overall' | 'sub';
-type DashboardSection = 'stock' | 'fsn';
+type DashboardSection = 'stock' | 'fsn' | 'aging';
 
 function getVariantsByTypeEntries(brand: Brand): [string, Variant[]][] {
   const v = brand.variantsByType;
@@ -449,8 +451,8 @@ export default function WarehouseInventoryDashboardPage() {
 
   const fsnCatalogBrands = displayedBrands;
 
-  const fsnQueryEnabled =
-    dashboardSection === 'fsn' &&
+  const reportQueryEnabled =
+    (dashboardSection === 'fsn' || dashboardSection === 'aging') &&
     !!user?.company_id &&
     !!fsnLocationId &&
     !(isMainWarehouseUser && viewMode === 'sub' && !selectedLocationId);
@@ -464,7 +466,17 @@ export default function WarehouseInventoryDashboardPage() {
     locationId: fsnLocationId,
     periodDays: fsnPeriodDays,
     brands: fsnCatalogBrands,
-    enabled: fsnQueryEnabled,
+    enabled: reportQueryEnabled && dashboardSection === 'fsn',
+  });
+
+  const {
+    data: agingRows = [],
+    isLoading: loadingAging,
+    error: agingError,
+  } = useWarehouseBatchAging({
+    companyId: user?.company_id,
+    locationId: fsnLocationId,
+    enabled: reportQueryEnabled && dashboardSection === 'aging',
   });
 
   const stockScopeHint = useMemo(() => {
@@ -493,6 +505,9 @@ export default function WarehouseInventoryDashboardPage() {
         await qc.invalidateQueries({
           queryKey: ['warehouse-fsn-movement', user?.company_id, fsnLocationId],
         });
+        await qc.invalidateQueries({
+          queryKey: ['warehouse-batch-aging', user?.company_id, fsnLocationId],
+        });
       }
     } finally {
       setRefreshing(false);
@@ -507,7 +522,9 @@ export default function WarehouseInventoryDashboardPage() {
           <p className="text-muted-foreground">
             {dashboardSection === 'fsn'
               ? `FSN analysis (transfer PO fulfillments). ${fsnLocationLabel}.`
-              : stockScopeHint}
+              : dashboardSection === 'aging'
+                ? `Batch aging (days in warehouse). ${fsnLocationLabel}.`
+                : stockScopeHint}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -567,7 +584,7 @@ export default function WarehouseInventoryDashboardPage() {
               </div>
             </>
           )}
-          {isMainWarehouseUser && dashboardSection === 'fsn' && (
+          {isMainWarehouseUser && (dashboardSection === 'fsn' || dashboardSection === 'aging') && (
             <>
               <div className="w-full sm:hidden">
                 <Label className="sr-only">Location for FSN</Label>
@@ -648,6 +665,10 @@ export default function WarehouseInventoryDashboardPage() {
             <BarChart3 className="h-4 w-4" aria-hidden />
             FSN analysis
           </TabsTrigger>
+          <TabsTrigger value="aging" className="gap-1.5">
+            <Clock className="h-4 w-4" aria-hidden />
+            Batch aging
+          </TabsTrigger>
         </TabsList>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -655,7 +676,11 @@ export default function WarehouseInventoryDashboardPage() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               className="pl-9"
-              placeholder="Filter brands or variant names…"
+              placeholder={
+                dashboardSection === 'aging'
+                  ? 'Filter batch #, brand, or variant…'
+                  : 'Filter brands or variant names…'
+              }
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Filter dashboard"
@@ -730,6 +755,26 @@ export default function WarehouseInventoryDashboardPage() {
               error={fsnError}
               periodDays={fsnPeriodDays}
               onPeriodDaysChange={setFsnPeriodDays}
+              locationLabel={fsnLocationLabel}
+              search={search}
+            />
+          )}
+        </TabsContent>
+
+        <TabsContent value="aging" className="mt-0">
+          {!fsnLocationId ? (
+            <div className="rounded-lg border border-dashed border-border bg-muted/30 py-16 text-center text-muted-foreground">
+              {isMainWarehouseUser && loadingLocations
+                ? 'Loading warehouse locations…'
+                : isMainWarehouseUser && viewMode === 'sub' && !selectedLocationId
+                  ? 'Select a sub-warehouse to view batch aging for that location.'
+                  : 'Warehouse location is not configured yet. Link this account to a location to view batch aging.'}
+            </div>
+          ) : (
+            <WarehouseBatchAgingPanel
+              rows={agingRows}
+              loading={loadingAging}
+              error={agingError}
               locationLabel={fsnLocationLabel}
               search={search}
             />

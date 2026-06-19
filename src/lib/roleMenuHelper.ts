@@ -181,6 +181,9 @@ const warehouseMenuItems: MenuItem[] = [
     description: 'Main inventory for your warehouse company.',
     hasSubmenu: true,
     submenu: [
+      { title: 'Stock Requests', url: '/inventory/stock-requests', description: 'Inbound stock requests by brand; receive creates inventory batches.' },
+      { title: 'Stock Returns', url: '/inventory/stock-returns', description: 'Inspect sub-warehouse returns; good restocks main batch lots, damaged goes to disposal.' },
+      { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', description: 'Audited stock corrections with batch tracking and history.' },
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', description: 'Create sub-warehouses and allocate stock from main.' },
       { title: 'Main Inventory', url: '/inventory/main', description: 'Stock levels for your warehouse company.' },
       { title: 'Disposal Log', url: '/inventory/disposals', description: 'Damaged or unsellable units from rebate returns.' },

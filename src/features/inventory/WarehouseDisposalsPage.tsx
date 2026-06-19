@@ -47,6 +47,7 @@ type LocationOption = {
 
 const SOURCE_LABELS: Record<string, string> = {
   rebate_return: 'Rebate return',
+  sub_warehouse_return: 'Sub-warehouse return',
   adjustment: 'Adjustment',
   other: 'Other',
 };

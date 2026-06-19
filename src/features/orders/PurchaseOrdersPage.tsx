@@ -30,6 +30,9 @@ import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-ac
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
 import { RebateReplacementPricingSummary, RebateReceiveReturnsDialog } from '@/features/key-accounts/rebates';
 import {
+  filterRebateReturnLinesForWarehouseUser,
+} from '@/features/key-accounts/rebates/keyAccountRebateShared';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -2111,6 +2114,8 @@ interface KeyAccountPOViewProps {
 
 function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
   const { user } = useAuth();
+  const isWarehouse = user?.role === 'warehouse';
+  const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const [warehouseLocationMeta, setWarehouseLocationMeta] = useState<
     Record<string, { name: string; is_main: boolean }>
   >({});
@@ -2256,6 +2261,29 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
     }
     return map;
   }, [warehouseLocationMeta]);
+
+  const warehouseLocationIsMainById = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const [id, m] of Object.entries(warehouseLocationMeta)) {
+      map[id] = m.is_main;
+    }
+    return map;
+  }, [warehouseLocationMeta]);
+
+  const receivableRebateReturnLines = useMemo(
+    () =>
+      filterRebateReturnLinesForWarehouseUser(
+        rebateReturnLines,
+        membership,
+        warehouseLocationIsMainById
+      ),
+    [rebateReturnLines, membership, warehouseLocationIsMainById]
+  );
+
+  const canReceiveRebateReturns =
+    isWarehouse &&
+    !returnsAlreadyReceived &&
+    receivableRebateReturnLines.length > 0;
 
   useEffect(() => {
     if (order.po_order_kind !== 'rebate_fulfillment' || !order.source_rebate_id) {
@@ -2535,17 +2563,27 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
               </div>
             )}
 
-            {user?.role === 'warehouse' && !returnsAlreadyReceived && (
+            {canReceiveRebateReturns && (
               <div className="flex justify-end pt-1">
                 <Button
                   variant="secondary"
-                  disabled={loadingRebateReturnLines || rebateReturnLines.length === 0}
+                  disabled={loadingRebateReturnLines}
                   onClick={() => setReceiveReturnsOpen(true)}
                 >
                   Receive returns
                 </Button>
               </div>
             )}
+            {isWarehouse &&
+              !returnsAlreadyReceived &&
+              !loadingRebateReturnLines &&
+              rebateReturnLines.length > 0 &&
+              receivableRebateReturnLines.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Returns for this rebate must be received by the assigned sub-warehouse or main warehouse
+                  user for each line&apos;s ship-from location.
+                </p>
+              )}
             {returnsAlreadyReceived && (
               <p className="text-sm text-muted-foreground">Returns already received for this rebate.</p>
             )}
@@ -2560,6 +2598,8 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
           fulfillmentPoId={order.id}
           sourceRebateId={order.source_rebate_id}
           warehouseNamesById={warehouseNamesById}
+          warehouseLocationIsMainById={warehouseLocationIsMainById}
+          warehouseMembership={membership}
           hubCompanyId={order.warehouse_company_id || user?.company_id}
           onSuccess={() => setReturnsAlreadyReceived(true)}
         />

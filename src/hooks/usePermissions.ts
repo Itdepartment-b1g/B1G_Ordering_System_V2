@@ -1,6 +1,7 @@
 import { useAuth } from '@/features/auth';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 
 /**
  * Hook to check user permissions
@@ -13,7 +14,7 @@ export function usePermissions() {
   // (brands & variant management) so only the warehouse controls catalog changes.
   const { data: hasWarehouseHubLink } = useQuery({
     queryKey: ['has-warehouse-hub-link', user?.company_id],
-    enabled: !!user?.company_id && (user?.role === 'super_admin' || user?.role === 'admin'),
+    enabled: !!user?.company_id && user?.role !== 'warehouse',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('warehouse_company_assignments')
@@ -27,6 +28,10 @@ export function usePermissions() {
   });
 
   const lockStandardCatalog = hasWarehouseHubLink === true;
+
+  const isWarehouseRole = user?.role === 'warehouse';
+  const { membership: warehouseMembership, isLoading: warehouseMembershipLoading } =
+    useWarehouseLocationMembership({ userId: user?.id, isWarehouse: isWarehouseRole });
 
   const checkPermission = (route: string): boolean => {
     // If impersonating, allow full navigation access to the tenant environment.
@@ -66,6 +71,17 @@ export function usePermissions() {
     }
 
     if (user?.role === 'warehouse') {
+      const mainWarehouseOnlyRoutes = [
+        '/inventory/stock-requests',
+        '/inventory/stock-adjustments',
+      ];
+      if (
+        mainWarehouseOnlyRoutes.includes(route) &&
+        (warehouseMembershipLoading || !warehouseMembership.isMain)
+      ) {
+        return false;
+      }
+
       const warehouseRoutes = [
         '/purchase-order-management',
         '/purchase-orders',
@@ -76,6 +92,9 @@ export function usePermissions() {
         '/inventory/main',
         '/inventory/sub-warehouses',
         '/inventory/disposals',
+        '/inventory/stock-requests',
+        '/inventory/stock-returns',
+        '/inventory/stock-adjustments',
         '/profile',
       ];
       return warehouseRoutes.includes(route);
@@ -121,6 +140,8 @@ export function usePermissions() {
     isSystemAdmin: user?.role === 'system_administrator',
     isExecutive: user?.role === 'executive',
     isWarehouse: user?.role === 'warehouse',
+    hasWarehouseHubLink: hasWarehouseHubLink === true,
+    lockStandardCatalog,
   };
 }
 
