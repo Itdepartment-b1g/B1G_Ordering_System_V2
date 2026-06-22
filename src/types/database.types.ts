@@ -723,6 +723,16 @@ export interface AllocationHistory {
   created_at: string;
 }
 
+export interface WarehouseAllocationHistory {
+  id: string;
+  company_id: string;
+  location_id: string;
+  performed_by: string;
+  brand_id: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface RemittanceLog {
   id: string;
   company_id: string;
@@ -1233,6 +1243,11 @@ export interface Database {
       allocation_history: {
         Row: AllocationHistory;
         Insert: Omit<AllocationHistory, "id" | "created_at">;
+        Update: never;
+      };
+      warehouse_allocation_history: {
+        Row: WarehouseAllocationHistory;
+        Insert: Omit<WarehouseAllocationHistory, "id" | "created_at">;
         Update: never;
       };
       financial_transactions: {

@@ -92,6 +92,7 @@ export function usePermissions() {
         '/inventory/main',
         '/inventory/sub-warehouses',
         '/inventory/disposals',
+        '/inventory/allocation-history',
         '/inventory/stock-requests',
         '/inventory/stock-returns',
         '/inventory/stock-adjustments',

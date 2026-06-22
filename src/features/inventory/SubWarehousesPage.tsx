@@ -14,6 +14,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useInventory, type Brand, type Variant } from './InventoryContext';
+import { refetchWarehouseAllocationHistory } from './warehouse-allocation-history/hooks/useWarehouseAllocationHistory';
+import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 
 type LocationRow = {
   id: string;
@@ -78,6 +80,10 @@ export default function SubWarehousesPage() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { brands, loading: loadingBrands, refreshInventory } = useInventory();
+  const { membership } = useWarehouseLocationMembership({
+    userId: user?.id,
+    isWarehouse: user?.role === 'warehouse',
+  });
 
   const [createOpen, setCreateOpen] = useState(false);
   const [allocOpen, setAllocOpen] = useState(false);
@@ -415,18 +421,25 @@ export default function SubWarehousesPage() {
       if (data && (data as any).success === false) throw new Error((data as any).error || 'Allocation failed');
 
       toast({ title: 'Success', description: 'Stock allocated to sub-warehouse.' });
+      const allocatedLocationId = selectedLocationId;
       setAllocOpen(false);
       setSelectedLocationId('');
       setAllocQuantities({});
       setAllocFilter('');
       // Keep both the main inventory and the sub-warehouse dashboard in sync.
       await onRefresh();
+      await refetchWarehouseAllocationHistory(
+        qc,
+        user,
+        membership.isMain ? null : membership.locationId,
+        membership.isMain
+      );
       await qc.invalidateQueries({
-        queryKey: ['warehouse-location-inventory-brands', user?.company_id, selectedLocationId],
+        queryKey: ['warehouse-location-inventory-brands', user?.company_id, allocatedLocationId],
       });
       // Invalidate the raw location inventory used by the return modal
       await qc.invalidateQueries({
-        queryKey: ['warehouse-location-inventory', selectedLocationId],
+        queryKey: ['warehouse-location-inventory', allocatedLocationId],
       });
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to allocate stock', variant: 'destructive' });
