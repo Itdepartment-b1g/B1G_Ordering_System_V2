@@ -35,19 +35,31 @@ export type PurchaseOrderDeliveryRow = {
   warehouse_signature_url: string | null;
   status: string | null;
   dr_number?: string | null;
+  notes?: string | null;
   dispatched_at: string | null;
   delivered_at: string | null;
 };
+
+/** Warehouse transfer POs with at least one dispatch recorded. */
+export function purchaseOrderDeliveryDetailsEnabled(order: {
+  fulfillment_type?: string | null;
+  workflow_status?: string | null;
+  status?: string | null;
+}): boolean {
+  if (order.fulfillment_type !== 'warehouse_transfer') return false;
+  if (!keyAccountDispatchWorkflowActive(order.workflow_status)) return false;
+  const status = String(order.status || '');
+  return status === 'fulfilled' || status === 'partially_fulfilled';
+}
 
 export function keyAccountDeliveryDetailsEnabled(order: {
   workflow_status?: string | null;
   status?: string | null;
   key_account_client_id?: string | null;
+  fulfillment_type?: string | null;
 }): boolean {
   if (!order.key_account_client_id) return false;
-  if (!keyAccountDispatchWorkflowActive(order.workflow_status)) return false;
-  const status = String(order.status || '');
-  return status === 'fulfilled' || status === 'partially_fulfilled';
+  return purchaseOrderDeliveryDetailsEnabled(order);
 }
 
 interface PurchaseOrderDeliveryDetailsPanelProps {
@@ -77,7 +89,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
       const { data, error: qErr } = await supabase
         .from('purchase_order_deliveries')
         .select(
-          'id,warehouse_location_id,warehouse_locations:warehouse_location_id(name),created_by_profile:profiles!purchase_order_deliveries_created_by_fkey(full_name,email),rider_name,rider_plate_number,rider_photo_url,warehouse_signature_url,status,dr_number,dispatched_at,delivered_at'
+          'id,warehouse_location_id,warehouse_locations:warehouse_location_id(name),created_by_profile:profiles!purchase_order_deliveries_created_by_fkey(full_name,email),rider_name,rider_plate_number,rider_photo_url,warehouse_signature_url,status,dr_number,notes,dispatched_at,delivered_at'
         )
         .eq('purchase_order_id', purchaseOrderId)
         .order('dispatched_at', { ascending: false });
@@ -203,6 +215,12 @@ export function PurchaseOrderDeliveryDetailsPanel({
                             className="max-h-32 w-full object-contain"
                           />
                         </div>
+                      </div>
+                    ) : null}
+                    {row.notes?.trim() ? (
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Notes</Label>
+                        <p className="text-sm mt-0.5 whitespace-pre-wrap">{row.notes}</p>
                       </div>
                     ) : null}
                     <p className="text-[11px] text-muted-foreground">

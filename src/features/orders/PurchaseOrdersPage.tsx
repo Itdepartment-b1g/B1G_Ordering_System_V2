@@ -25,9 +25,11 @@ import { useWarehouseLocationMembership } from '@/features/inventory/useWarehous
 import { generateAndOpenCofPdf } from './cof/generateCofPdf';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
-import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
+  import { Textarea } from '@/components/ui/textarea';
+import { PurchaseOrderDeliveryDetailsPanel, purchaseOrderDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
 import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
+import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import { RebateReplacementPricingSummary, RebateReceiveReturnsDialog } from '@/features/key-accounts/rebates';
 import {
   filterRebateReturnLinesForWarehouseUser,
@@ -46,6 +48,76 @@ import {
 /** Key Account dispatch: separate private buckets (see supabase migration key_account_delivery_storage_buckets). */
 const KA_DELIVERY_RIDER_PHOTOS_BUCKET = 'ka-delivery-rider-photos';
 const KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET = 'ka-delivery-warehouse-signatures';
+
+type PoWarehouseSource = { id: string; name: string };
+
+function poItemWarehouseLabel(item: any): string | null {
+  const raw = Array.isArray(item?.warehouse_location) ? item.warehouse_location[0] : item?.warehouse_location;
+  if (raw?.name) return raw.is_main ? `${raw.name} (Main)` : raw.name;
+  const raw2 = Array.isArray(item?.warehouse_locations) ? item.warehouse_locations[0] : item?.warehouse_locations;
+  if (raw2?.name) return raw2.is_main ? `${raw2.name} (Main)` : raw2.name;
+  return null;
+}
+
+function formatPoHeaderWarehouse(order: any): string | null {
+  const loc = Array.isArray(order?.warehouse_locations) ? order.warehouse_locations[0] : order?.warehouse_location;
+  if (!loc?.name) return null;
+  return loc.is_main ? `${loc.name} (Main)` : loc.name;
+}
+
+/** Source hub locations for a transfer PO (header and/or line items). */
+function getPoSourceWarehouses(order: any): PoWarehouseSource[] {
+  const items = (order?.items || []) as any[];
+  const seen = new Map<string, string>();
+  for (const it of items) {
+    const locId = String(it.warehouse_location_id || '');
+    if (!locId || seen.has(locId)) continue;
+    seen.set(locId, poItemWarehouseLabel(it) || `Warehouse ${locId.slice(0, 8)}…`);
+  }
+  if (seen.size > 0) {
+    return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+  }
+  const headerId = String(order?.warehouse_location_id || order?.warehouse_location?.id || '');
+  const headerName = formatPoHeaderWarehouse(order);
+  if (headerId && headerName) {
+    return [{ id: headerId, name: headerName }];
+  }
+  return [];
+}
+
+function formatPoRequestedWarehouseSummary(order: any): string {
+  const sources = getPoSourceWarehouses(order);
+  if (sources.length > 1) return sources.map((s) => s.name).join(', ');
+  if (sources.length === 1) return sources[0].name;
+  return formatPoHeaderWarehouse(order) ?? '—';
+}
+
+function RequestedWarehouseSources({
+  order,
+  fallbackStatuses = [],
+}: {
+  order: any;
+  fallbackStatuses?: Array<{ location_id: string; location_name: string }>;
+}) {
+  let sources = getPoSourceWarehouses(order);
+  if (sources.length === 0 && fallbackStatuses.length > 0) {
+    sources = fallbackStatuses.map((s) => ({ id: s.location_id, name: s.location_name }));
+  }
+
+  if (sources.length === 0) {
+    return <p className="font-medium">—</p>;
+  }
+  if (sources.length === 1) {
+    return <p className="font-medium">{sources[0].name}</p>;
+  }
+  return (
+    <ul className="space-y-1 text-sm font-medium">
+      {sources.map((s) => (
+        <li key={s.id}>{s.name}</li>
+      ))}
+    </ul>
+  );
+}
 
 export default function PurchaseOrdersPage() {
   const { user } = useAuth();
@@ -81,13 +153,14 @@ export default function PurchaseOrdersPage() {
   // Warehouse view tabs (supplier POs will be removed later; keep tabs by account type)
   const [poTab, setPoTab] = useState<'all' | 'key_accounts' | 'standard_accounts'>('all');
 
-  // Key Account dispatch capture (after fulfillment)
+  // Dispatch capture for warehouse transfer fulfill (Key + Standard accounts)
   const [dispatchOpen, setDispatchOpen] = useState(false);
   const [dispatchPo, setDispatchPo] = useState<any>(null);
   const [riderName, setRiderName] = useState('');
   const [riderPlate, setRiderPlate] = useState('');
   const [riderPhotoFile, setRiderPhotoFile] = useState<File | null>(null);
   const [warehouseSignatureDataUrl, setWarehouseSignatureDataUrl] = useState<string | null>(null);
+  const [dispatchNotes, setDispatchNotes] = useState('');
   const [showWarehouseSignatureModal, setShowWarehouseSignatureModal] = useState(false);
   const [savingDispatch, setSavingDispatch] = useState(false);
 
@@ -230,6 +303,7 @@ export default function PurchaseOrdersPage() {
     if (locId && locId !== 'unknown') return `Warehouse ${shortId(locId)}`;
     return 'Warehouse';
   };
+
 
   // Fetch my location fulfillment statuses for warehouse transfer POs
   useEffect(() => {
@@ -502,17 +576,22 @@ export default function PurchaseOrdersPage() {
     setRejectDialogOpen(true);
   };
 
+  const openDispatchCaptureForFulfill = (order: any) => {
+    setDispatchPo(order);
+    setRiderName('');
+    setRiderPlate('');
+    setRiderPhotoFile(null);
+    setWarehouseSignatureDataUrl(null);
+    setDispatchNotes('');
+    setDispatchOpen(true);
+  };
+
   const handleOpenFulfillDialog = (order: any) => {
     setOrderToFulfill(order);
     setFulfillLocationId(membership.locationId ?? null);
     setFulfillLocationName(null);
-    if (String(order?.company_account_type || '') === 'Key Accounts') {
-      setDispatchPo(order);
-      setRiderName('');
-      setRiderPlate('');
-      setRiderPhotoFile(null);
-      setWarehouseSignatureDataUrl(null);
-      setDispatchOpen(true);
+    if (order?.fulfillment_type === 'warehouse_transfer') {
+      openDispatchCaptureForFulfill(order);
       return;
     }
     setFulfillDialogOpen(true);
@@ -522,20 +601,15 @@ export default function PurchaseOrdersPage() {
     setOrderToFulfill(order);
     setFulfillLocationId(locationId);
     setFulfillLocationName(locationName ?? null);
-    if (String(order?.company_account_type || '') === 'Key Accounts') {
-      setDispatchPo(order);
-      setRiderName('');
-      setRiderPlate('');
-      setRiderPhotoFile(null);
-      setWarehouseSignatureDataUrl(null);
-      setDispatchOpen(true);
+    if (order?.fulfillment_type === 'warehouse_transfer') {
+      openDispatchCaptureForFulfill(order);
       return;
     }
     setFulfillDialogOpen(true);
   };
 
   useEffect(() => {
-    if (!fulfillDialogOpen || !orderToFulfill?.id) return;
+    if ((!fulfillDialogOpen && !dispatchOpen) || !orderToFulfill?.id) return;
     if (String(orderToFulfill.po_order_kind || '') !== 'rebate_fulfillment' || !orderToFulfill.source_rebate_id) {
       setFulfillRebateReturnLines([]);
       return;
@@ -610,6 +684,7 @@ export default function PurchaseOrdersPage() {
     };
   }, [
     fulfillDialogOpen,
+    dispatchOpen,
     orderToFulfill?.id,
     orderToFulfill?.po_order_kind,
     orderToFulfill?.source_rebate_id,
@@ -693,7 +768,7 @@ export default function PurchaseOrdersPage() {
         (order.supplier?.company_name || '').toLowerCase().includes(q) ||
         typeLabel.includes(q) ||
         (order.fulfillment_type === 'warehouse_transfer' &&
-          (order.warehouse_location?.name || '').toLowerCase().includes(q))
+          formatPoRequestedWarehouseSummary(order).toLowerCase().includes(q))
       );
     });
   }, [scopedOrders, searchQuery]);
@@ -861,7 +936,7 @@ export default function PurchaseOrdersPage() {
                     <div className="truncate">{order.supplier?.company_name ?? '—'}</div>
                     {order.fulfillment_type === 'warehouse_transfer' && (
                       <div className="text-xs text-muted-foreground truncate">
-                        Requested: {order.warehouse_location?.name ?? '—'}
+                        Requested: {formatPoRequestedWarehouseSummary(order)}
                       </div>
                     )}
                   </div>
@@ -959,7 +1034,7 @@ export default function PurchaseOrdersPage() {
                           <p className="text-xs text-muted-foreground">{order.supplier?.contact_person ?? ''}</p>
                           {order.fulfillment_type === 'warehouse_transfer' && (
                             <p className="text-xs text-muted-foreground">
-                              Requested: <span className="font-medium text-foreground/80">{order.warehouse_location?.name ?? '—'}</span>
+                              Requested: <span className="font-medium text-foreground/80">{formatPoRequestedWarehouseSummary(order)}</span>
                             </p>
                           )}
                         </div>
@@ -1361,17 +1436,55 @@ export default function PurchaseOrdersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Key Account Dispatch Dialog (after fulfillment) */}
+      {/* Dispatch / Delivery Dialog (warehouse transfer fulfill) */}
       <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Dispatch / Delivery (Key Accounts)</DialogTitle>
+            <DialogTitle>Dispatch / Delivery</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="text-sm text-muted-foreground">
               {dispatchPo?.po_number ? `PO: ${dispatchPo.po_number}` : 'PO'}
             </div>
+
+            {dispatchPo?.po_order_kind === 'rebate_fulfillment' && (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Expected return items (disputed lines)</div>
+                <div className="text-xs text-muted-foreground">
+                  This fulfillment deducts replacement stock. Returned/disputed items are not automatically added back to
+                  inventory until they are physically received.
+                </div>
+                {loadingFulfillRebateReturnLines ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading return items…
+                  </div>
+                ) : fulfillRebateReturnLines.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">—</div>
+                ) : (
+                  <div className="max-h-40 overflow-auto rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Brand</TableHead>
+                          <TableHead>Variant</TableHead>
+                          <TableHead className="text-right">Qty</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {fulfillRebateReturnLines.map((l, idx) => (
+                          <TableRow key={`${l.variant_name}-${idx}`}>
+                            <TableCell className="font-medium">{l.brand_name}</TableCell>
+                            <TableCell>{l.variant_name}</TableCell>
+                            <TableCell className="text-right font-semibold">{l.disputed_quantity}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>Rider name</Label>
@@ -1386,11 +1499,6 @@ export default function PurchaseOrdersPage() {
             <div className="space-y-2">
               <Label>Rider photo</Label>
               <Input type="file" accept="image/*" onChange={(e) => setRiderPhotoFile(e.target.files?.[0] ?? null)} />
-              <p className="text-xs text-muted-foreground">
-                Rider photo → <span className="font-medium">{KA_DELIVERY_RIDER_PHOTOS_BUCKET}</span>
-                {' · '}
-                Signature → <span className="font-medium">{KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET}</span>
-              </p>
             </div>
 
             <div className="space-y-2">
@@ -1412,6 +1520,16 @@ export default function PurchaseOrdersPage() {
                   </Button>
                 </div>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Notes <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Textarea
+                value={dispatchNotes}
+                onChange={(e) => setDispatchNotes(e.target.value)}
+                placeholder="Delivery instructions, gate pass, etc."
+                rows={3}
+              />
             </div>
 
             <div className="flex items-center justify-end gap-2">
@@ -1523,6 +1641,7 @@ export default function PurchaseOrdersPage() {
                       warehouse_signature_path: signaturePath,
                       dr_number: drNumber,
                       status: 'dispatched',
+                      notes: dispatchNotes.trim() || null,
                       created_by: user.id,
                     } as any);
                     if (insErr) throw insErr;
@@ -1574,6 +1693,7 @@ export default function PurchaseOrdersPage() {
                     setDispatchOpen(false);
                     setDispatchPo(null);
                     setWarehouseSignatureDataUrl(null);
+                    setDispatchNotes('');
                     setOrderToFulfill(null);
                     setFulfillLocationId(null);
                     setFulfillLocationName(null);
@@ -1608,7 +1728,7 @@ export default function PurchaseOrdersPage() {
           </DialogHeader>
           <SignatureCanvas
             title="Draw the warehouse signature in the area below"
-            description="This signature confirms the warehouse personnel who fulfilled and dispatched this Key Account PO."
+            description="This signature confirms the warehouse personnel who fulfilled and dispatched this PO."
             onSave={(sigDataUrl) => {
               setWarehouseSignatureDataUrl(sigDataUrl);
               setShowWarehouseSignatureModal(false);
@@ -1692,29 +1812,53 @@ export default function PurchaseOrdersPage() {
                       </AccordionTrigger>
                       <AccordionContent>
                         <div className="space-y-2 text-sm pt-4">
-                          {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                          {orderToView.fulfillment_type === 'warehouse_transfer' ? (
                             <div className="rounded-md border bg-muted/40 p-3">
                               <Label className="text-muted-foreground text-xs">Requested warehouse / sub-warehouse</Label>
-                              <p className="font-medium">{orderToView.warehouse_location?.name ?? '—'}</p>
+                              <div className="mt-1">
+                                <RequestedWarehouseSources
+                                  order={orderToView}
+                                  fallbackStatuses={transferLocationStatuses}
+                                />
+                              </div>
                             </div>
+                          ) : (
+                            <>
+                              <div>
+                                <p className="font-medium">{orderToView.supplier.company_name}</p>
+                                <p className="text-muted-foreground text-xs">{orderToView.supplier.address}</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <p className="text-muted-foreground">Contact</p>
+                                  <p>{orderToView.supplier.contact_person}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Phone</p>
+                                  <p>{orderToView.supplier.phone}</p>
+                                </div>
+                              </div>
+                            </>
                           )}
-                          <div>
-                            <p className="font-medium">{orderToView.supplier.company_name}</p>
-                            <p className="text-muted-foreground text-xs">{orderToView.supplier.address}</p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <p className="text-muted-foreground">Contact</p>
-                              <p>{orderToView.supplier.contact_person}</p>
-                            </div>
-                            <div>
-                              <p className="text-muted-foreground">Phone</p>
-                              <p>{orderToView.supplier.phone}</p>
-                            </div>
-                          </div>
                         </div>
                       </AccordionContent>
                     </AccordionItem>
+
+                    {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                      <KeyAccountPoWarehouseProgress
+                        purchaseOrderId={orderToView.id}
+                        workflowStatus={orderToView.workflow_status}
+                        fulfillmentType={orderToView.fulfillment_type}
+                      />
+                    )}
+
+                    {purchaseOrderDeliveryDetailsEnabled(orderToView) && (
+                      <PurchaseOrderDeliveryDetailsPanel
+                        purchaseOrderId={orderToView.id}
+                        enabled
+                        warehouseNamesById={{}}
+                      />
+                    )}
 
                     {/* Items Section */}
                     <AccordionItem value="items" className="border rounded-lg px-4">
@@ -1803,16 +1947,6 @@ export default function PurchaseOrdersPage() {
                       </div>
                     )}
                   </Accordion>
-
-                  {orderToView.key_account_client_id && keyAccountDeliveryDetailsEnabled(orderToView) && (
-                    <div className="mt-4">
-                      <PurchaseOrderDeliveryDetailsPanel
-                        purchaseOrderId={orderToView.id}
-                        enabled
-                        warehouseNamesById={{}}
-                      />
-                    </div>
-                  )}
                 </div>
               )}
             </ScrollArea>
@@ -1877,47 +2011,52 @@ export default function PurchaseOrdersPage() {
                         {orderToView.fulfillment_type === 'warehouse_transfer' ? 'Warehouse Information' : 'Seller Information'}
                       </h4>
                       <div className="bg-muted p-4 rounded-lg space-y-1">
-                        {orderToView.fulfillment_type === 'warehouse_transfer' && (
-                          <div className="pb-2 border-b">
-                            <p className="text-xs text-muted-foreground">Requested warehouse / sub-warehouse</p>
-                            <p className="font-medium">{orderToView.warehouse_location?.name ?? '—'}</p>
-                          </div>
-                        )}
-                        {orderToView.fulfillment_type === 'warehouse_transfer' && transferLocationStatuses.length > 0 && (
-                          <div className="pt-3 mt-2 border-t space-y-2">
-                            <p className="text-xs font-semibold text-muted-foreground">Fulfillment progress (by location)</p>
-                            <div className="space-y-1">
-                              {transferLocationStatuses.map((s) => (
-                                <div key={s.location_id} className="flex items-center justify-between gap-2 text-sm">
-                                  <span className="font-medium">{s.location_name}</span>
-                                  <div className="flex items-center gap-2">
-                                    <Badge
-                                      variant={
-                                        s.status === 'fulfilled'
-                                          ? 'default'
-                                          : s.status === 'ready'
-                                            ? 'secondary'
-                                            : s.status === 'partial'
-                                              ? 'secondary'
-                                              : 'outline'
-                                      }
-                                    >
-                                      {s.status.toUpperCase()}
-                                    </Badge>
-                                  </div>
-                                </div>
-                              ))}
+                        {orderToView.fulfillment_type === 'warehouse_transfer' ? (
+                          <>
+                            <div className="pb-2 border-b">
+                              <p className="text-xs text-muted-foreground">Fulfillment type</p>
+                              <p className="font-medium">Internal warehouse transfer</p>
                             </div>
-                          </div>
+                            <div className="pb-2 border-b">
+                              <p className="text-xs text-muted-foreground">Requested warehouse / sub-warehouse</p>
+                              <div className="mt-0.5">
+                                <RequestedWarehouseSources
+                                  order={orderToView}
+                                  fallbackStatuses={transferLocationStatuses}
+                                />
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-medium">{orderToView.supplier.company_name}</p>
+                            <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
+                            <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
+                            <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
+                            <p className="text-sm">Email: {orderToView.supplier.email}</p>
+                          </>
                         )}
-                        <p className="font-medium">{orderToView.supplier.company_name}</p>
-                        <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
-                        <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
-                        <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
-                        <p className="text-sm">Email: {orderToView.supplier.email}</p>
                       </div>
                     </div>
                   </div>
+
+                  {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                    <KeyAccountPoWarehouseProgress
+                      purchaseOrderId={orderToView.id}
+                      workflowStatus={orderToView.workflow_status}
+                      fulfillmentType={orderToView.fulfillment_type}
+                    />
+                  )}
+
+                  {purchaseOrderDeliveryDetailsEnabled(orderToView) && (
+                    <PurchaseOrderDeliveryDetailsPanel
+                      purchaseOrderId={orderToView.id}
+                      enabled
+                      warehouseNamesById={Object.fromEntries(
+                        transferLocationStatuses.map((s) => [s.location_id, s.location_name])
+                      )}
+                    />
+                  )}
 
                   {/* Items Desktop */}
                   <div className="space-y-2">
@@ -2492,7 +2631,7 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
 
       <PurchaseOrderDeliveryDetailsPanel
         purchaseOrderId={order.id}
-        enabled={keyAccountDeliveryDetailsEnabled(order)}
+        enabled={purchaseOrderDeliveryDetailsEnabled(order)}
         warehouseNamesById={warehouseNamesById}
       />
 
