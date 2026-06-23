@@ -153,6 +153,7 @@ const superAdminMenuItems: MenuItem[] = [
     { title: 'Variant Types', url: '/variant-types', description: 'Configure global variant types (flavor, battery, POSM, etc.).' },
     { title: 'Suppliers', url: '/suppliers', description: 'Manage the list of suppliers providing goods to the tenant.' },
   ]},
+  { title: 'Task Calendar', url: '/calendar', description: 'View and manage mobile sales and team leader task calendars.' },
   { title: 'AI Analytics', url: '/analytics', description: 'AI-driven analytics across tenants, teams, and products.' },
   { title: 'War Room', url: '/war-room', description: 'Strategic command center for monitoring critical KPIs and maps.' },
   { title: 'System History', url: '/system-history', description: 'Global audit trail of system operations.' },

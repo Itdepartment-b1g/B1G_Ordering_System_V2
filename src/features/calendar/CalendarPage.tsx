@@ -2,7 +2,9 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -30,11 +32,19 @@ import {
   BarChart3,
   Camera,
   X,
-  RotateCcw
+  RotateCcw,
+  Edit,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import {
+  getOversightAgentIds,
+  getOversightAgents,
+  type OversightAgent,
+} from '@/features/calendar/utils/calendarOversightHelpers';
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -149,9 +159,38 @@ export default function CalendarPage() {
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
 
-  // Team-leader specific state
-  const [teamAgents, setTeamAgents] = useState<Array<{ id: string; full_name: string }>>([]);
+  // Team-leader / super-admin oversight state
+  const [teamAgents, setTeamAgents] = useState<Array<{ id: string; full_name: string; role?: string }>>([]);
   const [selectedAgentFilter, setSelectedAgentFilter] = useState<string>('all');
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>('all');
+  const [oversightAgents, setOversightAgents] = useState<OversightAgent[]>([]);
+
+  // Super-admin task management state
+  const [createManageDialogOpen, setCreateManageDialogOpen] = useState(false);
+  const [editManageDialogOpen, setEditManageDialogOpen] = useState(false);
+  const [deleteManageConfirmOpen, setDeleteManageConfirmOpen] = useState(false);
+  const [selectedManageTask, setSelectedManageTask] = useState<Task | null>(null);
+  const [manageAgentClients, setManageAgentClients] = useState<Array<{ id: string; name: string }>>([]);
+  const [manageSelectedClientIds, setManageSelectedClientIds] = useState<string[]>([]);
+  const [manageClientSearchQuery, setManageClientSearchQuery] = useState('');
+  const [fetchingManageClients, setFetchingManageClients] = useState(false);
+  const [plotForSpecificDate, setPlotForSpecificDate] = useState(false);
+  const getTodayDate = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  const [manageFormData, setManageFormData] = useState({
+    agent_id: '',
+    title: '',
+    description: '',
+    priority: 'medium' as 'low' | 'medium' | 'high' | 'urgent',
+    due_date: getTodayDate(),
+    due_time: '09:00',
+    notes: '',
+  });
 
   // Daily task creation states
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
@@ -215,11 +254,16 @@ export default function CalendarPage() {
 
   const { toast } = useToast();
   const { user } = useAuth();
-  // Role helpers: managers (and admins) can see their full team; others only see their own tasks
-  const isManager = user?.role === 'manager' || user?.role === 'admin';
+  // Role helpers: managers see their sub-teams; admins/super-admins see company-wide oversight agents
+  const isAdmin = user?.role === 'admin';
+  const isManager = user?.role === 'manager';
   const isTeamLeader = user?.role === 'team_leader';
   const isMobileSales = user?.role === 'mobile_sales';
-  const hasTeamView = isManager || isTeamLeader;
+  const isSuperAdmin = user?.role === 'super_admin';
+  const isSuperAdminOversight = isSuperAdmin && !!user?.company_id;
+  const hasCompanyOversight = (isAdmin || isSuperAdminOversight) && !!user?.company_id;
+  const hasTeamView = isManager || isTeamLeader || hasCompanyOversight;
+  const canManageTasks = isSuperAdminOversight;
 
   // Convert tasks from database to calendar events
   const allEvents = useMemo(() => {
@@ -398,7 +442,7 @@ export default function CalendarPage() {
 
   // Setup real-time subscriptions for tasks
   const setupRealtimeSubscriptions = () => {
-    if (!user?.id) return;
+    if (!user?.id || isSuperAdminOversight) return;
 
     const taskFilter = hasTeamView
       ? `leader_id=eq.${user.id}`
@@ -523,11 +567,15 @@ export default function CalendarPage() {
       let data: Task[] | null = null;
 
       if (hasTeamView) {
-        // Managers/Team Leaders: show tasks for all team members
+        // Managers/Team Leaders/Super Admin: show tasks for team or oversight agents
         let teamAgentIds: string[] = [];
         
-        if (isManager) {
-             teamAgentIds = await getManagerTeamAgentIds();
+        if (hasCompanyOversight && user?.company_id) {
+          const agents = await getOversightAgents(user.company_id);
+          setOversightAgents(agents);
+          teamAgentIds = getOversightAgentIds(agents);
+        } else if (isManager) {
+          teamAgentIds = await getManagerTeamAgentIds();
         } else if (isTeamLeader) {
              // Team leaders: get agents reporting to them directly
             const { data: teamData } = await supabase
@@ -540,12 +588,24 @@ export default function CalendarPage() {
             teamAgentIds.push(user!.id);
         }
 
-        const { data: managerViewTasks, error: managerTasksError } = await supabase
+        if (teamAgentIds.length === 0 && !hasCompanyOversight) {
+          setTasks([]);
+          return;
+        }
+
+        let tasksQuery = supabase
           .from('tasks')
           .select(
             '*, leader:profiles!tasks_leader_id_fkey(full_name, email), agent:profiles!tasks_agent_id_fkey(full_name, email), client:clients!tasks_client_id_fkey(name, company, address, location_latitude, location_longitude), visit_logs(*)'
-          )
-          .in('agent_id', teamAgentIds)
+          );
+
+        if (hasCompanyOversight && user?.company_id) {
+          tasksQuery = tasksQuery.eq('company_id', user.company_id);
+        } else {
+          tasksQuery = tasksQuery.in('agent_id', teamAgentIds);
+        }
+
+        const { data: managerViewTasks, error: managerTasksError } = await tasksQuery
           .order('created_at', { ascending: false });
 
         if (managerTasksError) throw managerTasksError;
@@ -586,8 +646,8 @@ export default function CalendarPage() {
 
       setTasks(data || []);
 
-      // Enable real-time subscriptions after initial load
-      if (!realtimeEnabled) {
+      // Enable real-time subscriptions after initial load (not for super-admin oversight)
+      if (!realtimeEnabled && !isSuperAdminOversight) {
         setupRealtimeSubscriptions();
         setRealtimeEnabled(true);
       }
@@ -607,11 +667,17 @@ export default function CalendarPage() {
     try {
       if (!user?.id) return;
 
-      const isManagerRole = user.role === 'manager' || user.role === 'admin';
       const isTeamLeaderRole = user.role === 'team_leader';
 
       let agentIds: string[] = [user.id];
-      if (isManagerRole) {
+      if (hasCompanyOversight && user.company_id) {
+        const agents = await getOversightAgents(user.company_id);
+        agentIds = getOversightAgentIds(agents);
+        if (agentIds.length === 0) {
+          setVisits([]);
+          return;
+        }
+      } else if (isManager) {
         agentIds = await getManagerTeamAgentIds();
       } else if (isTeamLeaderRole) {
          const { data: teamData } = await supabase
@@ -647,7 +713,17 @@ export default function CalendarPage() {
     if (!user?.id) return;
 
     try {
-      if (isManager) {
+      if (hasCompanyOversight && user?.company_id) {
+        const agents = await getOversightAgents(user.company_id);
+        setOversightAgents(agents);
+        setTeamAgents(
+          agents.map((agent) => ({
+            id: agent.id,
+            full_name: agent.full_name,
+            role: agent.role,
+          }))
+        );
+      } else if (isManager) {
         // Managers: derive leaders + mobile sales from sub_teams_overview
         const { data, error } = await supabase
           .from('sub_teams_overview')
@@ -703,6 +779,212 @@ export default function CalendarPage() {
       toast({
         title: 'Error',
         description: 'Failed to load team members for calendar view',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const resetManageForm = () => {
+    setManageFormData({
+      agent_id: '',
+      title: '',
+      description: '',
+      priority: 'medium',
+      due_date: getTodayDate(),
+      due_time: '09:00',
+      notes: '',
+    });
+    setManageSelectedClientIds([]);
+    setManageClientSearchQuery('');
+    setPlotForSpecificDate(false);
+  };
+
+  const fetchManageAgentClients = async (agentId: string) => {
+    if (!agentId) {
+      setManageAgentClients([]);
+      return;
+    }
+
+    setFetchingManageClients(true);
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, name, company')
+        .eq('agent_id', agentId)
+        .order('company');
+
+      if (error) throw error;
+
+      setManageAgentClients(
+        data?.map((client) => ({
+          id: client.id,
+          name: client.company || client.name || 'Unnamed Client',
+        })) || []
+      );
+    } catch (error) {
+      console.error('Error fetching agent clients:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load agent clients',
+        variant: 'destructive',
+      });
+    } finally {
+      setFetchingManageClients(false);
+    }
+  };
+
+  const handleCreateManageTask = async () => {
+    try {
+      if (!user?.company_id) {
+        toast({
+          title: 'Error',
+          description: 'User company information is missing',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (manageSelectedClientIds.length > 0) {
+        const createPromises = manageSelectedClientIds.map((clientId) => {
+          const client = manageAgentClients.find((c) => c.id === clientId);
+          const clientName = client?.name || 'Unknown Client';
+
+          return supabase.from('tasks').insert({
+            company_id: user.company_id,
+            leader_id: user.id,
+            agent_id: manageFormData.agent_id,
+            client_id: clientId,
+            title: `${manageFormData.title} - ${clientName}`,
+            description: manageFormData.description,
+            priority: manageFormData.priority,
+            due_date: manageFormData.due_date || null,
+            time: '23:59',
+            notes: manageFormData.notes || null,
+            status: 'pending',
+          });
+        });
+
+        const results = await Promise.all(createPromises);
+        const errors = results.filter((result) => result.error);
+        if (errors.length > 0) throw new Error(`Failed to create ${errors.length} tasks`);
+
+        toast({
+          title: 'Success',
+          description: `${manageSelectedClientIds.length} tasks created successfully`,
+        });
+      } else {
+        const { error } = await supabase.from('tasks').insert({
+          company_id: user.company_id,
+          leader_id: user.id,
+          agent_id: manageFormData.agent_id,
+          title: manageFormData.title,
+          description: manageFormData.description,
+          priority: manageFormData.priority,
+          due_date: manageFormData.due_date || null,
+          time: manageFormData.due_time || null,
+          notes: manageFormData.notes || null,
+          status: 'pending',
+        });
+
+        if (error) throw error;
+
+        toast({
+          title: 'Success',
+          description: 'Task created successfully',
+        });
+      }
+
+      setCreateManageDialogOpen(false);
+      resetManageForm();
+      fetchTasks();
+    } catch (error) {
+      console.error('Error creating task:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to create task',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleUpdateManageTask = async () => {
+    if (!selectedManageTask) return;
+
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({
+          title: manageFormData.title,
+          description: manageFormData.description,
+          priority: manageFormData.priority,
+          due_date: manageFormData.due_date || null,
+          time: manageFormData.due_time || null,
+          notes: manageFormData.notes || null,
+        })
+        .eq('id', selectedManageTask.id);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: 'Task updated successfully',
+      });
+
+      setEditManageDialogOpen(false);
+      setSelectedManageTask(null);
+      resetManageForm();
+      setShowEventDetails(false);
+      fetchTasks();
+    } catch (error) {
+      console.error('Error updating task:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to update task',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleEditManageTask = (task: Task) => {
+    setSelectedManageTask(task);
+    setManageFormData({
+      agent_id: task.agent_id,
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      due_date: task.due_date ? task.due_date.split('T')[0] : getTodayDate(),
+      due_time: task.time ? task.time.slice(0, 5) : '09:00',
+      notes: task.notes || '',
+    });
+    setEditManageDialogOpen(true);
+  };
+
+  const handleDeleteManageTask = (task: Task) => {
+    setSelectedManageTask(task);
+    setDeleteManageConfirmOpen(true);
+  };
+
+  const confirmDeleteManageTask = async () => {
+    if (!selectedManageTask) return;
+
+    try {
+      const { error } = await supabase.from('tasks').delete().eq('id', selectedManageTask.id);
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: 'Task deleted successfully',
+      });
+
+      setDeleteManageConfirmOpen(false);
+      setSelectedManageTask(null);
+      setShowEventDetails(false);
+      fetchTasks();
+    } catch (error) {
+      console.error('Error deleting task:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to delete task',
         variant: 'destructive',
       });
     }
@@ -798,6 +1080,7 @@ export default function CalendarPage() {
       const { data: taskData, error: taskError } = await supabase
         .from('tasks')
         .insert({
+          company_id: user.company_id || null,
           agent_id: user.id,
           leader_id: null, // NULL for agent-created tasks
           client_id: selectedClient?.id || null, // Optional client link
@@ -1186,11 +1469,21 @@ export default function CalendarPage() {
       const priorityMatch = priorityFilter === 'all' ||
         (event.taskData && event.taskData.priority === priorityFilter);
 
-      // Agent filter (managers only, tasks only)
+      // Agent filter (team view)
       const agentMatch =
-        !isManager ||
+        !hasTeamView ||
         selectedAgentFilter === 'all' ||
-        (event.taskData && event.taskData.agent_id === selectedAgentFilter);
+        (event.taskData && event.taskData.agent_id === selectedAgentFilter) ||
+        (event.visitData && event.visitData.agent_id === selectedAgentFilter);
+
+      // Role filter (company oversight: admin / super-admin)
+      const roleMatch =
+        selectedRoleFilter === 'all' ||
+        !hasCompanyOversight ||
+        (event.taskData &&
+          oversightAgents.find((a) => a.id === event.taskData?.agent_id)?.role === selectedRoleFilter) ||
+        (event.visitData &&
+          oversightAgents.find((a) => a.id === event.visitData?.agent_id)?.role === selectedRoleFilter);
 
       // Mobile tab filter
       let mobileMatch = true;
@@ -1204,7 +1497,7 @@ export default function CalendarPage() {
         }
       }
 
-      return statusMatch && searchMatch && priorityMatch && agentMatch && mobileMatch;
+      return statusMatch && searchMatch && priorityMatch && agentMatch && roleMatch && mobileMatch;
     });
   };
 
@@ -1402,6 +1695,20 @@ export default function CalendarPage() {
     }
   };
 
+  if (isSuperAdmin && !user?.company_id) {
+    return (
+      <div className="w-full min-w-0 space-y-6 p-4 md:p-8">
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Company required</AlertTitle>
+          <AlertDescription>
+            Link your super admin account to a company to manage task calendars.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   return (
     <div className="p-3 sm:p-4 md:p-6 lg:p-8 space-y-3 sm:space-y-4 md:space-y-6 overflow-x-hidden max-w-full">
       {/* Header */}
@@ -1409,10 +1716,245 @@ export default function CalendarPage() {
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Calendar & Visits</h1>
-            <p className="text-muted-foreground">Manage your schedule and record client visits.</p>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {isSuperAdminOversight ? 'Task Calendar' : 'Calendar & Visits'}
+            </h1>
+            <p className="text-muted-foreground">
+              {isSuperAdminOversight
+                ? 'Manage mobile sales and team leader tasks and visits.'
+                : 'Manage your schedule and record client visits.'}
+            </p>
           </div>
-          {!isManager && (
+          {canManageTasks && (
+            <div className="flex gap-2 w-full sm:w-auto">
+              <Dialog
+                open={createManageDialogOpen}
+                onOpenChange={(open) => {
+                  setCreateManageDialogOpen(open);
+                  if (!open) resetManageForm();
+                }}
+              >
+                <DialogTrigger asChild>
+                  <Button>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Task
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Create New Task</DialogTitle>
+                    <DialogDescription>
+                      Assign a task to a mobile sales agent or team leader
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 px-1">
+                    <div>
+                      <Label htmlFor="manage-agent">Assignee</Label>
+                      <Select
+                        value={manageFormData.agent_id}
+                        onValueChange={(value) => {
+                          setManageFormData({ ...manageFormData, agent_id: value });
+                          setManageSelectedClientIds([]);
+                          fetchManageAgentClients(value);
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select agent" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {teamAgents.map((agent) => (
+                            <SelectItem key={agent.id} value={agent.id}>
+                              {agent.full_name}
+                              {agent.role === 'team_leader' ? ' (Team Leader)' : ' (Mobile Sales)'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {manageFormData.agent_id && (
+                      <div className="space-y-2 border rounded-lg p-3 bg-gray-50">
+                        <Label>Link Clients (Optional)</Label>
+                        {fetchingManageClients ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading clients...
+                          </div>
+                        ) : (
+                          <>
+                            <Input
+                              placeholder="Search clients..."
+                              value={manageClientSearchQuery}
+                              onChange={(e) => setManageClientSearchQuery(e.target.value)}
+                            />
+                            <div className="max-h-40 overflow-y-auto space-y-2 p-1">
+                              {manageAgentClients
+                                .filter((client) =>
+                                  client.name.toLowerCase().includes(manageClientSearchQuery.toLowerCase())
+                                )
+                                .map((client) => (
+                                  <div
+                                    key={client.id}
+                                    className="flex items-center space-x-2 bg-white p-2 rounded border border-gray-100 shadow-sm"
+                                  >
+                                    <Checkbox
+                                      id={`manage-client-${client.id}`}
+                                      checked={manageSelectedClientIds.includes(client.id)}
+                                      onCheckedChange={(checked) => {
+                                        if (checked) {
+                                          setManageSelectedClientIds([...manageSelectedClientIds, client.id]);
+                                        } else {
+                                          setManageSelectedClientIds(
+                                            manageSelectedClientIds.filter((id) => id !== client.id)
+                                          );
+                                        }
+                                      }}
+                                    />
+                                    <Label
+                                      htmlFor={`manage-client-${client.id}`}
+                                      className="text-sm font-normal cursor-pointer flex-1"
+                                    >
+                                      {client.name}
+                                    </Label>
+                                  </div>
+                                ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    <div>
+                      <Label htmlFor="manage-title">Task Title</Label>
+                      <Input
+                        id="manage-title"
+                        value={manageFormData.title}
+                        onChange={(e) => setManageFormData({ ...manageFormData, title: e.target.value })}
+                        placeholder="Enter task title"
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="manage-description">Description</Label>
+                      <Textarea
+                        id="manage-description"
+                        value={manageFormData.description}
+                        onChange={(e) =>
+                          setManageFormData({ ...manageFormData, description: e.target.value })
+                        }
+                        placeholder="Enter task description"
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="manage-priority">Priority</Label>
+                        <Select
+                          value={manageFormData.priority}
+                          onValueChange={(value: 'low' | 'medium' | 'high' | 'urgent') =>
+                            setManageFormData({ ...manageFormData, priority: value })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="low">Low</SelectItem>
+                            <SelectItem value="medium">Medium</SelectItem>
+                            <SelectItem value="high">High</SelectItem>
+                            <SelectItem value="urgent">Urgent</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label className="mb-2 block">When should this task be due?</Label>
+                        <Select
+                          value={plotForSpecificDate ? 'specific' : 'today'}
+                          onValueChange={(value) => {
+                            const useSpecific = value === 'specific';
+                            setPlotForSpecificDate(useSpecific);
+                            if (!useSpecific) {
+                              setManageFormData((prev) => ({ ...prev, due_date: getTodayDate() }));
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="w-full sm:max-w-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="today">Today</SelectItem>
+                            <SelectItem value="specific">Pick a date</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {plotForSpecificDate && (
+                          <div className="mt-2">
+                            <Label htmlFor="manage-due_date">Due Date</Label>
+                            <Input
+                              id="manage-due_date"
+                              type="date"
+                              min={getTodayDate()}
+                              value={manageFormData.due_date}
+                              onChange={(e) =>
+                                setManageFormData({ ...manageFormData, due_date: e.target.value })
+                              }
+                              className="mt-1"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <Label htmlFor="manage-due_time">Due Time</Label>
+                        <Input
+                          id="manage-due_time"
+                          type="time"
+                          value={manageFormData.due_time}
+                          onChange={(e) =>
+                            setManageFormData({ ...manageFormData, due_time: e.target.value })
+                          }
+                          className="max-w-full sm:max-w-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="manage-notes">Notes</Label>
+                      <Textarea
+                        id="manage-notes"
+                        value={manageFormData.notes}
+                        onChange={(e) => setManageFormData({ ...manageFormData, notes: e.target.value })}
+                        placeholder="Additional notes (optional)"
+                        rows={2}
+                      />
+                    </div>
+
+                    <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 pt-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setCreateManageDialogOpen(false);
+                          resetManageForm();
+                        }}
+                        className="w-full sm:w-auto"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleCreateManageTask}
+                        disabled={!manageFormData.agent_id || !manageFormData.title}
+                        className="w-full sm:w-auto"
+                      >
+                        Create Task
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+          )}
+          {!isManager && !isAdmin && !isSuperAdmin && (
           <div className="flex gap-2 w-full sm:w-auto">
             {/* Record Visit Button */}
             <Dialog open={showRecordVisitDialog} onOpenChange={(open) => {
@@ -1868,19 +2410,35 @@ export default function CalendarPage() {
             </SelectContent>
           </Select>
 
-          {/* Agent Filter (Managers & Team Leaders) */}
+          {/* Agent Filter (team view) */}
           {hasTeamView && (
             <Select value={selectedAgentFilter} onValueChange={setSelectedAgentFilter}>
               <SelectTrigger className="w-44">
                 <SelectValue placeholder="Filter by agent" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Team Members</SelectItem>
+                <SelectItem value="all">
+                  {hasCompanyOversight ? 'All Agents' : 'All Team Members'}
+                </SelectItem>
                 {teamAgents.map(agent => (
                   <SelectItem key={agent.id} value={agent.id}>
                     {agent.full_name}
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Role Filter (company oversight) */}
+          {hasCompanyOversight && (
+            <Select value={selectedRoleFilter} onValueChange={setSelectedRoleFilter}>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Filter by role" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Roles</SelectItem>
+                <SelectItem value="mobile_sales">Mobile Sales</SelectItem>
+                <SelectItem value="team_leader">Team Leader</SelectItem>
               </SelectContent>
             </Select>
           )}
@@ -3144,8 +3702,8 @@ export default function CalendarPage() {
 
                 {/* Right Column: Actions & Meta (md:col-span-5) */}
                 <div className="md:col-span-5 space-y-6 flex flex-col h-full">
-                  {/* Event Actions - hidden for managers, team leaders (viewing team tasks), and completed tasks */}
-                  {!isManager && !isTeamLeader && !(selectedEvent.type === 'task' && selectedEvent.taskData?.status === 'completed') && (
+                  {/* Event Actions - mobile sales field actions */}
+                  {!isManager && !isAdmin && !isTeamLeader && !canManageTasks && !(selectedEvent.type === 'task' && selectedEvent.taskData?.status === 'completed') && (
                     <div className="bg-gray-50/50 p-4 rounded-xl border space-y-4">
                       <h3 className="text-sm font-semibold text-gray-900">Event Actions</h3>
 
@@ -3203,6 +3761,33 @@ export default function CalendarPage() {
                             </>
                           )}
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Super-admin task management actions */}
+                  {canManageTasks && selectedEvent.type === 'task' && selectedEvent.taskData && (
+                    <div className="bg-gray-50/50 p-4 rounded-xl border space-y-4">
+                      <h3 className="text-sm font-semibold text-gray-900">Task Actions</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => handleEditManageTask(selectedEvent.taskData!)}
+                        >
+                          <Edit className="h-4 w-4 mr-2" />
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full text-red-600 hover:bg-red-50 hover:text-red-700"
+                          onClick={() => handleDeleteManageTask(selectedEvent.taskData!)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete
+                        </Button>
                       </div>
                     </div>
                   )}
@@ -3287,6 +3872,137 @@ export default function CalendarPage() {
               >
                 <CheckCircle className="h-4 w-4 mr-2" />
                 Yes, Complete Task
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Super-admin Edit Task Dialog */}
+      <Dialog
+        open={editManageDialogOpen}
+        onOpenChange={(open) => {
+          setEditManageDialogOpen(open);
+          if (!open) {
+            setSelectedManageTask(null);
+            resetManageForm();
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Task</DialogTitle>
+            <DialogDescription>Update task details</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="edit-manage-title">Task Title</Label>
+              <Input
+                id="edit-manage-title"
+                value={manageFormData.title}
+                onChange={(e) => setManageFormData({ ...manageFormData, title: e.target.value })}
+                placeholder="Enter task title"
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-manage-description">Description</Label>
+              <Textarea
+                id="edit-manage-description"
+                value={manageFormData.description}
+                onChange={(e) => setManageFormData({ ...manageFormData, description: e.target.value })}
+                placeholder="Enter task description"
+                rows={3}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-manage-priority">Priority</Label>
+                <Select
+                  value={manageFormData.priority}
+                  onValueChange={(value: 'low' | 'medium' | 'high' | 'urgent') =>
+                    setManageFormData({ ...manageFormData, priority: value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="urgent">Urgent</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="edit-manage-due_date">Due Date</Label>
+                <Input
+                  id="edit-manage-due_date"
+                  type="date"
+                  value={manageFormData.due_date}
+                  onChange={(e) => setManageFormData({ ...manageFormData, due_date: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-manage-due_time">Due Time</Label>
+                <Input
+                  id="edit-manage-due_time"
+                  type="time"
+                  value={manageFormData.due_time}
+                  onChange={(e) => setManageFormData({ ...manageFormData, due_time: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="edit-manage-notes">Notes</Label>
+              <Textarea
+                id="edit-manage-notes"
+                value={manageFormData.notes}
+                onChange={(e) => setManageFormData({ ...manageFormData, notes: e.target.value })}
+                placeholder="Additional notes (optional)"
+                rows={2}
+              />
+            </div>
+            <div className="flex justify-end space-x-2">
+              <Button variant="outline" onClick={() => setEditManageDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleUpdateManageTask}>Update Task</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Super-admin Delete Task Dialog */}
+      <Dialog open={deleteManageConfirmOpen} onOpenChange={setDeleteManageConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-red-600" />
+              Delete Task
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-muted-foreground">
+              Are you sure you want to delete this task? This action cannot be undone.
+            </p>
+            {selectedManageTask && (
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <h4 className="font-medium text-sm text-gray-700 mb-1">Task Details:</h4>
+                <p className="text-sm font-medium">{selectedManageTask.title}</p>
+                <p className="text-xs text-gray-600 mt-1">Assigned to: {selectedManageTask.agent_name}</p>
+                {selectedManageTask.description && (
+                  <p className="text-xs text-gray-600 mt-1">{selectedManageTask.description}</p>
+                )}
+              </div>
+            )}
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setDeleteManageConfirmOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={confirmDeleteManageTask}>
+                <Trash2 className="h-4 w-4 mr-2" />
+                Yes, Delete Task
               </Button>
             </div>
           </div>

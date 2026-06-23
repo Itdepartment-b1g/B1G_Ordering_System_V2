@@ -484,6 +484,7 @@ const superAdminMenuItems: MenuItem[] = [
     ]
   },
   { title: 'Agent Attendance', url: '/agent-attendance-overview', icon: Calendar},
+  { title: 'Task Calendar', url: '/calendar', icon: Calendar },
   { title: 'AI Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   {
