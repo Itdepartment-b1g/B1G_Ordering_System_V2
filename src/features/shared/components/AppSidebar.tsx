@@ -37,7 +37,8 @@ import {
   Package2Icon,
   RotateCcw,
   PackageX,
-  Scale
+  Scale,
+  Layers,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -355,6 +356,7 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Stock Requests', url: '/inventory/stock-requests', icon: ClipboardList },
       { title: 'Stock Returns', url: '/inventory/stock-returns', icon: RotateCcw },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', icon: Scale },
+      { title: 'Batch View', url: '/inventory/batches', icon: Layers },
       { title: 'Disposal Log', url: '/inventory/disposals', icon: PackageX },
     ],
   },

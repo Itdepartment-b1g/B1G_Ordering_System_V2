@@ -10,6 +10,7 @@ export { default as WarehouseStockRequestsPage } from './WarehouseStockRequestsP
 export { default as WarehouseStockReturnsPage } from './WarehouseStockReturnsPage';
 export { default as WarehouseStockAdjustmentsPage } from './WarehouseStockAdjustmentsPage';
 export { default as WarehouseAllocationHistoryPage } from './WarehouseAllocationHistoryPage';
+export { default as BatchViewPage } from './BatchViewPage';
 export { default as AdminTeamRemittancesPage } from './AdminTeamRemittancesPage';
 export { default as LeaderRemittancePage } from './LeaderRemittancePage';
 export { default as LeaderCashDepositsPage } from './LeaderCashDepositsPage';

@@ -93,6 +93,7 @@ export function usePermissions() {
         '/inventory/sub-warehouses',
         '/inventory/disposals',
         '/inventory/allocation-history',
+        '/inventory/batches',
         '/inventory/stock-requests',
         '/inventory/stock-returns',
         '/inventory/stock-adjustments',
