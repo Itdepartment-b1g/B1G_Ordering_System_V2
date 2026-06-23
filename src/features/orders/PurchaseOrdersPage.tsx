@@ -14,7 +14,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, MapPin, Store } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store } from 'lucide-react';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
@@ -23,6 +23,7 @@ import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { generateAndOpenCofPdf } from './cof/generateCofPdf';
+import { generateAndOpenDrPdf } from './dr/generateDrPdf';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
   import { Textarea } from '@/components/ui/textarea';
@@ -57,6 +58,35 @@ function poItemWarehouseLabel(item: any): string | null {
   const raw2 = Array.isArray(item?.warehouse_locations) ? item.warehouse_locations[0] : item?.warehouse_locations;
   if (raw2?.name) return raw2.is_main ? `${raw2.name} (Main)` : raw2.name;
   return null;
+}
+
+function resolveWarehouseLocationName(
+  loc: { name: string } | { name: string }[] | null | undefined
+): string | null {
+  if (!loc) return null;
+  const row = Array.isArray(loc) ? loc[0] : loc;
+  return row?.name?.trim() || null;
+}
+
+type PoViewRequestorInfo = {
+  company: { id: string; company_name: string } | null;
+  profile: {
+    id: string;
+    full_name: string | null;
+    email: string | null;
+    phone: string | null;
+    address: string | null;
+    city: string | null;
+    country: string | null;
+  } | null;
+};
+
+function formatPoRequestorAddress(
+  profile: PoViewRequestorInfo['profile'] | null | undefined
+): string {
+  if (!profile) return 'N/A';
+  const line = [profile.address, profile.city, profile.country].filter(Boolean).join(', ');
+  return line || 'N/A';
 }
 
 function formatPoHeaderWarehouse(order: any): string | null {
@@ -178,16 +208,18 @@ export default function PurchaseOrdersPage() {
 
   // Track fulfillment status for current user's warehouse location
   const [myLocationStatuses, setMyLocationStatuses] = useState<Record<string, string>>({});
+  const [myLocationDrByPo, setMyLocationDrByPo] = useState<
+    Record<string, { dr_number: string; warehouse_location_id: string; warehouse_name: string }>
+  >({});
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [orderToView, setOrderToView] = useState<any>(null);
   const [transferLocationStatuses, setTransferLocationStatuses] = useState<Array<{ location_id: string; location_name: string; status: string }>>([]);
 
-  // Company info for view dialog
-  const [companyInfo, setCompanyInfo] = useState<{ company_name: string } | null>(null);
-
   const [isMobile, setIsMobile] = useState(false);
+  const [viewRequestorInfo, setViewRequestorInfo] = useState<PoViewRequestorInfo | null>(null);
+  const [loadingViewRequestor, setLoadingViewRequestor] = useState(false);
 
   // Detect mobile
   useEffect(() => {
@@ -196,27 +228,6 @@ export default function PurchaseOrdersPage() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
-
-  // Fetch company info for view dialog
-  useEffect(() => {
-    const fetchCompanyInfo = async () => {
-      if (!user?.company_id) return;
-      try {
-        const { data, error } = await supabase
-          .from('companies')
-          .select('company_name')
-          .eq('id', user.company_id)
-          .maybeSingle();
-        if (error) throw error;
-        setCompanyInfo(data);
-      } catch (error) {
-        console.error('Error fetching company info:', error);
-      }
-    };
-    fetchCompanyInfo();
-  }, [user?.company_id]);
-
-  const [viewBuyerCompanyName, setViewBuyerCompanyName] = useState<string | null>(null);
 
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
@@ -257,6 +268,44 @@ export default function PurchaseOrdersPage() {
       toast({
         title: 'COF Error',
         description: e?.message || 'Failed to generate COF',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const resolveWarehouseNameForLocation = (order: any, locationId: string): string => {
+    const fromApprove = approveLocationNames[locationId];
+    if (fromApprove) return fromApprove;
+    const items = (order?.items || []) as any[];
+    for (const it of items) {
+      if (String(it.warehouse_location_id) !== String(locationId)) continue;
+      const label = poItemWarehouseLabel(it);
+      if (label) return label;
+    }
+    const headerLoc = Array.isArray(order?.warehouse_locations)
+      ? order.warehouse_locations[0]
+      : order?.warehouse_location;
+    if (headerLoc?.id && String(headerLoc.id) === String(locationId) && headerLoc.name) {
+      return headerLoc.is_main ? `${headerLoc.name} (Main)` : headerLoc.name;
+    }
+    return `Warehouse ${shortId(locationId)}`;
+  };
+
+  const canPrintDrForOrder = (order: { id: string }) => !!myLocationDrByPo[order.id]?.dr_number;
+
+  const openDrForOrder = async (order: any) => {
+    const drMeta = myLocationDrByPo[order.id];
+    if (!drMeta?.dr_number) return;
+    try {
+      await generateAndOpenDrPdf(order, {
+        drNumber: drMeta.dr_number,
+        warehouseLocationId: drMeta.warehouse_location_id,
+        warehouseLocationName: drMeta.warehouse_name,
+      });
+    } catch (e: any) {
+      toast({
+        title: 'DR Error',
+        description: e?.message || 'Failed to generate delivery receipt',
         variant: 'destructive',
       });
     }
@@ -339,6 +388,63 @@ export default function PurchaseOrdersPage() {
           statusMap[row.purchase_order_id] = row.status;
         });
         setMyLocationStatuses(statusMap);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [purchaseOrders, membership.locationId, isWarehouse]);
+
+  // DR numbers issued by this warehouse user's location (for Print DR button visibility).
+  useEffect(() => {
+    if (!isWarehouse || !membership.locationId || purchaseOrders.length === 0) {
+      setMyLocationDrByPo({});
+      return;
+    }
+
+    const transferPoIds = purchaseOrders
+      .filter((o) => o.fulfillment_type === 'warehouse_transfer')
+      .map((o) => o.id);
+
+    if (transferPoIds.length === 0) {
+      setMyLocationDrByPo({});
+      return;
+    }
+
+    let cancelled = false;
+    supabase
+      .from('purchase_order_deliveries')
+      .select(
+        'purchase_order_id, dr_number, warehouse_location_id, warehouse_locations:warehouse_location_id(name)'
+      )
+      .in('purchase_order_id', transferPoIds)
+      .eq('warehouse_location_id', membership.locationId)
+      .not('dr_number', 'is', null)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn('[PO List] Failed to load DR numbers', error);
+          setMyLocationDrByPo({});
+          return;
+        }
+        const drMap: Record<
+          string,
+          { dr_number: string; warehouse_location_id: string; warehouse_name: string }
+        > = {};
+        for (const row of (data || []) as any[]) {
+          const poId = String(row.purchase_order_id || '');
+          const drNumber = String(row.dr_number || '').trim();
+          const locId = String(row.warehouse_location_id || '');
+          if (!poId || !drNumber || !locId) continue;
+          const locName =
+            resolveWarehouseLocationName(row.warehouse_locations) || `Warehouse ${shortId(locId)}`;
+          drMap[poId] = {
+            dr_number: drNumber,
+            warehouse_location_id: locId,
+            warehouse_name: locName,
+          };
+        }
+        setMyLocationDrByPo(drMap);
       });
 
     return () => {
@@ -443,29 +549,49 @@ export default function PurchaseOrdersPage() {
 
 
   useEffect(() => {
-    if (!orderToView?.company_id) {
-      setViewBuyerCompanyName(null);
+    if (!viewDialogOpen || !orderToView?.id) {
+      setViewRequestorInfo(null);
+      setLoadingViewRequestor(false);
       return;
     }
-    const buyerId =
-      user?.role === 'warehouse' ? orderToView.company_id : user?.company_id;
-    if (!buyerId) {
-      setViewBuyerCompanyName(null);
+    if (orderToView.key_account_client_id) {
+      setViewRequestorInfo(null);
+      setLoadingViewRequestor(false);
       return;
     }
+
     let cancelled = false;
-    (async () => {
-      const { data, error } = await supabase
-        .from('companies')
-        .select('company_name')
-        .eq('id', buyerId)
-        .maybeSingle();
-      if (!cancelled && !error) setViewBuyerCompanyName(data?.company_name ?? null);
+    setLoadingViewRequestor(true);
+    void (async () => {
+      try {
+        const { data, error } = await supabase.rpc('get_po_requestor_info', {
+          p_po_id: orderToView.id,
+        });
+        if (cancelled) return;
+        if (error) {
+          console.warn('[PO View] get_po_requestor_info error:', error);
+          setViewRequestorInfo(null);
+          return;
+        }
+        const obj = (data || {}) as Partial<PoViewRequestorInfo>;
+        setViewRequestorInfo({
+          company: obj.company ?? null,
+          profile: obj.profile ?? null,
+        });
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('[PO View] get_po_requestor_info exception:', e);
+          setViewRequestorInfo(null);
+        }
+      } finally {
+        if (!cancelled) setLoadingViewRequestor(false);
+      }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [orderToView?.company_id, orderToView?.id, user?.role, user?.company_id]);
+  }, [viewDialogOpen, orderToView?.id, orderToView?.key_account_client_id]);
 
   // For warehouse_transfer POs: load per-location fulfillment statuses for progress view.
   useEffect(() => {
@@ -979,6 +1105,12 @@ export default function PurchaseOrdersPage() {
                     <FileText className="h-4 w-4 mr-1" />
                     COF
                   </Button>
+                  {canPrintDrForOrder(order) && (
+                    <Button variant="outline" size="sm" onClick={() => void openDrForOrder(order)} title="Print delivery receipt for your warehouse">
+                      <Receipt className="h-4 w-4 mr-1" />
+                      DR
+                    </Button>
+                  )}
                   <Button variant="ghost" size="sm" onClick={() => handleViewOrder(order)}>
                     <Eye className="h-4 w-4 mr-1" /> View
                   </Button>
@@ -1101,6 +1233,16 @@ export default function PurchaseOrdersPage() {
                           <Button variant="outline" size="icon" onClick={() => void openCofForOrder(order)} title="View / Print COF">
                             <FileText className="h-4 w-4" />
                           </Button>
+                          {canPrintDrForOrder(order) && (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => void openDrForOrder(order)}
+                              title="Print delivery receipt for your warehouse"
+                            >
+                              <Receipt className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1688,6 +1830,36 @@ export default function PurchaseOrdersPage() {
                           ? `All warehouses dispatched. DR: ${poUpdate.dr_number || drNumber}`
                           : `Dispatch saved for this warehouse. DR: ${drNumber}. Other warehouse(s) still pending.`,
                     });
+
+                    const whName =
+                      fulfillLocationName?.trim() ||
+                      approveLocationNames[locId] ||
+                      resolveWarehouseNameForLocation(dispatchPo, locId);
+
+                    try {
+                      await generateAndOpenDrPdf(dispatchPo, {
+                        drNumber,
+                        warehouseLocationId: locId,
+                        warehouseLocationName: whName,
+                      });
+                    } catch (drPdfErr: any) {
+                      console.warn('[DR] auto-open after dispatch failed', drPdfErr);
+                      toast({
+                        title: 'DR opened with issues',
+                        description: drPdfErr?.message || 'Delivery saved but DR preview could not open.',
+                        variant: 'destructive',
+                      });
+                    }
+
+                    setMyLocationDrByPo((prev) => ({
+                      ...prev,
+                      [dispatchPo.id]: {
+                        dr_number: drNumber,
+                        warehouse_location_id: locId,
+                        warehouse_name: whName,
+                      },
+                    }));
+
                     // Update local status so Fulfill button hides immediately
                     setMyLocationStatuses((prev) => ({ ...prev, [dispatchPo.id]: 'fulfilled' }));
                     setDispatchOpen(false);
@@ -1781,24 +1953,41 @@ export default function PurchaseOrdersPage() {
                     {/* Buyer Info Section */}
                     <AccordionItem value="buyer" className="border rounded-lg px-4">
                       <AccordionTrigger className="hover:no-underline">
-                        <span className="font-semibold">Buyer (Our Company)</span>
+                        <span className="font-semibold">Buyer information</span>
                       </AccordionTrigger>
                       <AccordionContent>
                         <div className="space-y-2 text-sm pt-4">
-                          <div>
-                            <p className="font-medium">{(viewBuyerCompanyName ?? companyInfo?.company_name) || 'N/A'}</p>
-                            <p className="text-muted-foreground text-xs">{user?.address || 'N/A'}</p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <p className="text-muted-foreground">Contact</p>
-                              <p>{user?.full_name || 'N/A'}</p>
-                            </div>
-                            <div>
-                              <p className="text-muted-foreground">Phone</p>
-                              <p>{user?.phone || 'N/A'}</p>
-                            </div>
-                          </div>
+                          {loadingViewRequestor ? (
+                            <p className="text-muted-foreground text-xs flex items-center gap-2">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Loading buyer details…
+                            </p>
+                          ) : (
+                            <>
+                              <div>
+                                <p className="font-medium">
+                                  {viewRequestorInfo?.company?.company_name || 'N/A'}
+                                </p>
+                                <p className="text-muted-foreground text-xs">
+                                  {formatPoRequestorAddress(viewRequestorInfo?.profile)}
+                                </p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <p className="text-muted-foreground">Placed by</p>
+                                  <p>{viewRequestorInfo?.profile?.full_name || 'N/A'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Phone</p>
+                                  <p>{viewRequestorInfo?.profile?.phone || 'N/A'}</p>
+                                </div>
+                                <div className="col-span-2">
+                                  <p className="text-muted-foreground">Email</p>
+                                  <p>{viewRequestorInfo?.profile?.email || 'N/A'}</p>
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </AccordionContent>
                     </AccordionItem>
@@ -1856,7 +2045,11 @@ export default function PurchaseOrdersPage() {
                       <PurchaseOrderDeliveryDetailsPanel
                         purchaseOrderId={orderToView.id}
                         enabled
-                        warehouseNamesById={{}}
+                        purchaseOrder={orderToView}
+                        filterWarehouseLocationId={isWarehouse ? membership.locationId : null}
+                        warehouseNamesById={Object.fromEntries(
+                          transferLocationStatuses.map((s) => [s.location_id, s.location_name])
+                        )}
                       />
                     )}
 
@@ -1999,11 +2192,30 @@ export default function PurchaseOrdersPage() {
                     <div className="space-y-2">
                       <h4 className="font-semibold text-lg">Buyer Information</h4>
                       <div className="bg-muted p-4 rounded-lg space-y-1">
-                        <p className="font-medium">{(viewBuyerCompanyName ?? companyInfo?.company_name) || 'N/A'}</p>
-                        <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
-                        <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
-                        <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
-                        <p className="text-sm">Email: {user?.email || 'N/A'}</p>
+                        {loadingViewRequestor ? (
+                          <p className="text-sm text-muted-foreground flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading buyer details…
+                          </p>
+                        ) : (
+                          <>
+                            <p className="font-medium">
+                              {viewRequestorInfo?.company?.company_name || 'N/A'}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              {formatPoRequestorAddress(viewRequestorInfo?.profile)}
+                            </p>
+                            <p className="text-sm">
+                              Placed by: {viewRequestorInfo?.profile?.full_name || 'N/A'}
+                            </p>
+                            <p className="text-sm">
+                              Phone: {viewRequestorInfo?.profile?.phone || 'N/A'}
+                            </p>
+                            <p className="text-sm">
+                              Email: {viewRequestorInfo?.profile?.email || 'N/A'}
+                            </p>
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="space-y-2">
@@ -2052,6 +2264,8 @@ export default function PurchaseOrdersPage() {
                     <PurchaseOrderDeliveryDetailsPanel
                       purchaseOrderId={orderToView.id}
                       enabled
+                      purchaseOrder={orderToView}
+                      filterWarehouseLocationId={isWarehouse ? membership.locationId : null}
                       warehouseNamesById={Object.fromEntries(
                         transferLocationStatuses.map((s) => [s.location_id, s.location_name])
                       )}
@@ -2632,6 +2846,8 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
       <PurchaseOrderDeliveryDetailsPanel
         purchaseOrderId={order.id}
         enabled={purchaseOrderDeliveryDetailsEnabled(order)}
+        purchaseOrder={order}
+        filterWarehouseLocationId={isWarehouse ? membership.locationId : null}
         warehouseNamesById={warehouseNamesById}
       />
 

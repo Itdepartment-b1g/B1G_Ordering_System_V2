@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronsUpDown, Loader2, Truck } from 'lucide-react';
+import { ChevronsUpDown, FileText, Loader2, Receipt, Truck } from 'lucide-react';
+import type { PurchaseOrder } from '../types';
+import { generateAndOpenDrPdf } from '../dr/generateDrPdf';
 
 function resolveWarehouseLocationName(
   loc: { name: string } | { name: string }[] | null | undefined
@@ -68,18 +70,41 @@ interface PurchaseOrderDeliveryDetailsPanelProps {
   enabled: boolean;
   /** Fallback when location join is null (e.g. get_linked_warehouse_locations). */
   warehouseNamesById?: Record<string, string>;
+  /** PO record — required for Print DR. */
+  purchaseOrder?: PurchaseOrder | null;
+  /** When set, only show Print DR for dispatches from this warehouse location. */
+  filterWarehouseLocationId?: string | null;
 }
 
 export function PurchaseOrderDeliveryDetailsPanel({
   purchaseOrderId,
   enabled,
   warehouseNamesById = {},
+  purchaseOrder = null,
+  filterWarehouseLocationId = null,
 }: PurchaseOrderDeliveryDetailsPanelProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [printingDrId, setPrintingDrId] = useState<string | null>(null);
   const [rows, setRows] = useState<PurchaseOrderDeliveryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+
+  const printDrForRow = async (row: PurchaseOrderDeliveryRow, warehouseName: string) => {
+    if (!purchaseOrder || !row.dr_number || !row.warehouse_location_id) return;
+    setPrintingDrId(row.id);
+    try {
+      await generateAndOpenDrPdf(purchaseOrder, {
+        drNumber: row.dr_number,
+        warehouseLocationId: row.warehouse_location_id,
+        warehouseLocationName: warehouseName,
+      });
+    } catch (e) {
+      console.warn('[DR] print failed', e);
+    } finally {
+      setPrintingDrId(null);
+    }
+  };
 
   const load = useCallback(async () => {
     if (loaded || loading) return;
@@ -149,6 +174,12 @@ export function PurchaseOrderDeliveryDetailsPanel({
                   ? warehouseNamesById[row.warehouse_location_id]
                   : null) ||
                 '—';
+              const showPrintDr =
+                !!purchaseOrder &&
+                !!row.dr_number &&
+                !!row.warehouse_location_id &&
+                (!filterWarehouseLocationId ||
+                  String(filterWarehouseLocationId) === String(row.warehouse_location_id));
 
               return (
                   <div key={row.id} className="rounded-md border bg-muted/20 p-3 space-y-3 text-sm">
@@ -222,6 +253,21 @@ export function PurchaseOrderDeliveryDetailsPanel({
                         <Label className="text-xs text-muted-foreground">Notes</Label>
                         <p className="text-sm mt-0.5 whitespace-pre-wrap">{row.notes}</p>
                       </div>
+                    ) : null}
+                    {showPrintDr ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={printingDrId === row.id}
+                        onClick={() => void printDrForRow(row, fulfillingWarehouse)}
+                      >
+                        {printingDrId === row.id ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <Receipt className="h-4 w-4 mr-1" />
+                        )}
+                        Print DR
+                      </Button>
                     ) : null}
                     <p className="text-[11px] text-muted-foreground">
                       Proof images use signed URLs; if they fail to load later, links may have expired and need

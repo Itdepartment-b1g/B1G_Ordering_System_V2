@@ -9,6 +9,7 @@ import {
 
 export type ExecutiveStockLayer = 'main' | 'team_leader';
 export type ExecutiveMainStockMode = 'available' | 'overall';
+export type ExecutiveTeamLeaderMode = 'leader_only' | 'team_total';
 
 export interface ExecutiveTeamLeader {
   id: string;
@@ -122,32 +123,86 @@ async function fetchMainInventoryBrands(companyId: string): Promise<Brand[]> {
   return groupBrands(brandsData || []);
 }
 
+const AGENT_INVENTORY_SELECT = `
+  stock,
+  variants!inner (
+    id,
+    name,
+    variant_type,
+    created_at,
+    is_active,
+    brands!inner (
+      id,
+      name,
+      is_active
+    )
+  )
+`;
+
+function aggregateAgentInventoryByVariant(rows: any[]): any[] {
+  const byVariant = new Map<string, { row: any; stock: number }>();
+
+  for (const row of rows ?? []) {
+    const variantId = row.variants?.id as string | undefined;
+    if (!variantId) continue;
+
+    const existing = byVariant.get(variantId);
+    if (existing) {
+      existing.stock += row.stock ?? 0;
+    } else {
+      byVariant.set(variantId, { row, stock: row.stock ?? 0 });
+    }
+  }
+
+  return Array.from(byVariant.values()).map(({ row, stock }) => ({
+    ...row,
+    stock,
+  }));
+}
+
+async function fetchLeaderTeamAgentIds(
+  companyId: string,
+  leaderId: string
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('leader_teams')
+    .select('agent_id')
+    .eq('company_id', companyId)
+    .eq('leader_id', leaderId);
+
+  if (error) throw error;
+  return (data ?? []).map((row) => row.agent_id);
+}
+
 async function fetchLeaderInventoryBrands(
   companyId: string,
   leaderId: string
 ): Promise<Brand[]> {
   const { data, error } = await supabase
     .from('agent_inventory')
-    .select(`
-      stock,
-      variants!inner (
-        id,
-        name,
-        variant_type,
-        created_at,
-        is_active,
-        brands!inner (
-          id,
-          name,
-          is_active
-        )
-      )
-    `)
+    .select(AGENT_INVENTORY_SELECT)
     .eq('company_id', companyId)
     .eq('agent_id', leaderId);
 
   if (error) throw error;
   return groupBrandsFromAgentInventory(data || []);
+}
+
+async function fetchTeamTotalInventoryBrands(
+  companyId: string,
+  leaderId: string
+): Promise<Brand[]> {
+  const teamAgentIds = await fetchLeaderTeamAgentIds(companyId, leaderId);
+  const memberIds = Array.from(new Set([leaderId, ...teamAgentIds]));
+
+  const { data, error } = await supabase
+    .from('agent_inventory')
+    .select(AGENT_INVENTORY_SELECT)
+    .eq('company_id', companyId)
+    .in('agent_id', memberIds);
+
+  if (error) throw error;
+  return groupBrandsFromAgentInventory(aggregateAgentInventoryByVariant(data || []));
 }
 
 export function useExecutiveMainInventory(companyId: string | null) {
@@ -163,12 +218,16 @@ export function useExecutiveMainInventory(companyId: string | null) {
 
 export function useExecutiveLeaderInventory(
   companyId: string | null,
-  leaderId: string | null
+  leaderId: string | null,
+  mode: ExecutiveTeamLeaderMode = 'leader_only'
 ) {
   return useQuery({
-    queryKey: ['executive', 'leader-inventory', companyId, leaderId],
+    queryKey: ['executive', 'leader-inventory', companyId, leaderId, mode],
     enabled: !!companyId && !!leaderId,
-    queryFn: () => fetchLeaderInventoryBrands(companyId!, leaderId!),
+    queryFn: () =>
+      mode === 'team_total'
+        ? fetchTeamTotalInventoryBrands(companyId!, leaderId!)
+        : fetchLeaderInventoryBrands(companyId!, leaderId!),
     staleTime: 30 * 1000,
     refetchOnWindowFocus: true,
     retry: 2,

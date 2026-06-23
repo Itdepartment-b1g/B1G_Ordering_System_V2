@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Search,
   Truck,
+  Undo2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
@@ -19,6 +20,7 @@ import {
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
+import { SubWarehouseReturnStockDialog } from './components/SubWarehouseReturnStockDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -255,6 +257,24 @@ export default function WarehouseStockReturnsPage() {
   const [inspectNotes, setInspectNotes] = useState('');
   const [inspectSubmitting, setInspectSubmitting] = useState(false);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
+
+  const isSubWarehouseUser = !membership.isMain && !!membership.locationId;
+
+  const { data: subWarehouseLocations = [] } = useQuery({
+    queryKey: ['warehouse-sub-location-for-return', membership.locationId],
+    enabled: isSubWarehouseUser && !!membership.locationId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('warehouse_locations')
+        .select('id, name, is_main')
+        .eq('id', membership.locationId!)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return [];
+      return [{ id: data.id, name: data.name, is_main: !!data.is_main }];
+    },
+  });
 
   const {
     data: returns = [],
@@ -536,16 +556,28 @@ export default function WarehouseStockReturnsPage() {
 
   return (
     <div className="container mx-auto p-4 md:p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <RotateCcw className="h-7 w-7" />
-          Stock Returns
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          {isMainWarehouseUser
-            ? 'Inspect sub-warehouse returns: good stock re-enters main batch lots; damaged units go to the disposal log.'
-            : 'Returns you submitted from your sub-warehouse. Main warehouse inspects good vs damaged.'}
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <RotateCcw className="h-7 w-7" />
+            Stock Returns
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {isMainWarehouseUser
+              ? 'Inspect sub-warehouse returns: good stock re-enters main batch lots; damaged units go to the disposal log.'
+              : 'Returns you submitted from your sub-warehouse. Main warehouse inspects good vs damaged.'}
+          </p>
+        </div>
+        {isSubWarehouseUser && (
+          <Button
+            className="shrink-0"
+            onClick={() => setReturnOpen(true)}
+            disabled={membershipLoading || subWarehouseLocations.length === 0}
+          >
+            <Undo2 className="mr-2 h-4 w-4" />
+            Return stock
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -595,7 +627,9 @@ export default function WarehouseStockReturnsPage() {
           ) : filteredReturns.length === 0 ? (
             <p className="text-center text-muted-foreground py-12">
               {visibleReturns.length === 0
-                ? 'No stock return requests yet. Sub-warehouses submit returns from Sub Warehouses.'
+                ? isSubWarehouseUser
+                  ? 'No stock return requests yet. Use Return stock above to submit variants back to main.'
+                  : 'No stock return requests yet. Sub-warehouses submit returns from Sub Warehouses.'
                 : 'No returns match the selected filters.'}
             </p>
           ) : (
@@ -996,6 +1030,17 @@ export default function WarehouseStockReturnsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {isSubWarehouseUser && (
+        <SubWarehouseReturnStockDialog
+          open={returnOpen}
+          onOpenChange={setReturnOpen}
+          isMainWarehouseUser={false}
+          myLocationId={membership.locationId}
+          locations={subWarehouseLocations}
+          userId={user?.id ?? null}
+        />
+      )}
     </div>
   );
 }

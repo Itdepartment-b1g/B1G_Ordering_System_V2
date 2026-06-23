@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { AlertCircle, Loader2, PackageX, Search } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Loader2, PackageX, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
@@ -13,7 +13,9 @@ import { useWarehouseLocationMembership } from './useWarehouseLocationMembership
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -51,6 +53,9 @@ const SOURCE_LABELS: Record<string, string> = {
   adjustment: 'Adjustment',
   other: 'Other',
 };
+
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
+const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
@@ -130,6 +135,8 @@ export default function WarehouseDisposalsPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   const { data: locations = [] } = useQuery({
     queryKey: ['warehouse-disposal-locations', user?.company_id],
@@ -233,6 +240,25 @@ export default function WarehouseDisposalsPage() {
       );
     });
   }, [dateScopedDisposals, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredDisposals.length / pageSize));
+
+  const paginatedDisposals = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredDisposals.slice(start, start + pageSize);
+  }, [filteredDisposals, page, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, locationFilter, dateRangeFilter, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const paginationStart =
+    filteredDisposals.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const paginationEnd = Math.min(page * pageSize, filteredDisposals.length);
 
   const totalUnits = useMemo(
     () => filteredDisposals.reduce((sum, row) => sum + row.quantity, 0),
@@ -352,7 +378,7 @@ export default function WarehouseDisposalsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredDisposals.map((row) => (
+                  {paginatedDisposals.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell className="whitespace-nowrap text-muted-foreground">
                         {format(new Date(row.created_at), 'MMM d, yyyy HH:mm')}
@@ -384,6 +410,56 @@ export default function WarehouseDisposalsPage() {
                   ))}
                 </TableBody>
               </Table>
+              <div className="flex flex-col gap-3 border-t bg-muted/20 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span>
+                    Showing {paginationStart}–{paginationEnd} of {filteredDisposals.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="disposals-page-size" className="text-xs whitespace-nowrap">
+                      Rows per page
+                    </Label>
+                    <Select
+                      value={String(pageSize)}
+                      onValueChange={(v) => setPageSize(Number(v))}
+                    >
+                      <SelectTrigger id="disposals-page-size" className="h-8 w-[72px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PAGE_SIZE_OPTIONS.map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Previous
+                  </Button>
+                  <span className="min-w-[100px] text-center tabular-nums">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
         </CardContent>
