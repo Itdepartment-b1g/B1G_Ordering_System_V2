@@ -27,11 +27,17 @@ import {
   hasBatchInventoryDateFilter,
   summarizeBatchInventory,
 } from './utils/batchInventoryFilters';
+import {
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  createInitialTableSortCycle,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import { exportBatchInventoryExcel } from './utils/exportBatchInventoryExcel';
 import {
   DEFAULT_BATCH_VIEW_SORT_DIRECTION,
   DEFAULT_BATCH_VIEW_SORT_KEY,
-  getNextBatchViewSortDirection,
   sortBatchInventoryGroups,
   type BatchViewSortKey,
 } from './utils/batchInventorySorting';
@@ -61,8 +67,8 @@ export default function BatchViewList() {
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [isExportingFiltered, setIsExportingFiltered] = useState(false);
   const [isExportingAll, setIsExportingAll] = useState(false);
-  const [sortKey, setSortKey] = useState<BatchViewSortKey>(DEFAULT_BATCH_VIEW_SORT_KEY);
-  const [sortDirection, setSortDirection] = useState(DEFAULT_BATCH_VIEW_SORT_DIRECTION);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<BatchViewSortKey>>(createInitialTableSortCycle);
 
   useEffect(() => {
     if (!isMainWarehouseUser && membership.locationId) {
@@ -129,14 +135,24 @@ export default function BatchViewList() {
     [groups, search, brandId, fromDate, toDate]
   );
 
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_BATCH_VIEW_SORT_KEY,
+        DEFAULT_BATCH_VIEW_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
   const sortedGroups = useMemo(
-    () => sortBatchInventoryGroups(filteredGroups, sortKey, sortDirection),
-    [filteredGroups, sortKey, sortDirection]
+    () => sortBatchInventoryGroups(filteredGroups, resolvedSortKey, resolvedSortDirection),
+    [filteredGroups, resolvedSortKey, resolvedSortDirection]
   );
 
   useEffect(() => {
     setPage(0);
-  }, [search, brandId, dateRangeFilter, activeLocationId, sortKey, sortDirection]);
+  }, [search, brandId, dateRangeFilter, activeLocationId, sortState]);
 
   const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
     sortedGroups,
@@ -147,8 +163,7 @@ export default function BatchViewList() {
   const summary = useMemo(() => summarizeBatchInventory(filteredGroups), [filteredGroups]);
 
   const handleSort = (key: BatchViewSortKey) => {
-    setSortDirection((current) => getNextBatchViewSortDirection(sortKey, key, current));
-    setSortKey(key);
+    setSortState((current) => getNextTableSortCycleState(current, key));
   };
 
   const hasActiveFilters =
@@ -303,8 +318,7 @@ export default function BatchViewList() {
             isLoading={isLoading || (showLocationPicker && isLoadingLocations && !activeLocationId)}
             pagedGroups={pagedGroups}
             locationLabel={locationLabel}
-            sortKey={sortKey}
-            sortDirection={sortDirection}
+            sortState={sortState}
             onSort={handleSort}
           />
 

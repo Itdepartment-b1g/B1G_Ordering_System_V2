@@ -46,12 +46,3 @@ export function sortBatchInventoryGroups(
     return a.batchNumber.localeCompare(b.batchNumber, undefined, { numeric: true }) * direction;
   });
 }
-
-export function getNextBatchViewSortDirection(
-  currentKey: BatchViewSortKey,
-  clickedKey: BatchViewSortKey,
-  currentDirection: BatchViewSortDirection
-): BatchViewSortDirection {
-  if (currentKey !== clickedKey) return 'asc';
-  return currentDirection === 'asc' ? 'desc' : 'asc';
-}

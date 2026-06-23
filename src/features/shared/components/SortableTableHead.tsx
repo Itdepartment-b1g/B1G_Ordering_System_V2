@@ -3,26 +3,25 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { TableHead } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 
-import type { BatchViewSortDirection, BatchViewSortKey } from '../utils/batchInventorySorting';
+export type SortDirection = 'asc' | 'desc';
 
-type SortableTableHeadProps = {
+type SortableTableHeadProps<T extends string> = {
   label: string;
-  sortKey: BatchViewSortKey;
-  activeSortKey: BatchViewSortKey;
-  sortDirection: BatchViewSortDirection;
-  onSort: (key: BatchViewSortKey) => void;
+  sortKey: T;
+  /** null = neutral (default/reset); asc/desc = active sort on this column */
+  sortDirection: SortDirection | null;
+  onSort: (key: T) => void;
   className?: string;
 };
 
-export function SortableTableHead({
+export function SortableTableHead<T extends string>({
   label,
   sortKey,
-  activeSortKey,
   sortDirection,
   onSort,
   className,
-}: SortableTableHeadProps) {
-  const isActive = activeSortKey === sortKey;
+}: SortableTableHeadProps<T>) {
+  const isActive = sortDirection !== null;
 
   return (
     <TableHead className={className}>
@@ -36,12 +35,10 @@ export function SortableTableHead({
         onClick={() => onSort(sortKey)}
       >
         <span>{label}</span>
-        {isActive ? (
-          sortDirection === 'asc' ? (
-            <ArrowUp className="h-3.5 w-3.5 shrink-0" />
-          ) : (
-            <ArrowDown className="h-3.5 w-3.5 shrink-0" />
-          )
+        {sortDirection === 'asc' ? (
+          <ArrowUp className="h-3.5 w-3.5 shrink-0" />
+        ) : sortDirection === 'desc' ? (
+          <ArrowDown className="h-3.5 w-3.5 shrink-0" />
         ) : (
           <ArrowUpDown className="h-3.5 w-3.5 shrink-0 opacity-40" />
         )}

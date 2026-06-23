@@ -6,6 +6,13 @@ import {
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -14,7 +21,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, MapPin, Store } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, MapPin, Store, Filter } from 'lucide-react';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
@@ -29,6 +36,26 @@ import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { PurchaseOrderDeliveryDetailsPanel, purchaseOrderDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
 import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  createInitialTableSortCycle,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_PO_SORT_DIRECTION,
+  DEFAULT_PO_SORT_KEY,
+  sortPurchaseOrders,
+  type PurchaseOrderSortKey,
+} from './utils/purchaseOrderSorting';
+import {
+  PO_STATUS_FILTER_OPTIONS,
+  PO_STATUS_FILTER_LABELS,
+  purchaseOrderMatchesStatusFilter,
+  type PurchaseOrderStatusFilter,
+} from './utils/purchaseOrderFilters';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import { RebateReplacementPricingSummary, RebateReceiveReturnsDialog } from '@/features/key-accounts/rebates';
 import {
@@ -132,10 +159,13 @@ export default function PurchaseOrdersPage() {
     fetchPurchaseOrders,
   } = usePurchaseOrders();
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<PurchaseOrderStatusFilter>('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
   const [poPage, setPoPage] = useState(1);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<PurchaseOrderSortKey>>(createInitialTableSortCycle);
   // Form states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
@@ -762,6 +792,7 @@ export default function PurchaseOrdersPage() {
   const filteredOrders = useMemo(() => {
     const q = searchQuery.toLowerCase();
     return scopedOrders.filter((order) => {
+      if (!purchaseOrderMatchesStatusFilter(order, statusFilter)) return false;
       const typeLabel = order.fulfillment_type === 'warehouse_transfer' ? 'internal warehouse' : 'supplier';
       return (
         order.po_number.toLowerCase().includes(q) ||
@@ -771,19 +802,33 @@ export default function PurchaseOrdersPage() {
           formatPoRequestedWarehouseSummary(order).toLowerCase().includes(q))
       );
     });
-  }, [scopedOrders, searchQuery]);
+  }, [scopedOrders, searchQuery, statusFilter]);
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () => resolveTableSortDirection(sortState, DEFAULT_PO_SORT_KEY, DEFAULT_PO_SORT_DIRECTION),
+    [sortState]
+  );
+
+  const sortedOrders = useMemo(
+    () => sortPurchaseOrders(filteredOrders, resolvedSortKey, resolvedSortDirection),
+    [filteredOrders, resolvedSortKey, resolvedSortDirection]
+  );
 
   const summaryOrders = isWarehouse ? scopedOrders : purchaseOrders;
 
+  const handleSort = (key: PurchaseOrderSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
   useEffect(() => {
     setPoPage(1);
-  }, [searchQuery, poTab, orderDateRange.start, orderDateRange.end]);
+  }, [searchQuery, poTab, orderDateRange.start, orderDateRange.end, sortState, statusFilter]);
 
   // Pagination: 10 purchase orders per page
   const PO_PER_PAGE = 10;
-  const totalPoPages = Math.max(1, Math.ceil(filteredOrders.length / PO_PER_PAGE));
+  const totalPoPages = Math.max(1, Math.ceil(sortedOrders.length / PO_PER_PAGE));
   const currentPoPage = Math.min(Math.max(1, poPage), totalPoPages);
-  const paginatedOrders = filteredOrders.slice(
+  const paginatedOrders = sortedOrders.slice(
     (currentPoPage - 1) * PO_PER_PAGE,
     currentPoPage * PO_PER_PAGE
   );
@@ -890,9 +935,25 @@ export default function PurchaseOrdersPage() {
                 placeholder="Search orders..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-10 h-10"
               />
             </div>
+            <Select
+              value={statusFilter}
+              onValueChange={(value) => setStatusFilter(value as PurchaseOrderStatusFilter)}
+            >
+              <SelectTrigger className="h-10 w-full sm:w-[220px] gap-2">
+                <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                {PO_STATUS_FILTER_OPTIONS.map((key) => (
+                  <SelectItem key={key} value={key}>
+                    {PO_STATUS_FILTER_LABELS[key]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {isWarehouse && (
               <DateRangeFilterPopover
                 value={dateRangeFilter}
@@ -992,14 +1053,56 @@ export default function PurchaseOrdersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>PO Number</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Seller</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Expected Delivery</TableHead>
-                  <TableHead className="text-right">Items</TableHead>
-                  <TableHead className="text-right">Total Amount</TableHead>
-                  <TableHead>Status</TableHead>
+                  <SortableTableHead
+                    label="PO Number"
+                    sortKey="poNumber"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'poNumber')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Type"
+                    sortKey="type"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'type')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Seller"
+                    sortKey="seller"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'seller')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Date"
+                    sortKey="orderDate"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'orderDate')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Expected Delivery"
+                    sortKey="expectedDeliveryDate"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'expectedDeliveryDate')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Items"
+                    sortKey="itemCount"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'itemCount')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Total Amount"
+                    sortKey="totalAmount"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'totalAmount')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                    onSort={handleSort}
+                  />
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1110,7 +1213,7 @@ export default function PurchaseOrdersPage() {
             </Table>
 
             {/* Pagination controls */}
-            {filteredOrders.length > PO_PER_PAGE && (
+            {sortedOrders.length > PO_PER_PAGE && (
               <div className="flex items-center justify-between mt-4">
                 <div className="text-xs text-muted-foreground">
                   Showing{' '}

@@ -18,46 +18,30 @@ import {
 
 import type { BatchInventoryGroup } from '../types';
 
-import type { BatchViewSortDirection, BatchViewSortKey } from '../utils/batchInventorySorting';
+import type { BatchViewSortKey } from '../utils/batchInventorySorting';
 
 import { BatchViewRow } from './BatchViewRow';
 
-import { SortableTableHead } from './SortableTableHead';
-
-
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  getTableSortDisplayDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 
 type BatchViewTableProps = {
-
   isLoading: boolean;
-
   pagedGroups: BatchInventoryGroup[];
-
   locationLabel: string;
-
-  sortKey: BatchViewSortKey;
-
-  sortDirection: BatchViewSortDirection;
-
+  sortState: TableSortCycleState<BatchViewSortKey>;
   onSort: (key: BatchViewSortKey) => void;
-
 };
 
-
-
 export function BatchViewTable({
-
   isLoading,
-
   pagedGroups,
-
   locationLabel,
-
-  sortKey,
-
-  sortDirection,
-
+  sortState,
   onSort,
-
 }: BatchViewTableProps) {
 
   return (
@@ -73,77 +57,40 @@ export function BatchViewTable({
             <TableHead className="w-10" />
 
             <SortableTableHead
-
               label="Batch"
-
               sortKey="batchNumber"
-
-              activeSortKey={sortKey}
-
-              sortDirection={sortDirection}
-
+              sortDirection={getTableSortDisplayDirection(sortState, 'batchNumber')}
               onSort={onSort}
-
             />
 
             <SortableTableHead
-
               label="Warehouse"
-
               sortKey="locationName"
-
-              activeSortKey={sortKey}
-
-              sortDirection={sortDirection}
-
+              sortDirection={getTableSortDisplayDirection(sortState, 'locationName')}
               onSort={onSort}
-
             />
 
             <SortableTableHead
-
               label="SKUs"
-
               sortKey="skuCount"
-
-              activeSortKey={sortKey}
-
-              sortDirection={sortDirection}
-
+              sortDirection={getTableSortDisplayDirection(sortState, 'skuCount')}
               onSort={onSort}
-
               className="text-right"
-
             />
 
             <SortableTableHead
-
               label="Total units"
-
               sortKey="totalUnits"
-
-              activeSortKey={sortKey}
-
-              sortDirection={sortDirection}
-
+              sortDirection={getTableSortDisplayDirection(sortState, 'totalUnits')}
               onSort={onSort}
-
               className="text-right"
-
             />
 
             <SortableTableHead
-
               label="Date"
-
               sortKey="receivedAt"
-
-              activeSortKey={sortKey}
-
-              sortDirection={sortDirection}
-
+              sortDirection={getTableSortDisplayDirection(sortState, 'receivedAt')}
               onSort={onSort}
-
             />
 
             <TableHead className="text-right">Actions</TableHead>
