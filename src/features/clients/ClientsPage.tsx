@@ -50,6 +50,21 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_CLIENT_LIST_SORT_DIRECTION,
+  DEFAULT_CLIENT_LIST_SORT_KEY,
+  sortClientsList,
+  type ClientListSortContext,
+  type ClientListSortKey,
+} from '@/features/clients/utils/clientsListSorting';
 import * as XLSX from 'xlsx';
 
 const SUPABASE_PAGE_SIZE = 1000;
@@ -334,6 +349,8 @@ export default function ClientsPage() {
   // Pagination states
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [clientSortState, setClientSortState] =
+    useState<TableSortCycleState<ClientListSortKey>>(createInitialTableSortCycle);
 
   // Resolve role first
   useEffect(() => {
@@ -1134,13 +1151,56 @@ export default function ClientsPage() {
     });
   }, [clients, searchQuery, cityFilter, clientCreatedDateRange]);
 
-  const { pageCount, safePage, startIndex, endIndex, pagedItems: paginatedClients } =
-    getListPaginationSlice(filteredClients, page, pageSize);
+  const clientSortContext = useMemo(
+    (): ClientListSortContext => ({
+      getAgentLabel: (client) => {
+        if (!client.agent_id) return 'No Agent';
+        const agent = agents.find((a) => a.id === client.agent_id);
+        if (
+          agent?.role === 'admin' ||
+          agent?.role === 'super_admin' ||
+          (isAdmin && client.agent_id === user?.id)
+        ) {
+          return 'No Agent';
+        }
+        return client.agent_name || 'Unknown';
+      },
+    }),
+    [agents, isAdmin, user?.id]
+  );
 
-  // Reset to first page when filters or page size change
+  const { key: resolvedClientSortKey, direction: resolvedClientSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        clientSortState,
+        DEFAULT_CLIENT_LIST_SORT_KEY,
+        DEFAULT_CLIENT_LIST_SORT_DIRECTION
+      ),
+    [clientSortState]
+  );
+
+  const sortedClients = useMemo(
+    () =>
+      sortClientsList(
+        filteredClients,
+        resolvedClientSortKey,
+        resolvedClientSortDirection,
+        clientSortContext
+      ),
+    [filteredClients, resolvedClientSortKey, resolvedClientSortDirection, clientSortContext]
+  );
+
+  const { pageCount, safePage, startIndex, endIndex, pagedItems: paginatedClients } =
+    getListPaginationSlice(sortedClients, page, pageSize);
+
+  const handleClientSort = (key: ClientListSortKey) => {
+    setClientSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
+  // Reset to first page when filters, page size, or sort change
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, cityFilter, dateRangeFilter, pageSize]);
+  }, [searchQuery, cityFilter, dateRangeFilter, pageSize, clientSortState]);
 
   const getApprovalStatusBadge = (status: Client['approval_status']) => {
     switch (status) {
@@ -3892,18 +3952,90 @@ export default function ClientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
-                  <TableHead className="text-center">Trade Name</TableHead>
-                  <TableHead className="text-center">Shop Name</TableHead>
-                  <TableHead className="text-center">Email</TableHead>
-                  <TableHead className="text-center">Phone</TableHead>
-                  <TableHead className="text-center">Agent</TableHead>
-                  <TableHead className="text-center">City</TableHead>
-                  <TableHead className="text-center">Account Type</TableHead>
-                  <TableHead className="text-center">Category</TableHead>
-                  <TableHead className="text-center">Orders</TableHead>
-                  <TableHead>Total Spent</TableHead>
-                  <TableHead>Visits</TableHead>
-                  <TableHead className="text-center">Approval</TableHead>
+                  <SortableTableHead
+                    label="Trade Name"
+                    sortKey="tradeName"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'tradeName')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Shop Name"
+                    sortKey="shopName"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'shopName')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Email"
+                    sortKey="email"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'email')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Phone"
+                    sortKey="phone"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'phone')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Agent"
+                    sortKey="agent"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'agent')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="City"
+                    sortKey="city"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'city')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Account Type"
+                    sortKey="accountType"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'accountType')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Category"
+                    sortKey="category"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'category')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Orders"
+                    sortKey="orders"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'orders')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Total Spent"
+                    sortKey="totalSpent"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'totalSpent')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Visits"
+                    sortKey="visits"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'visits')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Approval"
+                    sortKey="approval"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'approval')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
                   <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>

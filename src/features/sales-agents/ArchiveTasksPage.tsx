@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -46,6 +46,20 @@ import {
   Search,
   Filter
 } from 'lucide-react';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_ARCHIVE_TASK_SORT_DIRECTION,
+  DEFAULT_ARCHIVE_TASK_SORT_KEY,
+  sortArchiveTasks,
+  type ArchiveTaskSortKey,
+} from '@/features/sales-agents/utils/archiveTasksSorting';
 
 interface Task {
   id: string;
@@ -87,6 +101,8 @@ export default function ArchiveTasksPage() {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [agentFilter, setAgentFilter] = useState<string>('all');
   const [dateFilter, setDateFilter] = useState<string>('');
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<ArchiveTaskSortKey>>(createInitialTableSortCycle);
 
   // Dialog states
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
@@ -241,17 +257,41 @@ export default function ArchiveTasksPage() {
     );
   };
 
-  const filteredTasks = tasks.filter(task => {
-    const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      task.agent_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      task.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
-    const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
-    const matchesAgent = agentFilter === 'all' || task.agent_id === agentFilter;
-    const matchesDate = !dateFilter || (task.due_date && task.due_date.startsWith(dateFilter));
+  const filteredTasks = useMemo(
+    () =>
+      tasks.filter((task) => {
+        const matchesSearch =
+          task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          task.agent_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          task.description.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
+        const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
+        const matchesAgent = agentFilter === 'all' || task.agent_id === agentFilter;
+        const matchesDate = !dateFilter || (task.due_date && task.due_date.startsWith(dateFilter));
 
-    return matchesSearch && matchesStatus && matchesPriority && matchesAgent && matchesDate;
-  });
+        return matchesSearch && matchesStatus && matchesPriority && matchesAgent && matchesDate;
+      }),
+    [tasks, searchQuery, statusFilter, priorityFilter, agentFilter, dateFilter]
+  );
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_ARCHIVE_TASK_SORT_KEY,
+        DEFAULT_ARCHIVE_TASK_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedTasks = useMemo(
+    () => sortArchiveTasks(filteredTasks, resolvedSortKey, resolvedSortDirection),
+    [filteredTasks, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const handleSort = (key: ArchiveTaskSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   if (!isLeader) {
     return (
@@ -352,17 +392,47 @@ export default function ArchiveTasksPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Task</TableHead>
-                  <TableHead>Agent</TableHead>
-                  <TableHead>Priority</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Due Date</TableHead>
-                  <TableHead>Created</TableHead>
+                  <SortableTableHead
+                    label="Task"
+                    sortKey="title"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'title')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Agent"
+                    sortKey="agentName"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'agentName')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Priority"
+                    sortKey="priority"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'priority')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Due Date"
+                    sortKey="dueDate"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'dueDate')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Created"
+                    sortKey="createdAt"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+                    onSort={handleSort}
+                  />
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredTasks.map((task) => (
+                {sortedTasks.map((task) => (
                   <TableRow key={task.id} className="hover:bg-gray-50">
                     <TableCell>
                       <div>

@@ -13,6 +13,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_MY_ORDER_LIST_SORT_DIRECTION,
+  DEFAULT_MY_ORDER_LIST_SORT_KEY,
+  sortMyOrderList,
+  type MyOrderListSortKey,
+} from '@/features/orders/utils/myOrdersListSorting';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -195,6 +209,8 @@ export default function MyOrdersPage() {
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
+  const [orderSortState, setOrderSortState] =
+    useState<TableSortCycleState<MyOrderListSortKey>>(createInitialTableSortCycle);
   const ordersPerPage = 10;
 
   // Client search state
@@ -412,18 +428,39 @@ export default function MyOrdersPage() {
   }, [dateRangeFilter]);
 
   // Apply all filters
-  const filteredOrders = myOrders.filter(order => {
-    const query = searchQuery.trim().toLowerCase();
-    const searchMatch =
-      !query ||
-      order.orderNumber.toLowerCase().includes(query) ||
-      order.clientName.toLowerCase().includes(query);
+  const filteredOrders = useMemo(() => {
+    return myOrders.filter((order) => {
+      const query = searchQuery.trim().toLowerCase();
+      const searchMatch =
+        !query ||
+        order.orderNumber.toLowerCase().includes(query) ||
+        order.clientName.toLowerCase().includes(query);
 
-    const dateMatch = isDateInRange(order.date, orderDateRange.start, orderDateRange.end);
-    const statusMatch = orderMatchesStatusFilter(order, statusFilter);
+      const dateMatch = isDateInRange(order.date, orderDateRange.start, orderDateRange.end);
+      const statusMatch = orderMatchesStatusFilter(order, statusFilter);
 
-    return searchMatch && dateMatch && statusMatch;
-  });
+      return searchMatch && dateMatch && statusMatch;
+    });
+  }, [myOrders, searchQuery, orderDateRange, statusFilter]);
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        orderSortState,
+        DEFAULT_MY_ORDER_LIST_SORT_KEY,
+        DEFAULT_MY_ORDER_LIST_SORT_DIRECTION
+      ),
+    [orderSortState]
+  );
+
+  const sortedOrders = useMemo(
+    () => sortMyOrderList(filteredOrders, resolvedSortKey, resolvedSortDirection),
+    [filteredOrders, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const handleOrderSort = (key: MyOrderListSortKey) => {
+    setOrderSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const hasActiveOrderFilters =
     dateRangeFilter.preset !== 'all' ||
@@ -538,15 +575,15 @@ export default function MyOrdersPage() {
   };
 
   // Pagination
-  const totalPages = Math.ceil(filteredOrders.length / ordersPerPage);
+  const totalPages = Math.ceil(sortedOrders.length / ordersPerPage);
   const startIndex = (currentPage - 1) * ordersPerPage;
   const endIndex = startIndex + ordersPerPage;
-  const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
+  const paginatedOrders = sortedOrders.slice(startIndex, endIndex);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, dateRangeFilter, statusFilter]);
+  }, [searchQuery, dateRangeFilter, statusFilter, orderSortState]);
 
   const selectedBrand = agentBrands.find(b => b.name === selectedBrandName);
 
@@ -2777,13 +2814,55 @@ export default function MyOrdersPage() {
             <Table>
               <TableHeader>
                 <TableRow className="border-b">
-                  <TableHead className="font-semibold whitespace-nowrap align-middle">Order #</TableHead>
-                  <TableHead className="font-semibold min-w-[150px] align-middle">Client</TableHead>
-                  <TableHead className="font-semibold whitespace-nowrap align-middle">Date</TableHead>
-                  <TableHead className="text-center font-semibold whitespace-nowrap align-middle">Qty</TableHead>
-                  <TableHead className="text-right font-semibold whitespace-nowrap align-middle">Amount</TableHead>
-                  <TableHead className="font-semibold whitespace-nowrap align-middle">Payment</TableHead>
-                  <TableHead className="font-semibold whitespace-nowrap align-middle">Status</TableHead>
+                  <SortableTableHead
+                    label="Order #"
+                    sortKey="orderNumber"
+                    sortDirection={getTableSortDisplayDirection(orderSortState, 'orderNumber')}
+                    onSort={handleOrderSort}
+                    className="font-semibold whitespace-nowrap align-middle"
+                  />
+                  <SortableTableHead
+                    label="Client"
+                    sortKey="clientName"
+                    sortDirection={getTableSortDisplayDirection(orderSortState, 'clientName')}
+                    onSort={handleOrderSort}
+                    className="font-semibold min-w-[150px] align-middle"
+                  />
+                  <SortableTableHead
+                    label="Date"
+                    sortKey="date"
+                    sortDirection={getTableSortDisplayDirection(orderSortState, 'date')}
+                    onSort={handleOrderSort}
+                    className="font-semibold whitespace-nowrap align-middle"
+                  />
+                  <SortableTableHead
+                    label="Qty"
+                    sortKey="qty"
+                    sortDirection={getTableSortDisplayDirection(orderSortState, 'qty')}
+                    onSort={handleOrderSort}
+                    className="text-center font-semibold whitespace-nowrap align-middle"
+                  />
+                  <SortableTableHead
+                    label="Amount"
+                    sortKey="amount"
+                    sortDirection={getTableSortDisplayDirection(orderSortState, 'amount')}
+                    onSort={handleOrderSort}
+                    className="text-right font-semibold whitespace-nowrap align-middle"
+                  />
+                  <SortableTableHead
+                    label="Payment"
+                    sortKey="payment"
+                    sortDirection={getTableSortDisplayDirection(orderSortState, 'payment')}
+                    onSort={handleOrderSort}
+                    className="font-semibold whitespace-nowrap align-middle"
+                  />
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(orderSortState, 'status')}
+                    onSort={handleOrderSort}
+                    className="font-semibold whitespace-nowrap align-middle"
+                  />
                   <TableHead className="text-center font-semibold whitespace-nowrap align-middle">Actions</TableHead>
                 </TableRow>
               </TableHeader>

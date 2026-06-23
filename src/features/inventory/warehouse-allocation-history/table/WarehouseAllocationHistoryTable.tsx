@@ -8,30 +8,31 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
 import {
   getTableSortDisplayDirection,
   type TableSortCycleState,
 } from '@/features/shared/utils/tableSortCycle';
 
-import type { AllocationHistoryGroup } from '../utils/allocationHistoryMappers';
-import type { SuperAdminAllocationSortKey } from '../utils/superAdminAllocationHistorySorting';
-import { AllocationGroupRow } from './TableRow';
+import type { WarehouseAllocationGroup } from '../types';
+import type { WarehouseAllocationSortKey } from '../utils/warehouseAllocationHistorySorting';
+import { WarehouseAllocationGroupRow } from './TableRow';
 
-type SuperAdminAllocationHistoryTableProps = {
+export type WarehouseAllocationHistoryTableProps = {
   isLoading: boolean;
-  pagedGroups: AllocationHistoryGroup[];
-  sortState: TableSortCycleState<SuperAdminAllocationSortKey>;
-  onSort: (key: SuperAdminAllocationSortKey) => void;
+  pagedGroups: WarehouseAllocationGroup[];
+  mainBrandFilterName: string | null;
+  sortState: TableSortCycleState<WarehouseAllocationSortKey>;
+  onSort: (key: WarehouseAllocationSortKey) => void;
 };
 
-export function SuperAdminAllocationHistoryTable({
+export function WarehouseAllocationHistoryTable({
   isLoading,
   pagedGroups,
+  mainBrandFilterName,
   sortState,
   onSort,
-}: SuperAdminAllocationHistoryTableProps) {
+}: WarehouseAllocationHistoryTableProps) {
   return (
     <div className="overflow-hidden rounded-md border">
       <Table>
@@ -45,15 +46,9 @@ export function SuperAdminAllocationHistoryTable({
               onSort={onSort}
             />
             <SortableTableHead
-              label="Allocated To"
-              sortKey="allocatedToName"
-              sortDirection={getTableSortDisplayDirection(sortState, 'allocatedToName')}
-              onSort={onSort}
-            />
-            <SortableTableHead
-              label="Flow"
-              sortKey="flow"
-              sortDirection={getTableSortDisplayDirection(sortState, 'flow')}
+              label="Sub-Warehouse"
+              sortKey="locationName"
+              sortDirection={getTableSortDisplayDirection(sortState, 'locationName')}
               onSort={onSort}
             />
             <SortableTableHead
@@ -63,9 +58,9 @@ export function SuperAdminAllocationHistoryTable({
               onSort={onSort}
             />
             <SortableTableHead
-              label="Allocated By"
-              sortKey="allocatedByName"
-              sortDirection={getTableSortDisplayDirection(sortState, 'allocatedByName')}
+              label="Performed By"
+              sortKey="performedByName"
+              sortDirection={getTableSortDisplayDirection(sortState, 'performedByName')}
               onSort={onSort}
             />
             <SortableTableHead
@@ -88,21 +83,27 @@ export function SuperAdminAllocationHistoryTable({
         <TableBody>
           {isLoading && (
             <TableRow>
-              <TableCell colSpan={9} className="h-24 text-center">
+              <TableCell colSpan={8} className="h-24 text-center">
                 Loading allocation history...
               </TableCell>
             </TableRow>
           )}
           {!isLoading &&
-            pagedGroups.map((group) => <AllocationGroupRow key={group.groupId} group={group} />)}
+            pagedGroups.map((group) => (
+              <WarehouseAllocationGroupRow
+                key={group.groupId}
+                group={group}
+                mainBrandFilterName={mainBrandFilterName}
+              />
+            ))}
           {!isLoading && pagedGroups.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} className="h-24 text-center">
+              <TableCell colSpan={8} className="h-24 text-center">
                 No allocation history yet. Use{' '}
-                <Link to="/inventory/allocations" className="underline">
-                  Stock Allocations
+                <Link to="/inventory/sub-warehouses" className="underline">
+                  Sub Warehouses
                 </Link>{' '}
-                to create sessions.
+                to allocate stock.
               </TableCell>
             </TableRow>
           )}

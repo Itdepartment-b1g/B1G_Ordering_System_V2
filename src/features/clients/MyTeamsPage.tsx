@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +22,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_CLIENT_LIST_SORT_DIRECTION,
+  DEFAULT_CLIENT_LIST_SORT_KEY,
+  sortClientsList,
+  type ClientListSortContext,
+  type ClientListSortKey,
+} from '@/features/clients/utils/clientsListSorting';
 
 interface Client {
   id: string;
@@ -48,8 +63,8 @@ interface Client {
   brand_ids?: string[];
   shop_type?: string;
   last_order_date?: string | null;
-  visit_count?: number;
-  total_spent?: number;
+  visit_count: number;
+  total_spent: number;
 }
 
 interface TeamAgent {
@@ -70,6 +85,8 @@ export default function MyTeamsPage() {
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
+  const [clientSortState, setClientSortState] =
+    useState<TableSortCycleState<ClientListSortKey>>(createInitialTableSortCycle);
   const itemsPerPage = 10;
 
   // View Client Dialog
@@ -440,18 +457,55 @@ export default function MyTeamsPage() {
   };
 
   // Filter clients
-  const filteredClients = clients.filter(client => {
-    const matchesSearch =
-      client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      client.company?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      client.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      client.agent_name?.toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredClients = useMemo(
+    () =>
+      clients.filter((client) => {
+        const matchesSearch =
+          client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          client.company?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          client.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          client.agent_name?.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesAgent = selectedAgent === 'all' || client.agent_id === selectedAgent;
-    const matchesCity = cityFilter === 'all' || (client.city || '').toLowerCase() === cityFilter.toLowerCase();
+        const matchesAgent = selectedAgent === 'all' || client.agent_id === selectedAgent;
+        const matchesCity =
+          cityFilter === 'all' || (client.city || '').toLowerCase() === cityFilter.toLowerCase();
 
-    return matchesSearch && matchesAgent && matchesCity;
-  });
+        return matchesSearch && matchesAgent && matchesCity;
+      }),
+    [clients, searchQuery, selectedAgent, cityFilter]
+  );
+
+  const clientSortContext = useMemo(
+    (): ClientListSortContext => ({
+      getAgentLabel: (client) => client.agent_name || 'Unknown',
+    }),
+    []
+  );
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        clientSortState,
+        DEFAULT_CLIENT_LIST_SORT_KEY,
+        DEFAULT_CLIENT_LIST_SORT_DIRECTION
+      ),
+    [clientSortState]
+  );
+
+  const sortedClients = useMemo(
+    () =>
+      sortClientsList(
+        filteredClients,
+        resolvedSortKey,
+        resolvedSortDirection,
+        clientSortContext
+      ),
+    [filteredClients, resolvedSortKey, resolvedSortDirection, clientSortContext]
+  );
+
+  const handleClientSort = (key: ClientListSortKey) => {
+    setClientSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   // Get unique cities for filter
   const getUniqueCities = () => {
@@ -464,15 +518,15 @@ export default function MyTeamsPage() {
   };
 
   // Pagination
-  const totalPages = Math.ceil(filteredClients.length / itemsPerPage);
+  const totalPages = Math.ceil(sortedClients.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedClients = filteredClients.slice(startIndex, endIndex);
+  const paginatedClients = sortedClients.slice(startIndex, endIndex);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, selectedAgent, cityFilter]);
+  }, [searchQuery, selectedAgent, cityFilter, clientSortState]);
 
   if (!user || user.role !== 'team_leader') {
     return (
@@ -636,18 +690,90 @@ export default function MyTeamsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
-                  <TableHead className="text-center">Trade Name</TableHead>
-                  <TableHead className="text-center">Shop Name</TableHead>
-                  <TableHead className="text-center">Email</TableHead>
-                  <TableHead className="text-center">Phone</TableHead>
-                  <TableHead className="text-center">Agent</TableHead>
-                  <TableHead className="text-center">City</TableHead>
-                  <TableHead className="text-center">Account Type</TableHead>
-                  <TableHead className="text-center">Category</TableHead>
-                  <TableHead className="text-center">Orders</TableHead>
-                  <TableHead className="text-center">Total Spent</TableHead>
-                  <TableHead className="text-center">Visits</TableHead>
-                  <TableHead className="text-center">Approval</TableHead>
+                  <SortableTableHead
+                    label="Trade Name"
+                    sortKey="tradeName"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'tradeName')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Shop Name"
+                    sortKey="shopName"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'shopName')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Email"
+                    sortKey="email"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'email')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Phone"
+                    sortKey="phone"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'phone')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Agent"
+                    sortKey="agent"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'agent')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="City"
+                    sortKey="city"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'city')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Account Type"
+                    sortKey="accountType"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'accountType')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Category"
+                    sortKey="category"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'category')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Orders"
+                    sortKey="orders"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'orders')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Total Spent"
+                    sortKey="totalSpent"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'totalSpent')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Visits"
+                    sortKey="visits"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'visits')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Approval"
+                    sortKey="approval"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'approval')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
                   <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>

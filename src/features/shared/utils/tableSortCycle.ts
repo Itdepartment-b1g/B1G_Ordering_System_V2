@@ -17,15 +17,15 @@ export function createInitialTableSortCycle<T extends string>(): TableSortCycleS
   return { key: null, step: 0 };
 }
 
-/** Same-column cycle: asc → reset → desc → asc … */
+/** Same-column cycle: desc → asc → reset → desc … */
 export function getNextTableSortCycleState<T extends string>(
   state: TableSortCycleState<T>,
   clickedKey: T
 ): TableSortCycleState<T> {
   if (state.key !== clickedKey) {
-    return { key: clickedKey, step: 1 };
+    return { key: clickedKey, step: 2 };
   }
-  const nextStep: TableSortStep = state.step === 1 ? 0 : state.step === 0 ? 2 : 1;
+  const nextStep: TableSortStep = state.step === 2 ? 1 : state.step === 1 ? 0 : 2;
   return { key: clickedKey, step: nextStep };
 }
 

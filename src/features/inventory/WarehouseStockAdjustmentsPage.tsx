@@ -22,7 +22,21 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_WAREHOUSE_STOCK_ADJUSTMENT_SORT_DIRECTION,
+  DEFAULT_WAREHOUSE_STOCK_ADJUSTMENT_SORT_KEY,
+  sortWarehouseStockAdjustments,
+  type WarehouseStockAdjustmentSortKey,
+} from './utils/warehouseStockAdjustmentSorting';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -113,6 +127,8 @@ export default function WarehouseStockAdjustmentsPage() {
   });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<WarehouseStockAdjustmentSortKey>>(createInitialTableSortCycle);
   const [adjustOpen, setAdjustOpen] = useState(false);
 
   const [locationId, setLocationId] = useState('');
@@ -347,23 +363,42 @@ export default function WarehouseStockAdjustmentsPage() {
     });
   }, [adjustments, searchQuery, directionFilter, adjustmentDateRange.end, adjustmentDateRange.start]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_WAREHOUSE_STOCK_ADJUSTMENT_SORT_KEY,
+        DEFAULT_WAREHOUSE_STOCK_ADJUSTMENT_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedAdjustments = useMemo(
+    () => sortWarehouseStockAdjustments(filtered, resolvedSortKey, resolvedSortDirection),
+    [filtered, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(sortedAdjustments.length / pageSize));
 
   const paginatedAdjustments = useMemo(() => {
     const start = (page - 1) * pageSize;
-    return filtered.slice(start, start + pageSize);
-  }, [filtered, page, pageSize]);
+    return sortedAdjustments.slice(start, start + pageSize);
+  }, [sortedAdjustments, page, pageSize]);
+
+  const handleSort = (key: WarehouseStockAdjustmentSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, directionFilter, dateRangeFilter, pageSize]);
+  }, [searchQuery, directionFilter, dateRangeFilter, pageSize, sortState]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  const paginationStart = filtered.length === 0 ? 0 : (page - 1) * pageSize + 1;
-  const paginationEnd = Math.min(page * pageSize, filtered.length);
+  const paginationStart = sortedAdjustments.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const paginationEnd = Math.min(page * pageSize, sortedAdjustments.length);
 
   const resetForm = () => {
     const mainLoc = locations.find((l) => l.is_main);
@@ -642,14 +677,55 @@ export default function WarehouseStockAdjustmentsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Location</TableHead>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Direction</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
-                    <TableHead>Reason</TableHead>
-                    <TableHead>Batch</TableHead>
-                    <TableHead>By</TableHead>
+                    <SortableTableHead
+                      label="Date"
+                      sortKey="createdAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Location"
+                      sortKey="locationName"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'locationName')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Product"
+                      sortKey="productName"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'productName')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Direction"
+                      sortKey="direction"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'direction')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Qty"
+                      sortKey="quantity"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'quantity')}
+                      onSort={handleSort}
+                      className="text-right"
+                    />
+                    <SortableTableHead
+                      label="Reason"
+                      sortKey="reason"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'reason')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Batch"
+                      sortKey="batchNumber"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'batchNumber')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="By"
+                      sortKey="performedBy"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'performedBy')}
+                      onSort={handleSort}
+                    />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -694,7 +770,7 @@ export default function WarehouseStockAdjustmentsPage() {
               <div className="flex flex-col gap-3 border-t bg-muted/20 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-3">
                   <span>
-                    Showing {paginationStart}–{paginationEnd} of {filtered.length}
+                    Showing {paginationStart}–{paginationEnd} of {sortedAdjustments.length}
                   </span>
                   <div className="flex items-center gap-2">
                     <Label htmlFor="adjustments-page-size" className="text-xs whitespace-nowrap">

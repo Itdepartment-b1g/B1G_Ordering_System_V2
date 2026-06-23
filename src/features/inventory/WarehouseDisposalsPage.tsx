@@ -11,7 +11,21 @@ import {
 import { useAuth } from '@/features/auth';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_WAREHOUSE_DISPOSAL_SORT_DIRECTION,
+  DEFAULT_WAREHOUSE_DISPOSAL_SORT_KEY,
+  sortWarehouseDisposals,
+  type WarehouseDisposalSortKey,
+} from './utils/warehouseDisposalSorting';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
@@ -130,6 +144,8 @@ export default function WarehouseDisposalsPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<WarehouseDisposalSortKey>>(createInitialTableSortCycle);
 
   const { data: locations = [] } = useQuery({
     queryKey: ['warehouse-disposal-locations', user?.company_id],
@@ -233,6 +249,25 @@ export default function WarehouseDisposalsPage() {
       );
     });
   }, [dateScopedDisposals, searchQuery]);
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_WAREHOUSE_DISPOSAL_SORT_KEY,
+        DEFAULT_WAREHOUSE_DISPOSAL_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedDisposals = useMemo(
+    () => sortWarehouseDisposals(filteredDisposals, resolvedSortKey, resolvedSortDirection),
+    [filteredDisposals, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const handleSort = (key: WarehouseDisposalSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const totalUnits = useMemo(
     () => filteredDisposals.reduce((sum, row) => sum + row.quantity, 0),
@@ -339,20 +374,73 @@ export default function WarehouseDisposalsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Date</TableHead>
-                    {isMainWarehouseUser && <TableHead>Location</TableHead>}
-                    <TableHead>Brand</TableHead>
-                    <TableHead>Variant</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>PO / Rebate</TableHead>
-                    <TableHead>Disposed by</TableHead>
-                    <TableHead>Notes</TableHead>
+                    <SortableTableHead
+                      label="Date"
+                      sortKey="createdAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+                      onSort={handleSort}
+                    />
+                    {isMainWarehouseUser && (
+                      <SortableTableHead
+                        label="Location"
+                        sortKey="locationName"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'locationName')}
+                        onSort={handleSort}
+                      />
+                    )}
+                    <SortableTableHead
+                      label="Brand"
+                      sortKey="brandName"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'brandName')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Variant"
+                      sortKey="variantName"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'variantName')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Type"
+                      sortKey="variantType"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'variantType')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Qty"
+                      sortKey="quantity"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'quantity')}
+                      onSort={handleSort}
+                      className="text-right"
+                    />
+                    <SortableTableHead
+                      label="Source"
+                      sortKey="sourceType"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'sourceType')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="PO / Rebate"
+                      sortKey="reference"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'reference')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Disposed by"
+                      sortKey="disposedBy"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'disposedBy')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Notes"
+                      sortKey="notes"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'notes')}
+                      onSort={handleSort}
+                    />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredDisposals.map((row) => (
+                  {sortedDisposals.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell className="whitespace-nowrap text-muted-foreground">
                         {format(new Date(row.created_at), 'MMM d, yyyy HH:mm')}

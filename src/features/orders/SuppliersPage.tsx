@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +22,20 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_SUPPLIER_SORT_DIRECTION,
+  DEFAULT_SUPPLIER_SORT_KEY,
+  sortSuppliers,
+  type SupplierSortKey,
+} from '@/features/orders/utils/supplierSorting';
 
 interface Supplier {
   id: string;
@@ -40,6 +54,8 @@ export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<SupplierSortKey>>(createInitialTableSortCycle);
 
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -91,12 +107,35 @@ export default function SuppliersPage() {
     fetchSuppliers();
   }, []);
 
-  // Filter suppliers by search query
-  const filteredSuppliers = suppliers.filter(supplier =>
-    supplier.company_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    supplier.contact_person.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    supplier.email.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredSuppliers = useMemo(
+    () =>
+      suppliers.filter(
+        (supplier) =>
+          supplier.company_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          supplier.contact_person.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          supplier.email.toLowerCase().includes(searchQuery.toLowerCase())
+      ),
+    [suppliers, searchQuery]
   );
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_SUPPLIER_SORT_KEY,
+        DEFAULT_SUPPLIER_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedSuppliers = useMemo(
+    () => sortSuppliers(filteredSuppliers, resolvedSortKey, resolvedSortDirection),
+    [filteredSuppliers, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const handleSort = (key: SupplierSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   // Phone number formatting for Philippines with +63 prefix
   const formatPhilippinePhone = (value: string) => {
@@ -370,7 +409,7 @@ export default function SuppliersPage() {
         <CardContent>
           {/* Mobile View */}
           <div className="md:hidden space-y-3">
-            {filteredSuppliers.map(supplier => (
+            {sortedSuppliers.map(supplier => (
               <div key={supplier.id} className="rounded-lg border bg-background p-4">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-semibold">{supplier.company_name}</h4>
@@ -410,16 +449,41 @@ export default function SuppliersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Company Name</TableHead>
-                  <TableHead>Contact Person</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Status</TableHead>
+                  <SortableTableHead
+                    label="Company Name"
+                    sortKey="companyName"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'companyName')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Contact Person"
+                    sortKey="contactPerson"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'contactPerson')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Email"
+                    sortKey="email"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'email')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Phone"
+                    sortKey="phone"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'phone')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                    onSort={handleSort}
+                  />
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredSuppliers.map(supplier => (
+                {sortedSuppliers.map(supplier => (
                   <TableRow key={supplier.id}>
                     <TableCell className="font-medium">{supplier.company_name}</TableCell>
                     <TableCell>{supplier.contact_person}</TableCell>

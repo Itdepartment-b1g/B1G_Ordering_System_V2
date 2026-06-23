@@ -41,6 +41,20 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import * as XLSX from 'xlsx';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_CLIENT_ORDER_LIST_SORT_DIRECTION,
+  DEFAULT_CLIENT_ORDER_LIST_SORT_KEY,
+  sortClientOrderList,
+  type ClientOrderListSortKey,
+} from '@/features/orders/utils/clientOrderListSorting';
 
 /** Zero-value orders skip deposit/remittance requirements (handles "0.00" strings from Supabase). */
 function isZeroValueOrder(order: {
@@ -79,20 +93,41 @@ type OrderTableProps = {
 
 function OrderTable({ orderList, onViewOrder }: OrderTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<ClientOrderListSortKey>>(createInitialTableSortCycle);
   const ordersPerPage = 10;
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_CLIENT_ORDER_LIST_SORT_KEY,
+        DEFAULT_CLIENT_ORDER_LIST_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedOrders = useMemo(
+    () => sortClientOrderList(orderList, resolvedSortKey, resolvedSortDirection),
+    [orderList, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const handleSort = (key: ClientOrderListSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [orderList.length]);
+  }, [orderList.length, sortState]);
 
-  const totalPages = Math.ceil(orderList.length / ordersPerPage);
+  const totalPages = Math.ceil(sortedOrders.length / ordersPerPage);
   const startIndex = (currentPage - 1) * ordersPerPage;
   const endIndex = startIndex + ordersPerPage;
-  const paginatedOrders = orderList.slice(startIndex, endIndex);
+  const paginatedOrders = sortedOrders.slice(startIndex, endIndex);
 
   return (
     <>
-      {orderList.length === 0 ? (
+      {sortedOrders.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center border rounded-lg bg-muted/20">
           <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
             <Package className="h-6 w-6 text-muted-foreground" />
@@ -169,13 +204,50 @@ function OrderTable({ orderList, onViewOrder }: OrderTableProps) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Order #</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Sales Agent</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Items</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Status</TableHead>
+                  <SortableTableHead
+                    label="Order #"
+                    sortKey="orderNumber"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'orderNumber')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Client"
+                    sortKey="clientName"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'clientName')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Sales Agent"
+                    sortKey="agentName"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'agentName')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Date"
+                    sortKey="date"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'date')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Items"
+                    sortKey="items"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'items')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Amount"
+                    sortKey="total"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'total')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                    onSort={handleSort}
+                  />
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -233,7 +305,7 @@ function OrderTable({ orderList, onViewOrder }: OrderTableProps) {
           {totalPages > 1 && (
             <div className="flex items-center justify-between mt-4 pt-4 border-t">
               <div className="text-sm text-muted-foreground">
-                Showing {startIndex + 1} to {Math.min(endIndex, orderList.length)} of {orderList.length} orders
+                Showing {startIndex + 1} to {Math.min(endIndex, sortedOrders.length)} of {sortedOrders.length} orders
               </div>
               <div className="flex items-center gap-1">
                 <Button

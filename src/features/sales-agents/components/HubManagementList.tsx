@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, MapPin, Plus, Search } from "lucide-react";
 
@@ -17,6 +17,12 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from "@/features/shared/utils/tableSortCycle";
 
 import { AssignHubDialog } from "./hub-management/AssignHubDialog";
 import { CreateHubDialog } from "./hub-management/CreateHubDialog";
@@ -24,6 +30,11 @@ import { DeleteHubDialog } from "./hub-management/DeleteHubDialog";
 import { EditHubDialog } from "./hub-management/EditHubDialog";
 import { ViewHubLocationDialog } from "./hub-management/ViewHubLocationDialog";
 import { fetchHubsPage } from "./hub-management/fetchHubsPage";
+import {
+  DEFAULT_HUB_SORT_DIRECTION,
+  DEFAULT_HUB_SORT_KEY,
+  type HubSortKey,
+} from "./hub-management/hubListSorting";
 import { DEFAULT_PAGE_SIZE } from "./hub-management/hubListPagination";
 import { HubListPaginationFooter } from "./hub-management/HubListPaginationFooter";
 import { HubListRow } from "./hub-management/HubListRow";
@@ -42,14 +53,27 @@ export default function HubManagementList() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const { searchInput, setSearchInput, debouncedSearch, clearSearch } =
     useDebouncedHubSearch();
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<HubSortKey>>(createInitialTableSortCycle);
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_HUB_SORT_KEY,
+        DEFAULT_HUB_SORT_DIRECTION
+      ),
+    [sortState]
+  );
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch]);
+  }, [debouncedSearch, sortState]);
 
   const { data, isLoading, isError, error, isFetching } = useQuery({
-    queryKey: ["hubs", page, pageSize, debouncedSearch],
-    queryFn: () => fetchHubsPage(page, pageSize, debouncedSearch),
+    queryKey: ["hubs", page, pageSize, debouncedSearch, resolvedSortKey, resolvedSortDirection],
+    queryFn: () =>
+      fetchHubsPage(page, pageSize, debouncedSearch, resolvedSortKey, resolvedSortDirection),
     staleTime: 60_000,
     refetchOnMount: true,
     placeholderData: (prev) => prev,
@@ -72,6 +96,10 @@ export default function HubManagementList() {
   const handleCreated = () => {
     setPage(1);
     refreshHubs();
+  };
+
+  const handleSort = (key: HubSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
   };
 
   return (
@@ -195,7 +223,7 @@ export default function HubManagementList() {
               )}
             >
               <Table>
-                <HubListTableHeader />
+                <HubListTableHeader sortState={sortState} onSort={handleSort} />
                 <TableBody>
                   {hubs.map((row) => (
                     <HubListRow

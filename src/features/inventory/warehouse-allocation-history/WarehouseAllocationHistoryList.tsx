@@ -19,8 +19,20 @@ import {
 import { WarehouseAllocationHistoryFilter } from './filter/Filter';
 import { useWarehouseAllocationHistory } from './hooks/useWarehouseAllocationHistory';
 import { useWarehouseAllocationHistoryOptions } from './hooks/useWarehouseAllocationHistoryOptions';
-import { WarehouseAllocationHistoryTable } from './table/TableHeader';
+import { WarehouseAllocationHistoryTable } from './table/WarehouseAllocationHistoryTable';
 import { exportWarehouseAllocationHistoryExcel } from './utils/exportWarehouseAllocationHistoryExcel';
+import {
+  getNextTableSortCycleState,
+  createInitialTableSortCycle,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_WAREHOUSE_ALLOCATION_SORT_DIRECTION,
+  DEFAULT_WAREHOUSE_ALLOCATION_SORT_KEY,
+  sortWarehouseAllocationGroups,
+  type WarehouseAllocationSortKey,
+} from './utils/warehouseAllocationHistorySorting';
 import {
   filterWarehouseAllocationGroups,
   getWarehouseAllocationHistoryDateBounds,
@@ -47,6 +59,8 @@ export default function WarehouseAllocationHistoryList() {
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [isExportingFiltered, setIsExportingFiltered] = useState(false);
   const [isExportingAll, setIsExportingAll] = useState(false);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<WarehouseAllocationSortKey>>(createInitialTableSortCycle);
 
   const showLocationFilter = membership.isMain;
 
@@ -74,6 +88,21 @@ export default function WarehouseAllocationHistoryList() {
     [groups, selectedFilter, filterValue, fromDate, toDate]
   );
 
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_WAREHOUSE_ALLOCATION_SORT_KEY,
+        DEFAULT_WAREHOUSE_ALLOCATION_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedGroups = useMemo(
+    () => sortWarehouseAllocationGroups(filteredGroups, resolvedSortKey, resolvedSortDirection),
+    [filteredGroups, resolvedSortKey, resolvedSortDirection]
+  );
+
   const mainBrandFilterName = useMemo(() => {
     if (selectedFilter !== 'brand' || !filterValue.trim()) return null;
     if (filterValue === MULTIBRAND_FILTER_VALUE) return null;
@@ -82,13 +111,17 @@ export default function WarehouseAllocationHistoryList() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedFilter, filterValue, dateRangeFilter]);
+  }, [selectedFilter, filterValue, dateRangeFilter, sortState]);
 
   const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
-    filteredGroups,
+    sortedGroups,
     page,
     pageSize
   );
+
+  const handleSort = (key: WarehouseAllocationSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const summary = useMemo(() => {
     const sessionCount = filteredGroups.length;
@@ -114,7 +147,7 @@ export default function WarehouseAllocationHistoryList() {
     try {
       setIsExportingFiltered(true);
       await exportWarehouseAllocationHistoryExcel(
-        filteredGroups,
+        sortedGroups,
         'warehouse_allocation_history_filtered'
       );
       toast({ title: 'Export complete', description: 'Filtered allocation history exported.' });
@@ -236,6 +269,8 @@ export default function WarehouseAllocationHistoryList() {
             isLoading={isLoading}
             pagedGroups={pagedGroups}
             mainBrandFilterName={mainBrandFilterName}
+            sortState={sortState}
+            onSort={handleSort}
           />
 
           <ListPagination

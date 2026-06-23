@@ -30,6 +30,7 @@ export function SortableTableHead<T extends string>({
         className={cn(
           'inline-flex items-center gap-1 font-medium transition-colors hover:text-foreground',
           className?.includes('text-right') && 'w-full justify-end',
+          className?.includes('text-center') && 'w-full justify-center',
           isActive ? 'text-foreground' : 'text-muted-foreground'
         )}
         onClick={() => onSort(sortKey)}

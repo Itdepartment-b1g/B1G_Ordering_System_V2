@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
@@ -17,6 +17,28 @@ import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_FORWARDED_REQUEST_SORT_DIRECTION,
+  DEFAULT_FORWARDED_REQUEST_SORT_KEY,
+  DEFAULT_READY_REQUEST_SORT_DIRECTION,
+  DEFAULT_READY_REQUEST_SORT_KEY,
+  DEFAULT_TEAM_GROUPED_SORT_DIRECTION,
+  DEFAULT_TEAM_GROUPED_SORT_KEY,
+  sortForwardedRequests,
+  sortReadyRequests,
+  sortTeamGroupedRequests,
+  type ForwardedRequestSortKey,
+  type ReadyRequestSortKey,
+  type TeamGroupedRequestSortKey,
+} from '@/features/inventory/utils/pendingRequestsSorting';
 
 interface AgentRequest {
   id: string;
@@ -109,6 +131,12 @@ export default function PendingRequestsPage() {
   const [teamSearch, setTeamSearch] = useState('');
   const [readySearch, setReadySearch] = useState('');
   const [forwardSearch, setForwardSearch] = useState('');
+  const [teamSortState, setTeamSortState] =
+    useState<TableSortCycleState<TeamGroupedRequestSortKey>>(createInitialTableSortCycle);
+  const [readySortState, setReadySortState] =
+    useState<TableSortCycleState<ReadyRequestSortKey>>(createInitialTableSortCycle);
+  const [forwardedSortState, setForwardedSortState] =
+    useState<TableSortCycleState<ForwardedRequestSortKey>>(createInitialTableSortCycle);
 
   const [selectedRequest, setSelectedRequest] = useState<AgentRequest | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<GroupedRequest | null>(null);
@@ -724,6 +752,102 @@ export default function PendingRequestsPage() {
     }
   };
 
+  // Apply basic filtering for large datasets
+  const filteredGroupedRequests = useMemo(
+    () =>
+      groupedRequests.filter((group) => {
+        if (!teamSearch.trim()) return true;
+        const q = teamSearch.toLowerCase();
+        const matchesAgent = group.agentName.toLowerCase().includes(q);
+        const matchesProduct = group.requests.some((req) =>
+          formatProductName(req).toLowerCase().includes(q)
+        );
+        return matchesAgent || matchesProduct;
+      }),
+    [groupedRequests, teamSearch]
+  );
+
+  const filteredReadyRequests = useMemo(
+    () =>
+      readyRequests.filter((req) => {
+        if (!readySearch.trim()) return true;
+        const q = readySearch.toLowerCase();
+        const agentName = req.requester?.full_name?.toLowerCase() || '';
+        const productName = formatProductName(req).toLowerCase();
+        return agentName.includes(q) || productName.includes(q);
+      }),
+    [readyRequests, readySearch]
+  );
+
+  const filteredForwardedRequests = useMemo(
+    () =>
+      forwardedRequests.filter((req) => {
+        if (!forwardSearch.trim()) return true;
+        const q = forwardSearch.toLowerCase();
+        const productName = formatProductName(req).toLowerCase();
+        const status = req.status.toLowerCase();
+        return productName.includes(q) || status.includes(q);
+      }),
+    [forwardedRequests, forwardSearch]
+  );
+
+  const { key: teamSortKey, direction: teamSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        teamSortState,
+        DEFAULT_TEAM_GROUPED_SORT_KEY,
+        DEFAULT_TEAM_GROUPED_SORT_DIRECTION
+      ),
+    [teamSortState]
+  );
+
+  const { key: readySortKey, direction: readySortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        readySortState,
+        DEFAULT_READY_REQUEST_SORT_KEY,
+        DEFAULT_READY_REQUEST_SORT_DIRECTION
+      ),
+    [readySortState]
+  );
+
+  const { key: forwardedSortKey, direction: forwardedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        forwardedSortState,
+        DEFAULT_FORWARDED_REQUEST_SORT_KEY,
+        DEFAULT_FORWARDED_REQUEST_SORT_DIRECTION
+      ),
+    [forwardedSortState]
+  );
+
+  const sortedGroupedRequests = useMemo(
+    () => sortTeamGroupedRequests(filteredGroupedRequests, teamSortKey, teamSortDirection),
+    [filteredGroupedRequests, teamSortKey, teamSortDirection]
+  );
+
+  const sortedReadyRequests = useMemo(
+    () => sortReadyRequests(filteredReadyRequests, readySortKey, readySortDirection),
+    [filteredReadyRequests, readySortKey, readySortDirection]
+  );
+
+  const sortedForwardedRequests = useMemo(
+    () => sortForwardedRequests(filteredForwardedRequests, forwardedSortKey, forwardedSortDirection),
+    [filteredForwardedRequests, forwardedSortKey, forwardedSortDirection]
+  );
+
+  const handleTeamSort = (key: TeamGroupedRequestSortKey) => {
+    setTeamSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
+  const handleReadySort = (key: ReadyRequestSortKey) => {
+    setReadySortState((current) => getNextTableSortCycleState(current, key));
+  };
+
+  const handleForwardedSort = (key: ForwardedRequestSortKey) => {
+    setForwardedSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
   if (loading) {
     return (
       <div className="container mx-auto p-6">
@@ -733,33 +857,6 @@ export default function PendingRequestsPage() {
       </div>
     );
   }
-
-  // Apply basic filtering for large datasets
-  const filteredGroupedRequests = groupedRequests.filter((group) => {
-    if (!teamSearch.trim()) return true;
-    const q = teamSearch.toLowerCase();
-    const matchesAgent = group.agentName.toLowerCase().includes(q);
-    const matchesProduct = group.requests.some((req) =>
-      formatProductName(req).toLowerCase().includes(q)
-    );
-    return matchesAgent || matchesProduct;
-  });
-
-  const filteredReadyRequests = readyRequests.filter((req) => {
-    if (!readySearch.trim()) return true;
-    const q = readySearch.toLowerCase();
-    const agentName = req.requester?.full_name?.toLowerCase() || '';
-    const productName = formatProductName(req).toLowerCase();
-    return agentName.includes(q) || productName.includes(q);
-  });
-
-  const filteredForwardedRequests = forwardedRequests.filter((req) => {
-    if (!forwardSearch.trim()) return true;
-    const q = forwardSearch.toLowerCase();
-    const productName = formatProductName(req).toLowerCase();
-    const status = req.status.toLowerCase();
-    return productName.includes(q) || status.includes(q);
-  });
 
   return (
     <div className="container mx-auto p-4 md:p-6 space-y-4 md:space-y-6">
@@ -824,7 +921,7 @@ export default function PendingRequestsPage() {
               {isMobile ? (
                 // Mobile Cards View
                 <div className="space-y-3">
-                  {filteredGroupedRequests.map(group => (
+                  {sortedGroupedRequests.map(group => (
                     <Card key={group.id} className="hover:shadow-md transition-shadow">
                       <CardContent className="p-3">
                         {/* Header */}
@@ -877,7 +974,7 @@ export default function PendingRequestsPage() {
                       </CardContent>
                     </Card>
                   ))}
-                  {filteredGroupedRequests.length === 0 && (
+                  {sortedGroupedRequests.length === 0 && (
                     <div className="text-center py-8 text-muted-foreground">
                       <Package className="h-10 w-10 mx-auto mb-2 opacity-50" />
                       <p className="text-sm">No pending requests</p>
@@ -890,15 +987,36 @@ export default function PendingRequestsPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Agent</TableHead>
-                        <TableHead>Products</TableHead>
-                        <TableHead className="text-right">Total Quantity</TableHead>
-                        <TableHead>Requested Date</TableHead>
+                        <SortableTableHead
+                          label="Agent"
+                          sortKey="agentName"
+                          sortDirection={getTableSortDisplayDirection(teamSortState, 'agentName')}
+                          onSort={handleTeamSort}
+                        />
+                        <SortableTableHead
+                          label="Products"
+                          sortKey="products"
+                          sortDirection={getTableSortDisplayDirection(teamSortState, 'products')}
+                          onSort={handleTeamSort}
+                        />
+                        <SortableTableHead
+                          label="Total Quantity"
+                          sortKey="totalQuantity"
+                          sortDirection={getTableSortDisplayDirection(teamSortState, 'totalQuantity')}
+                          onSort={handleTeamSort}
+                          className="text-right"
+                        />
+                        <SortableTableHead
+                          label="Requested Date"
+                          sortKey="requestedDate"
+                          sortDirection={getTableSortDisplayDirection(teamSortState, 'requestedDate')}
+                          onSort={handleTeamSort}
+                        />
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredGroupedRequests.map(group => (
+                      {sortedGroupedRequests.map(group => (
                         <TableRow key={group.id}>
                           <TableCell className="font-medium">{group.agentName}</TableCell>
                           <TableCell>
@@ -936,7 +1054,7 @@ export default function PendingRequestsPage() {
                           </TableCell>
                         </TableRow>
                       ))}
-                      {filteredGroupedRequests.length === 0 && (
+                      {sortedGroupedRequests.length === 0 && (
                         <TableRow>
                           <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                             <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
@@ -967,7 +1085,7 @@ export default function PendingRequestsPage() {
               {isMobile ? (
                 // Mobile Cards View
                 <div className="space-y-3">
-                  {filteredReadyRequests.map(req => (
+                  {sortedReadyRequests.map(req => (
                     <Card key={req.id} className="hover:shadow-md transition-shadow">
                       <CardContent className="p-3">
                         {/* Header */}
@@ -1025,7 +1143,7 @@ export default function PendingRequestsPage() {
                       </CardContent>
                     </Card>
                   ))}
-                  {filteredReadyRequests.length === 0 && (
+                  {sortedReadyRequests.length === 0 && (
                     <div className="text-center py-8 text-muted-foreground">
                       <Package className="h-10 w-10 mx-auto mb-2 opacity-50" />
                       <p className="text-sm">No ready requests</p>
@@ -1038,17 +1156,50 @@ export default function PendingRequestsPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Agent</TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-right">Agent Qty</TableHead>
-                        <TableHead className="text-right">Your Qty</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
-                        <TableHead>Date</TableHead>
+                        <SortableTableHead
+                          label="Agent"
+                          sortKey="agentName"
+                          sortDirection={getTableSortDisplayDirection(readySortState, 'agentName')}
+                          onSort={handleReadySort}
+                        />
+                        <SortableTableHead
+                          label="Product"
+                          sortKey="product"
+                          sortDirection={getTableSortDisplayDirection(readySortState, 'product')}
+                          onSort={handleReadySort}
+                        />
+                        <SortableTableHead
+                          label="Agent Qty"
+                          sortKey="agentQty"
+                          sortDirection={getTableSortDisplayDirection(readySortState, 'agentQty')}
+                          onSort={handleReadySort}
+                          className="text-right"
+                        />
+                        <SortableTableHead
+                          label="Your Qty"
+                          sortKey="leaderQty"
+                          sortDirection={getTableSortDisplayDirection(readySortState, 'leaderQty')}
+                          onSort={handleReadySort}
+                          className="text-right"
+                        />
+                        <SortableTableHead
+                          label="Total"
+                          sortKey="total"
+                          sortDirection={getTableSortDisplayDirection(readySortState, 'total')}
+                          onSort={handleReadySort}
+                          className="text-right"
+                        />
+                        <SortableTableHead
+                          label="Date"
+                          sortKey="date"
+                          sortDirection={getTableSortDisplayDirection(readySortState, 'date')}
+                          onSort={handleReadySort}
+                        />
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredReadyRequests.map((req) => {
+                      {sortedReadyRequests.map((req) => {
                         const totalQty = req.requested_quantity + (req.leader_additional_quantity || 0);
 
                         return (
@@ -1108,7 +1259,7 @@ export default function PendingRequestsPage() {
                           </TableRow>
                         );
                       })}
-                      {filteredReadyRequests.length === 0 && (
+                      {sortedReadyRequests.length === 0 && (
                         <TableRow>
                           <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                             <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
@@ -1139,7 +1290,7 @@ export default function PendingRequestsPage() {
               {isMobile ? (
                 // Mobile Cards View
                 <div className="space-y-3">
-                  {filteredForwardedRequests.map(req => {
+                  {sortedForwardedRequests.map(req => {
                     const statusColor =
                       req.status === 'approved_by_admin' ? 'bg-green-50 border-green-200' :
                         req.status === 'rejected' ? 'bg-red-50 border-red-200' :
@@ -1198,7 +1349,7 @@ export default function PendingRequestsPage() {
                       </Card>
                     );
                   })}
-                  {filteredForwardedRequests.length === 0 && (
+                  {sortedForwardedRequests.length === 0 && (
                     <div className="text-center py-8 text-muted-foreground">
                       <Package className="h-10 w-10 mx-auto mb-2 opacity-50" />
                       <p className="text-sm">No forwarded requests</p>
@@ -1211,15 +1362,41 @@ export default function PendingRequestsPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Forwarded Date</TableHead>
-                        <TableHead>Admin Response</TableHead>
+                        <SortableTableHead
+                          label="Product"
+                          sortKey="product"
+                          sortDirection={getTableSortDisplayDirection(forwardedSortState, 'product')}
+                          onSort={handleForwardedSort}
+                        />
+                        <SortableTableHead
+                          label="Quantity"
+                          sortKey="quantity"
+                          sortDirection={getTableSortDisplayDirection(forwardedSortState, 'quantity')}
+                          onSort={handleForwardedSort}
+                          className="text-right"
+                        />
+                        <SortableTableHead
+                          label="Status"
+                          sortKey="status"
+                          sortDirection={getTableSortDisplayDirection(forwardedSortState, 'status')}
+                          onSort={handleForwardedSort}
+                        />
+                        <SortableTableHead
+                          label="Forwarded Date"
+                          sortKey="forwardedDate"
+                          sortDirection={getTableSortDisplayDirection(forwardedSortState, 'forwardedDate')}
+                          onSort={handleForwardedSort}
+                        />
+                        <SortableTableHead
+                          label="Admin Response"
+                          sortKey="adminResponse"
+                          sortDirection={getTableSortDisplayDirection(forwardedSortState, 'adminResponse')}
+                          onSort={handleForwardedSort}
+                        />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredForwardedRequests.map(request => (
+                      {sortedForwardedRequests.map(request => (
                         <TableRow key={request.id}>
                           <TableCell className="font-medium">{formatProductName(request)}</TableCell>
                           <TableCell className="text-right">{request.requested_quantity} units</TableCell>
@@ -1238,7 +1415,7 @@ export default function PendingRequestsPage() {
                           </TableCell>
                         </TableRow>
                       ))}
-                      {filteredForwardedRequests.length === 0 && (
+                      {sortedForwardedRequests.length === 0 && (
                         <TableRow>
                           <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                             <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />

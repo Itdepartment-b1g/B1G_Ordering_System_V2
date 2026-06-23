@@ -53,6 +53,22 @@ import {
   canSuperAdminEditAttendance,
 } from '@/features/sales-agents/components/agent-attendance-overview/AdminAttendanceEditDialog';
 import { exportFilteredAttendanceComputedHoursExcel, exportFilteredAttendanceTimeInOutExcel } from '@/features/sales-agents/components/agent-attendance-overview/exportAttendanceOverview';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  applyAgentAttendanceOverviewSort,
+  DEFAULT_AGENT_ATTENDANCE_OVERVIEW_SORT_DIRECTION,
+  DEFAULT_AGENT_ATTENDANCE_OVERVIEW_SORT_KEY,
+  isClientSideAgentAttendanceSortKey,
+  sortAttendanceOverviewRowsClient,
+  type AgentAttendanceOverviewSortKey,
+} from '@/features/sales-agents/components/agent-attendance-overview/agentAttendanceOverviewSorting';
 
 const PAGE_SIZES = [5, 10, 15, 25, 50, 100] as const;
 type AttendanceExportMode = 'computed-hours' | 'time-in-out';
@@ -122,6 +138,23 @@ export default function AgentAttendanceOverviewList() {
   const [viewDialogRow, setViewDialogRow] = useState<AttendanceAgentRow | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editDialogRow, setEditDialogRow] = useState<AttendanceAgentRow | null>(null);
+  const [sortState, setSortState] = useState<TableSortCycleState<AgentAttendanceOverviewSortKey>>(
+    createInitialTableSortCycle
+  );
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_AGENT_ATTENDANCE_OVERVIEW_SORT_KEY,
+        DEFAULT_AGENT_ATTENDANCE_OVERVIEW_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const handleSort = (key: AgentAttendanceOverviewSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const { fromDate: businessDateFrom, toDate: businessDateTo } = useMemo(
     () => getAttendanceOverviewDateBounds(dateRangeFilter),
@@ -138,6 +171,7 @@ export default function AgentAttendanceOverviewList() {
     agentNameSearch,
     agentEmailSearch,
     dateRangeFilter,
+    sortState,
   ]);
 
   const { data: companyRow } = useQuery({
@@ -164,6 +198,8 @@ export default function AgentAttendanceOverviewList() {
       statusFilter,
       page,
       pageSize,
+      resolvedSortKey,
+      resolvedSortDirection,
     ],
     enabled: canAccess,
     queryFn: async (): Promise<{ rows: AttendanceAgentRow[]; total: number }> => {
@@ -173,17 +209,19 @@ export default function AgentAttendanceOverviewList() {
       const dateTo = businessDateTo;
 
       let countQuery = supabase.from('agent_attendances').select('*', { count: 'exact', head: true });
-      let dataQuery = supabase
-        .from('agent_attendances')
-        .select(
-          `
+      let dataQuery = applyAgentAttendanceOverviewSort(
+        supabase
+          .from('agent_attendances')
+          .select(
+            `
           *,
           agent:profiles!agent_attendances_user_id_fkey(id, full_name, email, role, company_id),
           hub:hubs!agent_attendances_hub_id_fkey(id, hub_name)
         `
-        )
-        .order('business_date', { ascending: false })
-        .order('created_at', { ascending: false });
+          ),
+        resolvedSortKey,
+        resolvedSortDirection
+      );
 
       if (dateFrom) {
         countQuery = countQuery.gte('business_date', dateFrom);
@@ -221,16 +259,21 @@ export default function AgentAttendanceOverviewList() {
   const agentEmailNorm = agentEmailSearch.trim().toLowerCase();
 
   const displayRows = useMemo(() => {
-    const rows = pageData?.rows ?? [];
-    if (!agentNameNorm && !agentEmailNorm) return rows;
-    return rows.filter(r => {
-      const name = r.agent?.full_name?.toLowerCase() ?? '';
-      const email = r.agent?.email?.toLowerCase() ?? '';
-      if (agentNameNorm && !name.includes(agentNameNorm)) return false;
-      if (agentEmailNorm && !email.includes(agentEmailNorm)) return false;
-      return true;
-    });
-  }, [pageData?.rows, agentNameNorm, agentEmailNorm]);
+    let rows = pageData?.rows ?? [];
+    if (agentNameNorm || agentEmailNorm) {
+      rows = rows.filter(r => {
+        const name = r.agent?.full_name?.toLowerCase() ?? '';
+        const email = r.agent?.email?.toLowerCase() ?? '';
+        if (agentNameNorm && !name.includes(agentNameNorm)) return false;
+        if (agentEmailNorm && !email.includes(agentEmailNorm)) return false;
+        return true;
+      });
+    }
+    if (isClientSideAgentAttendanceSortKey(resolvedSortKey)) {
+      rows = sortAttendanceOverviewRowsClient(rows, resolvedSortKey, resolvedSortDirection);
+    }
+    return rows;
+  }, [pageData?.rows, agentNameNorm, agentEmailNorm, resolvedSortKey, resolvedSortDirection]);
 
   const total = pageData?.total ?? 0;
   const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
@@ -472,14 +515,50 @@ export default function AgentAttendanceOverviewList() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Business date</TableHead>
-                      <TableHead>Agent</TableHead>
-                      <TableHead>Role</TableHead>
-                      {/* <TableHead>Hub</TableHead> */}
-                      <TableHead>Time in</TableHead>
-                      <TableHead>Time out</TableHead>
-                      <TableHead className="text-right tabular-nums">Total hours</TableHead>
-                      <TableHead className="text-right">Status</TableHead>
+                      <SortableTableHead
+                        label="Business date"
+                        sortKey="businessDate"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'businessDate')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Agent"
+                        sortKey="agent"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'agent')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Role"
+                        sortKey="role"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'role')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Time in"
+                        sortKey="timeIn"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'timeIn')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Time out"
+                        sortKey="timeOut"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'timeOut')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Total hours"
+                        sortKey="totalHours"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'totalHours')}
+                        onSort={handleSort}
+                        className="text-right tabular-nums"
+                      />
+                      <SortableTableHead
+                        label="Status"
+                        sortKey="status"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                        onSort={handleSort}
+                        className="text-right"
+                      />
                       <TableHead className="w-[1%] whitespace-nowrap text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>

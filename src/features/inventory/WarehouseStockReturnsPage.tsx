@@ -21,6 +21,20 @@ import { useToast } from '@/hooks/use-toast';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_WAREHOUSE_STOCK_RETURN_SORT_DIRECTION,
+  DEFAULT_WAREHOUSE_STOCK_RETURN_SORT_KEY,
+  sortWarehouseStockReturns,
+  type WarehouseStockReturnSortKey,
+} from './utils/warehouseStockReturnSorting';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -247,6 +261,8 @@ export default function WarehouseStockReturnsPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<WarehouseStockReturnSortKey>>(createInitialTableSortCycle);
   const [inspectOpen, setInspectOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<StockReturnRow | null>(null);
@@ -365,23 +381,42 @@ export default function WarehouseStockReturnsPage() {
     });
   }, [visibleReturns, searchQuery, statusFilter, returnDateRange]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredReturns.length / pageSize));
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_WAREHOUSE_STOCK_RETURN_SORT_KEY,
+        DEFAULT_WAREHOUSE_STOCK_RETURN_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedReturns = useMemo(
+    () => sortWarehouseStockReturns(filteredReturns, resolvedSortKey, resolvedSortDirection),
+    [filteredReturns, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(sortedReturns.length / pageSize));
 
   const paginatedReturns = useMemo(() => {
     const start = (page - 1) * pageSize;
-    return filteredReturns.slice(start, start + pageSize);
-  }, [filteredReturns, page, pageSize]);
+    return sortedReturns.slice(start, start + pageSize);
+  }, [sortedReturns, page, pageSize]);
+
+  const handleSort = (key: WarehouseStockReturnSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, statusFilter, dateRangeFilter, pageSize]);
+  }, [searchQuery, statusFilter, dateRangeFilter, pageSize, sortState]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  const paginationStart = filteredReturns.length === 0 ? 0 : (page - 1) * pageSize + 1;
-  const paginationEnd = Math.min(page * pageSize, filteredReturns.length);
+  const paginationStart = sortedReturns.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const paginationEnd = Math.min(page * pageSize, sortedReturns.length);
 
   const openInspectDialog = (req: StockReturnRow) => {
     const lines: InspectLine[] = req.items
@@ -603,12 +638,43 @@ export default function WarehouseStockReturnsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Return</TableHead>
-                    <TableHead>From</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Progress</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Last inspected</TableHead>
+                    <SortableTableHead
+                      label="Return"
+                      sortKey="returnNumber"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'returnNumber')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="From"
+                      sortKey="fromLocation"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'fromLocation')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Status"
+                      sortKey="status"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Progress"
+                      sortKey="progress"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'progress')}
+                      onSort={handleSort}
+                      className="text-right"
+                    />
+                    <SortableTableHead
+                      label="Created"
+                      sortKey="createdAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Last inspected"
+                      sortKey="lastInspectedAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'lastInspectedAt')}
+                      onSort={handleSort}
+                    />
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -684,7 +750,7 @@ export default function WarehouseStockReturnsPage() {
               <div className="flex flex-col gap-3 border-t bg-muted/20 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-3">
                   <span>
-                    Showing {paginationStart}–{paginationEnd} of {filteredReturns.length}
+                    Showing {paginationStart}–{paginationEnd} of {sortedReturns.length}
                   </span>
                   <div className="flex items-center gap-2">
                     <Label htmlFor="returns-page-size" className="text-xs whitespace-nowrap">

@@ -24,6 +24,20 @@ import { useToast } from '@/hooks/use-toast';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_WAREHOUSE_STOCK_REQUEST_SORT_DIRECTION,
+  DEFAULT_WAREHOUSE_STOCK_REQUEST_SORT_KEY,
+  sortWarehouseStockRequests,
+  type WarehouseStockRequestSortKey,
+} from './utils/warehouseStockRequestSorting';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -215,6 +229,8 @@ export default function WarehouseStockRequestsPage() {
   });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<WarehouseStockRequestSortKey>>(createInitialTableSortCycle);
   const [createOpen, setCreateOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -347,24 +363,43 @@ export default function WarehouseStockRequestsPage() {
     });
   }, [requests, searchQuery, statusFilter, requestDateRange.end, requestDateRange.start]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredRequests.length / pageSize));
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_WAREHOUSE_STOCK_REQUEST_SORT_KEY,
+        DEFAULT_WAREHOUSE_STOCK_REQUEST_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedRequests = useMemo(
+    () => sortWarehouseStockRequests(filteredRequests, resolvedSortKey, resolvedSortDirection),
+    [filteredRequests, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(sortedRequests.length / pageSize));
 
   const paginatedRequests = useMemo(() => {
     const start = (page - 1) * pageSize;
-    return filteredRequests.slice(start, start + pageSize);
-  }, [filteredRequests, page, pageSize]);
+    return sortedRequests.slice(start, start + pageSize);
+  }, [sortedRequests, page, pageSize]);
+
+  const handleSort = (key: WarehouseStockRequestSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, statusFilter, dateRangeFilter, pageSize]);
+  }, [searchQuery, statusFilter, dateRangeFilter, pageSize, sortState]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
   const paginationStart =
-    filteredRequests.length === 0 ? 0 : (page - 1) * pageSize + 1;
-  const paginationEnd = Math.min(page * pageSize, filteredRequests.length);
+    sortedRequests.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const paginationEnd = Math.min(page * pageSize, sortedRequests.length);
 
   const getLastReceivedAt = (request: StockRequestRow) => {
     if (request.receives.length === 0) return null;
@@ -675,12 +710,43 @@ export default function WarehouseStockRequestsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Request</TableHead>
-                    <TableHead>Brand</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Progress</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Last received</TableHead>
+                    <SortableTableHead
+                      label="Request"
+                      sortKey="requestNumber"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'requestNumber')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Brand"
+                      sortKey="brandName"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'brandName')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Status"
+                      sortKey="status"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Progress"
+                      sortKey="progress"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'progress')}
+                      onSort={handleSort}
+                      className="text-right"
+                    />
+                    <SortableTableHead
+                      label="Created"
+                      sortKey="createdAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Last received"
+                      sortKey="lastReceivedAt"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'lastReceivedAt')}
+                      onSort={handleSort}
+                    />
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -743,7 +809,7 @@ export default function WarehouseStockRequestsPage() {
               <div className="flex flex-col gap-3 border-t bg-muted/20 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-3">
                   <span>
-                    Showing {paginationStart}–{paginationEnd} of {filteredRequests.length}
+                    Showing {paginationStart}–{paginationEnd} of {sortedRequests.length}
                   </span>
                   <div className="flex items-center gap-2">
                     <Label htmlFor="requests-page-size" className="text-xs whitespace-nowrap">

@@ -1,9 +1,22 @@
 import { TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  getTableSortDisplayDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import { cn } from '@/lib/utils';
 
-const th = 'h-11 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
+import type { HubSortKey } from './hubListSorting';
 
-export function HubListTableHeader() {
+const th =
+  'h-11 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
+
+type HubListTableHeaderProps = {
+  sortState: TableSortCycleState<HubSortKey>;
+  onSort: (key: HubSortKey) => void;
+};
+
+export function HubListTableHeader({ sortState, onSort }: HubListTableHeaderProps) {
   return (
     <TableHeader
       className={cn(
@@ -13,11 +26,41 @@ export function HubListTableHeader() {
       )}
     >
       <TableRow className="border-0 hover:bg-transparent">
-        <TableHead className={cn(th, 'min-w-[160px] pl-6')}>Hub Name</TableHead>
-        <TableHead className={cn(th, 'min-w-[220px]')}>Location</TableHead>
-        <TableHead className={cn(th, 'min-w-[140px]')}>Team leader</TableHead>
-        <TableHead className={cn(th, 'min-w-[168px]')}>Created by</TableHead>
-        <TableHead className={cn(th, 'min-w-[128px] whitespace-nowrap')}>Created</TableHead>
+        <SortableTableHead
+          label="Hub Name"
+          sortKey="hubName"
+          sortDirection={getTableSortDisplayDirection(sortState, 'hubName')}
+          onSort={onSort}
+          className={cn(th, 'min-w-[160px] pl-6')}
+        />
+        <SortableTableHead
+          label="Location"
+          sortKey="location"
+          sortDirection={getTableSortDisplayDirection(sortState, 'location')}
+          onSort={onSort}
+          className={cn(th, 'min-w-[220px]')}
+        />
+        <SortableTableHead
+          label="Team leader"
+          sortKey="teamLeader"
+          sortDirection={getTableSortDisplayDirection(sortState, 'teamLeader')}
+          onSort={onSort}
+          className={cn(th, 'min-w-[140px]')}
+        />
+        <SortableTableHead
+          label="Created by"
+          sortKey="createdBy"
+          sortDirection={getTableSortDisplayDirection(sortState, 'createdBy')}
+          onSort={onSort}
+          className={cn(th, 'min-w-[168px]')}
+        />
+        <SortableTableHead
+          label="Created"
+          sortKey="createdAt"
+          sortDirection={getTableSortDisplayDirection(sortState, 'createdAt')}
+          onSort={onSort}
+          className={cn(th, 'min-w-[128px] whitespace-nowrap')}
+        />
         <TableHead className={cn(th, 'w-[72px] pr-6 text-right')}>Actions</TableHead>
       </TableRow>
     </TableHeader>

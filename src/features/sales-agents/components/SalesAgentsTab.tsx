@@ -1,9 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_SALES_AGENT_SORT_DIRECTION,
+  DEFAULT_SALES_AGENT_SORT_KEY,
+  getSalesAgentRoleLabel,
+  sortSalesAgents,
+  type SalesAgentSortKey,
+} from '../utils/salesAgentSorting';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -93,34 +108,7 @@ export function SalesAgentsTab() {
   const roleRequiresTerritory = (role?: UserRole | '') =>
     role === 'team_leader' || role === 'mobile_sales' || role === 'manager' || role === 'key_account_manager';
 
-  const getRoleLabel = (role?: UserRole | '') => {
-    switch (role) {
-      case 'admin':
-        return 'Admin';
-      case 'finance':
-        return 'Finance';
-      case 'accounting':
-        return 'Accounting';
-      case 'manager':
-        return 'Manager';
-      case 'team_leader':
-        return 'Team Leader';
-      case 'mobile_sales':
-        return 'Mobile Sales';
-      case 'key_account_manager':
-        return 'Key Account Manager';
-      case 'sales_director':
-        return 'Sales Director';
-      case 'sales_head':
-        return 'Sales Head';
-      case 'sales_admin':
-        return 'Sales Admin';
-      case 'key_account_accounting':
-        return 'Key Account Accounting';
-      default:
-        return '—';
-    }
-  };
+  const getRoleLabel = (role?: UserRole | '') => getSalesAgentRoleLabel(role) || '—';
 
   const [newAgent, setNewAgent] = useState({
     name: '',
@@ -147,27 +135,55 @@ export function SalesAgentsTab() {
   const addDialogRequiresTerritory = roleRequiresTerritory(newAgent.role);
   const editDialogRequiresTerritory = roleRequiresTerritory(editForm.role || (editingAgent?.role));
 
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<SalesAgentSortKey>>(createInitialTableSortCycle);
+
   const { toast } = useToast();
 
-  const filteredAgents = agents.filter(agent => {
-    // Status filter
-    if (statusFilter !== 'all' && agent.status !== statusFilter) return false;
+  const filteredAgents = useMemo(() => {
+    return agents.filter((agent) => {
+      if (statusFilter !== 'all' && agent.status !== statusFilter) return false;
 
-    // Search filter
-    return agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.region.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.cities.some(city => city.toLowerCase().includes(searchQuery.toLowerCase()));
-  });
+      return (
+        agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        agent.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        agent.region.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        agent.cities.some((city) => city.toLowerCase().includes(searchQuery.toLowerCase()))
+      );
+    });
+  }, [agents, statusFilter, searchQuery]);
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_SALES_AGENT_SORT_KEY,
+        DEFAULT_SALES_AGENT_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedAgents = useMemo(
+    () => sortSalesAgents(filteredAgents, resolvedSortKey, resolvedSortDirection),
+    [filteredAgents, resolvedSortKey, resolvedSortDirection]
+  );
 
   // Pagination: 10 agents per page
   const AGENTS_PER_PAGE = 10;
   const [agentPage, setAgentPage] = useState(1);
-  const totalAgentPages = Math.max(1, Math.ceil(filteredAgents.length / AGENTS_PER_PAGE));
-  const paginatedAgents = filteredAgents.slice(
+  const totalAgentPages = Math.max(1, Math.ceil(sortedAgents.length / AGENTS_PER_PAGE));
+  const paginatedAgents = sortedAgents.slice(
     (agentPage - 1) * AGENTS_PER_PAGE,
     agentPage * AGENTS_PER_PAGE
   );
+
+  const handleSort = (key: SalesAgentSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
+  useEffect(() => {
+    setAgentPage(1);
+  }, [searchQuery, statusFilter, sortState]);
 
   const fetchAgents = async () => {
     // Wait for user to be loaded
@@ -947,13 +963,55 @@ export function SalesAgentsTab() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-center">Name</TableHead>
-                  <TableHead className="text-center">Email</TableHead>
-                  <TableHead className="text-center">Phone</TableHead>
-                  <TableHead className="text-center">Role</TableHead>
-                  <TableHead className="text-center">Region</TableHead>
-                  <TableHead className="text-center">Cities</TableHead>
-                  <TableHead className="text-center">Active Status</TableHead>
+                  <SortableTableHead
+                    label="Name"
+                    sortKey="name"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'name')}
+                    onSort={handleSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Email"
+                    sortKey="email"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'email')}
+                    onSort={handleSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Phone"
+                    sortKey="phone"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'phone')}
+                    onSort={handleSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Role"
+                    sortKey="role"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'role')}
+                    onSort={handleSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Region"
+                    sortKey="region"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'region')}
+                    onSort={handleSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Cities"
+                    sortKey="cities"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'cities')}
+                    onSort={handleSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Active Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                    onSort={handleSort}
+                    className="text-center"
+                  />
                   <TableHead className="text-center">
                     <TooltipProvider>
                       <Tooltip>
@@ -1052,15 +1110,15 @@ export function SalesAgentsTab() {
             </Table>
 
             {/* Pagination controls */}
-            {filteredAgents.length > AGENTS_PER_PAGE && (
+            {sortedAgents.length > AGENTS_PER_PAGE && (
               <div className="flex items-center justify-between mt-4">
                 <div className="text-xs text-muted-foreground">
                   Showing{' '}
                   <span className="font-medium">
                     {(agentPage - 1) * AGENTS_PER_PAGE + 1}-
-                    {Math.min(agentPage * AGENTS_PER_PAGE, filteredAgents.length)}
+                    {Math.min(agentPage * AGENTS_PER_PAGE, sortedAgents.length)}
                   </span>{' '}
-                  of <span className="font-medium">{filteredAgents.length}</span> agents
+                  of <span className="font-medium">{sortedAgents.length}</span> agents
                 </div>
                 <div className="flex items-center gap-2">
                   <Button

@@ -21,6 +21,20 @@ import { InventoryImportExport } from './components/InventoryImportExport';
 import { format } from 'date-fns';
 import { usePendingMobileSalesAllocations, type PendingMobileSalesAllocation } from './requestHooks';
 import { VariantBatchLotsDialog } from './VariantBatchLotsDialog';
+import { InventoryVariantTableHeader } from './components/InventoryVariantTableHeader';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_MAIN_INVENTORY_VARIANT_SORT_DIRECTION,
+  DEFAULT_MAIN_INVENTORY_VARIANT_SORT_KEY,
+  sortMainInventoryVariants,
+  type MainInventoryVariantSortContext,
+  type MainInventoryVariantSortKey,
+} from './utils/mainInventoryVariantSorting';
 
 interface ReturnHistoryEntry {
   id: string;
@@ -43,6 +57,9 @@ export default function MainInventoryPage() {
   const { brands, setBrands, updateBrandName, updateVariant, refreshInventory } = useInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
+  const [variantSortStates, setVariantSortStates] = useState<
+    Record<string, TableSortCycleState<MainInventoryVariantSortKey>>
+  >({});
 
   // Dialog states
   const [editVariantOpen, setEditVariantOpen] = useState(false);
@@ -765,6 +782,49 @@ export default function MainInventoryPage() {
     );
   };
 
+  const variantHasNoPrice = (variant: Variant) => {
+    const sellingPriceRaw = (variant as { sellingPrice?: number | null }).sellingPrice;
+    return (
+      !isWarehouse &&
+      (sellingPriceRaw === null ||
+        sellingPriceRaw === undefined ||
+        (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)))
+    );
+  };
+
+  const getVariantSortState = (sectionId: string) =>
+    variantSortStates[sectionId] ?? createInitialTableSortCycle();
+
+  const variantSortContext = useMemo(
+    (): MainInventoryVariantSortContext => ({
+      getGrossAllocated: getVariantGrossAllocated,
+      getRemainingAllocated: getVariantRemainingAllocated,
+      getAvailable: getVariantAvailableStock,
+      hasNoPrice: variantHasNoPrice,
+    }),
+    [isWarehouse, pendingByVariantId, showPendingAllocations]
+  );
+
+  const sortVariantsForSection = <T extends Variant>(sectionId: string, variants: T[]) => {
+    const sortState = getVariantSortState(sectionId);
+    const { key, direction } = resolveTableSortDirection(
+      sortState,
+      DEFAULT_MAIN_INVENTORY_VARIANT_SORT_KEY,
+      DEFAULT_MAIN_INVENTORY_VARIANT_SORT_DIRECTION
+    );
+    return sortMainInventoryVariants(variants, key, direction, variantSortContext);
+  };
+
+  const handleVariantSort = (sectionId: string, key: MainInventoryVariantSortKey) => {
+    setVariantSortStates((current) => ({
+      ...current,
+      [sectionId]: getNextTableSortCycleState(
+        current[sectionId] ?? createInitialTableSortCycle(),
+        key
+      ),
+    }));
+  };
+
   // Calculate stats
   const totalBrands = brands.length;
   const totalVariants = brands.reduce((sum, brand) => sum + brand.flavors.length + brand.batteries.length + (brand.posms || []).length, 0);
@@ -838,7 +898,7 @@ export default function MainInventoryPage() {
 
       {!isWarehouse && hasWarehouseHubLink && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
-          This company is linked to a warehouse hub. <strong>Stock counts are read-only</strong> here
+          This company is linked to a warehouse. <strong>Stock counts are read-only</strong> here
           and update when you receive inventory through <strong>purchase orders to the warehouse</strong>.
           You can still edit pricing on each variant.
         </div>
@@ -1040,22 +1100,17 @@ export default function MainInventoryPage() {
                           </div>
                         </div>
                         <Table>
-                          <TableHeader>
-                            <TableRow className="bg-blue-50/30">
-                              <TableHead className="text-blue-800 text-center">Flavor Name</TableHead>
-                              <TableHead className="text-blue-800 text-center">Total Stock</TableHead>
-                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated (Remaing stocks)</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Available</TableHead>}
-                              {!isWarehouse && <TableHead className="text-blue-800 text-center">Selling Price</TableHead>}
-                              {!isWarehouse && <TableHead className="text-blue-800 text-center">DSP</TableHead>}
-                              {!isWarehouse && <TableHead className="text-blue-800 text-center">RSP</TableHead>}
-                              <TableHead className="text-blue-800 text-center">Status</TableHead>
-                              <TableHead className="text-blue-800 text-center">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
+                          <InventoryVariantTableHeader
+                            nameLabel="Flavor Name"
+                            rowClassName="bg-blue-50/30"
+                            headClassName="text-blue-800"
+                            isSubWarehouseUser={isSubWarehouseUser}
+                            isWarehouse={isWarehouse}
+                            sortState={getVariantSortState('flavor')}
+                            onSort={(key) => handleVariantSort('flavor', key)}
+                          />
                           <TableBody>
-                            {brand.flavors.map((flavor) => {
+                            {sortVariantsForSection('flavor', brand.flavors).map((flavor) => {
                               const available = isSubWarehouseUser ? flavor.stock : getVariantAvailableStock(flavor);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (flavor as any).sellingPrice;
@@ -1217,22 +1272,17 @@ export default function MainInventoryPage() {
                           </div>
                         </div>
                         <Table>
-                          <TableHeader>
-                            <TableRow className="bg-green-50/30">
-                              <TableHead className="text-green-800 text-center">Battery Name</TableHead>
-                              <TableHead className="text-green-800 text-center">Total Stock</TableHead>
-                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated (Remaining stocks)</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Available</TableHead>}
-                              {!isWarehouse && <TableHead className="text-green-800 text-center">Selling Price</TableHead>}
-                              {!isWarehouse && <TableHead className="text-green-800 text-center">DSP</TableHead>}
-                              {!isWarehouse && <TableHead className="text-green-800 text-center">RSP</TableHead>}
-                              <TableHead className="text-green-800 text-center">Status</TableHead>
-                              <TableHead className="text-green-800 text-center">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
+                          <InventoryVariantTableHeader
+                            nameLabel="Battery Name"
+                            rowClassName="bg-green-50/30"
+                            headClassName="text-green-800"
+                            isSubWarehouseUser={isSubWarehouseUser}
+                            isWarehouse={isWarehouse}
+                            sortState={getVariantSortState('battery')}
+                            onSort={(key) => handleVariantSort('battery', key)}
+                          />
                           <TableBody>
-                            {brand.batteries.map((battery) => {
+                            {sortVariantsForSection('battery', brand.batteries).map((battery) => {
                               const available = isSubWarehouseUser ? battery.stock : getVariantAvailableStock(battery);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (battery as any).sellingPrice;
@@ -1371,22 +1421,17 @@ export default function MainInventoryPage() {
                           </div>
                         </div>
                         <Table>
-                          <TableHeader>
-                            <TableRow className="bg-purple-50/30">
-                              <TableHead className="text-purple-800 text-center">POSM Name</TableHead>
-                              <TableHead className="text-purple-800 text-center">Total Stock</TableHead>
-                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Allocated Pending</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Available</TableHead>}
-                              {!isWarehouse && <TableHead className="text-purple-800 text-center">Selling Price</TableHead>}
-                              {!isWarehouse && <TableHead className="text-purple-800 text-center">DSP</TableHead>}
-                              {!isWarehouse && <TableHead className="text-purple-800 text-center">RSP</TableHead>}
-                              <TableHead className="text-purple-800 text-center">Status</TableHead>
-                              <TableHead className="text-purple-800 text-center">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
+                          <InventoryVariantTableHeader
+                            nameLabel="POSM Name"
+                            rowClassName="bg-purple-50/30"
+                            headClassName="text-purple-800"
+                            isSubWarehouseUser={isSubWarehouseUser}
+                            isWarehouse={isWarehouse}
+                            sortState={getVariantSortState('posm')}
+                            onSort={(key) => handleVariantSort('posm', key)}
+                          />
                           <TableBody>
-                            {(brand as any).posms.map((posm: any) => {
+                            {sortVariantsForSection('posm', (brand as Brand).posms ?? []).map((posm) => {
                               const available = isSubWarehouseUser ? posm.stock : getVariantAvailableStock(posm);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (posm as any).sellingPrice;
@@ -1542,22 +1587,17 @@ export default function MainInventoryPage() {
                               </div>
                             </div>
                             <Table>
-                              <TableHeader>
-                                <TableRow className="bg-gray-50/30">
-                                  <TableHead className="text-gray-800 text-center">Name</TableHead>
-                                  <TableHead className="text-gray-800 text-center">Total Stock</TableHead>
-                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated</TableHead>}
-                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated (Remaining stocks)</TableHead>}
-                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Available</TableHead>}
-                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">Selling Price</TableHead>}
-                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">DSP</TableHead>}
-                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">RSP</TableHead>}
-                                  <TableHead className="text-gray-800 text-center">Status</TableHead>
-                                  <TableHead className="text-gray-800 text-center">Actions</TableHead>
-                                </TableRow>
-                              </TableHeader>
+                              <InventoryVariantTableHeader
+                                nameLabel="Name"
+                                rowClassName="bg-gray-50/30"
+                                headClassName="text-gray-800"
+                                isSubWarehouseUser={isSubWarehouseUser}
+                                isWarehouse={isWarehouse}
+                                sortState={getVariantSortState(variantType)}
+                                onSort={(key) => handleVariantSort(variantType, key)}
+                              />
                               <TableBody>
-                                {variants.map((variant) => {
+                                {sortVariantsForSection(variantType, variants).map((variant) => {
                                   const available = isSubWarehouseUser ? variant.stock : getVariantAvailableStock(variant);
                                   const sellingPriceRaw = (variant as any).sellingPrice;
                                   const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
@@ -1811,7 +1851,7 @@ export default function MainInventoryPage() {
                   {isWarehouse
                     ? 'Use Stock Requests or Stock Adjustments to change warehouse stock.'
                     : hasWarehouseHubLink
-                      ? 'Stock is managed via purchase orders to your linked warehouse hub.'
+                      ? 'Stock is managed via purchase orders to your linked warehouse.'
                       : 'Update the total stock count for this variant'}
                 </p>
               </div>

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 
+import type { HubSortDirection, HubSortKey } from "./hubListSorting";
 import { normalizeSearchForFilter, quoteOrFilterValue } from "./hubSearchFilter";
 import type { HubRow } from "./types";
 
@@ -40,10 +41,46 @@ function normalizeHubRows(raw: unknown): HubRow[] {
   });
 }
 
+function applyHubSort<T extends { order: (...args: never[]) => T }>(
+  query: T,
+  sortKey: HubSortKey,
+  sortDirection: HubSortDirection
+): T {
+  const ascending = sortDirection === "asc";
+
+  switch (sortKey) {
+    case "hubName":
+      return query.order("hub_name", { ascending }).order("created_at", { ascending: false });
+    case "location":
+      return query.order("hub_location", { ascending }).order("created_at", { ascending: false });
+    case "teamLeader":
+      return query
+        .order("full_name", {
+          ascending,
+          foreignTable: "profiles!hubs_assigned_team_leader_id_fkey",
+          nullsFirst: ascending,
+        })
+        .order("created_at", { ascending: false });
+    case "createdBy":
+      return query
+        .order("full_name", {
+          ascending,
+          foreignTable: "profiles!hubs_created_by_fkey",
+          nullsFirst: ascending,
+        })
+        .order("created_at", { ascending: false });
+    case "createdAt":
+    default:
+      return query.order("created_at", { ascending });
+  }
+}
+
 export async function fetchHubsPage(
   page: number,
   pageSize: number,
   search: string,
+  sortKey: HubSortKey,
+  sortDirection: HubSortDirection
 ): Promise<{ rows: HubRow[]; total: number }> {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
@@ -51,10 +88,11 @@ export async function fetchHubsPage(
   const term = normalizeSearchForFilter(search);
   const pattern = term.length > 0 ? `%${term}%` : null;
 
-  let query = supabase
-    .from("hubs")
-    .select(
-      `
+  let query = applyHubSort(
+    supabase
+      .from("hubs")
+      .select(
+        `
       id,
       hub_name,
       hub_location,
@@ -69,9 +107,11 @@ export async function fetchHubsPage(
         full_name
       )
     `,
-      { count: "exact" },
-    )
-    .order("created_at", { ascending: false });
+        { count: "exact" }
+      ),
+    sortKey,
+    sortDirection
+  );
 
   if (pattern) {
     const q = quoteOrFilterValue(pattern);
