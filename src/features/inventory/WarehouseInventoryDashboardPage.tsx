@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart3, Clock, LayoutGrid, List, RefreshCw, Search } from 'lucide-react';
+import { BarChart3, Clock, LayoutGrid, List, Package, RefreshCw, Search } from 'lucide-react';
 import { useInventory, type Brand, type Variant } from './InventoryContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,15 +15,23 @@ import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { WarehouseBatchAgingPanel } from './components/WarehouseBatchAgingPanel';
 import { WarehouseFsnPanel } from './components/WarehouseFsnPanel';
+import { WarehouseProductMovementPanel } from './components/WarehouseProductMovementPanel';
 import { useWarehouseBatchAging } from './useWarehouseBatchAging';
 import { useWarehouseFsnAnalysis } from './useWarehouseFsnAnalysis';
+import { useWarehouseProductMovement } from './useWarehouseProductMovement';
 import { type FsnPeriodDays } from './warehouseFsnAnalysis';
+import { type DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  formatDateForInput,
+  getDatePresetLabel,
+  getDateRangeFromPreset,
+} from '@/lib/dateRangePresets';
 
 /** Order variant-type columns: known types first, then alphabetical. */
 const TYPE_SORT_ORDER: string[] = ['flavor', 'battery', 'POSM', 'posm'];
 
 type DashboardViewMode = 'available' | 'overall' | 'sub';
-type DashboardSection = 'stock' | 'fsn' | 'aging';
+type DashboardSection = 'stock' | 'movement' | 'fsn' | 'aging';
 
 function getVariantsByTypeEntries(brand: Brand): [string, Variant[]][] {
   const v = brand.variantsByType;
@@ -228,6 +236,9 @@ export default function WarehouseInventoryDashboardPage() {
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
   const [dashboardSection, setDashboardSection] = useState<DashboardSection>('stock');
   const [fsnPeriodDays, setFsnPeriodDays] = useState<FsnPeriodDays>(90);
+  const [movementDateRangeFilter, setMovementDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'this_year',
+  });
 
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
@@ -451,11 +462,54 @@ export default function WarehouseInventoryDashboardPage() {
 
   const fsnCatalogBrands = displayedBrands;
 
+  const movementDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        movementDateRangeFilter.preset,
+        movementDateRangeFilter.customStart,
+        movementDateRangeFilter.customEnd
+      ),
+    [movementDateRangeFilter]
+  );
+
+  const movementDateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
+        movementDateRangeFilter.preset,
+        movementDateRangeFilter.customStart,
+        movementDateRangeFilter.customEnd
+      ),
+    [movementDateRangeFilter]
+  );
+
+  const movementDateRangeKey = useMemo(() => {
+    const { start, end } = movementDateRange;
+    return [
+      movementDateRangeFilter.preset,
+      start ? formatDateForInput(start) : '',
+      end ? formatDateForInput(end) : '',
+    ].join('|');
+  }, [movementDateRange, movementDateRangeFilter.preset]);
+
   const reportQueryEnabled =
-    (dashboardSection === 'fsn' || dashboardSection === 'aging') &&
+    (dashboardSection === 'movement' || dashboardSection === 'fsn' || dashboardSection === 'aging') &&
     !!user?.company_id &&
     !!fsnLocationId &&
     !(isMainWarehouseUser && viewMode === 'sub' && !selectedLocationId);
+
+  const {
+    data: movementRows = [],
+    isLoading: loadingMovement,
+    error: movementError,
+  } = useWarehouseProductMovement({
+    companyId: user?.company_id,
+    locationId: fsnLocationId,
+    rangeStart: movementDateRange.start,
+    rangeEnd: movementDateRange.end,
+    rangeKey: movementDateRangeKey,
+    brands: fsnCatalogBrands,
+    enabled: reportQueryEnabled && dashboardSection === 'movement',
+  });
 
   const {
     data: fsnRows = [],
@@ -503,6 +557,9 @@ export default function WarehouseInventoryDashboardPage() {
       }
       if (fsnLocationId) {
         await qc.invalidateQueries({
+          queryKey: ['warehouse-product-movement', user?.company_id, fsnLocationId],
+        });
+        await qc.invalidateQueries({
           queryKey: ['warehouse-fsn-movement', user?.company_id, fsnLocationId],
         });
         await qc.invalidateQueries({
@@ -520,11 +577,13 @@ export default function WarehouseInventoryDashboardPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            {dashboardSection === 'fsn'
-              ? `FSN analysis (transfer PO fulfillments). ${fsnLocationLabel}.`
-              : dashboardSection === 'aging'
-                ? `Batch aging (days in warehouse). ${fsnLocationLabel}.`
-                : stockScopeHint}
+            {dashboardSection === 'movement'
+              ? `Product movement by SKU — ${movementDateRangeLabel}. ${fsnLocationLabel}.`
+              : dashboardSection === 'fsn'
+                ? `FSN analysis (transfer PO fulfillments). ${fsnLocationLabel}.`
+                : dashboardSection === 'aging'
+                  ? `Batch aging (days in warehouse). ${fsnLocationLabel}.`
+                  : stockScopeHint}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -584,7 +643,8 @@ export default function WarehouseInventoryDashboardPage() {
               </div>
             </>
           )}
-          {isMainWarehouseUser && (dashboardSection === 'fsn' || dashboardSection === 'aging') && (
+          {isMainWarehouseUser &&
+            (dashboardSection === 'movement' || dashboardSection === 'fsn' || dashboardSection === 'aging') && (
             <>
               <div className="w-full sm:hidden">
                 <Label className="sr-only">Location for FSN</Label>
@@ -660,6 +720,10 @@ export default function WarehouseInventoryDashboardPage() {
           <TabsTrigger value="stock" className="gap-1.5">
             <LayoutGrid className="h-4 w-4" aria-hidden />
             Stock board
+          </TabsTrigger>
+          <TabsTrigger value="movement" className="gap-1.5">
+            <Package className="h-4 w-4" aria-hidden />
+            Product movement
           </TabsTrigger>
           <TabsTrigger value="fsn" className="gap-1.5">
             <BarChart3 className="h-4 w-4" aria-hidden />
@@ -737,6 +801,29 @@ export default function WarehouseInventoryDashboardPage() {
           </div>
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="movement" className="mt-0">
+          {!fsnLocationId ? (
+            <div className="rounded-lg border border-dashed border-border bg-muted/30 py-16 text-center text-muted-foreground">
+              {isMainWarehouseUser && loadingLocations
+                ? 'Loading warehouse locations…'
+                : isMainWarehouseUser && viewMode === 'sub' && !selectedLocationId
+                  ? 'Select a sub-warehouse to view product movement for that location.'
+                  : 'Warehouse location is not configured yet. Link this account to a location to view product movement.'}
+            </div>
+          ) : (
+            <WarehouseProductMovementPanel
+              rows={movementRows}
+              loading={loadingMovement}
+              error={movementError}
+              dateRangeFilter={movementDateRangeFilter}
+              onDateRangeFilterChange={setMovementDateRangeFilter}
+              dateRangeLabel={movementDateRangeLabel}
+              locationLabel={fsnLocationLabel}
+              search={search}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="fsn" className="mt-0">
