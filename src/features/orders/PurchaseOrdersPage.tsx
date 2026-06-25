@@ -2030,6 +2030,9 @@ export default function PurchaseOrdersPage() {
             <ScrollArea className="h-[calc(95vh-80px)]">
               {orderToView && (
                 <div className="p-4">
+                  {orderToView.key_account_client_id ? (
+                    <KeyAccountPOView order={orderToView} />
+                  ) : (
                   <Accordion type="multiple" defaultValue={["info", "buyer", "seller", "items", "pricing"]} className="space-y-2">
                     {/* PO Info Section */}
                     <AccordionItem value="info" className="border rounded-lg px-4">
@@ -2243,6 +2246,7 @@ export default function PurchaseOrdersPage() {
                       </div>
                     )}
                   </Accordion>
+                  )}
                 </div>
               )}
             </ScrollArea>
@@ -2588,6 +2592,10 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
     disputed_total: number;
     replacement_total: number;
   } | null>(null);
+  const [rebateSource, setRebateSource] = useState<{
+    rebate_number: string;
+    source_po_number: string;
+  } | null>(null);
 
   const [rebateReturnLines, setRebateReturnLines] = useState<
     Array<{
@@ -2606,20 +2614,32 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
   useEffect(() => {
     if (order.po_order_kind !== 'rebate_fulfillment' || !order.source_rebate_id) {
       setRebatePricing(null);
+      setRebateSource(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       const { data } = await supabase
         .from('key_account_po_rebates')
-        .select('disputed_total, replacement_total')
+        .select(
+          'rebate_number, disputed_total, replacement_total, source_po:purchase_orders!key_account_po_rebates_purchase_order_id_fkey(po_number)'
+        )
         .eq('id', order.source_rebate_id)
         .maybeSingle();
-      if (!cancelled && data) {
-        setRebatePricing({
-          disputed_total: Number(data.disputed_total) || 0,
-          replacement_total: Number(data.replacement_total) || 0,
+      if (cancelled || !data) return;
+      setRebatePricing({
+        disputed_total: Number(data.disputed_total) || 0,
+        replacement_total: Number(data.replacement_total) || 0,
+      });
+      const src = (data as { source_po?: { po_number: string } | { po_number: string }[] }).source_po;
+      const poNum = Array.isArray(src) ? src?.[0]?.po_number : src?.po_number;
+      if (poNum) {
+        setRebateSource({
+          rebate_number: String(data.rebate_number || ''),
+          source_po_number: poNum,
         });
+      } else {
+        setRebateSource(null);
       }
     })();
     return () => {
@@ -2842,6 +2862,17 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
               <Badge variant="secondary">Rebate replacement</Badge>
             )}
           </div>
+          {rebateSource ? (
+            <>
+              <div className="text-xs text-muted-foreground mt-2">Source PO</div>
+              <div className="text-lg font-bold font-mono break-all flex flex-wrap items-center gap-2">
+                <span>{rebateSource.source_po_number}</span>
+                {rebateSource.rebate_number ? (
+                  <Badge variant="outline">{rebateSource.rebate_number}</Badge>
+                ) : null}
+              </div>
+            </>
+          ) : null}
           <div className="text-xs text-muted-foreground">RFPF Number</div>
           <div className="text-lg font-bold font-mono">{order.rfpf_number?.toUpperCase() || '—'}</div>
           <div className="text-sm text-muted-foreground mt-1">
