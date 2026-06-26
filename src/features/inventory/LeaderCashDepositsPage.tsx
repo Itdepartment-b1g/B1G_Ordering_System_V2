@@ -167,6 +167,10 @@ export default function LeaderCashDepositsPage() {
   const [chequeReferenceNumber, setChequeReferenceNumber] = useState('');
   const [depositNotes, setDepositNotes] = useState('');
   const [depositSlipFile, setDepositSlipFile] = useState<File | null>(null);
+  const depositSlipPreviewUrl = useMemo(
+    () => (depositSlipFile ? URL.createObjectURL(depositSlipFile) : null),
+    [depositSlipFile]
+  );
   const [submitting, setSubmitting] = useState(false);
 
   // View Details Modal State
@@ -1528,6 +1532,12 @@ export default function LeaderCashDepositsPage() {
     };
   }, [stream]);
 
+  useEffect(() => {
+    return () => {
+      if (depositSlipPreviewUrl) URL.revokeObjectURL(depositSlipPreviewUrl);
+    };
+  }, [depositSlipPreviewUrl]);
+
   const handleSubmitDeposit = async () => {
     // Basic validation
     if (!bankAccount) {
@@ -2488,11 +2498,12 @@ export default function LeaderCashDepositsPage() {
                       </div>
                     ) : depositSlipFile ? (
                       <div className="space-y-2">
-                        <div className={`border-2 rounded-lg p-3 ${depositType === 'CHEQUE' ? 'border-purple-200 bg-purple-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                          <div className={`text-xs font-medium flex items-center justify-center gap-2 ${depositType === 'CHEQUE' ? 'text-purple-700' : 'text-emerald-700'}`}>
-                            <CheckCircle2 className="h-4 w-4" />
-                            <span>Photo: {depositSlipFile.name}</span>
-                          </div>
+                        <div className={`border-2 rounded-lg overflow-hidden p-2 ${depositType === 'CHEQUE' ? 'border-purple-200 bg-purple-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                          <img
+                            src={depositSlipPreviewUrl!}
+                            alt="Deposit slip preview"
+                            className="w-full h-auto object-contain max-h-48 rounded-md"
+                          />
                         </div>
                         <Button
                           type="button"
@@ -2763,11 +2774,12 @@ export default function LeaderCashDepositsPage() {
                       </div>
                     ) : depositSlipFile ? (
                       <div className="space-y-3">
-                        <div className={`border-2 rounded-lg p-4 ${depositType === 'CHEQUE' ? 'border-purple-200 bg-purple-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                          <div className={`text-sm font-medium flex items-center justify-center gap-2 ${depositType === 'CHEQUE' ? 'text-purple-700' : 'text-emerald-700'}`}>
-                            <CheckCircle2 className="h-5 w-5" />
-                            <span>Photo Captured: {depositSlipFile.name}</span>
-                          </div>
+                        <div className={`border-2 rounded-lg overflow-hidden p-2 ${depositType === 'CHEQUE' ? 'border-purple-200 bg-purple-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                          <img
+                            src={depositSlipPreviewUrl!}
+                            alt="Deposit slip preview"
+                            className="w-full h-auto object-contain max-h-56 rounded-md"
+                          />
                         </div>
                         <Button
                           type="button"
