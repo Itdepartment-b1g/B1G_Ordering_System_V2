@@ -498,20 +498,18 @@ export default function LeaderCashDepositsPage() {
       if (remErr) throw remErr;
 
       const allOrderIds = Array.from(new Set((remittanceRows || []).flatMap((r: any) => r.order_ids || [])));
-      if (allOrderIds.length === 0) {
-        setPendingDeposits([]);
-        setDepositHistory([]);
-        setPendingDailyGroups([]);
-        return;
+
+      // 2. Fetch remittance-linked orders (may be empty for new companies / leaders who only sell directly)
+      let ordersData: any[] = [];
+      if (allOrderIds.length > 0) {
+        const { data, error: ordErr } = await supabase
+          .from('client_orders')
+          .select('id, deposit_id, order_date, total_amount, payment_method, payment_mode, payment_splits')
+          .in('id', allOrderIds);
+
+        if (ordErr) throw ordErr;
+        ordersData = data || [];
       }
-
-      // 2. Fetch orders and filter to only those with cash or cheque (exclude bank transfer only)
-      const { data: ordersData, error: ordErr } = await supabase
-        .from('client_orders')
-        .select('id, deposit_id, order_date, total_amount, payment_method, payment_mode, payment_splits')
-        .in('id', allOrderIds);
-
-      if (ordErr) throw ordErr;
 
       const orderIdsWithCashOrCheque: string[] = [];
       (ordersData || []).forEach((order: any) => {
@@ -542,9 +540,8 @@ export default function LeaderCashDepositsPage() {
           .map((o: any) => o.deposit_id as string)
       ));
 
-      // ========== FIX: Include Team Leader's own orders that bypass remittance ==========
-      // For orders created directly by Team Leader (not through agents), there's no remittance log entry
-      // These orders should still appear in cash deposits for the leader to record bank details
+      // Include Team Leader's own orders that bypass remittance (no remittances_log entry).
+      // Critical for new companies / leaders who sell directly without agent remittance history.
       if (user?.role === 'team_leader' && user?.id) {
         const { data: leaderOrders, error: leaderOrdersError } = await supabase
           .from('client_orders')
@@ -581,8 +578,45 @@ export default function LeaderCashDepositsPage() {
           }
         }
       }
-      // ========== END FIX ==========
- 
+
+      // Finance/admin: include all company orders with cash/cheque deposits (not only remittance path).
+      // Needed for new companies with no remittances_log and team-leader direct sales.
+      if (
+        ['finance', 'accounting', 'admin', 'super_admin'].includes(user?.role || '') &&
+        user?.company_id
+      ) {
+        const { data: companyOrders, error: companyOrdersError } = await supabase
+          .from('client_orders')
+          .select('id, deposit_id, order_date, payment_method, payment_mode, payment_splits')
+          .eq('company_id', user.company_id)
+          .not('deposit_id', 'is', null)
+          .gte('order_date', V1_IMPORT_ORDER_DATE_CUTOFF);
+
+        if (!companyOrdersError && companyOrders) {
+          const companyDepositIds: string[] = [];
+          (companyOrders || []).forEach((order: any) => {
+            const paymentMode = order.payment_mode as 'FULL' | 'SPLIT' | null;
+            const paymentMethod = order.payment_method as string | null;
+            const splits = Array.isArray(order.payment_splits) ? order.payment_splits : [];
+            let hasCashOrCheque = false;
+
+            if (paymentMode === 'SPLIT') {
+              hasCashOrCheque = splits.some((s: any) => s.method === 'CASH' || s.method === 'CHEQUE');
+            } else if (paymentMethod === 'CASH' || paymentMethod === 'CHEQUE') {
+              hasCashOrCheque = true;
+            }
+
+            if (hasCashOrCheque && order.deposit_id && !depositIdsFromRemittances.includes(order.deposit_id)) {
+              companyDepositIds.push(order.deposit_id);
+            }
+          });
+
+          if (companyDepositIds.length > 0) {
+            depositIdsFromRemittances.push(...companyDepositIds);
+          }
+        }
+      }
+
       if (depositIdsFromRemittances.length === 0) {
         setPendingDeposits([]);
         setDepositHistory([]);
