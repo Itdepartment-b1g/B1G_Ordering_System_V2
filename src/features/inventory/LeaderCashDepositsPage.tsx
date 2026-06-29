@@ -15,6 +15,11 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { format } from 'date-fns';
 import { canViewCashDeposits } from '@/lib/roleUtils';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
 import { sendNotificationToCompanyRoles } from '@/features/shared/lib/notification.helpers';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import {
@@ -178,6 +183,15 @@ function isDepositRecordedForDisplay(
 ): boolean {
   if (historyList.some((d) => d.id === depositId)) return true;
   return checkDepositRecorded(depositId, pendingList);
+}
+
+function deriveGroupStatus(depositsForDay: CashDeposit[]): DailyDepositGroup['status'] {
+  const needsRecording = depositsForDay.some(
+    (d) => !d.depositSlipUrl || !checkDepositRecorded(d.id, depositsForDay)
+  );
+  if (needsRecording) return 'pending_deposit';
+  if (depositsForDay.every((d) => d.status === 'verified')) return 'verified';
+  return 'awaiting_verification';
 }
 
 type OrderPaymentInput = {
@@ -377,16 +391,23 @@ export default function LeaderCashDepositsPage() {
     totalUnits: number;
   }>>({});
   const [loadingDayDetails, setLoadingDayDetails] = useState<Record<string, boolean>>({});
-  const [filterFromDate, setFilterFromDate] = useState('');
-  const [filterToDate, setFilterToDate] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const depositDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+  const hasActiveDateFilter = dateRangeFilter.preset !== 'all';
   const [expandedDays, setExpandedDays] = useState<string[]>([]);
   const [expandedAgents, setExpandedAgents] = useState<string[]>([]);
   const [selectedAgents, setSelectedAgents] = useState<Record<string, string[]>>({}); // dateKey -> agentIds[]
 
   // Verified Deposit History filters
   const [historySearchQuery, setHistorySearchQuery] = useState('');
-  const [historyDateFrom, setHistoryDateFrom] = useState('');
-  const [historyDateTo, setHistoryDateTo] = useState('');
   const [historyPage, setHistoryPage] = useState(1);
   const HISTORY_PAGE_SIZE = 10;
 
@@ -450,7 +471,12 @@ export default function LeaderCashDepositsPage() {
   }, []);
 
   const isFinanceViewOnly = user?.role === 'finance' || user?.role === 'accounting';
-  const canEditDepositSlip = user?.role === 'super_admin';
+
+  const canEditDepositSlipForDeposit = (deposit: CashDeposit): boolean => {
+    if (user?.role === 'super_admin') return true;
+    if (user?.role === 'team_leader') return deposit.status !== 'verified';
+    return false;
+  };
 
   // Agent selection helpers
   const toggleAgentSelection = (dateKey: string, agentId: string) => {
@@ -535,8 +561,7 @@ export default function LeaderCashDepositsPage() {
         const matchNotes = (d.notes || '').toLowerCase().includes(q);
         if (!matchAgent && !matchBank && !matchRef && !matchNotes) return false;
       }
-      if (historyDateFrom && d.depositDate < historyDateFrom) return false;
-      if (historyDateTo && d.depositDate > historyDateTo) return false;
+      if (!isDateInRange(d.depositDate, depositDateRange.start, depositDateRange.end)) return false;
       return true;
     });
     const totalPages = Math.max(1, Math.ceil(filtered.length / HISTORY_PAGE_SIZE));
@@ -547,7 +572,7 @@ export default function LeaderCashDepositsPage() {
       historyTotalPages: totalPages,
       filteredHistoryTotal: filtered.length,
     };
-  }, [depositHistory, historySearchQuery, historyDateFrom, historyDateTo, historyPage]);
+  }, [depositHistory, historySearchQuery, depositDateRange, historyPage]);
 
   // Reset page when filters change and current page would be empty
   useEffect(() => {
@@ -560,13 +585,12 @@ export default function LeaderCashDepositsPage() {
         const matchNotes = (d.notes || '').toLowerCase().includes(q);
         if (!matchAgent && !matchBank && !matchRef && !matchNotes) return false;
       }
-      if (historyDateFrom && d.depositDate < historyDateFrom) return false;
-      if (historyDateTo && d.depositDate > historyDateTo) return false;
+      if (!isDateInRange(d.depositDate, depositDateRange.start, depositDateRange.end)) return false;
       return true;
     });
     const totalPages = Math.max(1, Math.ceil(filtered.length / HISTORY_PAGE_SIZE));
     if (historyPage > totalPages) setHistoryPage(1);
-  }, [depositHistory, historySearchQuery, historyDateFrom, historyDateTo, historyPage]);
+  }, [depositHistory, historySearchQuery, depositDateRange, historyPage]);
 
   // Initial Fetch & Realtime
   useEffect(() => {
@@ -859,13 +883,14 @@ export default function LeaderCashDepositsPage() {
       setPendingDeposits(pending);
       setDepositHistory(verified);
 
-      // Build daily groups for pending deposits (cash/cheque portions only).
+      // Build daily groups from pending + verified deposits (cash/cheque portions only).
       // Use only the sum of orders currently linked to each deposit (summary).
       // Do not fall back to deposit.amount when summary is missing: after e.g.
       // unlinking imported orders (deposit_id = NULL), that deposit may have no
       // orders left and deposit.amount would be stale, causing a header/expand mismatch.
+      const allDepositsForDaily = deposits;
       const dailyMap: Record<string, DailyDepositGroup> = {};
-      pending.forEach((deposit) => {
+      allDepositsForDaily.forEach((deposit) => {
         const date = new Date(deposit.depositDate);
         const dateKey = format(date, 'yyyy-MM-dd');
         const dateLabel = format(date, 'M/d/yyyy');
@@ -878,7 +903,6 @@ export default function LeaderCashDepositsPage() {
             dateLabel,
             depositIds: [],
             totalAmount: 0,
-            // Initial status per day – will be refined after we see which deposits already have slips
             status: 'pending_deposit',
           };
         }
@@ -886,14 +910,9 @@ export default function LeaderCashDepositsPage() {
         dailyMap[dateKey].totalAmount += amount;
       });
 
-      // After grouping, determine per-day status based on whether ALL deposits for that day
-      // already have a deposit slip recorded.
       Object.values(dailyMap).forEach((group) => {
-        const depositsForDay = pending.filter((d) => group.depositIds.includes(d.id));
-        const allHaveSlip =
-          depositsForDay.length > 0 && depositsForDay.every((d) => !!d.depositSlipUrl);
-
-        group.status = allHaveSlip ? 'awaiting_verification' : 'pending_deposit';
+        const depositsForDay = allDepositsForDaily.filter((d) => group.depositIds.includes(d.id));
+        group.status = deriveGroupStatus(depositsForDay);
       });
 
       const groups = Object.values(dailyMap).sort((a, b) => (a.dateKey < b.dateKey ? 1 : -1));
@@ -1317,8 +1336,7 @@ export default function LeaderCashDepositsPage() {
   };
 
   const clearDateFilter = () => {
-    setFilterFromDate('');
-    setFilterToDate('');
+    setDateRangeFilter({ preset: 'all' });
   };
 
   const handlePrint = () => {
@@ -1329,12 +1347,20 @@ export default function LeaderCashDepositsPage() {
     }
   };
 
-  const getStatusBadge = (status: 'pending' | 'verified') => {
+  const getStatusBadge = (status: DailyDepositGroup['status']) => {
     if (status === 'verified') {
       return (
         <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
           <CheckCircle2 className="h-3 w-3 mr-1" />
-          Deposited
+          Finance Verified
+        </Badge>
+      );
+    }
+    if (status === 'awaiting_verification') {
+      return (
+        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+          <Clock className="h-3 w-3 mr-1" />
+          Awaiting Finance
         </Badge>
       );
     }
@@ -1454,6 +1480,18 @@ export default function LeaderCashDepositsPage() {
   };
 
   const handleOpenEditSlip = (deposit: CashDeposit) => {
+    if (!canEditDepositSlipForDeposit(deposit)) {
+      toast({
+        title: 'Cannot edit slip',
+        description:
+          deposit.status === 'verified'
+            ? 'This deposit was verified by finance. Only a super admin can replace the slip.'
+            : 'You are not allowed to replace this deposit slip.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!canReplaceDepositSlip(deposit.id, dayTrailSlipRevisions)) {
       toast({
         title: 'Edit limit reached',
@@ -1483,6 +1521,15 @@ export default function LeaderCashDepositsPage() {
       toast({
         title: 'Reason required',
         description: 'Please explain why the slip is being replaced.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!canEditDepositSlipForDeposit(editSlipDeposit)) {
+      toast({
+        title: 'Cannot edit slip',
+        description: 'This deposit can no longer be edited.',
         variant: 'destructive',
       });
       return;
@@ -1577,13 +1624,14 @@ export default function LeaderCashDepositsPage() {
 
     const editCount = getDepositSlipEditCount(deposit.id, dayTrailSlipRevisions);
     const hasRevisions = editCount > 0;
-    const slipEditAllowed = canReplaceDepositSlip(deposit.id, dayTrailSlipRevisions);
+    const roleAllowsEdit = canEditDepositSlipForDeposit(deposit);
+    const slipEditAllowed = roleAllowsEdit && canReplaceDepositSlip(deposit.id, dayTrailSlipRevisions);
 
     return (
       <div className="mt-1 border rounded-md overflow-hidden">
         <div className={`bg-muted/30 px-3 flex items-center justify-between text-muted-foreground font-semibold ${compact ? 'py-1 text-[10px]' : 'py-1.5 text-xs'}`}>
           <span>Deposit Slip{hasRevisions ? ' (corrected)' : ''}</span>
-          {canEditDepositSlip && slipEditAllowed && (
+          {slipEditAllowed && (
             <Button
               type="button"
               variant="ghost"
@@ -1595,9 +1643,14 @@ export default function LeaderCashDepositsPage() {
               Edit ({editCount}/{MAX_DEPOSIT_SLIP_EDITS})
             </Button>
           )}
-          {canEditDepositSlip && !slipEditAllowed && (
+          {roleAllowsEdit && !canReplaceDepositSlip(deposit.id, dayTrailSlipRevisions) && (
             <span className={`font-normal text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
               Max edits reached ({MAX_DEPOSIT_SLIP_EDITS}/{MAX_DEPOSIT_SLIP_EDITS})
+            </span>
+          )}
+          {user?.role === 'team_leader' && deposit.status === 'verified' && (
+            <span className={`font-normal text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
+              Verified by finance
             </span>
           )}
         </div>
@@ -2018,19 +2071,11 @@ export default function LeaderCashDepositsPage() {
 
   // Build daily cash data view (cash/cheque only) for the UI template
   const filteredDailyCashData = pendingDailyGroups
-    .filter((group) => {
-      if (filterFromDate && group.dateKey < filterFromDate) return false;
-      if (filterToDate && group.dateKey > filterToDate) return false;
-      return true;
-    })
+    .filter((group) =>
+      isDateInRange(group.dateKey, depositDateRange.start, depositDateRange.end)
+    )
     .map((group) => {
       const details = dayDetailsByDate[group.dateKey];
-
-      // Map internal day status to simple UI status:
-      // - 'pending_deposit'       → 'pending'   (Pending Deposit)
-      // - 'awaiting_verification' → 'verified'  (Deposited – waiting for finance verification)
-      const depositStatus: 'pending' | 'verified' =
-        group.status === 'pending_deposit' ? 'pending' : 'verified';
 
       return {
         date: group.dateKey,
@@ -2038,7 +2083,7 @@ export default function LeaderCashDepositsPage() {
         totalAmount: group.totalAmount,
         totalQuantity: details?.totalUnits ?? 0,
         agents: details?.agents ?? [],
-        depositStatus,
+        depositStatus: group.status,
         rawGroup: group,
       };
     });
@@ -2058,73 +2103,43 @@ export default function LeaderCashDepositsPage() {
 
       {/* Daily Cash Collections (cash/cheque portions only) */}
       <Card>
-        <CardHeader>
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5" />
-                Daily Cash Collections
-              </CardTitle>
-              <CardDescription>
-                Cash/cheque remittance orders grouped by date. Click to expand and view agent details.
-              </CardDescription>
-            </div>
+        <CardHeader className="space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              Daily Cash Collections
+            </CardTitle>
 
-            {/* Date Filter & Print */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="fromDate" className="text-sm whitespace-nowrap">
-                  From:
-                </Label>
-                <Input
-                  id="fromDate"
-                  type="date"
-                  value={filterFromDate}
-                  onChange={(e) => setFilterFromDate(e.target.value)}
-                  className="w-[140px] h-9"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Label htmlFor="toDate" className="text-sm whitespace-nowrap">
-                  To:
-                </Label>
-                <Input
-                  id="toDate"
-                  type="date"
-                  value={filterToDate}
-                  onChange={(e) => setFilterToDate(e.target.value)}
-                  className="w-[140px] h-9"
-                />
-              </div>
-              {(filterFromDate || filterToDate) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearDateFilter}
-                  className="h-9 px-2"
-                >
-                  <X className="h-4 w-4" />
-                  Clear
-                </Button>
-              )}
+            {/* Date Filter & Print — same row as title */}
+            <div className="flex flex-row flex-nowrap items-center gap-2 shrink-0">
+              <DateRangeFilterPopover
+                value={dateRangeFilter}
+                onChange={setDateRangeFilter}
+                triggerClassName="w-[220px] justify-between h-9 shrink-0"
+                align="end"
+              />
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handlePrint}
-                className="h-9 gap-1"
+                className="h-9 gap-1 shrink-0"
               >
                 <Printer className="h-4 w-4" />
                 Print
               </Button>
             </div>
           </div>
+          <CardDescription>
+            Cash/cheque remittance orders grouped by date. Click to expand and view agent details.
+            Finance-verified deposits remain listed by date below. Use Verified Deposit History to search all confirmed deposits.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {filteredDailyCashData.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               <Calendar className="h-12 w-12 mx-auto mb-2 opacity-50" />
               <p>No cash/cheque orders found for the selected date range.</p>
-              {(filterFromDate || filterToDate) && (
+              {(hasActiveDateFilter) && (
                 <Button variant="link" onClick={clearDateFilter} className="mt-2">
                   Clear filter
                 </Button>
@@ -2204,7 +2219,7 @@ export default function LeaderCashDepositsPage() {
                                     )}
                                     
                                     {/* Checkbox - only show if agent has pending deposits and day is pending */}
-                                    {hasPendingOrders && day.depositStatus === 'pending' && !isFinanceViewOnly && (
+                                    {hasPendingOrders && day.depositStatus === 'pending_deposit' && !isFinanceViewOnly && (
                                       <div onClick={(e) => e.stopPropagation()}>
                                         <input
                                           type="checkbox"
@@ -2399,7 +2414,7 @@ export default function LeaderCashDepositsPage() {
 
                         <div className="flex flex-col sm:flex-row gap-2">
                           {/* Select All / Clear buttons */}
-                          {day.depositStatus === 'pending' && !isFinanceViewOnly && (
+                          {day.depositStatus === 'pending_deposit' && !isFinanceViewOnly && (
                             <div className="flex items-center gap-2">
                               <Button
                                 variant="outline"
@@ -2429,7 +2444,7 @@ export default function LeaderCashDepositsPage() {
                             </div>
                           )}
                           
-                          {day.depositStatus === 'pending' ? (
+                          {day.depositStatus === 'pending_deposit' ? (
                             isFinanceViewOnly ? null : (
                               <Button
                                 className="gap-2 bg-green-600 hover:bg-green-700"
@@ -2474,45 +2489,25 @@ export default function LeaderCashDepositsPage() {
       <Card>
         <CardHeader className="p-4 md:p-6">
           <CardTitle className="text-base md:text-lg">Verified Deposit History</CardTitle>
-          <CardDescription className="text-xs md:text-sm">Confirmed bank deposits recorded in the system</CardDescription>
+          <CardDescription className="text-xs md:text-sm">
+            Confirmed bank deposits recorded in the system. Date range uses the filter above Daily Cash Collections.
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-4 md:p-6">
           {depositHistory.length === 0 ? (
             <p className="text-muted-foreground text-xs md:text-sm">No verified deposits yet.</p>
           ) : (
             <>
-              {/* Search, date filter, pagination */}
+              {/* Search and pagination */}
               <div className="flex flex-col gap-3 mb-4">
-                <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search by agent, bank, ref #, or notes..."
-                      value={historySearchQuery}
-                      onChange={(e) => { setHistorySearchQuery(e.target.value); setHistoryPage(1); }}
-                      className="pl-8 h-9"
-                    />
-                  </div>
-                  <div className="flex gap-2 items-center">
-                    <div className="flex items-center gap-1.5">
-                      <Label className="text-xs text-muted-foreground whitespace-nowrap">From</Label>
-                      <Input
-                        type="date"
-                        value={historyDateFrom}
-                        onChange={(e) => { setHistoryDateFrom(e.target.value); setHistoryPage(1); }}
-                        className="h-9 w-[130px]"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Label className="text-xs text-muted-foreground whitespace-nowrap">To</Label>
-                      <Input
-                        type="date"
-                        value={historyDateTo}
-                        onChange={(e) => { setHistoryDateTo(e.target.value); setHistoryPage(1); }}
-                        className="h-9 w-[130px]"
-                      />
-                    </div>
-                  </div>
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search by agent, bank, ref #, or notes..."
+                    value={historySearchQuery}
+                    onChange={(e) => { setHistorySearchQuery(e.target.value); setHistoryPage(1); }}
+                    className="pl-8 h-9"
+                  />
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>Showing {filteredHistoryDeposits.length} of {filteredHistoryTotal}</span>
@@ -3838,7 +3833,7 @@ export default function LeaderCashDepositsPage() {
         </Dialog>
       )}
 
-      {/* Replace Deposit Slip (Super Admin) */}
+      {/* Replace Deposit Slip */}
       <Dialog
         open={editSlipDialogOpen}
         onOpenChange={(open) => {
@@ -3854,7 +3849,8 @@ export default function LeaderCashDepositsPage() {
           <DialogHeader>
             <DialogTitle>Replace Deposit Slip</DialogTitle>
             <DialogDescription>
-              Upload the correct deposit slip. The original image will be kept in revision history.
+              Upload the correct deposit slip. Team leaders can replace slips before finance verification.
+              Super admins can replace anytime. The original image is kept in revision history.
               {' '}Each deposit can be edited up to {MAX_DEPOSIT_SLIP_EDITS} times.
             </DialogDescription>
           </DialogHeader>
