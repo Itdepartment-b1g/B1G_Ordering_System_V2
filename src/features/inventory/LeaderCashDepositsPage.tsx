@@ -46,6 +46,7 @@ import {
   Search,
   Pencil,
   History,
+  Lock,
 } from 'lucide-react';
 
 // Interfaces
@@ -130,6 +131,9 @@ const formatBankLabel = (name: string, accountNumber: string | null | undefined)
   accountNumber ? `${name} - ${accountNumber}` : name;
 
 const MAX_DEPOSIT_SLIP_EDITS = 2;
+
+const TEAM_LEADER_VERIFIED_SLIP_LOCK_MESSAGE =
+  'Deposit slip cannot be edited because Finance has already approved this deposit.';
 
 const getDepositSlipEditCount = (
   depositId: string,
@@ -478,6 +482,24 @@ export default function LeaderCashDepositsPage() {
     if (user?.role === 'super_admin') return true;
     if (user?.role === 'team_leader') return deposit.status !== 'verified';
     return false;
+  };
+
+  const showTeamLeaderSlipLockedNotice = (deposit: CashDeposit): boolean =>
+    user?.role === 'team_leader' && deposit.status === 'verified';
+
+  const renderTeamLeaderSlipLockedNotice = (deposit: CashDeposit, compact = false) => {
+    if (!showTeamLeaderSlipLockedNotice(deposit)) return null;
+
+    return (
+      <div
+        className={`flex items-start gap-1.5 px-3 py-2 bg-amber-50 text-amber-900 border-b border-amber-100 ${
+          compact ? 'text-[10px]' : 'text-xs'
+        }`}
+      >
+        <Lock className={`shrink-0 mt-0.5 ${compact ? 'h-3 w-3' : 'h-3.5 w-3.5'}`} />
+        <span>{TEAM_LEADER_VERIFIED_SLIP_LOCK_MESSAGE}</span>
+      </div>
+    );
   };
 
   // Agent selection helpers
@@ -1727,12 +1749,8 @@ export default function LeaderCashDepositsPage() {
               Max edits reached ({MAX_DEPOSIT_SLIP_EDITS}/{MAX_DEPOSIT_SLIP_EDITS})
             </span>
           )}
-          {user?.role === 'team_leader' && deposit.status === 'verified' && (
-            <span className={`font-normal text-muted-foreground ${compact ? 'text-[10px]' : 'text-xs'}`}>
-              Verified by finance
-            </span>
-          )}
         </div>
+        {renderTeamLeaderSlipLockedNotice(deposit, compact)}
         <div className={`flex justify-center bg-gray-50 ${compact ? 'p-1.5' : 'p-2'}`}>
           <img
             src={deposit.depositSlipUrl}
@@ -3444,22 +3462,25 @@ export default function LeaderCashDepositsPage() {
                     {selectedDepositToView.depositSlipUrl && (
                       <div className="space-y-2">
                         <h4 className="text-xs font-medium">Deposit Slip</h4>
-                        <div className="border rounded-lg overflow-hidden bg-gray-50">
-                          <img
-                            src={selectedDepositToView.depositSlipUrl}
-                            alt="Deposit Slip"
-                            className="w-full h-auto object-contain max-h-[250px]"
-                          />
-                        </div>
-                        <div className="text-center">
-                          <a
-                            href={selectedDepositToView.depositSlipUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-blue-600 hover:underline"
-                          >
-                            View Full Image
-                          </a>
+                        <div className="border rounded-lg overflow-hidden">
+                          {renderTeamLeaderSlipLockedNotice(selectedDepositToView, true)}
+                          <div className="bg-gray-50">
+                            <img
+                              src={selectedDepositToView.depositSlipUrl}
+                              alt="Deposit Slip"
+                              className="w-full h-auto object-contain max-h-[250px]"
+                            />
+                          </div>
+                          <div className="text-center py-1.5">
+                            <a
+                              href={selectedDepositToView.depositSlipUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-blue-600 hover:underline"
+                            >
+                              View Full Image
+                            </a>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -3599,25 +3620,28 @@ export default function LeaderCashDepositsPage() {
                 </div>
 
                 {selectedDepositToView.depositSlipUrl && (
-                  <div className="pt-2 border-t mt-4">
-                    <h4 className="text-sm font-semibold mb-2">Deposit Slip</h4>
-                    <div className="rounded-lg overflow-hidden border bg-gray-50 flex justify-center">
-                      <img
-                        src={selectedDepositToView.depositSlipUrl}
-                        alt="Deposit Slip"
-                        className="w-full h-auto object-contain max-h-[300px]"
-                      />
-                    </div>
-                    <div className="mt-2 text-center">
-                      <a
-                        href={selectedDepositToView.depositSlipUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-blue-600 hover:underline"
-                        title="Open full image in new tab"
-                      >
-                        View Full Image
-                      </a>
+                  <div className="pt-2 border-t mt-4 space-y-2">
+                    <h4 className="text-sm font-semibold">Deposit Slip</h4>
+                    <div className="rounded-lg overflow-hidden border">
+                      {renderTeamLeaderSlipLockedNotice(selectedDepositToView)}
+                      <div className="bg-gray-50 flex justify-center">
+                        <img
+                          src={selectedDepositToView.depositSlipUrl}
+                          alt="Deposit Slip"
+                          className="w-full h-auto object-contain max-h-[300px]"
+                        />
+                      </div>
+                      <div className="py-2 text-center">
+                        <a
+                          href={selectedDepositToView.depositSlipUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-600 hover:underline"
+                          title="Open full image in new tab"
+                        >
+                          View Full Image
+                        </a>
+                      </div>
                     </div>
                   </div>
                 )}
