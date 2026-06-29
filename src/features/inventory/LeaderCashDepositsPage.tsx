@@ -22,6 +22,7 @@ import {
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { sendNotificationToCompanyRoles } from '@/features/shared/lib/notification.helpers';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
+import { buildDepositTrailPrintHtml, printDepositTrailHtml } from '@/features/inventory/utils/buildDepositTrailPrintHtml';
 import {
   BanknoteIcon,
   AlertCircle,
@@ -441,6 +442,7 @@ export default function LeaderCashDepositsPage() {
   const [dayTrailOrders, setDayTrailOrders] = useState<Record<string, DepositOrderBreakdown[]>>({});
   const [loadingDayTrailOrders, setLoadingDayTrailOrders] = useState(false);
   const [dayTrailSlipRevisions, setDayTrailSlipRevisions] = useState<Record<string, CashDepositSlipRevision[]>>({});
+  const [selectedTrailDepositIds, setSelectedTrailDepositIds] = useState<string[]>([]);
 
   // Edit deposit slip (super admin)
   const [editSlipDialogOpen, setEditSlipDialogOpen] = useState(false);
@@ -1347,6 +1349,83 @@ export default function LeaderCashDepositsPage() {
     }
   };
 
+  const closeDayTrail = () => {
+    setViewDayTrailOpen(false);
+    setSelectedTrailDepositIds([]);
+  };
+
+  const handleDayTrailOpenChange = (open: boolean) => {
+    if (!open) {
+      closeDayTrail();
+      return;
+    }
+    setViewDayTrailOpen(true);
+  };
+
+  const toggleTrailDepositSelection = (depositId: string) => {
+    setSelectedTrailDepositIds((prev) =>
+      prev.includes(depositId) ? prev.filter((id) => id !== depositId) : [...prev, depositId]
+    );
+  };
+
+  const selectAllTrailDeposits = () => {
+    setSelectedTrailDepositIds(dayTrailDeposits.map((d) => d.id));
+  };
+
+  const clearTrailDepositSelection = () => {
+    setSelectedTrailDepositIds([]);
+  };
+
+  const handlePrintDepositTrail = () => {
+    const selected = dayTrailDeposits.filter((d) => selectedTrailDepositIds.includes(d.id));
+    if (!selected.length) {
+      toast({
+        title: 'Nothing selected',
+        description: 'Select at least one deposit to print.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const dateLabel =
+      selected.length > 0
+        ? format(new Date(selected[0].depositDate), 'MMMM dd, yyyy')
+        : 'Deposit Trail';
+
+    const html = buildDepositTrailPrintHtml(
+      dateLabel,
+      selected.map((deposit) => {
+        const orders = dayTrailOrders[deposit.id] || [];
+        const totalAmt = orders.reduce((s, o) => s + o.remittedAmount, 0);
+        return {
+          index: dayTrailDeposits.findIndex((d) => d.id === deposit.id),
+          depositDate: deposit.depositDate,
+          createdAt: deposit.createdAt,
+          agentName: deposit.agentName,
+          performedByName: deposit.performedByName,
+          bankAccount: deposit.bankAccount,
+          referenceNumber: deposit.referenceNumber,
+          notes: deposit.notes,
+          status: deposit.status,
+          displayType: getEffectiveDepositType(deposit),
+          totalAmt,
+          depositSlipUrl: deposit.depositSlipUrl,
+          orders,
+          revisions: dayTrailSlipRevisions[deposit.id] || [],
+        };
+      })
+    );
+
+    const opened = printDepositTrailHtml(html);
+    if (!opened) {
+      toast({
+        title: 'Popup blocked',
+        description: 'Allow popups for this site, then click Print selected again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const getStatusBadge = (status: DailyDepositGroup['status']) => {
     if (status === 'verified') {
       return (
@@ -1706,6 +1785,7 @@ export default function LeaderCashDepositsPage() {
     setDayTrailDeposits(allForDay);
     setDayTrailOrders({});
     setDayTrailSlipRevisions({});
+    setSelectedTrailDepositIds(allForDay.map((d) => d.id));
     setViewDayTrailOpen(true);
 
     const allIds = allForDay.map((d) => d.id);
@@ -2118,15 +2198,17 @@ export default function LeaderCashDepositsPage() {
                 triggerClassName="w-[220px] justify-between h-9 shrink-0"
                 align="end"
               />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handlePrint}
-                className="h-9 gap-1 shrink-0"
-              >
-                <Printer className="h-4 w-4" />
-                Print
-              </Button>
+              {!viewDayTrailOpen && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePrint}
+                  className="h-9 gap-1 shrink-0"
+                >
+                  <Printer className="h-4 w-4" />
+                  Print
+                </Button>
+              )}
             </div>
           </div>
           <CardDescription>
@@ -3550,10 +3632,20 @@ export default function LeaderCashDepositsPage() {
           </DialogContent>
         </Dialog>
       )}
+      {/* Hide deposit trail modal when printing the main page (Ctrl+P / header Print) */}
+      <style>{`
+        @media print {
+          [data-radix-dialog-overlay]:has(+ [data-deposit-trail-modal]),
+          [data-deposit-trail-modal] {
+            display: none !important;
+          }
+        }
+      `}</style>
+
       {/* Day Deposits Trail Modal */}
       {isMobile ? (
-        <Sheet open={viewDayTrailOpen} onOpenChange={setViewDayTrailOpen}>
-          <SheetContent side="bottom" className="h-[90vh] p-0">
+        <Sheet open={viewDayTrailOpen} onOpenChange={handleDayTrailOpenChange}>
+          <SheetContent side="bottom" className="h-[90vh] p-0" data-deposit-trail-modal>
             <ScrollArea className="h-full">
               <div className="p-5 space-y-4">
                 <SheetHeader>
@@ -3563,6 +3655,30 @@ export default function LeaderCashDepositsPage() {
                   </SheetTitle>
                   <SheetDescription className="text-xs">All deposits recorded for this day</SheetDescription>
                 </SheetHeader>
+
+                {dayTrailDeposits.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8 text-xs gap-1.5 shrink-0"
+                      onClick={handlePrintDepositTrail}
+                      disabled={selectedTrailDepositIds.length === 0}
+                    >
+                      <Printer className="h-3.5 w-3.5" />
+                      Print ({selectedTrailDepositIds.length})
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={selectAllTrailDeposits}>
+                      Select all
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" className="h-8 text-xs" onClick={clearTrailDepositSelection}>
+                      Clear
+                    </Button>
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      {selectedTrailDepositIds.length} of {dayTrailDeposits.length} selected
+                    </span>
+                  </div>
+                )}
 
                 {loadingDayTrailOrders && (
                   <div className="flex items-center justify-center py-6">
@@ -3575,10 +3691,17 @@ export default function LeaderCashDepositsPage() {
                   const totalAmt = orders.reduce((s, o) => s + o.remittedAmount, 0);
                   const displayType = getEffectiveDepositType(deposit);
                   return (
-                    <div key={deposit.id} className="border rounded-lg overflow-hidden">
+                    <div key={deposit.id} className={`border rounded-lg overflow-hidden ${selectedTrailDepositIds.includes(deposit.id) ? 'ring-2 ring-primary/30' : ''}`}>
                       {/* Deposit header */}
-                      <div className="bg-muted/50 px-3 py-2 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+                      <div className="bg-muted/50 px-3 py-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={selectedTrailDepositIds.includes(deposit.id)}
+                            onChange={() => toggleTrailDepositSelection(deposit.id)}
+                            className="h-4 w-4 shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                            aria-label={`Select deposit ${idx + 1} for printing`}
+                          />
                           <span className="text-xs font-bold text-muted-foreground">Deposit #{idx + 1}</span>
                           <Badge variant="outline" className={`${getDepositTypeBadgeClass(displayType)} h-5 text-[10px]`}>
                             {displayType === 'CHEQUE' ? <CreditCard className="h-2 w-2 mr-1" /> : <BanknoteIcon className="h-2 w-2 mr-1" />}
@@ -3679,7 +3802,7 @@ export default function LeaderCashDepositsPage() {
                 })}
 
                 <div className="sticky bottom-0 bg-background pt-3 pb-2 border-t">
-                  <Button variant="outline" onClick={() => setViewDayTrailOpen(false)} className="w-full h-10 text-xs">
+                  <Button variant="outline" onClick={closeDayTrail} className="w-full h-10 text-xs">
                     Close
                   </Button>
                 </div>
@@ -3688,8 +3811,8 @@ export default function LeaderCashDepositsPage() {
           </SheetContent>
         </Sheet>
       ) : (
-        <Dialog open={viewDayTrailOpen} onOpenChange={setViewDayTrailOpen}>
-          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <Dialog open={viewDayTrailOpen} onOpenChange={handleDayTrailOpenChange}>
+          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto" data-deposit-trail-modal>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Receipt className="h-4 w-4" />
@@ -3697,6 +3820,30 @@ export default function LeaderCashDepositsPage() {
               </DialogTitle>
               <DialogDescription>All deposits recorded for this day, in order of creation.</DialogDescription>
             </DialogHeader>
+
+            {dayTrailDeposits.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5 shrink-0"
+                  onClick={handlePrintDepositTrail}
+                  disabled={selectedTrailDepositIds.length === 0}
+                >
+                  <Printer className="h-4 w-4" />
+                  Print ({selectedTrailDepositIds.length})
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={selectAllTrailDeposits}>
+                  Select all
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={clearTrailDepositSelection}>
+                  Clear
+                </Button>
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {selectedTrailDepositIds.length} of {dayTrailDeposits.length} selected
+                </span>
+              </div>
+            )}
 
             <div className="space-y-4 py-2">
               {loadingDayTrailOrders && (
@@ -3710,10 +3857,17 @@ export default function LeaderCashDepositsPage() {
                 const totalAmt = orders.reduce((s, o) => s + o.remittedAmount, 0);
                 const displayType = getEffectiveDepositType(deposit);
                 return (
-                  <div key={deposit.id} className="border rounded-lg overflow-hidden">
+                  <div key={deposit.id} className={`border rounded-lg overflow-hidden ${selectedTrailDepositIds.includes(deposit.id) ? 'ring-2 ring-primary/30' : ''}`}>
                     {/* Deposit header bar */}
-                    <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={selectedTrailDepositIds.includes(deposit.id)}
+                          onChange={() => toggleTrailDepositSelection(deposit.id)}
+                          className="h-4 w-4 shrink-0 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                          aria-label={`Select deposit ${idx + 1} for printing`}
+                        />
                         <span className="text-sm font-bold text-muted-foreground">Deposit #{idx + 1}</span>
                         <Badge variant="outline" className={`${getDepositTypeBadgeClass(displayType)} text-xs`}>
                           {displayType === 'CHEQUE' ? <CreditCard className="h-3 w-3 mr-1" /> : <BanknoteIcon className="h-3 w-3 mr-1" />}
@@ -3825,7 +3979,7 @@ export default function LeaderCashDepositsPage() {
             </div>
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => setViewDayTrailOpen(false)}>
+              <Button type="button" variant="outline" onClick={closeDayTrail}>
                 Close
               </Button>
             </DialogFooter>
