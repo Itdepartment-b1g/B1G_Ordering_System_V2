@@ -6,12 +6,16 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Eye,
   Loader2,
+  MoreHorizontal,
   PackagePlus,
+  Pencil,
   Plus,
   Search,
   Trash2,
   Truck,
+  XCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
@@ -67,6 +71,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { WarehouseStockReceiveDialog } from './components/WarehouseStockReceiveDialog';
+import {
+  buildReceivePayload,
+  createReceiveLotSplit,
+  formatReceiveCurrency,
+  validateReceiveVariants,
+  type ReceiveVariantItem,
+} from './warehouseStockReceiveShared';
 
 type RequestStatus =
   | 'pending_receive'
@@ -99,7 +118,7 @@ type StockRequestRow = {
     id: string;
     received_at: string;
     notes: string | null;
-    batch: { batch_number: string } | null;
+    batch: { batch_number: string; total_amount?: number | null } | null;
     received_by_user: { full_name: string } | null;
   }>;
 };
@@ -232,6 +251,8 @@ export default function WarehouseStockRequestsPage() {
   const [sortState, setSortState] =
     useState<TableSortCycleState<WarehouseStockRequestSortKey>>(createInitialTableSortCycle);
   const [createOpen, setCreateOpen] = useState(false);
+  const [formMode, setFormMode] = useState<'create' | 'edit'>('create');
+  const [editingRequest, setEditingRequest] = useState<StockRequestRow | null>(null);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<StockRequestRow | null>(null);
@@ -244,7 +265,7 @@ export default function WarehouseStockRequestsPage() {
   const [addBrandOpen, setAddBrandOpen] = useState(false);
   const [selectedBrandForAdd, setSelectedBrandForAdd] = useState('');
 
-  const [receiveQuantities, setReceiveQuantities] = useState<Record<string, number>>({});
+  const [receiveVariants, setReceiveVariants] = useState<ReceiveVariantItem[]>([]);
   const [receiveNotes, setReceiveNotes] = useState('');
   const [receiveSubmitting, setReceiveSubmitting] = useState(false);
 
@@ -310,7 +331,7 @@ export default function WarehouseStockRequestsPage() {
             id,
             received_at,
             notes,
-            batch:inventory_batches ( batch_number ),
+            batch:inventory_batches ( batch_number, total_amount ),
             received_by_user:profiles!warehouse_stock_request_receives_received_by_fkey ( full_name )
           )
         `
@@ -411,12 +432,21 @@ export default function WarehouseStockRequestsPage() {
 
   const openReceiveDialog = (request: StockRequestRow) => {
     setSelectedRequest(request);
-    const initial: Record<string, number> = {};
-    for (const item of request.items) {
-      const remaining = item.ordered_quantity - item.received_quantity;
-      if (remaining > 0) initial[item.variant_id] = remaining;
-    }
-    setReceiveQuantities(initial);
+    const initialVariants: ReceiveVariantItem[] = request.items
+      .filter((item) => item.received_quantity < item.ordered_quantity)
+      .map((item) => {
+        const remaining = item.ordered_quantity - item.received_quantity;
+        const brandPrefix = item.variant?.brand?.name ? `${item.variant.brand.name} · ` : '';
+        return {
+          id: item.id,
+          variantId: item.variant_id,
+          variantLabel: `${brandPrefix}${item.variant?.name ?? item.variant_id}`,
+          remaining,
+          orderedQuantity: item.ordered_quantity,
+          splits: [createReceiveLotSplit(remaining)],
+        };
+      });
+    setReceiveVariants(initialVariants);
     setReceiveNotes('');
     setReceiveOpen(true);
   };
@@ -432,6 +462,33 @@ export default function WarehouseStockRequestsPage() {
     setCreateExpectedDate('');
     setSelectedBrandForAdd('');
     setAddBrandOpen(false);
+    setFormMode('create');
+    setEditingRequest(null);
+  };
+
+  const openCreateDialog = () => {
+    resetCreateForm();
+    setFormMode('create');
+    setCreateOpen(true);
+  };
+
+  const openEditDialog = (request: StockRequestRow) => {
+    setFormMode('edit');
+    setEditingRequest(request);
+    setCreateNotes(request.notes ?? '');
+    setCreateExpectedDate(request.expected_delivery_date ?? '');
+    setCreateLines(
+      request.items.map((item) => ({
+        id: crypto.randomUUID(),
+        brandId: item.variant?.brand?.id ?? '',
+        brandName: item.variant?.brand?.name ?? '—',
+        variantId: item.variant_id,
+        variantName: item.variant?.name ?? item.variant_id,
+        variantType: item.variant?.variant_type ?? '',
+        quantity: item.ordered_quantity,
+      }))
+    );
+    setCreateOpen(true);
   };
 
   const handleAddBrandVariants = () => {
@@ -476,7 +533,7 @@ export default function WarehouseStockRequestsPage() {
     });
   };
 
-  const handleCreate = async () => {
+  const handleSaveRequest = async () => {
     const items = createLines
       .map((line) => ({
         variant_id: line.variantId,
@@ -500,27 +557,51 @@ export default function WarehouseStockRequestsPage() {
 
     setCreateSubmitting(true);
     try {
-      const { data, error } = await supabase.rpc('create_warehouse_stock_request', {
-        p_brand_id: headerBrandId,
-        p_items: items,
-        p_notes: createNotes.trim() || null,
-        p_expected_delivery_date: createExpectedDate || null,
-        p_created_by: user?.id ?? null,
-      });
-      if (error) throw error;
-      const result = data as { success?: boolean; error?: string; request_number?: string };
-      if (!result?.success) {
-        throw new Error(result?.error ?? 'Failed to create stock request');
+      if (formMode === 'edit' && editingRequest) {
+        const { data, error } = await supabase.rpc('update_warehouse_stock_request', {
+          p_request_id: editingRequest.id,
+          p_items: items,
+          p_notes: createNotes.trim() || null,
+          p_expected_delivery_date: createExpectedDate || null,
+          p_updated_by: user?.id ?? null,
+        });
+        if (error) throw error;
+        const result = data as { success?: boolean; error?: string; request_number?: string };
+        if (!result?.success) {
+          throw new Error(result?.error ?? 'Failed to update stock request');
+        }
+        toast({
+          title: 'Stock request updated',
+          description: result.request_number ?? 'Request saved.',
+        });
+      } else {
+        const { data, error } = await supabase.rpc('create_warehouse_stock_request', {
+          p_brand_id: headerBrandId,
+          p_items: items,
+          p_notes: createNotes.trim() || null,
+          p_expected_delivery_date: createExpectedDate || null,
+          p_created_by: user?.id ?? null,
+        });
+        if (error) throw error;
+        const result = data as { success?: boolean; error?: string; request_number?: string };
+        if (!result?.success) {
+          throw new Error(result?.error ?? 'Failed to create stock request');
+        }
+        toast({
+          title: 'Stock request created',
+          description: result.request_number ?? 'Request saved.',
+        });
       }
-      toast({
-        title: 'Stock request created',
-        description: result.request_number ?? 'Request saved.',
-      });
       setCreateOpen(false);
       resetCreateForm();
       await queryClient.invalidateQueries({ queryKey: ['warehouse-stock-requests'] });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to create stock request';
+      const message =
+        err instanceof Error
+          ? err.message
+          : formMode === 'edit'
+            ? 'Failed to update stock request'
+            : 'Failed to create stock request';
       toast({ title: 'Error', description: message, variant: 'destructive' });
     } finally {
       setCreateSubmitting(false);
@@ -530,25 +611,17 @@ export default function WarehouseStockRequestsPage() {
   const handleReceive = async () => {
     if (!selectedRequest) return;
 
-    const items = selectedRequest.items
-      .map((item) => {
-        const remaining = item.ordered_quantity - item.received_quantity;
-        const qty = Math.min(
-          remaining,
-          Math.max(0, Math.floor(receiveQuantities[item.variant_id] ?? 0))
-        );
-        return { variant_id: item.variant_id, quantity: qty };
-      })
-      .filter((i) => i.quantity > 0);
-
-    if (items.length === 0) {
+    const validationError = validateReceiveVariants(receiveVariants);
+    if (validationError) {
       toast({
-        title: 'Nothing to receive',
-        description: 'Enter at least one quantity to receive.',
+        title: 'Cannot receive',
+        description: validationError,
         variant: 'destructive',
       });
       return;
     }
+
+    const items = buildReceivePayload(receiveVariants);
 
     setReceiveSubmitting(true);
     try {
@@ -565,13 +638,18 @@ export default function WarehouseStockRequestsPage() {
         batch_number?: string;
         fully_received?: boolean;
         total_received?: number;
+        total_amount?: number;
       };
       if (!result?.success) {
         throw new Error(result?.error ?? 'Failed to receive stock');
       }
+      const amountLabel =
+        typeof result.total_amount === 'number'
+          ? ` · ${formatReceiveCurrency(result.total_amount)}`
+          : '';
       toast({
         title: result.fully_received ? 'Fully received' : 'Partially received',
-        description: `Batch ${result.batch_number ?? ''} — ${result.total_received ?? 0} unit(s) added to main inventory.`,
+        description: `Batch ${result.batch_number ?? ''} — ${result.total_received ?? 0} unit(s) added to main inventory${amountLabel}.`,
       });
       setReceiveOpen(false);
       setSelectedRequest(null);
@@ -649,7 +727,7 @@ export default function WarehouseStockRequestsPage() {
             variants into the same batch.
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button onClick={openCreateDialog}>
           <Plus className="h-4 w-4 mr-2" />
           New request
         </Button>
@@ -755,6 +833,7 @@ export default function WarehouseStockRequestsPage() {
                     const ordered = req.items.reduce((s, i) => s + i.ordered_quantity, 0);
                     const received = req.items.reduce((s, i) => s + i.received_quantity, 0);
                     const canReceive = ['pending_receive', 'partially_received'].includes(req.status);
+                    const canEdit = req.status === 'pending_receive' && received === 0;
                     const canCancel = req.status === 'pending_receive' && received === 0;
                     const lastReceivedAt = getLastReceivedAt(req);
 
@@ -779,27 +858,44 @@ export default function WarehouseStockRequestsPage() {
                             : '—'}
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-1 flex-wrap">
-                            <Button variant="ghost" size="sm" onClick={() => openDetailDialog(req)}>
-                              View
-                            </Button>
-                            {canReceive && (
-                              <Button variant="outline" size="sm" onClick={() => openReceiveDialog(req)}>
-                                <Truck className="h-3.5 w-3.5 mr-1" />
-                                Receive
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreHorizontal className="h-4 w-4" />
+                                <span className="sr-only">Open actions</span>
                               </Button>
-                            )}
-                            {canCancel && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-destructive"
-                                onClick={() => setCancelTarget(req)}
-                              >
-                                Cancel
-                              </Button>
-                            )}
-                          </div>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-44">
+                              <DropdownMenuItem onClick={() => openDetailDialog(req)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View
+                              </DropdownMenuItem>
+                              {canReceive && (
+                                <DropdownMenuItem onClick={() => openReceiveDialog(req)}>
+                                  <Truck className="mr-2 h-4 w-4" />
+                                  Receive
+                                </DropdownMenuItem>
+                              )}
+                              {canEdit && (
+                                <DropdownMenuItem onClick={() => openEditDialog(req)}>
+                                  <Pencil className="mr-2 h-4 w-4" />
+                                  Edit
+                                </DropdownMenuItem>
+                              )}
+                              {canCancel && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => setCancelTarget(req)}
+                                  >
+                                    <XCircle className="mr-2 h-4 w-4" />
+                                    Cancel
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     );
@@ -873,7 +969,9 @@ export default function WarehouseStockRequestsPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <PackagePlus className="h-5 w-5" />
-              New stock request
+              {formMode === 'edit' && editingRequest
+                ? `Edit ${editingRequest.request_number}`
+                : 'New stock request'}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -984,10 +1082,16 @@ export default function WarehouseStockRequestsPage() {
               Cancel
             </Button>
             <Button
-              onClick={() => void handleCreate()}
+              onClick={() => void handleSaveRequest()}
               disabled={createSubmitting || createLines.length === 0}
             >
-              {createSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Create request'}
+              {createSubmitting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : formMode === 'edit' ? (
+                'Save changes'
+              ) : (
+                'Create request'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1030,81 +1134,17 @@ export default function WarehouseStockRequestsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Receive dialog */}
-      <Dialog open={receiveOpen} onOpenChange={setReceiveOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Truck className="h-5 w-5" />
-              Receive stock — {selectedRequest?.request_number}
-            </DialogTitle>
-          </DialogHeader>
-          {selectedRequest && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                One receive creates one batch ({'BATCH-YYYY-MM-#####'}) for all lines in this
-                delivery.
-              </p>
-              <div className="space-y-2 border rounded-lg p-3">
-                {selectedRequest.items
-                  .filter((i) => i.received_quantity < i.ordered_quantity)
-                  .map((item) => {
-                    const remaining = item.ordered_quantity - item.received_quantity;
-                    return (
-                      <div key={item.id} className="flex items-center justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">
-                            {item.variant?.brand?.name ? `${item.variant.brand.name} · ` : ''}
-                            {item.variant?.name ?? item.variant_id}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Remaining: {remaining} of {item.ordered_quantity}
-                          </p>
-                        </div>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={remaining}
-                          className="w-24"
-                          value={receiveQuantities[item.variant_id] ?? ''}
-                          onChange={(e) =>
-                            setReceiveQuantities((prev) => ({
-                              ...prev,
-                              [item.variant_id]: Math.min(
-                                remaining,
-                                parseInt(e.target.value, 10) || 0
-                              ),
-                            }))
-                          }
-                        />
-                      </div>
-                    );
-                  })}
-              </div>
-              <div className="grid gap-2">
-                <Label>Receive notes (optional)</Label>
-                <Textarea
-                  value={receiveNotes}
-                  onChange={(e) => setReceiveNotes(e.target.value)}
-                  rows={2}
-                />
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setReceiveOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => void handleReceive()} disabled={receiveSubmitting}>
-              {receiveSubmitting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                'Confirm receive'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <WarehouseStockReceiveDialog
+        open={receiveOpen}
+        onOpenChange={setReceiveOpen}
+        requestNumber={selectedRequest?.request_number ?? ''}
+        variants={receiveVariants}
+        onVariantsChange={setReceiveVariants}
+        notes={receiveNotes}
+        onNotesChange={setReceiveNotes}
+        submitting={receiveSubmitting}
+        onConfirm={() => void handleReceive()}
+      />
 
       {/* Detail dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
@@ -1171,6 +1211,10 @@ export default function WarehouseStockRequestsPage() {
                               {format(new Date(recv.received_at), 'MMM d, yyyy h:mm a')}
                               {recv.received_by_user?.full_name
                                 ? ` · ${recv.received_by_user.full_name}`
+                                : ''}
+                              {typeof recv.batch?.total_amount === 'number' &&
+                              recv.batch.total_amount > 0
+                                ? ` · ${formatReceiveCurrency(recv.batch.total_amount)}`
                                 : ''}
                             </p>
                           </div>

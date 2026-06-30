@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import { getDrBankAccounts } from '@/features/finance/paymentSettingsUtils';
+import type { BankAccount } from '@/types/database.types';
 import type { PurchaseOrder, PurchaseOrderItem } from '../types';
 
 export type DrPdfOptions = {
@@ -9,6 +11,7 @@ export type DrPdfOptions = {
 
 type DrReceiptInfo = {
   company_account_type?: string;
+  key_account_client_id?: string | null;
   key_account?: {
     client_name: string;
     full_address: string;
@@ -26,6 +29,11 @@ type DrReceiptInfo = {
     city: string;
     country: string;
   } | null;
+  payment?: {
+    company_name?: string;
+    bank_transfer_enabled?: boolean;
+    bank_accounts?: BankAccount[];
+  } | null;
 };
 
 type DeliveryDetails = {
@@ -35,18 +43,55 @@ type DeliveryDetails = {
   contactPhone: string;
 };
 
-async function fetchDrReceiptInfo(poId: string): Promise<DrReceiptInfo> {
+async function fetchDrReceiptInfo(po: PurchaseOrder): Promise<DrReceiptInfo> {
   try {
-    const { data, error } = await supabase.rpc('get_po_dr_receipt_info', { p_po_id: poId });
+    const { data, error } = await supabase.rpc('get_po_dr_receipt_info', { p_po_id: po.id });
     if (error) {
       console.warn('[DR] get_po_dr_receipt_info error:', error);
-      return {};
+      return await fetchDrReceiptInfoFallback(po);
     }
-    return (data || {}) as DrReceiptInfo;
+    const info = (data || {}) as DrReceiptInfo;
+    if (!info.payment?.bank_accounts?.length) {
+      const fallbackPayment = await fetchWarehousePaymentFallback(po);
+      if (fallbackPayment) {
+        info.payment = { ...info.payment, ...fallbackPayment };
+      }
+    }
+    return info;
   } catch (e) {
     console.warn('[DR] get_po_dr_receipt_info exception:', e);
-    return {};
+    return fetchDrReceiptInfoFallback(po);
   }
+}
+
+/** When RPC is not migrated yet, load warehouse payment settings directly (same company RLS). */
+async function fetchWarehousePaymentFallback(
+  po: PurchaseOrder
+): Promise<DrReceiptInfo['payment'] | null> {
+  const companyId = po.warehouse_company_id;
+  if (!companyId) return null;
+
+  const [{ data: paymentRow }, { data: companyRow }] = await Promise.all([
+    supabase
+      .from('company_payment_settings')
+      .select('bank_accounts, bank_transfer_enabled')
+      .eq('company_id', companyId)
+      .maybeSingle(),
+    supabase.from('companies').select('company_name').eq('id', companyId).maybeSingle(),
+  ]);
+
+  if (!paymentRow && !companyRow) return null;
+
+  return {
+    company_name: companyRow?.company_name ?? '',
+    bank_transfer_enabled: paymentRow?.bank_transfer_enabled ?? false,
+    bank_accounts: (paymentRow?.bank_accounts as BankAccount[] | undefined) ?? [],
+  };
+}
+
+async function fetchDrReceiptInfoFallback(po: PurchaseOrder): Promise<DrReceiptInfo> {
+  const payment = await fetchWarehousePaymentFallback(po);
+  return payment ? { payment } : {};
 }
 
 /**
@@ -55,7 +100,7 @@ async function fetchDrReceiptInfo(poId: string): Promise<DrReceiptInfo> {
  * save as PDF or send to a printer (same pattern as COF).
  */
 export async function generateAndOpenDrPdf(po: PurchaseOrder, options: DrPdfOptions) {
-  const receiptInfo = await fetchDrReceiptInfo(po.id);
+  const receiptInfo = await fetchDrReceiptInfo(po);
   const html = buildDrHtml(po, options, receiptInfo);
 
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
@@ -127,8 +172,20 @@ function itemsForWarehouse(
   return items.filter((it) => String(it.warehouse_location_id) === String(warehouseLocationId));
 }
 
+function resolveCompanyAccountType(po: PurchaseOrder, info: DrReceiptInfo): string {
+  return String(info.company_account_type || po.company_account_type || 'Standard Accounts');
+}
+
+/** Key Account POs omit warehouse name on the printed DR. */
+function shouldHideWarehouseOnDr(po: PurchaseOrder, info: DrReceiptInfo): boolean {
+  if (resolveCompanyAccountType(po, info) === 'Key Accounts') return true;
+  if (po.key_account_client_id) return true;
+  if (info.key_account_client_id) return true;
+  return false;
+}
+
 function resolveDeliveryDetails(po: PurchaseOrder, info: DrReceiptInfo): DeliveryDetails {
-  const acct = String(info.company_account_type || po.company_account_type || 'Standard Accounts');
+  const acct = resolveCompanyAccountType(po, info);
 
   if (acct === 'Key Accounts' && info.key_account) {
     const ka = info.key_account;
@@ -182,6 +239,33 @@ function itemRowsHtml(items: PurchaseOrderItem[]): string {
   return rows.join('');
 }
 
+function bankSectionHtml(receiptInfo: DrReceiptInfo): string {
+  const payment = receiptInfo.payment;
+  const banks = getDrBankAccounts(payment ? { bank_accounts: payment.bank_accounts ?? [] } : null);
+
+  if (banks.length === 0) return '';
+
+  const companyName = payment?.company_name?.trim() || 'B1G CORPORATION';
+  const cols = banks
+    .map(
+      (bank) => `
+        <div>
+          <div class="corp">${escapeHtml(companyName)}</div>
+          <div class="bank-name">${escapeHtml(bank.name)}</div>
+          <div class="bank-acct">${escapeHtml(bank.account_number)}</div>
+        </div>`
+    )
+    .join('');
+
+  return `
+    <div class="bank-section">
+      <div class="bank-title">BANK DETAILS:</div>
+      <div class="bank-cols">
+        ${cols}
+      </div>
+    </div>`;
+}
+
 function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrReceiptInfo): string {
   const warehouseItems = itemsForWarehouse(
     po.items || [],
@@ -189,11 +273,17 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     po.warehouse_location_id
   );
   const delivery = resolveDeliveryDetails(po, receiptInfo);
+  const hideWarehouse = shouldHideWarehouseOnDr(po, receiptInfo);
   const whLabel = escapeHtml(options.warehouseLocationName);
   const whFooter = escapeHtml(formatWarehouseFooterLabel(options.warehouseLocationName));
   const drNo = escapeHtml(options.drNumber);
-  const acct = String(receiptInfo.company_account_type || po.company_account_type || 'Standard Accounts');
+  const acct = resolveCompanyAccountType(po, receiptInfo);
   const recipientLabel = acct === 'Key Accounts' ? 'CLIENT' : 'COMPANY';
+  const warehouseBadgeHtml = hideWarehouse
+    ? ''
+    : `<div class="warehouse-badge">DR from: <span>${whLabel}</span></div>`;
+  const footerNoteHtml = hideWarehouse ? '' : `<div class="footer-note">${whFooter}</div>`;
+  const bankSection = bankSectionHtml(receiptInfo);
 
   return `<!doctype html>
 <html lang="en">
@@ -356,7 +446,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   }
   .bank-cols {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 12px;
     font-size: 10px;
     text-align: center;
@@ -426,7 +516,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
       </h1>
     </div>
     <div class="toolbar-center">
-      <div class="warehouse-badge">DR from: <span>${whLabel}</span></div>
+      ${warehouseBadgeHtml}
     </div>
     <div class="toolbar-right">
       <button type="button" onclick="window.print()">Print</button>
@@ -482,26 +572,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
       </div>
     </div>
 
-    <div class="bank-section">
-      <div class="bank-title">BANK DETAILS:</div>
-      <div class="bank-cols">
-        <div>
-          <div class="corp">B1G CORPORATION</div>
-          <div class="bank-name">BDO</div>
-          <div class="bank-acct">004738021691</div>
-        </div>
-        <div>
-          <div class="corp">B1G CORPORATION</div>
-          <div class="bank-name">BPI</div>
-          <div class="bank-acct">1761-011118</div>
-        </div>
-        <div>
-          <div class="corp">B1G CORPORATION</div>
-          <div class="bank-name">PBCOM</div>
-          <div class="bank-acct">238-10-1005743</div>
-        </div>
-      </div>
-    </div>
+    ${bankSection}
 
     <table class="signoff-table">
       <thead>
@@ -533,7 +604,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
       </tbody>
     </table>
 
-    <div class="footer-note">${whFooter}</div>
+    ${footerNoteHtml}
   </div>
 </body>
 </html>`;

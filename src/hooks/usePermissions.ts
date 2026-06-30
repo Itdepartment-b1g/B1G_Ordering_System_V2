@@ -85,6 +85,7 @@ export function usePermissions() {
       const warehouseRoutes = [
         '/purchase-order-management',
         '/purchase-orders',
+        '/finance/payment-settings',
         '/brands',
         '/variant-types',
         '/inventory',
@@ -102,7 +103,7 @@ export function usePermissions() {
       return warehouseRoutes.includes(route);
     }
 
-    // For other roles, you can add specific route checks here
+    // Finance role only — warehouse is handled in the block above.
     if (route === '/finance/payment-settings') {
       return user?.role === 'finance';
     }

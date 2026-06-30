@@ -55,7 +55,7 @@ export function InventoryVariantTableHeader({
             className={th}
           />
         )}
-        {!isSubWarehouseUser && (
+        {!isWarehouse && (
           <SortableTableHead
             label="Allocated (Remaining stocks)"
             sortKey="allocatedRemaining"

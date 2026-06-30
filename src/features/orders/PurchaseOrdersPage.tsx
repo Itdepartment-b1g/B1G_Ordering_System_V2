@@ -16,7 +16,15 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -1683,23 +1691,21 @@ export default function PurchaseOrdersPage() {
 
       {/* Dispatch / Delivery Dialog (warehouse transfer fulfill) */}
       <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-3 shrink-0 space-y-1">
             <DialogTitle>Dispatch / Delivery</DialogTitle>
+            <DialogDescription>
+              {dispatchPo?.po_number ? `PO: ${dispatchPo.po_number}` : 'Complete delivery details below.'}
+            </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="text-sm text-muted-foreground">
-              {dispatchPo?.po_number ? `PO: ${dispatchPo.po_number}` : 'PO'}
-            </div>
-
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4 space-y-4">
             {dispatchPo?.po_order_kind === 'rebate_fulfillment' && (
-              <div className="space-y-2">
+              <div className="space-y-2 rounded-md border bg-muted/20 p-3">
                 <div className="text-sm font-medium">Expected return items (disputed lines)</div>
-                <div className="text-xs text-muted-foreground">
-                  This fulfillment deducts replacement stock. Returned/disputed items are not automatically added back to
-                  inventory until they are physically received.
-                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Replacement stock is deducted on delivery. Disputed items are restocked only after physical receive.
+                </p>
                 {loadingFulfillRebateReturnLines ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading return items…
@@ -1707,21 +1713,21 @@ export default function PurchaseOrdersPage() {
                 ) : fulfillRebateReturnLines.length === 0 ? (
                   <div className="text-sm text-muted-foreground">—</div>
                 ) : (
-                  <div className="max-h-40 overflow-auto rounded-md border">
+                  <div className="max-h-28 overflow-auto rounded-md border bg-background">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Brand</TableHead>
-                          <TableHead>Variant</TableHead>
-                          <TableHead className="text-right">Qty</TableHead>
+                          <TableHead className="h-8 text-xs">Brand</TableHead>
+                          <TableHead className="h-8 text-xs">Variant</TableHead>
+                          <TableHead className="h-8 text-xs text-right">Qty</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {fulfillRebateReturnLines.map((l, idx) => (
                           <TableRow key={`${l.variant_name}-${idx}`}>
-                            <TableCell className="font-medium">{l.brand_name}</TableCell>
-                            <TableCell>{l.variant_name}</TableCell>
-                            <TableCell className="text-right font-semibold">{l.disputed_quantity}</TableCell>
+                            <TableCell className="py-2 text-xs font-medium">{l.brand_name}</TableCell>
+                            <TableCell className="py-2 text-xs">{l.variant_name}</TableCell>
+                            <TableCell className="py-2 text-xs text-right font-semibold">{l.disputed_quantity}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1731,14 +1737,15 @@ export default function PurchaseOrdersPage() {
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label>Rider name</Label>
-              <Input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="e.g. Juan Dela Cruz" />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Plate number</Label>
-              <Input value={riderPlate} onChange={(e) => setRiderPlate(e.target.value)} placeholder="e.g. ABC-1234" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Rider name</Label>
+                <Input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="e.g. Juan Dela Cruz" />
+              </div>
+              <div className="space-y-2">
+                <Label>Plate number</Label>
+                <Input value={riderPlate} onChange={(e) => setRiderPlate(e.target.value)} placeholder="e.g. ABC-1234" />
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -1750,7 +1757,7 @@ export default function PurchaseOrdersPage() {
               <Label>Warehouse e-signature</Label>
               {warehouseSignatureDataUrl ? (
                 <div className="border rounded-md p-3 bg-muted/30 space-y-2">
-                  <img src={warehouseSignatureDataUrl} alt="Warehouse signature" className="max-h-24 mx-auto" />
+                  <img src={warehouseSignatureDataUrl} alt="Warehouse signature" className="max-h-20 mx-auto" />
                   <div className="flex justify-end">
                     <Button variant="ghost" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
                       Change signature
@@ -1758,7 +1765,7 @@ export default function PurchaseOrdersPage() {
                   </div>
                 </div>
               ) : (
-                <div className="border rounded-md p-3 bg-muted/30 flex items-center justify-between">
+                <div className="border rounded-md p-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm text-muted-foreground">Draw warehouse signature before delivering.</p>
                   <Button type="button" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
                     Add signature
@@ -1773,11 +1780,12 @@ export default function PurchaseOrdersPage() {
                 value={dispatchNotes}
                 onChange={(e) => setDispatchNotes(e.target.value)}
                 placeholder="Delivery instructions, gate pass, etc."
-                rows={3}
+                rows={2}
               />
             </div>
+          </div>
 
-            <div className="flex items-center justify-end gap-2">
+          <DialogFooter className="px-6 py-4 border-t shrink-0 bg-background">
               <Button
                 variant="outline"
                 onClick={() => setDispatchOpen(false)}
@@ -1990,8 +1998,7 @@ export default function PurchaseOrdersPage() {
                 {savingDispatch || fulfillingOrderId === dispatchPo?.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                 Deliver
               </Button>
-            </div>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -18,6 +18,7 @@ export type BatchInventoryGroup = {
   batchNumber: string;
   receivedAt: string;
   sourceType: InventoryBatchSourceType;
+  totalAmount: number;
   locationId: string;
   locationName: string;
   skuCount: number;

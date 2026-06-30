@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart3, Clock, LayoutGrid, List, Package, RefreshCw, Search } from 'lucide-react';
-import { useInventory, type Brand, type Variant } from './InventoryContext';
+import { useInventory, groupFlatInventoryRowsIntoBrands, type Brand, type Variant } from './InventoryContext';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -154,12 +155,9 @@ function TypeColumn({
   );
 }
 
-/** Card width scales with how many variant-type columns the brand has. */
-function brandCardWidthClass(columnCount: number): string {
-  if (columnCount <= 1) return 'w-[min(100%,280px)]';
-  if (columnCount === 2) return 'w-[min(100%,460px)]';
-  if (columnCount === 3) return 'w-[min(100%,620px)]';
-  return 'w-[min(100%,780px)]';
+/** Brand cards fill their grid cell (2 columns on md+). */
+function brandCardWidthClass(_columnCount: number): string {
+  return 'w-full min-w-0';
 }
 
 function BrandColumn({
@@ -177,7 +175,7 @@ function BrandColumn({
     return (
       <div
         className={cn(
-          'flex shrink-0 flex-col rounded-lg border border-border bg-card shadow-sm',
+          'flex w-full min-w-0 flex-col rounded-lg border border-border bg-card shadow-sm',
           brandCardWidthClass(1)
         )}
         role="region"
@@ -196,7 +194,7 @@ function BrandColumn({
   return (
     <div
       className={cn(
-        'flex shrink-0 flex-col rounded-lg border border-border bg-card shadow-sm overflow-hidden',
+        'flex w-full min-w-0 flex-col rounded-lg border border-border bg-card shadow-sm overflow-hidden',
         brandCardWidthClass(colCount)
       )}
       role="region"
@@ -273,114 +271,44 @@ export default function WarehouseInventoryDashboardPage() {
     refetchOnReconnect: true,
     queryFn: async () => {
       const companyId = user!.company_id!;
-      const { data: rows, error } = await supabase
-        .from('warehouse_location_inventory')
-        .select(
-          `
-          stock,
-          variant_id,
-          variants:variant_id (
-            id,
-            name,
-            variant_type,
-            created_at,
-            is_active,
-            brands:brand_id (
+      const rows = await fetchAllPaginated(async (from, to) => {
+        const { data, error } = await supabase
+          .from('warehouse_location_inventory')
+          .select(
+            `
+            stock,
+            variant_id,
+            variants:variant_id (
               id,
               name,
-              is_active
+              variant_type,
+              created_at,
+              is_active,
+              brands:brand_id (
+                id,
+                name,
+                is_active
+              )
             )
+          `
           )
-        `
-        )
-        .eq('company_id', companyId)
-        .eq('location_id', selectedLocationId);
-      if (error) throw error;
-
-      const byBrand = new Map<string, any>();
-      for (const r of rows ?? []) {
-        const v = (r as any).variants;
-        if (!v || v.is_active === false) continue;
-        const b = v.brands;
-        if (!b || b.is_active === false) continue;
-        const brandId = b.id as string;
-        const brandName = b.name as string;
-        const variantId = v.id as string;
-
-        const inv = {
-          id: `loc:${selectedLocationId}:${variantId}`,
-          stock: (r as any).stock ?? 0,
-          allocated_stock: 0,
-          unit_price: 0,
-          selling_price: 0,
-          dsp_price: 0,
-          rsp_price: 0,
-          reorder_level: 10,
-        };
-
-        const variantRow = {
-          id: variantId,
-          name: v.name,
-          variant_type: v.variant_type,
-          created_at: v.created_at,
-          is_active: v.is_active,
-          main_inventory: inv,
-        };
-
-        const existing = byBrand.get(brandId) ?? { id: brandId, name: brandName, variants: [] as any[] };
-        existing.variants.push(variantRow);
-        byBrand.set(brandId, existing);
-      }
-
-      const brandsData = Array.from(byBrand.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
-      for (const b of brandsData) {
-        b.variants.sort((a: any, b2: any) => new Date(a.created_at).getTime() - new Date(b2.created_at).getTime());
-      }
-
-      // Convert to the Brand[] shape used by the board (same logic as InventoryContext grouping).
-      const calculateStatus = (stock: number, reorderLevel: number = 10): 'in-stock' | 'low-stock' | 'out-of-stock' => {
-        if (stock === 0) return 'out-of-stock';
-        if (stock <= reorderLevel) return 'low-stock';
-        return 'in-stock';
-      };
-
-      const transformed: Brand[] = brandsData.map((brand: any) => {
-        const allVariants: Variant[] = (brand.variants || []).map((v: any) => {
-          const inventory = v.main_inventory;
-          return {
-            id: v.id,
-            name: v.name,
-            variantType: v.variant_type,
-            stock: inventory.stock,
-            allocatedStock: 0,
-            price: 0,
-            sellingPrice: 0,
-            dspPrice: 0,
-            rspPrice: 0,
-            status: calculateStatus(inventory.stock, inventory.reorder_level ?? 10),
-            mainInventoryId: inventory.id,
-          } as Variant;
-        });
-
-        const variantsByType = new Map<string, Variant[]>();
-        for (const variant of allVariants) {
-          const type = variant.variantType;
-          if (!variantsByType.has(type)) variantsByType.set(type, []);
-          variantsByType.get(type)!.push(variant);
-        }
-
-        return {
-          id: brand.id,
-          name: brand.name,
-          flavors: allVariants.filter((v) => v.variantType === 'flavor'),
-          batteries: allVariants.filter((v) => v.variantType === 'battery'),
-          posms: allVariants.filter((v) => v.variantType === 'POSM' || v.variantType === 'posm'),
-          variantsByType,
-          allVariants,
-        };
+          .eq('company_id', companyId)
+          .eq('location_id', selectedLocationId)
+          .order('variant_id')
+          .range(from, to);
+        return { data, error };
       });
 
-      return transformed.filter((b) => b.allVariants.length > 0);
+      return groupFlatInventoryRowsIntoBrands(rows, (row, variantId) => ({
+        id: `loc:${selectedLocationId}:${variantId}`,
+        stock: row.stock ?? 0,
+        allocated_stock: 0,
+        unit_price: 0,
+        selling_price: 0,
+        dsp_price: 0,
+        rsp_price: 0,
+        reorder_level: 10,
+      }));
     },
   });
 
@@ -788,8 +716,7 @@ export default function WarehouseInventoryDashboardPage() {
           {search.trim() ? 'No brands match your filter.' : 'No main inventory to display yet.'}
         </div>
       ) : (
-        <div className="overflow-x-auto pb-4">
-          <div className="flex flex-row items-stretch gap-4">
+        <div className="grid grid-cols-1 gap-4 pb-4 md:grid-cols-2">
             {filtered.map((brand) => (
               <BrandColumn
                 key={brand.id}
@@ -798,7 +725,6 @@ export default function WarehouseInventoryDashboardPage() {
                 isMainWarehouseUser={isMainWarehouseUser}
               />
             ))}
-          </div>
         </div>
       )}
         </TabsContent>

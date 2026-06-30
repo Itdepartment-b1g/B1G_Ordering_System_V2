@@ -1,5 +1,6 @@
-import { createContext, useContext, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useEffect, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AuthContext } from '@/features/auth/hooks';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
@@ -109,39 +110,90 @@ export const groupBrands = (brandsData: any[]): Brand[] => {
   return transformedBrands.filter(b => b.allVariants.length > 0);
 };
 
+export function groupFlatInventoryRowsIntoBrands(
+  rows: any[],
+  buildInventory: (row: any, variantId: string) => Record<string, unknown>
+): Brand[] {
+  const byBrand = new Map<string, any>();
+
+  for (const r of rows) {
+    const v = r.variants;
+    if (!v || v.is_active === false) continue;
+    const b = v.brands;
+    if (!b || b.is_active === false) continue;
+
+    const brandId = b.id as string;
+    const brandName = b.name as string;
+    const variantId = v.id as string;
+
+    const variantRow = {
+      id: variantId,
+      name: v.name,
+      variant_type: v.variant_type,
+      created_at: v.created_at,
+      is_active: v.is_active,
+      main_inventory: buildInventory(r, variantId),
+    };
+
+    const existing = byBrand.get(brandId) ?? { id: brandId, name: brandName, variants: [] as any[] };
+    existing.variants.push(variantRow);
+    byBrand.set(brandId, existing);
+  }
+
+  const brandsData = Array.from(byBrand.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  for (const b of brandsData) {
+    b.variants.sort((a: any, b2: any) => new Date(a.created_at).getTime() - new Date(b2.created_at).getTime());
+  }
+
+  return groupBrands(brandsData);
+}
+
 const fetchInventory = async (companyId?: string): Promise<Brand[]> => {
   if (!companyId) return [];
-  const { data: brandsData, error } = await supabase
-    .from('brands')
-    .select(`
-      id,
-      name,
-      is_active,
-      variants (
+
+  const rows = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from('main_inventory')
+      .select(
+        `
         id,
-        name,
-        variant_type,
-        created_at,
-        is_active,
-        main_inventory (
+        stock,
+        allocated_stock,
+        unit_price,
+        selling_price,
+        dsp_price,
+        rsp_price,
+        reorder_level,
+        variants:variant_id (
           id,
-          stock,
-          allocated_stock,
-          unit_price,
-          selling_price,
-          dsp_price,
-          rsp_price,
-          reorder_level
+          name,
+          variant_type,
+          created_at,
+          is_active,
+          brands:brand_id (
+            id,
+            name,
+            is_active
+          )
         )
+      `
       )
-    `)
-    .eq('company_id', companyId)
-    .or('is_active.eq.true,is_active.is.null')
-    .order('name');
+      .eq('company_id', companyId)
+      .order('variant_id')
+      .range(from, to);
+    return { data, error };
+  });
 
-  if (error) throw error;
-
-  return groupBrands(brandsData || []);
+  return groupFlatInventoryRowsIntoBrands(rows, (row) => ({
+    id: row.id,
+    stock: row.stock ?? 0,
+    allocated_stock: row.allocated_stock ?? 0,
+    unit_price: row.unit_price ?? 0,
+    selling_price: row.selling_price ?? 0,
+    dsp_price: row.dsp_price ?? 0,
+    rsp_price: row.rsp_price ?? 0,
+    reorder_level: row.reorder_level ?? LOW_STOCK_THRESHOLD,
+  }));
 };
 
 const fetchLocationInventoryForSubWarehouse = async (companyId?: string): Promise<Brand[]> => {
@@ -152,76 +204,44 @@ const fetchLocationInventoryForSubWarehouse = async (companyId?: string): Promis
   if (locErr) throw locErr;
   if (!locId) return [];
 
-  const { data: rows, error } = await supabase
-    .from('warehouse_location_inventory')
-    .select(
-      `
-      stock,
-      variant_id,
-      variants:variant_id (
-        id,
-        name,
-        variant_type,
-        created_at,
-        is_active,
-        brands:brand_id (
+  const rows = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from('warehouse_location_inventory')
+      .select(
+        `
+        stock,
+        variant_id,
+        variants:variant_id (
           id,
           name,
-          is_active
+          variant_type,
+          created_at,
+          is_active,
+          brands:brand_id (
+            id,
+            name,
+            is_active
+          )
         )
+      `
       )
-    `
-    )
-    .eq('company_id', companyId)
-    .eq('location_id', locId as any);
+      .eq('company_id', companyId)
+      .eq('location_id', locId as any)
+      .order('variant_id')
+      .range(from, to);
+    return { data, error };
+  });
 
-  if (error) throw error;
-
-  // Transform location inventory rows into the same Brand[] shape expected by UI.
-  const byBrand = new Map<string, any>();
-
-  for (const r of rows ?? []) {
-    const v = (r as any).variants;
-    if (!v || v.is_active === false) continue;
-    const b = v.brands;
-    if (!b || b.is_active === false) continue;
-
-    const brandId = b.id as string;
-    const brandName = b.name as string;
-    const variantId = v.id as string;
-
-    const inv = {
-      id: `loc:${String(locId)}:${variantId}`,
-      stock: (r as any).stock ?? 0,
-      allocated_stock: 0,
-      unit_price: 0,
-      selling_price: 0,
-      dsp_price: 0,
-      rsp_price: 0,
-      reorder_level: LOW_STOCK_THRESHOLD,
-    };
-
-    const variantRow = {
-      id: variantId,
-      name: v.name,
-      variant_type: v.variant_type,
-      created_at: v.created_at,
-      is_active: v.is_active,
-      main_inventory: inv,
-    };
-
-    const existing = byBrand.get(brandId) ?? { id: brandId, name: brandName, variants: [] as any[] };
-    existing.variants.push(variantRow);
-    byBrand.set(brandId, existing);
-  }
-
-  // Ensure stable ordering
-  const brandsData = Array.from(byBrand.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  for (const b of brandsData) {
-    b.variants.sort((a: any, b2: any) => new Date(a.created_at).getTime() - new Date(b2.created_at).getTime());
-  }
-
-  return groupBrands(brandsData);
+  return groupFlatInventoryRowsIntoBrands(rows, (row, variantId) => ({
+    id: `loc:${String(locId)}:${variantId}`,
+    stock: row.stock ?? 0,
+    allocated_stock: 0,
+    unit_price: 0,
+    selling_price: 0,
+    dsp_price: 0,
+    rsp_price: 0,
+    reorder_level: LOW_STOCK_THRESHOLD,
+  }));
 };
 
 /**

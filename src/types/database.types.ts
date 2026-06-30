@@ -613,6 +613,7 @@ export interface InventoryBatch {
   stock_request_id?: string | null;
   status: InventoryBatchStatus;
   received_at: string;
+  total_amount: number;
   notes?: string | null;
   created_by?: string | null;
   created_at: string;
@@ -628,6 +629,10 @@ export interface InventoryBatchLot {
   quantity_received: number;
   quantity_remaining: number;
   received_at: string;
+  manufactured_date?: string | null;
+  expiration_date?: string | null;
+  unit_cost?: number | null;
+  line_amount?: number | null;
   created_at: string;
   updated_at: string;
 }
