@@ -718,6 +718,35 @@ export interface WarehouseStockAdjustment {
   created_at: string;
 }
 
+export interface PhysicalCountSession {
+  id: string;
+  company_id: string;
+  warehouse_location_id: string;
+  batch_id: string;
+  performed_by?: string | null;
+  counted_at: string;
+  signature_url: string;
+  signature_path: string;
+  notes?: string | null;
+  status: 'submitted';
+  created_at: string;
+}
+
+export interface PhysicalCountLineRecord {
+  id: string;
+  session_id: string;
+  lot_id?: string | null;
+  variant_id: string;
+  brand_name: string;
+  variant_name: string;
+  system_qty_snapshot: number;
+  physical_qty: number;
+  variance: number;
+  adjustment_id?: string | null;
+  expiration_date?: string | null;
+  created_at: string;
+}
+
 export interface AllocationHistory {
   id: string;
   company_id: string;
@@ -1245,6 +1274,16 @@ export interface Database {
         Insert: Omit<WarehouseStockAdjustment, "id" | "created_at">;
         Update: never;
       };
+      physical_count_sessions: {
+        Row: PhysicalCountSession;
+        Insert: Omit<PhysicalCountSession, "id" | "created_at">;
+        Update: never;
+      };
+      physical_count_lines: {
+        Row: PhysicalCountLineRecord;
+        Insert: Omit<PhysicalCountLineRecord, "id" | "created_at">;
+        Update: never;
+      };
       allocation_history: {
         Row: AllocationHistory;
         Insert: Omit<AllocationHistory, "id" | "created_at">;
@@ -1428,6 +1467,28 @@ export interface Database {
           p_reason: string;
         };
         Returns: FunctionResponse<{ revision_id: string }>;
+      };
+      submit_physical_count: {
+        Args: {
+          p_warehouse_location_id: string;
+          p_batch_id: string;
+          p_lines: {
+            variant_id: string;
+            lot_id?: string | null;
+            physical_qty: number;
+            system_qty_snapshot: number;
+            brand_name?: string;
+            variant_name?: string;
+            expiration_date?: string | null;
+          }[];
+          p_signature_url: string;
+          p_signature_path: string;
+          p_notes?: string | null;
+          p_performed_by?: string | null;
+        };
+        Returns: FunctionResponse<{
+          session_id: string;
+        }>;
       };
     };
   };

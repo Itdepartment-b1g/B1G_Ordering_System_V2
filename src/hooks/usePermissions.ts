@@ -95,6 +95,7 @@ export function usePermissions() {
         '/inventory/disposals',
         '/inventory/allocation-history',
         '/inventory/batches',
+        '/inventory/physical-count',
         '/inventory/stock-requests',
         '/inventory/stock-returns',
         '/inventory/stock-adjustments',

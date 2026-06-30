@@ -186,6 +186,7 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Stock Returns', url: '/inventory/stock-returns', description: 'Inspect sub-warehouse returns; good restocks main batch lots, damaged goes to disposal.' },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', description: 'Audited stock corrections with batch tracking and history.' },
       { title: 'Batch View', url: '/inventory/batches', description: 'Browse on-hand stock grouped by batch with brand and variant breakdown.' },
+      { title: 'Physical Count', url: '/inventory/physical-count', description: 'Count warehouse stock by batch and lot; sign to confirm; records physical vs system qty without changing stock.' },
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', description: 'Create sub-warehouses and allocate stock from main.' },
       { title: 'Main Inventory', url: '/inventory/main', description: 'Stock levels for your warehouse company.' },
       { title: 'Disposal Log', url: '/inventory/disposals', description: 'Damaged or unsellable units from rebate returns.' },
