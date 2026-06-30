@@ -4,8 +4,19 @@ import { format } from 'date-fns';
 import { ClipboardCheck, Loader2, Plus, RefreshCw } from 'lucide-react';
 
 import { supabase } from '@/lib/supabase';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { useWarehouseLocations } from '@/features/inventory/batch-view/hooks/useWarehouseLocations';
 import { Badge } from '@/components/ui/badge';
@@ -58,6 +69,11 @@ export default function PhysicalCountPage() {
   const [submitting, setSubmitting] = useState(false);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [historyDetailOpen, setHistoryDetailOpen] = useState(false);
+  const [historyDateRangeFilter, setHistoryDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyPageSize, setHistoryPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
   const { data: locations = [] } = useWarehouseLocations(
     user?.company_id,
@@ -165,6 +181,31 @@ export default function PhysicalCountPage() {
     selectedHistoryId,
     historyDetailOpen && !!selectedHistoryId
   );
+
+  const historyDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        historyDateRangeFilter.preset,
+        historyDateRangeFilter.customStart,
+        historyDateRangeFilter.customEnd
+      ),
+    [historyDateRangeFilter]
+  );
+
+  const filteredHistory = useMemo(() => {
+    const { start, end } = historyDateRange;
+    return history.filter((row) => isDateInRange(new Date(row.counted_at), start, end));
+  }, [history, historyDateRange]);
+
+  useEffect(() => {
+    setHistoryPage(0);
+  }, [historyDateRangeFilter, historyPageSize]);
+
+  const {
+    pageCount: historyPageCount,
+    safePage: historySafePage,
+    pagedItems: paginatedHistory,
+  } = getListPaginationSlice(filteredHistory, historyPage, historyPageSize);
 
   const handleAddLine = () => {
     if (!brandId || !variantId || !batchId || !activeLocationId) {
@@ -567,8 +608,18 @@ export default function PhysicalCountPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Count history</CardTitle>
-          <CardDescription>Previously submitted physical counts with signatures.</CardDescription>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle>Count history</CardTitle>
+              <CardDescription>Previously submitted physical counts with signatures.</CardDescription>
+            </div>
+            <DateRangeFilterPopover
+              value={historyDateRangeFilter}
+              onChange={setHistoryDateRangeFilter}
+              triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
+              align="end"
+            />
+          </div>
         </CardHeader>
         <CardContent>
           {historyLoading ? (
@@ -580,56 +631,70 @@ export default function PhysicalCountPage() {
             <p className="text-sm text-muted-foreground py-6 text-center">
               No physical counts submitted yet.
             </p>
+          ) : filteredHistory.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">
+              No physical counts match the selected date range.
+            </p>
           ) : (
-            <div className="rounded-md border overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Batch</TableHead>
-                    <TableHead>Location</TableHead>
-                    <TableHead>Counted by</TableHead>
-                    <TableHead className="text-right">Lines</TableHead>
-                    <TableHead className="text-right">Net variance</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {history.map((row) => (
-                    <TableRow key={row.id}>
-                      <TableCell className="whitespace-nowrap">
-                        {format(new Date(row.counted_at), 'MMM d, yyyy h:mm a')}
-                      </TableCell>
-                      <TableCell>{row.batch?.batch_number ?? '—'}</TableCell>
-                      <TableCell>{row.warehouse_location?.name ?? '—'}</TableCell>
-                      <TableCell>{row.performed_by_user?.full_name ?? '—'}</TableCell>
-                      <TableCell className="text-right tabular-nums">{row.line_count}</TableCell>
-                      <TableCell
-                        className={`text-right tabular-nums font-medium ${
-                          row.total_variance > 0
-                            ? 'text-green-600'
-                            : row.total_variance < 0
-                              ? 'text-destructive'
-                              : ''
-                        }`}
-                      >
-                        {row.total_variance > 0 ? '+' : ''}
-                        {row.total_variance}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openHistoryDetail(row.id)}
-                        >
-                          View
-                        </Button>
-                      </TableCell>
+            <div className="space-y-4">
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Batch</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead>Counted by</TableHead>
+                      <TableHead className="text-right">Lines</TableHead>
+                      <TableHead className="text-right">Net variance</TableHead>
+                      <TableHead />
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedHistory.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="whitespace-nowrap">
+                          {format(new Date(row.counted_at), 'MMM d, yyyy h:mm a')}
+                        </TableCell>
+                        <TableCell>{row.batch?.batch_number ?? '—'}</TableCell>
+                        <TableCell>{row.warehouse_location?.name ?? '—'}</TableCell>
+                        <TableCell>{row.performed_by_user?.full_name ?? '—'}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.line_count}</TableCell>
+                        <TableCell
+                          className={`text-right tabular-nums font-medium ${
+                            row.total_variance > 0
+                              ? 'text-green-600'
+                              : row.total_variance < 0
+                                ? 'text-destructive'
+                                : ''
+                          }`}
+                        >
+                          {row.total_variance > 0 ? '+' : ''}
+                          {row.total_variance}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openHistoryDetail(row.id)}
+                          >
+                            View
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <ListPagination
+                pageSize={historyPageSize}
+                safePage={historySafePage}
+                pageCount={historyPageCount}
+                onPageSizeChange={setHistoryPageSize}
+                onPrevious={() => setHistoryPage((p) => Math.max(0, p - 1))}
+                onNext={() => setHistoryPage((p) => Math.min(historyPageCount - 1, p + 1))}
+              />
             </div>
           )}
         </CardContent>
