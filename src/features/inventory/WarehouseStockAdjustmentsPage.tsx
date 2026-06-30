@@ -73,6 +73,7 @@ type BatchLotOption = {
   quantity_remaining: number;
   quantity_received: number;
   received_at: string;
+  expiration_date: string | null;
 };
 
 type AdjustmentRow = {
@@ -86,7 +87,7 @@ type AdjustmentRow = {
   variant: {
     name: string;
     variant_type: string;
-    brand: { name: string } | null;
+    brand: { id: string; name: string } | null;
   } | null;
   batch: { batch_number: string } | null;
   performed_by_user: { full_name: string } | null;
@@ -112,6 +113,21 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
+function formatLotDate(date: string | null): string {
+  if (!date) return '—';
+  return format(new Date(date), 'MMM d, yyyy');
+}
+
+function formatBatchLotLabel(lot: Pick<BatchLotOption, 'batch_number' | 'expiration_date' | 'quantity_remaining'>): string {
+  const exp = lot.expiration_date ? ` · exp ${formatLotDate(lot.expiration_date)}` : '';
+  return `${lot.batch_number}${exp} · ${lot.quantity_remaining} remaining`;
+}
+
+function formatBatchLotHeading(lot: Pick<BatchLotOption, 'batch_number' | 'expiration_date'>): string {
+  const exp = lot.expiration_date ? ` · exp ${formatLotDate(lot.expiration_date)}` : '';
+  return `${lot.batch_number}${exp}`;
+}
+
 export default function WarehouseStockAdjustmentsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -121,6 +137,7 @@ export default function WarehouseStockAdjustmentsPage() {
   const isMainWarehouseUser = membership.isMain;
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [brandFilter, setBrandFilter] = useState('all');
   const [directionFilter, setDirectionFilter] = useState<string>('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
@@ -201,6 +218,7 @@ export default function WarehouseStockAdjustmentsPage() {
           quantity_remaining,
           quantity_received,
           received_at,
+          expiration_date,
           batch:inventory_batches (
             batch_number,
             source_type
@@ -227,6 +245,7 @@ export default function WarehouseStockAdjustmentsPage() {
             quantity_remaining: r.quantity_remaining as number,
             quantity_received: r.quantity_received as number,
             received_at: r.received_at as string,
+            expiration_date: (r.expiration_date as string | null) ?? null,
           } satisfies BatchLotOption;
         })
         .filter(Boolean) as BatchLotOption[];
@@ -298,7 +317,7 @@ export default function WarehouseStockAdjustmentsPage() {
           variant:variants (
             name,
             variant_type,
-            brand:brands ( name )
+            brand:brands ( id, name )
           ),
           batch:inventory_batches ( batch_number ),
           performed_by_user:profiles!warehouse_stock_adjustments_performed_by_fkey ( full_name )
@@ -314,7 +333,7 @@ export default function WarehouseStockAdjustmentsPage() {
           r.variant as AdjustmentRow['variant'] | AdjustmentRow['variant'][]
         );
         const brand = variant?.brand
-          ? firstRelation(variant.brand as { name: string } | { name: string }[])
+          ? firstRelation(variant.brand as { id: string; name: string } | { id: string; name: string }[])
           : null;
         return {
           id: r.id as string,
@@ -344,6 +363,17 @@ export default function WarehouseStockAdjustmentsPage() {
     );
   }, [dateRangeFilter]);
 
+  const brandOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of adjustments) {
+      const brand = row.variant?.brand;
+      if (brand?.id) map.set(brand.id, brand.name);
+    }
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [adjustments]);
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const { start, end } = adjustmentDateRange;
@@ -351,6 +381,7 @@ export default function WarehouseStockAdjustmentsPage() {
     return adjustments.filter((a) => {
       if (!isDateInRange(new Date(a.created_at), start, end)) return false;
       if (directionFilter !== 'all' && a.direction !== directionFilter) return false;
+      if (brandFilter !== 'all' && a.variant?.brand?.id !== brandFilter) return false;
       if (!q) return true;
       const brand = a.variant?.brand?.name?.toLowerCase() ?? '';
       const variant = a.variant?.name?.toLowerCase() ?? '';
@@ -361,7 +392,14 @@ export default function WarehouseStockAdjustmentsPage() {
         (a.batch?.batch_number?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [adjustments, searchQuery, directionFilter, adjustmentDateRange.end, adjustmentDateRange.start]);
+  }, [
+    adjustments,
+    searchQuery,
+    brandFilter,
+    directionFilter,
+    adjustmentDateRange.end,
+    adjustmentDateRange.start,
+  ]);
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
     () =>
@@ -391,7 +429,13 @@ export default function WarehouseStockAdjustmentsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, directionFilter, dateRangeFilter, pageSize, sortState]);
+  }, [searchQuery, brandFilter, directionFilter, dateRangeFilter, pageSize, sortState]);
+
+  useEffect(() => {
+    if (brandFilter !== 'all' && !brandOptions.some((b) => b.id === brandFilter)) {
+      setBrandFilter('all');
+    }
+  }, [brandFilter, brandOptions]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -643,6 +687,21 @@ export default function WarehouseStockAdjustmentsPage() {
               triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
               align="end"
             />
+            {brandOptions.length > 0 && (
+              <Select value={brandFilter} onValueChange={setBrandFilter}>
+                <SelectTrigger className="w-full sm:w-[180px]">
+                  <SelectValue placeholder="All brands" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All brands</SelectItem>
+                  {brandOptions.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Select value={directionFilter} onValueChange={setDirectionFilter}>
               <SelectTrigger className="w-full sm:w-[160px]">
                 <SelectValue />
@@ -670,7 +729,7 @@ export default function WarehouseStockAdjustmentsPage() {
             <p className="text-center text-muted-foreground py-12">
               {adjustments.length === 0
                 ? 'No adjustments yet.'
-                : 'No adjustments match the selected date range, direction, or search.'}
+                : 'No adjustments match the selected date range, brand, direction, or search.'}
             </p>
           ) : (
             <div>
@@ -915,7 +974,7 @@ export default function WarehouseStockAdjustmentsPage() {
                       <SelectItem value={NEW_BATCH_VALUE}>Create new ADJ batch</SelectItem>
                       {selectableLots.map((lot) => (
                         <SelectItem key={lot.lot_id} value={lot.lot_id}>
-                          {lot.batch_number} · {lot.quantity_remaining} remaining
+                          {formatBatchLotLabel(lot)}
                         </SelectItem>
                       ))}
                       {selectableLots.length === 0 && (
@@ -933,9 +992,15 @@ export default function WarehouseStockAdjustmentsPage() {
               <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-sm">
                 <div className="flex items-center gap-2 font-medium">
                   <Package className="h-4 w-4" />
-                  {selectedLot.batch_number}
+                  {formatBatchLotHeading(selectedLot)}
                 </div>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
+                  {selectedLot.expiration_date && (
+                    <>
+                      <span>Expiration</span>
+                      <span className="text-foreground">{formatLotDate(selectedLot.expiration_date)}</span>
+                    </>
+                  )}
                   <span>Remaining</span>
                   <span className="text-foreground font-semibold tabular-nums">
                     {selectedLot.quantity_remaining}

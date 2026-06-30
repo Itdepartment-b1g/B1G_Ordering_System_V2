@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { format } from 'date-fns';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -36,9 +37,22 @@ type ReturnLotRow = {
   variantName: string;
   variantType: string;
   batch_number: string;
+  expiration_date: string | null;
   quantity_remaining: number;
   received_at: string;
 };
+
+function formatLotDate(date: string | null): string {
+  if (!date) return '—';
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return format(parsed, 'MMM d, yyyy');
+}
+
+function formatReturnLotLabel(row: ReturnLotRow): string {
+  const exp = row.expiration_date ? ` · exp ${formatLotDate(row.expiration_date)}` : '';
+  return `${row.batch_number}${exp} · ${row.quantity_remaining} in lot`;
+}
 
 function normalizeTypeLabel(typeKey: string): string {
   const t = typeKey.toLowerCase();
@@ -63,7 +77,9 @@ function getReturnLotTypeGroups(rows: ReturnLotRow[]): [string, ReturnLotRow[]][
           type,
           list.sort(
             (a, b) =>
-              a.variantName.localeCompare(b.variantName) || a.batch_number.localeCompare(b.batch_number)
+              a.variantName.localeCompare(b.variantName) ||
+              a.batch_number.localeCompare(b.batch_number) ||
+              formatLotDate(a.expiration_date).localeCompare(formatLotDate(b.expiration_date))
           ),
         ] as [string, ReturnLotRow[]]
     )
@@ -129,6 +145,7 @@ export function SubWarehouseReturnStockDialog({
           variant_id,
           quantity_remaining,
           received_at,
+          expiration_date,
           batch:inventory_batches ( batch_number ),
           variant:variants!inventory_batch_lots_variant_id_fkey (
             name,
@@ -157,6 +174,7 @@ export function SubWarehouseReturnStockDialog({
             variantName: (variant as { name?: string })?.name ?? String(r.variant_id),
             variantType: (variant as { variant_type?: string })?.variant_type ?? 'unknown',
             batch_number: (batch as { batch_number?: string })?.batch_number ?? '—',
+            expiration_date: (r.expiration_date as string | null) ?? null,
             quantity_remaining: remaining,
             received_at: r.received_at as string,
           } satisfies ReturnLotRow;
@@ -261,8 +279,8 @@ export function SubWarehouseReturnStockDialog({
         </DialogHeader>
 
         <p className="text-sm text-muted-foreground px-1">
-          Choose specific batch lots to return. Each line returns from one batch; main warehouse
-          inspects good vs damaged and restores the same batch at main.
+          Choose the sub-warehouse batch lot to return (including expiry when the same batch has
+          multiple dates). Main warehouse will assign where it is restocked at inspect.
         </p>
 
         <div className="space-y-4 py-2 flex-1 min-h-0 flex flex-col">
@@ -291,7 +309,7 @@ export function SubWarehouseReturnStockDialog({
               <Label htmlFor="return-filter">Filter brands, SKUs, or batches</Label>
               <Input
                 id="return-filter"
-                placeholder="Search by brand or product name…"
+                placeholder="Search by brand, product, or batch…"
                 value={returnFilter}
                 onChange={(e) => setReturnFilter(e.target.value)}
                 disabled={!returnLocationId || loadingReturnBatchLots}
@@ -357,7 +375,7 @@ export function SubWarehouseReturnStockDialog({
                                       {r.variantName}
                                     </div>
                                     <div className="text-xs text-muted-foreground font-mono">
-                                      {r.batch_number} · {r.quantity_remaining} in lot
+                                      {formatReturnLotLabel(r)}
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0">

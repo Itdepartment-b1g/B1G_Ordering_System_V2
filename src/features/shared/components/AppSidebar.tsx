@@ -339,6 +339,7 @@ const warehouseMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
       { title: 'Brands & Variants', url: '/brands', icon: Tag },
       { title: 'Variant Types', url: '/variant-types', icon: Tag },
     ],

@@ -672,7 +672,7 @@ export default function MainInventoryPage() {
 
 
   const isSubWarehouseUser = isWarehouse && !isMainWarehouseUser;
-  const showPendingAllocations = !isSubWarehouseUser;
+  const showPendingAllocations = !isWarehouse;
 
   const renderBatchViewButton = (variant: { id: string; name: string }, brandName: string) => {
     if (!isWarehouse) return null;
@@ -873,10 +873,19 @@ export default function MainInventoryPage() {
               </Button>
             </>
           )}
-          <Button variant="outline" onClick={handleOpenReturnHistory} className="gap-2">
-            <RotateCcw className="h-4 w-4" />
-            View Returns
-          </Button>
+          {isWarehouse ? (
+            <Button variant="outline" asChild>
+              <Link to="/inventory/stock-returns">
+                <RotateCcw className="mr-2 h-4 w-4" />
+                View Returns
+              </Link>
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={handleOpenReturnHistory} className="gap-2">
+              <RotateCcw className="h-4 w-4" />
+              View Returns
+            </Button>
+          )}
           {!isWarehouse && <InventoryImportExport brands={brands} />}
           <Button
             onClick={refreshInventory}

@@ -21,6 +21,13 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { SubWarehouseReturnStockDialog } from './components/SubWarehouseReturnStockDialog';
+import { WarehouseStockReturnInspectDialog } from './components/WarehouseStockReturnInspectDialog';
+import {
+  buildInspectPayload,
+  createInspectSplit,
+  getInspectValidationError,
+  type InspectRequestItem,
+} from './warehouseStockReturnInspectShared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
@@ -74,18 +81,31 @@ type ReturnStatus =
   | 'fully_received'
   | 'cancelled';
 
-type InspectLine = {
-  request_item_id: string;
+type InspectLotOption = {
+  lot_id: string;
   variant_id: string;
-  brand_name: string;
-  variant_name: string;
-  variant_type: string;
-  batch_number: string | null;
-  return_quantity: number;
-  inspected_quantity: number;
-  qty_good: number;
-  qty_damaged: number;
+  batch_number: string;
+  expiration_date: string | null;
+  quantity_remaining: number;
 };
+
+function formatSubLotLabel(batchNumber: string | null, expirationDate: string | null): string {
+  const batch = batchNumber ?? '—';
+  const exp = expirationDate ? ` · exp ${formatLotDate(expirationDate)}` : '';
+  return `${batch}${exp}`;
+}
+
+function formatLotDate(date: string | null): string {
+  if (!date) return '—';
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return format(parsed, 'MMM d, yyyy');
+}
+
+function formatInspectLotLabel(lot: InspectLotOption): string {
+  const exp = lot.expiration_date ? ` · exp ${formatLotDate(lot.expiration_date)}` : '';
+  return `${lot.batch_number}${exp} · ${lot.quantity_remaining} at main`;
+}
 
 type StockReturnRow = {
   id: string;
@@ -110,6 +130,7 @@ type StockReturnRow = {
     } | null;
     lot: {
       id: string;
+      expiration_date: string | null;
       batch: { batch_number: string } | null;
     } | null;
   }>;
@@ -187,7 +208,8 @@ function mapReturnRow(raw: Record<string, unknown>): StockReturnRow {
         : null,
       lot: lot
         ? {
-            id: lot.id,
+            id: lot.id as string,
+            expiration_date: (lot.expiration_date as string | null | undefined) ?? null,
             batch: batch ? { batch_number: batch.batch_number } : null,
           }
         : null,
@@ -269,11 +291,71 @@ export default function WarehouseStockReturnsPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<StockReturnRow | null>(null);
   const [selectedReturn, setSelectedReturn] = useState<StockReturnRow | null>(null);
-  const [inspectLines, setInspectLines] = useState<InspectLine[]>([]);
+  const [inspectItems, setInspectItems] = useState<InspectRequestItem[]>([]);
   const [inspectNotes, setInspectNotes] = useState('');
   const [inspectSubmitting, setInspectSubmitting] = useState(false);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
+
+  const inspectVariantIds = useMemo(
+    () => [...new Set(inspectItems.map((item) => item.variant_id))],
+    [inspectItems]
+  );
+
+  const { data: mainWarehouseLocationId } = useQuery({
+    queryKey: ['main-warehouse-location-id', user?.company_id],
+    enabled: inspectOpen && !!user?.company_id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('warehouse_locations')
+        .select('id')
+        .eq('company_id', user!.company_id!)
+        .eq('is_main', true)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.id ?? null;
+    },
+  });
+
+  const { data: inspectMainLots = [], isLoading: loadingInspectLots } = useQuery({
+    queryKey: ['warehouse-inspect-main-batch-lots', mainWarehouseLocationId, inspectVariantIds],
+    enabled: inspectOpen && !!mainWarehouseLocationId && inspectVariantIds.length > 0,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: async (): Promise<InspectLotOption[]> => {
+      const { data, error } = await supabase
+        .from('inventory_batch_lots')
+        .select(
+          `
+          id,
+          variant_id,
+          quantity_remaining,
+          expiration_date,
+          batch:inventory_batches ( batch_number )
+        `
+        )
+        .eq('warehouse_location_id', mainWarehouseLocationId!)
+        .in('variant_id', inspectVariantIds)
+        .order('received_at', { ascending: true });
+      if (error) throw error;
+
+      return (data ?? [])
+        .map((row) => {
+          const r = row as Record<string, unknown>;
+          const batch = firstRelation(r.batch as { batch_number?: string } | null);
+          const remaining = Number(r.quantity_remaining);
+          if (!Number.isFinite(remaining)) return null;
+          return {
+            lot_id: r.id as string,
+            variant_id: r.variant_id as string,
+            batch_number: batch?.batch_number ?? '—',
+            expiration_date: (r.expiration_date as string | null) ?? null,
+            quantity_remaining: Math.max(0, remaining),
+          } satisfies InspectLotOption;
+        })
+        .filter(Boolean) as InspectLotOption[];
+    },
+  });
 
   const isSubWarehouseUser = !membership.isMain && !!membership.locationId;
 
@@ -338,6 +420,7 @@ export default function WarehouseStockReturnsPage() {
             ),
             lot:inventory_batch_lots!warehouse_stock_return_request_items_lot_id_fkey (
               id,
+              expiration_date,
               batch:inventory_batches ( batch_number )
             )
           ),
@@ -439,7 +522,7 @@ export default function WarehouseStockReturnsPage() {
   const paginationEnd = Math.min(page * pageSize, sortedReturns.length);
 
   const openInspectDialog = (req: StockReturnRow) => {
-    const lines: InspectLine[] = req.items
+    const items: InspectRequestItem[] = req.items
       .filter((i) => i.inspected_quantity < i.return_quantity)
       .map((i) => {
         const remaining = i.return_quantity - i.inspected_quantity;
@@ -449,39 +532,46 @@ export default function WarehouseStockReturnsPage() {
           brand_name: i.variant?.brand?.name ?? 'Unknown',
           variant_name: i.variant?.name ?? i.variant_id,
           variant_type: i.variant?.variant_type ?? '',
-          batch_number: i.lot?.batch?.batch_number ?? null,
+          sub_batch_number: i.lot?.batch?.batch_number ?? null,
+          sub_expiration_date: i.lot?.expiration_date ?? null,
           return_quantity: i.return_quantity,
           inspected_quantity: i.inspected_quantity,
-          qty_good: remaining,
-          qty_damaged: 0,
+          splits: [
+            createInspectSplit({
+              qty_good: remaining,
+              qty_damaged: 0,
+            }),
+          ],
         };
       });
     setSelectedReturn(req);
-    setInspectLines(lines);
+    setInspectItems(items);
     setInspectNotes('');
     setInspectOpen(true);
   };
 
-  const validationError = useMemo(() => {
-    for (const l of inspectLines) {
-      const remaining = l.return_quantity - l.inspected_quantity;
-      if (l.qty_good < 0 || l.qty_damaged < 0) return 'Quantities cannot be negative';
-      if (l.qty_good + l.qty_damaged <= 0) return 'Each line needs at least one inspected unit';
-      if (l.qty_good + l.qty_damaged > remaining) {
-        return `${l.variant_name}: good + damaged cannot exceed remaining (${remaining})`;
-      }
-    }
-    return null;
-  }, [inspectLines]);
-
-  const updateInspectLine = (
-    requestItemId: string,
-    patch: Partial<Pick<InspectLine, 'qty_good' | 'qty_damaged'>>
-  ) => {
-    setInspectLines((prev) =>
-      prev.map((l) => (l.request_item_id === requestItemId ? { ...l, ...patch } : l))
+  useEffect(() => {
+    if (!inspectOpen || inspectMainLots.length === 0) return;
+    setInspectItems((prev) =>
+      prev.map((item) => {
+        const options = inspectMainLots.filter((lot) => lot.variant_id === item.variant_id);
+        if (options.length !== 1) return item;
+        return {
+          ...item,
+          splits: item.splits.map((split) =>
+            split.destination_lot_id
+              ? split
+              : { ...split, destination_lot_id: options[0].lot_id }
+          ),
+        };
+      })
     );
-  };
+  }, [inspectOpen, inspectMainLots]);
+
+  const validationError = useMemo(
+    () => getInspectValidationError(inspectItems),
+    [inspectItems]
+  );
 
   const handleInspect = async () => {
     if (!selectedReturn || validationError) {
@@ -493,13 +583,7 @@ export default function WarehouseStockReturnsPage() {
       return;
     }
 
-    const lines = inspectLines
-      .filter((l) => l.qty_good + l.qty_damaged > 0)
-      .map((l) => ({
-        request_item_id: l.request_item_id,
-        qty_good: l.qty_good,
-        qty_damaged: l.qty_damaged,
-      }));
+    const lines = buildInspectPayload(inspectItems);
 
     if (lines.length === 0) {
       toast({
@@ -599,8 +683,8 @@ export default function WarehouseStockReturnsPage() {
           </h1>
           <p className="text-muted-foreground mt-1">
             {isMainWarehouseUser
-              ? 'Inspect sub-warehouse returns: good stock re-enters main batch lots; damaged units go to the disposal log.'
-              : 'Returns you submitted from your sub-warehouse. Main warehouse inspects good vs damaged.'}
+              ? 'Inspect returns: sub batch is fixed from submit; assign main batch + split good vs damaged.'
+              : 'You chose sub batch lots when submitting. Main warehouse assigns main batch and inspects good vs damaged.'}
           </p>
         </div>
         {isSubWarehouseUser && (
@@ -836,139 +920,23 @@ export default function WarehouseStockReturnsPage() {
         </CardContent>
       </Card>
 
-      {/* Inspect dialog */}
-      <Dialog open={inspectOpen} onOpenChange={setInspectOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Inspect returned stock — {selectedReturn?.request_number}</DialogTitle>
-            <DialogDescription>
-              From {selectedReturn?.from_location?.name ?? 'sub-warehouse'}. Split each line into
-              good (restock at main via batch lots) and damaged (disposal log).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex-1 min-h-0 overflow-auto space-y-4">
-            <div className="rounded-md border overflow-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Batch</TableHead>
-                    <TableHead className="text-right">Remaining</TableHead>
-                    <TableHead className="text-right w-24">Good</TableHead>
-                    <TableHead className="text-right w-24">Damaged</TableHead>
-                    <TableHead className="text-right">Quick</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {inspectLines.map((l) => {
-                    const remaining = l.return_quantity - l.inspected_quantity;
-                    return (
-                      <TableRow key={l.request_item_id}>
-                        <TableCell>
-                          <div className="font-medium">{l.brand_name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {l.variant_name} ({l.variant_type})
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {l.batch_number ?? '—'}
-                        </TableCell>
-                        <TableCell className="text-right font-semibold">{remaining}</TableCell>
-                        <TableCell className="text-right">
-                          <Input
-                            type="number"
-                            min={0}
-                            max={remaining}
-                            className="w-20 ml-auto text-right"
-                            value={l.qty_good}
-                            onChange={(e) =>
-                              updateInspectLine(l.request_item_id, {
-                                qty_good: Math.max(0, parseInt(e.target.value, 10) || 0),
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Input
-                            type="number"
-                            min={0}
-                            max={remaining}
-                            className="w-20 ml-auto text-right"
-                            value={l.qty_damaged}
-                            onChange={(e) =>
-                              updateInspectLine(l.request_item_id, {
-                                qty_damaged: Math.max(0, parseInt(e.target.value, 10) || 0),
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex flex-col gap-1 items-end">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2"
-                              onClick={() =>
-                                updateInspectLine(l.request_item_id, {
-                                  qty_good: remaining,
-                                  qty_damaged: 0,
-                                })
-                              }
-                            >
-                              All good
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2"
-                              onClick={() =>
-                                updateInspectLine(l.request_item_id, {
-                                  qty_good: 0,
-                                  qty_damaged: remaining,
-                                })
-                              }
-                            >
-                              All damaged
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-            <div className="grid gap-2">
-              <Label>Inspection notes (optional)</Label>
-              <Textarea
-                value={inspectNotes}
-                onChange={(e) => setInspectNotes(e.target.value)}
-                rows={2}
-              />
-            </div>
-            {validationError && (
-              <p className="text-sm text-destructive">{validationError}</p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setInspectOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void handleInspect()}
-              disabled={inspectSubmitting || !!validationError}
-            >
-              {inspectSubmitting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                'Confirm inspection'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <WarehouseStockReturnInspectDialog
+        open={inspectOpen}
+        onOpenChange={setInspectOpen}
+        requestNumber={selectedReturn?.request_number ?? ''}
+        fromLocationName={selectedReturn?.from_location?.name ?? 'sub-warehouse'}
+        items={inspectItems}
+        onItemsChange={setInspectItems}
+        mainLots={inspectMainLots}
+        loadingLots={loadingInspectLots}
+        formatSubLotLabel={formatSubLotLabel}
+        formatMainLotLabel={formatInspectLotLabel}
+        notes={inspectNotes}
+        onNotesChange={setInspectNotes}
+        validationError={validationError}
+        submitting={inspectSubmitting}
+        onConfirm={() => void handleInspect()}
+      />
 
       {/* Detail dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
@@ -1012,7 +980,7 @@ export default function WarehouseStockReturnsPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Product</TableHead>
-                      <TableHead>Batch</TableHead>
+                      <TableHead>Sub batch</TableHead>
                       <TableHead className="text-right">Returned</TableHead>
                       <TableHead className="text-right">Inspected</TableHead>
                     </TableRow>
@@ -1025,7 +993,10 @@ export default function WarehouseStockReturnsPage() {
                           {item.variant?.name ?? item.variant_id}
                         </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
-                          {item.lot?.batch?.batch_number ?? '—'}
+                          {formatSubLotLabel(
+                            item.lot?.batch?.batch_number ?? null,
+                            item.lot?.expiration_date ?? null
+                          )}
                         </TableCell>
                         <TableCell className="text-right">{item.return_quantity}</TableCell>
                         <TableCell className="text-right">{item.inspected_quantity}</TableCell>

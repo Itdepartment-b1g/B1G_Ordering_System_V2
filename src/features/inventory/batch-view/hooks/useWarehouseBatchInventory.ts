@@ -32,7 +32,8 @@ export function useWarehouseBatchInventory({
             id,
             batch_number,
             source_type,
-            received_at
+            received_at,
+            total_amount
           ),
           variant:variants (
             id,

@@ -20,12 +20,14 @@ type RawBatchLotRow = {
         batch_number: string;
         source_type: InventoryBatchSourceType;
         received_at: string;
+        total_amount?: number | null;
       }
     | {
         id: string;
         batch_number: string;
         source_type: InventoryBatchSourceType;
         received_at: string;
+        total_amount?: number | null;
       }[]
     | null;
   variant:
@@ -53,6 +55,7 @@ type BatchAccumulator = {
   batchNumber: string;
   receivedAt: string;
   sourceType: InventoryBatchSourceType;
+  totalAmount: number;
   locationId: string;
   locationName: string;
   brandMap: Map<
@@ -84,6 +87,7 @@ export function mapBatchInventoryGroups(data: unknown[]): BatchInventoryGroup[] 
         batchNumber: batch.batch_number,
         receivedAt: batch.received_at,
         sourceType: batch.source_type,
+        totalAmount: Number(batch.total_amount) || 0,
         locationId: location.id,
         locationName: location.name,
         brandMap: new Map(),
@@ -137,6 +141,7 @@ export function mapBatchInventoryGroups(data: unknown[]): BatchInventoryGroup[] 
       batchNumber: acc.batchNumber,
       receivedAt: acc.receivedAt,
       sourceType: acc.sourceType,
+      totalAmount: acc.totalAmount,
       locationId: acc.locationId,
       locationName: acc.locationName,
       skuCount: acc.variantIds.size,
