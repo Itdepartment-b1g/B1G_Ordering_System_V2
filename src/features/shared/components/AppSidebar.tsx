@@ -127,7 +127,7 @@ const adminMenuItems: MenuItem[] = [
     ]
   },
 
-  { title: 'AI Analytics', url: '/analytics', icon: Brain },
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
@@ -402,6 +402,7 @@ const financeMenuItems: MenuItem[] = [
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
     ]
   },
+  { title: 'Analytics', url:'/analytics', icon: Brain },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -420,7 +421,8 @@ const accountingMenuItems: MenuItem[] = [
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
     ]
   },
-  { title: 'Product Analytics', url: '/product-analytics', icon: Package },
+
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -488,7 +490,7 @@ const superAdminMenuItems: MenuItem[] = [
   },
   { title: 'Agent Attendance', url: '/agent-attendance-overview', icon: Calendar},
   { title: 'Task Calendar', url: '/calendar', icon: Calendar },
-  { title: 'AI Analytics', url: '/analytics', icon: Brain },
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   {
     title: 'History',

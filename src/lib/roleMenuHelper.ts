@@ -108,6 +108,7 @@ const financeMenuItems: MenuItem[] = [
     { title: 'Order List', url: '/orders', description: 'List of all customer orders for reconciliation and review.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Verify and track deposits against orders and remittances.' },
   ]},
+  { title: 'Analytics', url: '/analytics', description: 'Company-wide sales, product, and agent performance analytics.' },
   { title: 'System History', url: '/system-history', description: 'See finance-related actions in the audit log.' },
   { title: 'Profile', url: '/profile', description: 'Update your finance user profile.' },
 ];
@@ -119,7 +120,7 @@ const accountingMenuItems: MenuItem[] = [
     { title: 'Order List', url: '/orders', description: 'View orders without approval actions.' },
     { title: 'Cash Deposits', url: '/inventory/cash-deposits', description: 'Track cash and cheque deposits.' },
   ]},
-  { title: 'Product Analytics', url: '/product-analytics', description: 'Product sales from approved orders by brand and variant.' },
+  { title: 'Analytics', url: '/analytics', description: 'Company-wide sales, product, and agent performance analytics (read-only).' },
   { title: 'System History', url: '/system-history', description: 'Transaction and order activity history.' },
   { title: 'Profile', url: '/profile', description: 'Update your profile.' },
 ];

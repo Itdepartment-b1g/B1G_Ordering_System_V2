@@ -206,8 +206,12 @@ export default function AnalyticsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'system_administrator';
+  const isFinance = (user?.role as string) === 'finance';
+  const isAccounting = (user?.role as string) === 'accounting';
   const isLeader = (user?.role as string) === 'team_leader';
   const isManager = (user?.role as string) === 'manager';
+  const canViewAnalytics = isAdmin || isFinance || isAccounting || isLeader || isManager;
+  const hasCompanyWideView = isAdmin || isFinance || isAccounting;
   
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
@@ -564,21 +568,23 @@ export default function AnalyticsPage() {
     // 2. For Admins: immediately (no team filtering needed)
     // 3. For Leaders/Managers: after teamAgentIds has been fetched (even if empty array)
     const shouldFetch = user && (
-      isAdmin || 
+      hasCompanyWideView ||
       ((isLeader || isManager) && teamAgentIds !== undefined && teamAgentIds.length >= 0)
     );
     
     if (shouldFetch) {
       fetchAnalyticsData();
       fetchAgentKPIs();
+    } else if (user && teamAgentsResolved) {
+      setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.role, teamAgentIds, agentKpiDateFrom, agentKpiDateTo]);
+  }, [user?.id, user?.role, teamAgentIds, teamAgentsResolved, agentKpiDateFrom, agentKpiDateTo]);
 
   useEffect(() => {
     const shouldFetch =
       user &&
-      (isAdmin || ((isLeader || isManager) && teamAgentIds !== undefined && teamAgentIds.length >= 0));
+      (hasCompanyWideView || ((isLeader || isManager) && teamAgentIds !== undefined && teamAgentIds.length >= 0));
     if (shouldFetch) {
       fetchAgentRevenueKPIs();
     }
@@ -607,7 +613,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     const shouldFetch =
-      user && (isAdmin || ((isLeader || isManager) && teamAgentsResolved));
+      user && (hasCompanyWideView || ((isLeader || isManager) && teamAgentsResolved));
     if (shouldFetch) {
       fetchProductPerformance();
     }
@@ -710,13 +716,14 @@ export default function AnalyticsPage() {
         setTeamAgentIds([]);
         setTeamAgentsResolved(true);
       }
-    } else if (isAdmin) {
-      // Admin sees all, no need to filter
-      console.log('Admin user - no team filtering');
+    } else if (hasCompanyWideView) {
+      // Admin/finance see all company data, no team filtering
       setTeamAgentIds([]);
       setTeamAgentsResolved(true);
     } else {
+      setTeamAgentIds([]);
       setTeamAgentsResolved(true);
+      setLoading(false);
     }
   };
 
@@ -725,7 +732,7 @@ export default function AnalyticsPage() {
   const fetchAnalyticsData = async () => {
     setLoading(true);
     try {
-      if (isAdmin || isLeader || isManager) {
+      if (canViewAnalytics) {
         await Promise.all([
           fetchCityPerformance(),
           fetchAgentKPIs(),
@@ -733,7 +740,6 @@ export default function AnalyticsPage() {
           fetchSummaryStats()
         ]);
       } else {
-        // Other roles currently have no analytics access
         setAgentKPIs([]);
       }
     } catch (error: any) {
@@ -2070,12 +2076,12 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Summary Cards */}
-      {(isAdmin || isLeader || isManager) && (
+      {canViewAnalytics && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                {isAdmin ? 'Total Revenue (This Month)' : 'Team Revenue (This Month)'}
+                {hasCompanyWideView ? 'Total Revenue (This Month)' : 'Team Revenue (This Month)'}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -2100,7 +2106,7 @@ export default function AnalyticsPage() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                {isAdmin ? 'Total Orders' : 'Team Orders'}
+                {hasCompanyWideView ? 'Total Orders' : 'Team Orders'}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -2137,7 +2143,7 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {(isAdmin || isLeader || isManager) && (
+      {canViewAnalytics && (
         <>
           {/* Main Analytics Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -2152,7 +2158,7 @@ export default function AnalyticsPage() {
               </TabsTrigger>
               <TabsTrigger value="agents">
                 <Users className="h-4 w-4 mr-2" />
-                {isAdmin ? 'Agent Analytics' : 'Team Analytics'}
+                {hasCompanyWideView ? 'Agent Analytics' : 'Team Analytics'}
               </TabsTrigger>
             </TabsList>
 
@@ -2519,7 +2525,7 @@ export default function AnalyticsPage() {
               {/* Agent Performance Overview Chart */}
               <AgentAnalyticsTab 
                 userId={user!.id} 
-                isAdmin={isAdmin} 
+                isAdmin={hasCompanyWideView} 
                 isLeader={isLeader}
                 isManager={isManager}
                 onViewAgentDetails={handleViewAgentDetails}
