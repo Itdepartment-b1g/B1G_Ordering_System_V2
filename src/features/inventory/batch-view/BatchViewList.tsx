@@ -318,6 +318,7 @@ export default function BatchViewList() {
             isLoading={isLoading || (showLocationPicker && isLoadingLocations && !activeLocationId)}
             pagedGroups={pagedGroups}
             locationLabel={locationLabel}
+            companyId={user?.company_id}
             sortState={sortState}
             onSort={handleSort}
           />

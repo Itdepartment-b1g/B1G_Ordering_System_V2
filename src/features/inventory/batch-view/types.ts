@@ -1,6 +1,8 @@
 import type { InventoryBatchSourceType } from '@/types/database.types';
 
 export type BatchInventoryLotLine = {
+  lotId: string;
+  batchId: string;
   variantId: string;
   variantName: string;
   variantType: string | null;

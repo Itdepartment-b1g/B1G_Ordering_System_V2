@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
+  Eye,
   FileSpreadsheet,
   FileText,
   Loader2,
@@ -31,10 +32,15 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { BatchLotAdjustmentsDialog } from '@/features/inventory/BatchLotAdjustmentsDialog';
 import { BATCH_SOURCE_LABELS } from '@/features/inventory/warehouseBatchAging';
 import { useToast } from '@/hooks/use-toast';
 
-import type { BatchInventoryBrandGroup, BatchInventoryGroup } from '../types';
+import type {
+  BatchInventoryBrandGroup,
+  BatchInventoryGroup,
+  BatchInventoryLotLine,
+} from '../types';
 import { buildBatchInventoryFilenamePrefix } from '../utils/batchInventoryExportHelpers';
 import { exportBatchInventoryExcel } from '../utils/exportBatchInventoryExcel';
 import { exportBatchInventoryPdf } from '../utils/exportBatchInventoryPdf';
@@ -67,7 +73,20 @@ function variantTypeBadgeClass(type: string | null): string {
   return '';
 }
 
-function BrandVariantSection({ brand }: { brand: BatchInventoryBrandGroup }) {
+type AdjustmentViewTarget = {
+  lotId: string;
+  batchId: string;
+  batchNumber: string;
+  variantName: string;
+};
+
+function BrandVariantSection({
+  brand,
+  onViewAdjustments,
+}: {
+  brand: BatchInventoryBrandGroup;
+  onViewAdjustments: (lot: BatchInventoryLotLine) => void;
+}) {
   return (
     <div className="overflow-hidden rounded-md border bg-white">
       <div className="border-b bg-muted/40 px-4 py-2.5 font-semibold">{brand.brandName}</div>
@@ -77,11 +96,12 @@ function BrandVariantSection({ brand }: { brand: BatchInventoryBrandGroup }) {
             <TableHead>Variant</TableHead>
             <TableHead>Expiration</TableHead>
             <TableHead className="text-right">Qty</TableHead>
+            <TableHead className="text-right w-[90px]">Adjustments</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {brand.lots.map((lot, index) => (
-            <TableRow key={`${lot.variantId}-${lot.expirationDate ?? 'none'}-${index}`}>
+            <TableRow key={`${lot.lotId}-${index}`}>
               <TableCell>
                 <div className="flex flex-wrap items-center gap-2">
                   <span>{lot.variantName}</span>
@@ -99,6 +119,18 @@ function BrandVariantSection({ brand }: { brand: BatchInventoryBrandGroup }) {
               <TableCell className="text-right tabular-nums">
                 {lot.quantity.toLocaleString()}
               </TableCell>
+              <TableCell className="text-right">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2"
+                  onClick={() => onViewAdjustments(lot)}
+                >
+                  <Eye className="h-3.5 w-3.5 mr-1" />
+                  View
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -107,13 +139,31 @@ function BrandVariantSection({ brand }: { brand: BatchInventoryBrandGroup }) {
   );
 }
 
-export function BatchViewRow({ group }: { group: BatchInventoryGroup }) {
+export function BatchViewRow({
+  group,
+  companyId,
+}: {
+  group: BatchInventoryGroup;
+  companyId?: string;
+}) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [detailPage, setDetailPage] = useState(0);
   const [detailPageSize, setDetailPageSize] = useState<PageSize>(DEFAULT_DETAIL_PAGE_SIZE);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [adjustmentViewTarget, setAdjustmentViewTarget] = useState<AdjustmentViewTarget | null>(
+    null
+  );
+
+  const handleViewAdjustments = (lot: BatchInventoryLotLine) => {
+    setAdjustmentViewTarget({
+      lotId: lot.lotId,
+      batchId: lot.batchId,
+      batchNumber: group.batchNumber,
+      variantName: lot.variantName,
+    });
+  };
 
   const sourceLabel = BATCH_SOURCE_LABELS[group.sourceType] ?? group.sourceType;
   const isExporting = isExportingExcel || isExportingPdf;
@@ -267,7 +317,11 @@ export function BatchViewRow({ group }: { group: BatchInventoryGroup }) {
             ) : (
               <div className="space-y-4" onClick={(e) => e.stopPropagation()}>
                 {pagedBrands.map((brand) => (
-                  <BrandVariantSection key={brand.brandId} brand={brand} />
+                  <BrandVariantSection
+                    key={brand.brandId}
+                    brand={brand}
+                    onViewAdjustments={handleViewAdjustments}
+                  />
                 ))}
 
                 {showBrandPagination && (
@@ -289,6 +343,18 @@ export function BatchViewRow({ group }: { group: BatchInventoryGroup }) {
           </TableCell>
         </TableRow>
       )}
+
+      <BatchLotAdjustmentsDialog
+        open={!!adjustmentViewTarget}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setAdjustmentViewTarget(null);
+        }}
+        companyId={companyId}
+        lotId={adjustmentViewTarget?.lotId ?? null}
+        batchId={adjustmentViewTarget?.batchId ?? null}
+        batchNumber={adjustmentViewTarget?.batchNumber ?? ''}
+        variantName={adjustmentViewTarget?.variantName ?? ''}
+      />
     </>
   );
 }

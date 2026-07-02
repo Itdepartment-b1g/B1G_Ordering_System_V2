@@ -32,6 +32,7 @@ type BatchViewTableProps = {
   isLoading: boolean;
   pagedGroups: BatchInventoryGroup[];
   locationLabel: string;
+  companyId?: string;
   sortState: TableSortCycleState<BatchViewSortKey>;
   onSort: (key: BatchViewSortKey) => void;
 };
@@ -40,6 +41,7 @@ export function BatchViewTable({
   isLoading,
   pagedGroups,
   locationLabel,
+  companyId,
   sortState,
   onSort,
 }: BatchViewTableProps) {
@@ -117,7 +119,9 @@ export function BatchViewTable({
 
           {!isLoading &&
 
-            pagedGroups.map((group) => <BatchViewRow key={group.batchId} group={group} />)}
+            pagedGroups.map((group) => (
+              <BatchViewRow key={group.batchId} group={group} companyId={companyId} />
+            ))}
 
           {!isLoading && pagedGroups.length === 0 && (
 

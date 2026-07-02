@@ -95,9 +95,10 @@ type AdjustmentRow = {
 
 const REASON_PRESETS = [
   'Cycle count correction',
-  'Found stock',
-  'Damaged / unsellable',
-  'Data entry error',
+  // 'Found stock',
+  'Damaged',
+  'Obsolete',
+  // 'Data entry error',
   'Supplier discrepancy',
   'Other',
 ];

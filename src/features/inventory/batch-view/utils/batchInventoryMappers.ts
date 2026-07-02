@@ -119,6 +119,8 @@ export function mapBatchInventoryGroups(data: unknown[]): BatchInventoryGroup[] 
     }
 
     brandAcc.lots.push({
+      lotId: row.id,
+      batchId: batch.id,
       variantId: variant.id,
       variantName: variant.name,
       variantType: variant.variant_type,
