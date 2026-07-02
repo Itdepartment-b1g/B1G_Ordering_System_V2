@@ -189,6 +189,38 @@ export interface KeyAccountProductAnalyticsRow {
   clientCount: number;
 }
 
+export const KEY_ACCOUNT_DASHBOARD_MONTH_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
+
+export interface KeyAccountMonthlyRevenueRow {
+  month: string;
+  deliveredRevenue: number;
+  pendingRevenue: number;
+  grossRevenue: number;
+  rebatedRevenue: number;
+  totalRevenue: number;
+  /** POs in kam/admin/director/warehouse_reserved workflow (analytics pending definition). */
+  pendingWorkflowOrders: number;
+}
+
+/** Revenue metrics for a month bucket (dashboard chart adds pendingWorkflowOrders separately). */
+export type KeyAccountMonthlyRevenueMetrics = Omit<
+  KeyAccountMonthlyRevenueRow,
+  'month' | 'pendingWorkflowOrders'
+>;
+
 function normalizeRebateAnalyticsLines(
   lines: KeyAccountRebateAnalyticsRecord['lines']
 ): KeyAccountRebateAnalyticsLine[] {
@@ -293,6 +325,20 @@ const REPLACEMENT_POST_RESERVE_WORKFLOW_STATUSES = new Set([
   'delivered',
 ]);
 
+function deliveredReplacementLineSplit(
+  quantity: number,
+  lineRevenue: number
+): KeyAccountLineItemSplit {
+  return {
+    deliveredQuantity: quantity,
+    pendingQuantity: 0,
+    deliveredRevenue: lineRevenue,
+    pendingRevenue: 0,
+    deliveredLineItems: 1,
+    pendingLineItems: 0,
+  };
+}
+
 /** Delivered vs pending for replacement SKUs (fulfillment PO or pending until released). */
 export function splitReplacementProductLineItem(input: {
   rebateStatus: string;
@@ -301,6 +347,7 @@ export function splitReplacementProductLineItem(input: {
   variantId: string;
   warehouseLocationId?: string | null;
   fulfillmentOrder?: KeyAccountProductAnalyticsOrderRef | null;
+  sourceOrder?: KeyAccountProductAnalyticsOrderRef | null;
   purchaseOrderId?: string | null;
   reservationByKey: Map<string, { quantity_fulfilled: number; quantity_reserved: number }>;
   locationStatusByKey: Map<string, string>;
@@ -308,6 +355,13 @@ export function splitReplacementProductLineItem(input: {
   const quantity = Math.max(0, input.itemQuantity);
   const lineRevenue = Math.max(0, input.lineRevenue);
   if (quantity <= 0 && lineRevenue <= 0) return null;
+
+  const rebateStatus = String(input.rebateStatus || '');
+
+  // Executed rebate — replacement is complete; do not leave phantom pending revenue.
+  if (rebateStatus === 'executed') {
+    return deliveredReplacementLineSplit(quantity, lineRevenue);
+  }
 
   const fulfillmentOrder = input.fulfillmentOrder;
   if (fulfillmentOrder) {
@@ -326,18 +380,20 @@ export function splitReplacementProductLineItem(input: {
 
     const ws = String(fulfillmentOrder.workflow_status || '');
     if (REPLACEMENT_POST_RESERVE_WORKFLOW_STATUSES.has(ws)) {
-      return {
-        deliveredQuantity: quantity,
-        pendingQuantity: 0,
-        deliveredRevenue: lineRevenue,
-        pendingRevenue: 0,
-        deliveredLineItems: 1,
-        pendingLineItems: 0,
-      };
+      return deliveredReplacementLineSplit(quantity, lineRevenue);
     }
   }
 
-  if (new Set<string>(KEY_ACCOUNT_REBATE_ANALYTICS_STATUSES).has(String(input.rebateStatus || ''))) {
+  // Source PO already delivered — replacement is on a closed PO (no separate fulfillment PO).
+  const sourceOrder = input.sourceOrder;
+  if (
+    sourceOrder &&
+    getKeyAccountProductWorkflowBucket(sourceOrder.workflow_status) === 'delivered'
+  ) {
+    return deliveredReplacementLineSplit(quantity, lineRevenue);
+  }
+
+  if (new Set<string>(KEY_ACCOUNT_REBATE_ANALYTICS_STATUSES).has(rebateStatus)) {
     return {
       deliveredQuantity: 0,
       pendingQuantity: quantity,
@@ -366,6 +422,53 @@ type ProductAnalyticsAccumulator = {
   clientIds: Set<string>;
 };
 
+export interface KeyAccountOrderRevenueAttribution {
+  grossDeliveredRevenue: number;
+  grossPendingRevenue: number;
+  rebatedDeliveredRevenue: number;
+  rebatedPendingRevenue: number;
+}
+
+function emptyOrderRevenueAttribution(): KeyAccountOrderRevenueAttribution {
+  return {
+    grossDeliveredRevenue: 0,
+    grossPendingRevenue: 0,
+    rebatedDeliveredRevenue: 0,
+    rebatedPendingRevenue: 0,
+  };
+}
+
+function accumulateRevenueAttribution(
+  target: KeyAccountOrderRevenueAttribution,
+  split: KeyAccountLineItemSplit,
+  rebateAllocation: { delivered: number; pending: number }
+) {
+  target.grossDeliveredRevenue += split.deliveredRevenue;
+  target.grossPendingRevenue += split.pendingRevenue;
+  target.rebatedDeliveredRevenue += rebateAllocation.delivered;
+  target.rebatedPendingRevenue += rebateAllocation.pending;
+}
+
+function accumulateOrderRevenueAttribution(
+  orderRevenueById: Map<string, KeyAccountOrderRevenueAttribution>,
+  orderId: string,
+  split: KeyAccountLineItemSplit,
+  rebateAllocation: { delivered: number; pending: number }
+) {
+  const existing = orderRevenueById.get(orderId) || emptyOrderRevenueAttribution();
+  accumulateRevenueAttribution(existing, split, rebateAllocation);
+  orderRevenueById.set(orderId, existing);
+}
+
+function monthKeyFromOrderDate(
+  orderDate: string | undefined,
+  monthNames: readonly string[]
+): string | null {
+  if (!orderDate) return null;
+  const month = monthNames[new Date(orderDate).getMonth()];
+  return month ?? null;
+}
+
 function accumulateProductAnalyticsContribution(
   productMap: Map<string, ProductAnalyticsAccumulator>,
   brand: string,
@@ -373,7 +476,11 @@ function accumulateProductAnalyticsContribution(
   split: KeyAccountLineItemSplit,
   rebateAllocation: { delivered: number; pending: number },
   purchaseOrderId: string,
-  clientId: string | null | undefined
+  clientId: string | null | undefined,
+  orderRevenueById?: Map<string, KeyAccountOrderRevenueAttribution>,
+  monthlyRevenueByMonth?: Map<string, KeyAccountOrderRevenueAttribution>,
+  orderDateById?: Map<string, string>,
+  monthNames?: readonly string[]
 ) {
   const key = `${brand}::${variantName}`;
   const existing = productMap.get(key) || {
@@ -402,6 +509,17 @@ function accumulateProductAnalyticsContribution(
   existing.orderIds.add(purchaseOrderId);
   if (clientId) existing.clientIds.add(clientId);
   productMap.set(key, existing);
+  if (orderRevenueById) {
+    accumulateOrderRevenueAttribution(orderRevenueById, purchaseOrderId, split, rebateAllocation);
+  }
+  if (monthlyRevenueByMonth && orderDateById) {
+    const monthKey = monthKeyFromOrderDate(orderDateById.get(purchaseOrderId), monthNames || []);
+    if (monthKey) {
+      const monthly = monthlyRevenueByMonth.get(monthKey) || emptyOrderRevenueAttribution();
+      accumulateRevenueAttribution(monthly, split, rebateAllocation);
+      monthlyRevenueByMonth.set(monthKey, monthly);
+    }
+  }
 }
 
 function finalizeProductAnalyticsRows(
@@ -456,8 +574,17 @@ export function buildKeyAccountProductAnalyticsRows(input: {
   rebates: KeyAccountRebateAnalyticsRecord[];
   reservationByKey: Map<string, { quantity_fulfilled: number; quantity_reserved: number }>;
   locationStatusByKey: Map<string, string>;
-}): KeyAccountProductAnalyticsRow[] {
+  orderDateById?: Map<string, string>;
+  trackMonthlyRevenue?: boolean;
+}): {
+  rows: KeyAccountProductAnalyticsRow[];
+  orderRevenueById: Map<string, KeyAccountOrderRevenueAttribution>;
+  monthlyRevenueByMonth: Map<string, KeyAccountOrderRevenueAttribution>;
+} {
   const productMap = new Map<string, ProductAnalyticsAccumulator>();
+  const orderRevenueById = new Map<string, KeyAccountOrderRevenueAttribution>();
+  const monthlyRevenueByMonth = new Map<string, KeyAccountOrderRevenueAttribution>();
+  const trackMonthly = Boolean(input.trackMonthlyRevenue && input.orderDateById);
   const activeStatuses = new Set<string>(KEY_ACCOUNT_REBATE_ANALYTICS_STATUSES);
 
   input.items.forEach((item) => {
@@ -519,7 +646,11 @@ export function buildKeyAccountProductAnalyticsRows(input: {
       adjustedSplit,
       rebateAllocation,
       item.purchase_order_id,
-      order.key_account_client_id
+      order.key_account_client_id,
+      orderRevenueById,
+      trackMonthly ? monthlyRevenueByMonth : undefined,
+      trackMonthly ? input.orderDateById : undefined,
+      KEY_ACCOUNT_DASHBOARD_MONTH_NAMES
     );
   });
 
@@ -527,16 +658,13 @@ export function buildKeyAccountProductAnalyticsRows(input: {
     if (!activeStatuses.has(String(rebate.status || ''))) return;
     if (!rebateResolutionHasReplacement(rebate.resolution_type)) return;
 
+    // Attribute replacement revenue to the source PO month only so monthly totals sum to all-time.
     const sourceInScope = input.productAnalyticsOrderById.has(rebate.purchase_order_id);
+    if (!sourceInScope) return;
+
     const fulfillmentOrder = rebate.fulfillment_purchase_order_id
       ? input.orderById.get(rebate.fulfillment_purchase_order_id) ?? null
       : null;
-    const fulfillmentInScope =
-      fulfillmentOrder != null &&
-      input.dateFilteredOrderIds.has(fulfillmentOrder.id) &&
-      isKeyAccountAnalyticsEligibleOrder(fulfillmentOrder);
-
-    if (!sourceInScope && !fulfillmentInScope) return;
 
     const sourceOrder =
       input.productAnalyticsOrderById.get(rebate.purchase_order_id) ||
@@ -544,29 +672,14 @@ export function buildKeyAccountProductAnalyticsRows(input: {
     if (!sourceOrder) return;
 
     const replacements = normalizeRebateReplacements(rebate.replacements);
-    const replacementCatalogTotal = replacements.reduce(
-      (sum, replacement) => sum + Math.max(0, Number(replacement.total_price) || 0),
-      0
-    );
-    const fulfillmentOverage = Math.max(0, Number(fulfillmentOrder?.total_amount) || 0);
 
     replacements.forEach((replacement) => {
       const quantity = Math.max(0, Number(replacement.quantity) || 0);
       const catalogLineRevenue = Math.max(0, Number(replacement.total_price) || 0);
       if (quantity <= 0 && catalogLineRevenue <= 0) return;
 
-      let lineRevenue = catalogLineRevenue;
-      if (sourceInScope) {
-        // Source PO in range: full replacement value (swap already removed disputed lines).
-        lineRevenue = catalogLineRevenue;
-      } else if (fulfillmentInScope) {
-        // Source PO outside range: only the payable overage in this period (matches PO table row).
-        if (fulfillmentOverage <= 0) return;
-        lineRevenue =
-          replacementCatalogTotal > 0
-            ? (catalogLineRevenue / replacementCatalogTotal) * fulfillmentOverage
-            : fulfillmentOverage;
-      }
+      // Full replacement catalog value; disputed lines were already swapped off the source PO.
+      const lineRevenue = catalogLineRevenue;
 
       const split = splitReplacementProductLineItem({
         rebateStatus: rebate.status,
@@ -575,6 +688,7 @@ export function buildKeyAccountProductAnalyticsRows(input: {
         variantId: replacement.variant_id,
         warehouseLocationId: replacement.warehouse_location_id,
         fulfillmentOrder,
+        sourceOrder,
         purchaseOrderId: fulfillmentOrder?.id ?? null,
         reservationByKey: input.reservationByKey,
         locationStatusByKey: input.locationStatusByKey,
@@ -585,19 +699,129 @@ export function buildKeyAccountProductAnalyticsRows(input: {
       const brand = firstRelation(variant?.brands)?.name || 'Unknown Brand';
       const variantName = variant?.name || 'Unknown Variant';
 
+      const attributionOrderId = rebate.purchase_order_id;
+
       accumulateProductAnalyticsContribution(
         productMap,
         brand,
         variantName,
         split,
         { delivered: 0, pending: 0 },
-        sourceInScope ? rebate.purchase_order_id : fulfillmentOrder!.id,
-        sourceOrder.key_account_client_id
+        attributionOrderId,
+        sourceOrder.key_account_client_id,
+        orderRevenueById,
+        trackMonthly ? monthlyRevenueByMonth : undefined,
+        trackMonthly ? input.orderDateById : undefined,
+        KEY_ACCOUNT_DASHBOARD_MONTH_NAMES
       );
     });
   });
 
-  return finalizeProductAnalyticsRows(productMap);
+  return { rows: finalizeProductAnalyticsRows(productMap), orderRevenueById, monthlyRevenueByMonth };
+}
+
+export interface KeyAccountProductRevenueSummary {
+  grossRevenue: number;
+  rebatedRevenue: number;
+  deliveredRevenue: number;
+  pendingRevenue: number;
+  totalRevenue: number;
+}
+
+export function sumKeyAccountProductRevenueSummary(
+  rows: KeyAccountProductAnalyticsRow[]
+): KeyAccountProductRevenueSummary {
+  const grossRevenue = rows.reduce((sum, row) => sum + row.grossRevenue, 0);
+  const rebatedRevenue = rows.reduce((sum, row) => sum + row.rebatedRevenue, 0);
+  const deliveredRevenue = rows.reduce((sum, row) => sum + row.deliveredRevenue, 0);
+  const pendingRevenue = rows.reduce((sum, row) => sum + row.pendingRevenue, 0);
+  return {
+    grossRevenue,
+    rebatedRevenue,
+    deliveredRevenue,
+    pendingRevenue,
+    totalRevenue: deliveredRevenue + pendingRevenue,
+  };
+}
+
+function netOrderRevenueAttribution(attribution: KeyAccountOrderRevenueAttribution) {
+  const deliveredRevenue =
+    attribution.grossDeliveredRevenue - attribution.rebatedDeliveredRevenue;
+  const pendingRevenue = attribution.grossPendingRevenue - attribution.rebatedPendingRevenue;
+  return { deliveredRevenue, pendingRevenue };
+}
+
+/** Net delivered/pending/gross/rebated totals for one PO — matches product analytics attribution. */
+export function getKeyAccountOrderNetRevenueFromAttribution(
+  attribution?: KeyAccountOrderRevenueAttribution
+) {
+  const empty = {
+    grossDelivered: 0,
+    grossPending: 0,
+    rebatedDelivered: 0,
+    rebatedPending: 0,
+    deliveredRevenue: 0,
+    pendingRevenue: 0,
+    grossRevenue: 0,
+    rebatedRevenue: 0,
+    totalRevenue: 0,
+  };
+  if (!attribution) return empty;
+
+  const { deliveredRevenue, pendingRevenue } = netOrderRevenueAttribution(attribution);
+  const grossRevenue = attribution.grossDeliveredRevenue + attribution.grossPendingRevenue;
+  const rebatedRevenue = attribution.rebatedDeliveredRevenue + attribution.rebatedPendingRevenue;
+
+  return {
+    grossDelivered: attribution.grossDeliveredRevenue,
+    grossPending: attribution.grossPendingRevenue,
+    rebatedDelivered: attribution.rebatedDeliveredRevenue,
+    rebatedPending: attribution.rebatedPendingRevenue,
+    deliveredRevenue,
+    pendingRevenue,
+    grossRevenue,
+    rebatedRevenue,
+    totalRevenue: deliveredRevenue + pendingRevenue,
+  };
+}
+
+function finalizeMonthlyRevenueAttribution(
+  attribution: KeyAccountOrderRevenueAttribution
+): KeyAccountMonthlyRevenueMetrics {
+  const grossDeliveredRevenue = attribution.grossDeliveredRevenue;
+  const grossPendingRevenue = attribution.grossPendingRevenue;
+  const rebatedDeliveredRevenue = attribution.rebatedDeliveredRevenue;
+  const rebatedPendingRevenue = attribution.rebatedPendingRevenue;
+  const grossRevenue = grossDeliveredRevenue + grossPendingRevenue;
+  const rebatedRevenue = rebatedDeliveredRevenue + rebatedPendingRevenue;
+  const deliveredRevenue = grossDeliveredRevenue - rebatedDeliveredRevenue;
+  const pendingRevenue = grossPendingRevenue - rebatedPendingRevenue;
+  return {
+    deliveredRevenue,
+    pendingRevenue,
+    grossRevenue,
+    rebatedRevenue,
+    totalRevenue: deliveredRevenue + pendingRevenue,
+  };
+}
+
+/** Build monthly revenue rows from per-contribution month buckets (matches product analytics totals). */
+export function buildKeyAccountMonthlyRevenueData(
+  monthlyRevenueByMonth: Map<string, KeyAccountOrderRevenueAttribution>,
+  monthNames: readonly string[] = KEY_ACCOUNT_DASHBOARD_MONTH_NAMES
+): KeyAccountMonthlyRevenueRow[] {
+  return monthNames.map((month) => ({
+    month,
+    pendingWorkflowOrders: 0,
+    ...finalizeMonthlyRevenueAttribution(
+      monthlyRevenueByMonth.get(month) || {
+        grossDeliveredRevenue: 0,
+        grossPendingRevenue: 0,
+        rebatedDeliveredRevenue: 0,
+        rebatedPendingRevenue: 0,
+      }
+    ),
+  }));
 }
 
 /**

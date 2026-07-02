@@ -24,6 +24,7 @@ const EMPTY_SHOP = {
   contact_person: '',
   contact_phone: '',
   contact_email: '',
+  operating_hours: '',
   notes: '',
 };
 
@@ -87,7 +88,7 @@ export function KeyAccountAddShopDialog({
           contact_person: form.contact_person.trim() || null,
           contact_phone: form.contact_phone.trim() || null,
           contact_email: form.contact_email.trim() || null,
-          operating_hours: null,
+          operating_hours: form.operating_hours.trim() || null,
           notes: form.notes.trim() || null,
           created_by: createdBy ?? null,
         })
@@ -209,6 +210,15 @@ export function KeyAccountAddShopDialog({
               type="email"
               value={form.contact_email}
               onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="ka-po-shop_operating_hours">Operating hours</Label>
+            <Input
+              id="ka-po-shop_operating_hours"
+              value={form.operating_hours}
+              onChange={(e) => setForm({ ...form, operating_hours: e.target.value })}
+              placeholder="Mon–Sat 9AM–9PM"
             />
           </div>
           <div className="space-y-2">

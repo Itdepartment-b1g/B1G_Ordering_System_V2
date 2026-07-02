@@ -35,6 +35,7 @@ import {
 import {
   isKeyAccountAccounting,
   isKeyAccountDirector,
+  isKeyAccountManager,
   isKeyAccountSalesAdmin,
   isKeyAccountSalesHead,
 } from '@/features/key-accounts/keyAccountRoles';
@@ -43,6 +44,8 @@ type RebateRow = {
   id: string;
   rebate_number: string;
   purchase_order_id: string;
+  kam_id: string | null;
+  created_by: string | null;
   status: KeyAccountRebateStatus;
   resolution_type: string;
   reason_code: string;
@@ -56,6 +59,7 @@ type RebateRow = {
   created_at: string;
   purchase_order?: { po_number: string; total_amount: number } | null;
   client?: { client_name: string } | null;
+  kam?: { full_name: string; role: string } | null;
   fulfillment_po?: { po_number: string } | null;
   top_up_po?: { po_number: string } | null;
 };
@@ -68,10 +72,11 @@ function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
 
 type RebateQueryRow = Omit<
   RebateRow,
-  'purchase_order' | 'client' | 'fulfillment_po' | 'top_up_po'
+  'purchase_order' | 'client' | 'kam' | 'fulfillment_po' | 'top_up_po'
 > & {
   purchase_order?: { po_number: string; total_amount: number } | { po_number: string; total_amount: number }[] | null;
   client?: { client_name: string } | { client_name: string }[] | null;
+  kam?: { full_name: string; role: string } | { full_name: string; role: string }[] | null;
   fulfillment_po?: { po_number: string } | { po_number: string }[] | null;
   top_up_po?: { po_number: string } | { po_number: string }[] | null;
 };
@@ -81,9 +86,24 @@ function mapRebateRow(row: RebateQueryRow): RebateRow {
     ...row,
     purchase_order: unwrapRelation(row.purchase_order),
     client: unwrapRelation(row.client),
+    kam: unwrapRelation(row.kam),
     fulfillment_po: unwrapRelation(row.fulfillment_po),
     top_up_po: unwrapRelation(row.top_up_po),
   };
+}
+
+function isOwnRebate(row: RebateRow, userId: string): boolean {
+  return row.kam_id === userId || row.created_by === userId;
+}
+
+function isKamTeamRebate(
+  row: RebateRow,
+  assignedKamIds: Set<string>,
+  isDirector: boolean
+): boolean {
+  if (!row.kam_id || row.kam?.role !== 'key_account_manager') return false;
+  if (isDirector) return assignedKamIds.has(row.kam_id);
+  return true;
 }
 
 type RebateLine = {
@@ -143,18 +163,28 @@ function mapRebateReplacement(row: {
 const REBATES_PER_PAGE = 10;
 
 type ResolutionFilter = 'all' | KeyAccountRebateResolutionType;
+type ScopeFilter = 'all' | 'mine' | 'kam' | 'sales_director' | 'sales_head';
 
 export function KeyAccountRebatesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
 
+  const role = user?.role;
+  const isKAM = isKeyAccountManager(role);
+  const isDirector = isKeyAccountDirector(role);
+  const isSalesLead =
+    isKeyAccountSalesAdmin(role) || isKeyAccountSalesHead(role) || isDirector;
+  const showScopeFilter = isSalesLead;
+
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<RebateRow[]>([]);
+  const [directorKamIds, setDirectorKamIds] = useState<Set<string>>(new Set());
   const [q, setQ] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
   const [resolutionFilter, setResolutionFilter] = useState<ResolutionFilter>('all');
+  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('all');
   const [page, setPage] = useState(1);
   const [active, setActive] = useState<RebateRow | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -171,19 +201,40 @@ export function KeyAccountRebatesPage() {
     isKeyAccountSalesHead(user?.role) ||
     isKeyAccountDirector(user?.role);
 
+  useEffect(() => {
+    if (!user?.id || !isDirector) {
+      setDirectorKamIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('kam_director_assignments')
+        .select('kam_id')
+        .eq('director_id', user.id);
+      if (error || cancelled) return;
+      setDirectorKamIds(new Set((data ?? []).map((r: { kam_id: string }) => r.kam_id)));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, isDirector]);
+
   const fetchRows = useCallback(async () => {
-    if (!user?.company_id) {
+    if (!user?.company_id || !user?.id) {
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('key_account_po_rebates')
         .select(`
           id,
           rebate_number,
           purchase_order_id,
+          kam_id,
+          created_by,
           status,
           resolution_type,
           reason_code,
@@ -197,11 +248,18 @@ export function KeyAccountRebatesPage() {
           created_at,
           purchase_order:purchase_orders!key_account_po_rebates_purchase_order_id_fkey(po_number, total_amount),
           client:key_account_clients(client_name),
+          kam:profiles!key_account_po_rebates_kam_id_fkey(full_name, role),
           fulfillment_po:purchase_orders!key_account_po_rebates_fulfillment_purchase_order_id_fkey(po_number),
           top_up_po:purchase_orders!key_account_po_rebates_top_up_purchase_order_id_fkey(po_number)
         `)
         .eq('company_id', user.company_id)
         .order('created_at', { ascending: false });
+
+      if (isKAM) {
+        query = query.or(`kam_id.eq.${user.id},created_by.eq.${user.id}`);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       setRows((data ?? []).map((row) => mapRebateRow(row as RebateQueryRow)));
     } catch (e: unknown) {
@@ -219,7 +277,7 @@ export function KeyAccountRebatesPage() {
     } finally {
       setLoading(false);
     }
-  }, [user?.company_id, toast]);
+  }, [user?.company_id, user?.id, isKAM, toast]);
 
   useEffect(() => {
     void fetchRows();
@@ -235,10 +293,46 @@ export function KeyAccountRebatesPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [q, rebateDateRange.start, rebateDateRange.end, resolutionFilter]);
+  }, [q, rebateDateRange.start, rebateDateRange.end, resolutionFilter, scopeFilter]);
+
+  const scopedRows = useMemo(() => {
+    if (!showScopeFilter || !user?.id || scopeFilter === 'all') return rows;
+    if (scopeFilter === 'mine') {
+      return rows.filter((r) => isOwnRebate(r, user.id));
+    }
+    if (scopeFilter === 'kam') {
+      return rows.filter((r) => isKamTeamRebate(r, directorKamIds, isDirector));
+    }
+    if (scopeFilter === 'sales_director') {
+      return rows.filter((r) => r.kam?.role === 'sales_director');
+    }
+    if (scopeFilter === 'sales_head') {
+      return rows.filter((r) => r.kam?.role === 'sales_head');
+    }
+    return rows;
+  }, [rows, showScopeFilter, user?.id, scopeFilter, directorKamIds, isDirector]);
+
+  const showKamColumn = showScopeFilter && scopeFilter !== 'mine';
+
+  const ownerColumnLabel = useMemo(() => {
+    if (scopeFilter === 'kam') return 'KAM';
+    if (scopeFilter === 'sales_director') return 'Director';
+    if (scopeFilter === 'sales_head') return 'Sales Head';
+    return 'Owner';
+  }, [scopeFilter]);
+
+  const listTitle = useMemo(() => {
+    if (isKAM) return 'My rebates';
+    if (!showScopeFilter) return 'All rebates';
+    if (scopeFilter === 'mine') return 'My rebates';
+    if (scopeFilter === 'kam') return 'KAM rebates';
+    if (scopeFilter === 'sales_director') return 'Sales Director rebates';
+    if (scopeFilter === 'sales_head') return 'Sales Head rebates';
+    return 'All rebates';
+  }, [isKAM, showScopeFilter, scopeFilter]);
 
   const filtered = useMemo(() => {
-    const dateFiltered = rows.filter((r) =>
+    const dateFiltered = scopedRows.filter((r) =>
       isDateInRange(new Date(r.created_at), rebateDateRange.start, rebateDateRange.end)
     );
     const resolutionFiltered =
@@ -250,13 +344,15 @@ export function KeyAccountRebatesPage() {
     return resolutionFiltered.filter((r) => {
       const poNum = r.purchase_order?.po_number?.toLowerCase() || '';
       const client = r.client?.client_name?.toLowerCase() || '';
+      const kamName = r.kam?.full_name?.toLowerCase() || '';
       return (
         r.rebate_number.toLowerCase().includes(term) ||
         poNum.includes(term) ||
-        client.includes(term)
+        client.includes(term) ||
+        kamName.includes(term)
       );
     });
-  }, [rows, q, rebateDateRange.end, rebateDateRange.start, resolutionFilter]);
+  }, [scopedRows, q, rebateDateRange.end, rebateDateRange.start, resolutionFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / REBATES_PER_PAGE));
   const currentPage = Math.min(Math.max(1, page), totalPages);
@@ -382,7 +478,7 @@ export function KeyAccountRebatesPage() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle className="text-base">All rebates</CardTitle>
+            <CardTitle className="text-base">{listTitle}</CardTitle>
             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto sm:items-center">
               <Input
                 placeholder="Search rebate #, PO, client…"
@@ -390,6 +486,23 @@ export function KeyAccountRebatesPage() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
+              {showScopeFilter && (
+                <Select
+                  value={scopeFilter}
+                  onValueChange={(v) => setScopeFilter(v as ScopeFilter)}
+                >
+                  <SelectTrigger className="w-full sm:w-[220px] h-10 shrink-0">
+                    <SelectValue placeholder="All rebates" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All rebates</SelectItem>
+                    <SelectItem value="mine">My rebates</SelectItem>
+                    <SelectItem value="kam">KAM rebates</SelectItem>
+                    <SelectItem value="sales_director">Sales Director rebates</SelectItem>
+                    <SelectItem value="sales_head">Sales Head rebates</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
               <Select
                 value={resolutionFilter}
                 onValueChange={(v) => setResolutionFilter(v as ResolutionFilter)}
@@ -422,9 +535,9 @@ export function KeyAccountRebatesPage() {
             </div>
           ) : filtered.length === 0 ? (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              {rows.length === 0
+              {scopedRows.length === 0
                 ? `No rebates yet.${canCreate ? ' Click Create rebate and choose a delivered PO.' : ''}`
-                : 'No rebates match your search, resolution, or date range.'}
+                : 'No rebates match your search, scope, resolution, or date range.'}
             </p>
           ) : (
             <>
@@ -436,6 +549,7 @@ export function KeyAccountRebatesPage() {
                       <TableHead>Created</TableHead>
                       <TableHead>PO</TableHead>
                       <TableHead>Client</TableHead>
+                      {showKamColumn && <TableHead>{ownerColumnLabel}</TableHead>}
                       <TableHead>Resolution</TableHead>
                       <TableHead className="text-right">Disputed</TableHead>
                       <TableHead>Status</TableHead>
@@ -453,6 +567,9 @@ export function KeyAccountRebatesPage() {
                         </TableCell>
                         <TableCell>{row.purchase_order?.po_number ?? '—'}</TableCell>
                         <TableCell>{row.client?.client_name ?? '—'}</TableCell>
+                        {showKamColumn && (
+                          <TableCell>{row.kam?.full_name ?? '—'}</TableCell>
+                        )}
                         <TableCell>{rebateResolutionLabel(row.resolution_type)}</TableCell>
                         <TableCell className="text-right">
                           {formatRebateCurrency(row.disputed_total)}
@@ -536,6 +653,12 @@ export function KeyAccountRebatesPage() {
                   <span className="text-muted-foreground">Client: </span>
                   {active.client?.client_name ?? '—'}
                 </div>
+                {active.kam?.full_name && (
+                  <div>
+                    <span className="text-muted-foreground">KAM: </span>
+                    {active.kam.full_name}
+                  </div>
+                )}
                 <div>
                   <span className="text-muted-foreground">Disputed: </span>
                   {formatRebateCurrency(active.disputed_total)}
