@@ -58,7 +58,7 @@ export function filterBatchInventoryGroups(
     return group.brands.some(
       (brand) =>
         brand.brandName.toLowerCase().includes(q) ||
-        brand.variants.some((v) => v.variantName.toLowerCase().includes(q))
+        brand.lots.some((lot) => lot.variantName.toLowerCase().includes(q))
     );
   });
 }

@@ -38,6 +38,7 @@ type SupabaseBatchMovementRow = {
   variant_id: string;
   batch_id: string;
   batch?: { batch_number: string } | { batch_number: string }[] | null;
+  lot?: { expiration_date: string | null } | { expiration_date: string | null }[] | null;
 };
 
 type SupabaseHistoryRow = {
@@ -97,11 +98,13 @@ function mapTransaction(row: SupabaseTransactionRow): WarehouseAllocationLine {
 
 function mapBatchMovement(row: SupabaseBatchMovementRow): WarehouseAllocationBatchLine {
   const batch = unwrapRelation(row.batch);
+  const lot = unwrapRelation(row.lot);
   return {
     id: row.id,
     batchId: row.batch_id,
     batchNumber: batch?.batch_number ?? 'Unknown batch',
     quantity: row.quantity,
+    expirationDate: lot?.expiration_date ?? null,
   };
 }
 

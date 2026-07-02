@@ -118,7 +118,8 @@ async function fetchWarehouseAllocationHistory({
       reference_id,
       variant_id,
       batch_id,
-      batch:inventory_batches!inventory_batch_movements_batch_id_fkey ( batch_number )
+      batch:inventory_batches!inventory_batch_movements_batch_id_fkey ( batch_number ),
+      lot:inventory_batch_lots!inventory_batch_movements_lot_id_fkey ( expiration_date )
     `
     )
     .eq('company_id', user.company_id)

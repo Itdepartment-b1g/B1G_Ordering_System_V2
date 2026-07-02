@@ -1,3 +1,5 @@
+import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
+
 import type { WarehouseAllocationGroup } from '../types';
 import { formatManilaDateTime } from '../table/TableRow';
 
@@ -23,7 +25,7 @@ function buildWarehouseAllocationHistoryHtml(group: WarehouseAllocationGroup): s
   const title = `Warehouse Allocation – ${formatManilaDateTime(group.createdAt)}`;
   const variantRows =
     group.lines.length === 0
-      ? `<tr><td colspan="6" style="text-align:center;font-style:italic;color:#6b7280;">No linked variant lines</td></tr>`
+      ? `<tr><td colspan="7" style="text-align:center;font-style:italic;color:#6b7280;">No linked variant lines</td></tr>`
       : group.lines
           .flatMap((line) => {
             if (line.batches.length === 0) {
@@ -33,6 +35,7 @@ function buildWarehouseAllocationHistoryHtml(group: WarehouseAllocationGroup): s
           <td>${escapeHtml(line.variantName)}</td>
           <td>${escapeHtml(variantTypeLabel(line.variantType))}</td>
           <td class="num">${line.quantity.toLocaleString()}</td>
+          <td>—</td>
           <td>—</td>
           <td class="num">—</td>
         </tr>`;
@@ -45,6 +48,7 @@ function buildWarehouseAllocationHistoryHtml(group: WarehouseAllocationGroup): s
           <td>${index === 0 ? escapeHtml(variantTypeLabel(line.variantType)) : ''}</td>
           <td class="num">${index === 0 ? line.quantity.toLocaleString() : ''}</td>
           <td>${escapeHtml(batch.batchNumber)}</td>
+          <td>${escapeHtml(formatLotDate(batch.expirationDate))}</td>
           <td class="num">${batch.quantity.toLocaleString()}</td>
         </tr>`
             );
@@ -96,6 +100,7 @@ function buildWarehouseAllocationHistoryHtml(group: WarehouseAllocationGroup): s
           <th>Type</th>
           <th style="text-align:right;">Qty</th>
           <th>Batch</th>
+          <th>Expiration</th>
           <th style="text-align:right;">Batch Qty</th>
         </tr>
       </thead>

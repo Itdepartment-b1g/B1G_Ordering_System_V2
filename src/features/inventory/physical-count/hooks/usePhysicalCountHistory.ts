@@ -35,9 +35,9 @@ export function usePhysicalCountHistory({
           signature_url,
           signature_path,
           notes,
-          batch:inventory_batches ( batch_number ),
-          warehouse_location:warehouse_locations ( name, is_main ),
-          performed_by_user:profiles!physical_count_sessions_performed_by_fkey ( full_name ),
+          batch:inventory_batches ( id, batch_number ),
+          warehouse_location:warehouse_locations ( id, name, is_main ),
+          performed_by_user:profiles!physical_count_sessions_performed_by_fkey ( id, full_name ),
           physical_count_lines ( variance )
         `
         )
@@ -91,9 +91,9 @@ export function usePhysicalCountSessionDetail(sessionId: string | null, enabled:
           signature_url,
           signature_path,
           notes,
-          batch:inventory_batches ( batch_number ),
-          warehouse_location:warehouse_locations ( name, is_main ),
-          performed_by_user:profiles!physical_count_sessions_performed_by_fkey ( full_name ),
+          batch:inventory_batches ( id, batch_number ),
+          warehouse_location:warehouse_locations ( id, name, is_main ),
+          performed_by_user:profiles!physical_count_sessions_performed_by_fkey ( id, full_name ),
           physical_count_lines (
             id,
             brand_name,

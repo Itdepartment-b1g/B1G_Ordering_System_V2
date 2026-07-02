@@ -28,6 +28,7 @@ export function useWarehouseBatchInventory({
           `
           id,
           quantity_remaining,
+          expiration_date,
           batch:inventory_batches (
             id,
             batch_number,

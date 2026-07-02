@@ -1,16 +1,17 @@
 import type { InventoryBatchSourceType } from '@/types/database.types';
 
-export type BatchInventoryVariantLine = {
+export type BatchInventoryLotLine = {
   variantId: string;
   variantName: string;
   variantType: string | null;
+  expirationDate: string | null;
   quantity: number;
 };
 
 export type BatchInventoryBrandGroup = {
   brandId: string;
   brandName: string;
-  variants: BatchInventoryVariantLine[];
+  lots: BatchInventoryLotLine[];
 };
 
 export type BatchInventoryGroup = {

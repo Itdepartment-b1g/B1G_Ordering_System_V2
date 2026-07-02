@@ -8,6 +8,8 @@ import {
   MoreVertical,
 } from 'lucide-react';
 
+import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -73,27 +75,29 @@ function BrandVariantSection({ brand }: { brand: BatchInventoryBrandGroup }) {
         <TableHeader>
           <TableRow>
             <TableHead>Variant</TableHead>
+            <TableHead>Expiration</TableHead>
             <TableHead className="text-right">Qty</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {brand.variants.map((variant) => (
-            <TableRow key={variant.variantId}>
+          {brand.lots.map((lot, index) => (
+            <TableRow key={`${lot.variantId}-${lot.expirationDate ?? 'none'}-${index}`}>
               <TableCell>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span>{variant.variantName}</span>
-                  {variantTypeLabel(variant.variantType) && (
+                  <span>{lot.variantName}</span>
+                  {variantTypeLabel(lot.variantType) && (
                     <Badge
                       variant="outline"
-                      className={`text-[10px] ${variantTypeBadgeClass(variant.variantType)}`}
+                      className={`text-[10px] ${variantTypeBadgeClass(lot.variantType)}`}
                     >
-                      {variantTypeLabel(variant.variantType)}
+                      {variantTypeLabel(lot.variantType)}
                     </Badge>
                   )}
                 </div>
               </TableCell>
+              <TableCell>{formatLotDate(lot.expirationDate)}</TableCell>
               <TableCell className="text-right tabular-nums">
-                {variant.quantity.toLocaleString()}
+                {lot.quantity.toLocaleString()}
               </TableCell>
             </TableRow>
           ))}

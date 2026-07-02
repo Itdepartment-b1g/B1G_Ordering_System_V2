@@ -1,4 +1,5 @@
 import { BATCH_SOURCE_LABELS } from '@/features/inventory/warehouseBatchAging';
+import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
 
 import type { BatchInventoryGroup } from '../types';
 import { formatManilaDateTime } from '../table/BatchViewRow';
@@ -29,16 +30,17 @@ function buildBatchInventoryHtml(group: BatchInventoryGroup): string {
   const title = `Batch ${group.batchNumber} – ${formatManilaDateTime(group.receivedAt)}`;
   const variantRows =
     group.brands.length === 0
-      ? `<tr><td colspan="4" style="text-align:center;font-style:italic;color:#6b7280;">No active stock in this batch</td></tr>`
+      ? `<tr><td colspan="5" style="text-align:center;font-style:italic;color:#6b7280;">No active stock in this batch</td></tr>`
       : group.brands
           .flatMap((brand) =>
-            brand.variants.map(
-              (variant, index) => `
+            brand.lots.map(
+              (lot, index) => `
         <tr>
           <td>${index === 0 ? escapeHtml(brand.brandName) : ''}</td>
-          <td>${escapeHtml(variant.variantName)}</td>
-          <td>${escapeHtml(variantTypeLabel(variant.variantType))}</td>
-          <td class="num">${variant.quantity.toLocaleString()}</td>
+          <td>${escapeHtml(lot.variantName)}</td>
+          <td>${escapeHtml(variantTypeLabel(lot.variantType))}</td>
+          <td>${escapeHtml(formatLotDate(lot.expirationDate))}</td>
+          <td class="num">${lot.quantity.toLocaleString()}</td>
         </tr>`
             )
           )
@@ -87,6 +89,7 @@ function buildBatchInventoryHtml(group: BatchInventoryGroup): string {
           <th>Brand</th>
           <th>Variant</th>
           <th>Type</th>
+          <th>Expiration</th>
           <th style="text-align:right;">Qty</th>
         </tr>
       </thead>

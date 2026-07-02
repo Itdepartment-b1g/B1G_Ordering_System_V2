@@ -4,11 +4,10 @@ import { format } from 'date-fns';
 import { ClipboardCheck, Loader2, Plus, RefreshCw } from 'lucide-react';
 
 import { supabase } from '@/lib/supabase';
-import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import { getDateRangeFromPreset } from '@/lib/dateRangePresets';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import {
-  DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
 import {
@@ -17,6 +16,14 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { useWarehouseLocations } from '@/features/inventory/batch-view/hooks/useWarehouseLocations';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +42,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 import { PhysicalCountLineTable } from './physical-count/components/PhysicalCountLineTable';
+import { PhysicalCountHistoryFilter } from './physical-count/components/PhysicalCountHistoryFilter';
 import {
   PhysicalCountHistoryDetailDialog,
   PhysicalCountReviewDialog,
@@ -47,8 +55,19 @@ import {
   usePhysicalCountHistory,
   usePhysicalCountSessionDetail,
 } from './physical-count/hooks/usePhysicalCountHistory';
+import { usePhysicalCountHistoryFilterOptions } from './physical-count/hooks/usePhysicalCountHistoryFilterOptions';
 import type { PhysicalCountLine, PhysicalCountLotOption, PhysicalCountSubmitLine } from './physical-count/types';
 import { uploadPhysicalCountSignature } from './physical-count/utils/uploadPhysicalCountSignature';
+import {
+  filterPhysicalCountHistory,
+  type PhysicalCountHistoryFilterKey,
+} from './physical-count/utils/physicalCountHistoryFilters';
+import {
+  DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_DIRECTION,
+  DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_KEY,
+  sortPhysicalCountHistory,
+  type PhysicalCountHistorySortKey,
+} from './physical-count/utils/physicalCountHistorySorting';
 
 export default function PhysicalCountPage() {
   const { user } = useAuth();
@@ -72,6 +91,10 @@ export default function PhysicalCountPage() {
   const [historyDateRangeFilter, setHistoryDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [historyFilterKey, setHistoryFilterKey] = useState<PhysicalCountHistoryFilterKey>('all');
+  const [historyFilterValue, setHistoryFilterValue] = useState('');
+  const [historySortState, setHistorySortState] =
+    useState<TableSortCycleState<PhysicalCountHistorySortKey>>(createInitialTableSortCycle);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyPageSize, setHistoryPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
@@ -177,6 +200,16 @@ export default function PhysicalCountPage() {
     enabled: isWarehouse && !!user?.company_id,
   });
 
+  const {
+    batchOptions,
+    locationOptions,
+    performedByOptions,
+    isLoading: historyFilterOptionsLoading,
+  } = usePhysicalCountHistoryFilterOptions({
+    companyId: user?.company_id,
+    enabled: isWarehouse && !!user?.company_id,
+  });
+
   const { data: historyDetail } = usePhysicalCountSessionDetail(
     selectedHistoryId,
     historyDetailOpen && !!selectedHistoryId
@@ -192,20 +225,52 @@ export default function PhysicalCountPage() {
     [historyDateRangeFilter]
   );
 
-  const filteredHistory = useMemo(() => {
-    const { start, end } = historyDateRange;
-    return history.filter((row) => isDateInRange(new Date(row.counted_at), start, end));
-  }, [history, historyDateRange]);
+  const filteredHistory = useMemo(
+    () =>
+      filterPhysicalCountHistory(
+        history,
+        historyFilterKey,
+        historyFilterValue,
+        historyDateRange.start,
+        historyDateRange.end
+      ),
+    [history, historyFilterKey, historyFilterValue, historyDateRange]
+  );
+
+  const { key: resolvedHistorySortKey, direction: resolvedHistorySortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        historySortState,
+        DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_KEY,
+        DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_DIRECTION
+      ),
+    [historySortState]
+  );
+
+  const sortedHistory = useMemo(
+    () => sortPhysicalCountHistory(filteredHistory, resolvedHistorySortKey, resolvedHistorySortDirection),
+    [filteredHistory, resolvedHistorySortKey, resolvedHistorySortDirection]
+  );
+
+  const clearHistoryFilters = () => {
+    setHistoryFilterKey('all');
+    setHistoryFilterValue('');
+    setHistoryDateRangeFilter({ preset: 'all' });
+  };
+
+  const handleHistorySort = (key: PhysicalCountHistorySortKey) => {
+    setHistorySortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   useEffect(() => {
     setHistoryPage(0);
-  }, [historyDateRangeFilter, historyPageSize]);
+  }, [historyFilterKey, historyFilterValue, historyDateRangeFilter, historyPageSize, historySortState]);
 
   const {
     pageCount: historyPageCount,
     safePage: historySafePage,
     pagedItems: paginatedHistory,
-  } = getListPaginationSlice(filteredHistory, historyPage, historyPageSize);
+  } = getListPaginationSlice(sortedHistory, historyPage, historyPageSize);
 
   const handleAddLine = () => {
     if (!brandId || !variantId || !batchId || !activeLocationId) {
@@ -608,20 +673,25 @@ export default function PhysicalCountPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <CardTitle>Count history</CardTitle>
-              <CardDescription>Previously submitted physical counts with signatures.</CardDescription>
-            </div>
-            <DateRangeFilterPopover
-              value={historyDateRangeFilter}
-              onChange={setHistoryDateRangeFilter}
-              triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
-              align="end"
-            />
-          </div>
+          <CardTitle>Count history</CardTitle>
+          <CardDescription>Previously submitted physical counts with signatures.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <PhysicalCountHistoryFilter
+            selectedFilter={historyFilterKey}
+            filterValue={historyFilterValue}
+            dateRangeFilter={historyDateRangeFilter}
+            batchOptions={batchOptions}
+            locationOptions={locationOptions}
+            performedByOptions={performedByOptions}
+            showLocationFilter={isMainWarehouseUser}
+            isLoading={historyFilterOptionsLoading}
+            onSelectedFilterChange={setHistoryFilterKey}
+            onFilterValueChange={setHistoryFilterValue}
+            onDateRangeFilterChange={setHistoryDateRangeFilter}
+            onClearFilters={clearHistoryFilters}
+          />
+
           {historyLoading ? (
             <div className="flex items-center justify-center py-8 text-muted-foreground gap-2">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -633,7 +703,7 @@ export default function PhysicalCountPage() {
             </p>
           ) : filteredHistory.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center">
-              No physical counts match the selected date range.
+              No physical counts match the selected filters.
             </p>
           ) : (
             <div className="space-y-4">
@@ -641,12 +711,44 @@ export default function PhysicalCountPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Batch</TableHead>
-                      <TableHead>Location</TableHead>
-                      <TableHead>Counted by</TableHead>
-                      <TableHead className="text-right">Lines</TableHead>
-                      <TableHead className="text-right">Net variance</TableHead>
+                      <SortableTableHead
+                        label="Date"
+                        sortKey="countedAt"
+                        sortDirection={getTableSortDisplayDirection(historySortState, 'countedAt')}
+                        onSort={handleHistorySort}
+                      />
+                      <SortableTableHead
+                        label="Batch"
+                        sortKey="batchNumber"
+                        sortDirection={getTableSortDisplayDirection(historySortState, 'batchNumber')}
+                        onSort={handleHistorySort}
+                      />
+                      <SortableTableHead
+                        label="Location"
+                        sortKey="locationName"
+                        sortDirection={getTableSortDisplayDirection(historySortState, 'locationName')}
+                        onSort={handleHistorySort}
+                      />
+                      <SortableTableHead
+                        label="Counted by"
+                        sortKey="performedBy"
+                        sortDirection={getTableSortDisplayDirection(historySortState, 'performedBy')}
+                        onSort={handleHistorySort}
+                      />
+                      <SortableTableHead
+                        label="Lines"
+                        sortKey="lineCount"
+                        sortDirection={getTableSortDisplayDirection(historySortState, 'lineCount')}
+                        onSort={handleHistorySort}
+                        className="text-right"
+                      />
+                      <SortableTableHead
+                        label="Net variance"
+                        sortKey="totalVariance"
+                        sortDirection={getTableSortDisplayDirection(historySortState, 'totalVariance')}
+                        onSort={handleHistorySort}
+                        className="text-right"
+                      />
                       <TableHead />
                     </TableRow>
                   </TableHeader>

@@ -1,5 +1,7 @@
 import ExcelJS from 'exceljs';
 
+import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
+
 import type { WarehouseAllocationGroup } from '../types';
 import { formatManilaDateTime } from '../table/TableRow';
 
@@ -36,7 +38,7 @@ export async function exportWarehouseAllocationHistoryExcel(
   ];
 
   const tableHeader = ['Date', 'Sub-Warehouse', 'Brand', 'Performed By', 'SKUs', 'Total Units'];
-  const variantHeader = ['Brand', 'Variant', 'Type', 'Quantity', 'Batch', 'Batch Qty'];
+  const variantHeader = ['Brand', 'Variant', 'Type', 'Quantity', 'Batch', 'Expiration', 'Batch Qty'];
   let rowCursor = 1;
 
   rows.forEach((group, index) => {
@@ -63,7 +65,7 @@ export async function exportWarehouseAllocationHistoryExcel(
 
     if (group.lines.length === 0) {
       const emptyRow = worksheet.getRow(rowCursor++);
-      worksheet.mergeCells(`A${emptyRow.number}:F${emptyRow.number}`);
+      worksheet.mergeCells(`A${emptyRow.number}:G${emptyRow.number}`);
       emptyRow.getCell(1).value = 'No linked variant lines';
       emptyRow.getCell(1).font = { italic: true };
     } else {
@@ -76,6 +78,7 @@ export async function exportWarehouseAllocationHistoryExcel(
           lineRow.getCell(4).value = line.quantity;
           lineRow.getCell(5).value = '—';
           lineRow.getCell(6).value = '—';
+          lineRow.getCell(7).value = '—';
         } else {
           line.batches.forEach((batch, batchIndex) => {
             const lineRow = worksheet.getRow(rowCursor++);
@@ -86,7 +89,8 @@ export async function exportWarehouseAllocationHistoryExcel(
               lineRow.getCell(4).value = line.quantity;
             }
             lineRow.getCell(5).value = batch.batchNumber;
-            lineRow.getCell(6).value = batch.quantity;
+            lineRow.getCell(6).value = formatLotDate(batch.expirationDate);
+            lineRow.getCell(7).value = batch.quantity;
           });
         }
       });

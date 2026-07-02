@@ -3,6 +3,7 @@ export type WarehouseAllocationBatchLine = {
   batchId: string;
   batchNumber: string;
   quantity: number;
+  expirationDate: string | null;
 };
 
 export type WarehouseAllocationLine = {

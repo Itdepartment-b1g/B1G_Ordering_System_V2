@@ -3,7 +3,7 @@ import type { InventoryBatchSourceType } from '@/types/database.types';
 import type {
   BatchInventoryBrandGroup,
   BatchInventoryGroup,
-  BatchInventoryVariantLine,
+  BatchInventoryLotLine,
 } from '../types';
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -14,6 +14,7 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
 type RawBatchLotRow = {
   id: string;
   quantity_remaining: number;
+  expiration_date: string | null;
   batch:
     | {
         id: string;
@@ -58,13 +59,20 @@ type BatchAccumulator = {
   totalAmount: number;
   locationId: string;
   locationName: string;
-  brandMap: Map<
-    string,
-    { brandId: string; brandName: string; variantMap: Map<string, BatchInventoryVariantLine> }
-  >;
+  brandMap: Map<string, { brandId: string; brandName: string; lots: BatchInventoryLotLine[] }>;
   totalUnits: number;
   variantIds: Set<string>;
 };
+
+function compareLots(a: BatchInventoryLotLine, b: BatchInventoryLotLine): number {
+  const nameCompare = a.variantName.localeCompare(b.variantName);
+  if (nameCompare !== 0) return nameCompare;
+
+  if (!a.expirationDate && !b.expirationDate) return 0;
+  if (!a.expirationDate) return 1;
+  if (!b.expirationDate) return -1;
+  return new Date(a.expirationDate).getTime() - new Date(b.expirationDate).getTime();
+}
 
 export function mapBatchInventoryGroups(data: unknown[]): BatchInventoryGroup[] {
   const batchMap = new Map<string, BatchAccumulator>();
@@ -105,22 +113,18 @@ export function mapBatchInventoryGroups(data: unknown[]): BatchInventoryGroup[] 
       brandAcc = {
         brandId: brand.id,
         brandName: brand.name,
-        variantMap: new Map(),
+        lots: [],
       };
       acc.brandMap.set(brand.id, brandAcc);
     }
 
-    const existing = brandAcc.variantMap.get(variant.id);
-    if (existing) {
-      existing.quantity += qty;
-    } else {
-      brandAcc.variantMap.set(variant.id, {
-        variantId: variant.id,
-        variantName: variant.name,
-        variantType: variant.variant_type,
-        quantity: qty,
-      });
-    }
+    brandAcc.lots.push({
+      variantId: variant.id,
+      variantName: variant.name,
+      variantType: variant.variant_type,
+      expirationDate: row.expiration_date ?? null,
+      quantity: qty,
+    });
   }
 
   const groups: BatchInventoryGroup[] = [];
@@ -130,9 +134,7 @@ export function mapBatchInventoryGroups(data: unknown[]): BatchInventoryGroup[] 
       .map((b) => ({
         brandId: b.brandId,
         brandName: b.brandName,
-        variants: [...b.variantMap.values()].sort((a, c) =>
-          a.variantName.localeCompare(c.variantName)
-        ),
+        lots: [...b.lots].sort(compareLots),
       }))
       .sort((a, b) => a.brandName.localeCompare(b.brandName));
 

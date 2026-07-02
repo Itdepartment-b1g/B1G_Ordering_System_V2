@@ -33,6 +33,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
 
 import type { WarehouseAllocationGroup, WarehouseAllocationLine } from '../types';
 import { buildWarehouseAllocationFilenamePrefix } from '../utils/warehouseAllocationExportHelpers';
@@ -83,6 +84,7 @@ function flattenBrandLinesToRows(lines: WarehouseAllocationLine[]) {
     batchNumber: string;
     variantName: string;
     variantType: string | null;
+    expirationDate: string | null;
     quantity: number;
   }[] = [];
 
@@ -94,6 +96,7 @@ function flattenBrandLinesToRows(lines: WarehouseAllocationLine[]) {
           batchNumber: batch.batchNumber,
           variantName: line.variantName,
           variantType: line.variantType,
+          expirationDate: batch.expirationDate,
           quantity: batch.quantity,
         });
       }
@@ -103,6 +106,7 @@ function flattenBrandLinesToRows(lines: WarehouseAllocationLine[]) {
         batchNumber: '—',
         variantName: line.variantName,
         variantType: line.variantType,
+        expirationDate: null,
         quantity: line.quantity,
       });
     }
@@ -128,6 +132,7 @@ function BrandSessionTable({
           <TableRow>
             <TableHead>Batch</TableHead>
             <TableHead>Variant</TableHead>
+            <TableHead>Expiration</TableHead>
             <TableHead className="text-right">Qty</TableHead>
           </TableRow>
         </TableHeader>
@@ -148,6 +153,7 @@ function BrandSessionTable({
                   )}
                 </div>
               </TableCell>
+              <TableCell>{formatLotDate(row.expirationDate)}</TableCell>
               <TableCell className="text-right tabular-nums">{row.quantity.toLocaleString()}</TableCell>
             </TableRow>
           ))}

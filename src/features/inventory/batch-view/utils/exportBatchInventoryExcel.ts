@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 
 import { BATCH_SOURCE_LABELS } from '@/features/inventory/warehouseBatchAging';
+import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
 
 import type { BatchInventoryGroup } from '../types';
 import { formatManilaDateTime } from '../table/BatchViewRow';
@@ -42,7 +43,7 @@ export async function exportBatchInventoryExcel(
   ];
 
   const tableHeader = ['Batch', 'Warehouse', 'SKUs', 'Total Units', 'Date', 'Source'];
-  const variantHeader = ['Brand', 'Variant', 'Type', 'Quantity'];
+  const variantHeader = ['Brand', 'Variant', 'Type', 'Expiration', 'Quantity'];
   let rowCursor = 1;
 
   rows.forEach((group, index) => {
@@ -69,19 +70,20 @@ export async function exportBatchInventoryExcel(
 
     if (group.brands.length === 0) {
       const emptyRow = worksheet.getRow(rowCursor++);
-      worksheet.mergeCells(`A${emptyRow.number}:D${emptyRow.number}`);
+      worksheet.mergeCells(`A${emptyRow.number}:E${emptyRow.number}`);
       emptyRow.getCell(1).value = 'No active stock in this batch';
       emptyRow.getCell(1).font = { italic: true };
     } else {
       for (const brand of group.brands) {
-        for (const [variantIndex, variant] of brand.variants.entries()) {
+        for (const [lotIndex, lot] of brand.lots.entries()) {
           const lineRow = worksheet.getRow(rowCursor++);
-          if (variantIndex === 0) {
+          if (lotIndex === 0) {
             lineRow.getCell(1).value = brand.brandName;
           }
-          lineRow.getCell(2).value = variant.variantName;
-          lineRow.getCell(3).value = variantTypeLabel(variant.variantType);
-          lineRow.getCell(4).value = variant.quantity;
+          lineRow.getCell(2).value = lot.variantName;
+          lineRow.getCell(3).value = variantTypeLabel(lot.variantType);
+          lineRow.getCell(4).value = formatLotDate(lot.expirationDate);
+          lineRow.getCell(5).value = lot.quantity;
         }
       }
     }
