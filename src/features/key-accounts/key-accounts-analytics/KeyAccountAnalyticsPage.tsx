@@ -465,24 +465,11 @@ export default function KeyAccountAnalyticsPage() {
     return map;
   }, [transferLocationStatuses]);
 
-  const productRows = useMemo(
-    () =>
-      buildKeyAccountProductAnalyticsRows({
-        items: filteredItems,
-        productAnalyticsOrderById,
-        orderById: allOrdersById,
-        dateFilteredOrderIds,
-        poLineSubtotalByOrderId,
-        rebateDeductionByPoItemId,
-        rebateSwapByPoItemId,
-        rebates,
-        reservationByKey,
-        locationStatusByKey,
-      }),
-    [
+  const { productRows, productOrderRevenueById } = useMemo(() => {
+    const result = buildKeyAccountProductAnalyticsRows({
+      items: filteredItems,
       productAnalyticsOrderById,
-      filteredItems,
-      allOrdersById,
+      orderById: allOrdersById,
       dateFilteredOrderIds,
       poLineSubtotalByOrderId,
       rebateDeductionByPoItemId,
@@ -490,8 +477,23 @@ export default function KeyAccountAnalyticsPage() {
       rebates,
       reservationByKey,
       locationStatusByKey,
-    ]
-  );
+    });
+    return {
+      productRows: result.rows,
+      productOrderRevenueById: result.orderRevenueById,
+    };
+  }, [
+    productAnalyticsOrderById,
+    filteredItems,
+    allOrdersById,
+    dateFilteredOrderIds,
+    poLineSubtotalByOrderId,
+    rebateDeductionByPoItemId,
+    rebateSwapByPoItemId,
+    rebates,
+    reservationByKey,
+    locationStatusByKey,
+  ]);
 
   const brands = useMemo(
     () => Array.from(new Set(productRows.map((row) => row.brand))).sort(),
@@ -1138,7 +1140,7 @@ export default function KeyAccountAnalyticsPage() {
                 formatCurrency={formatCurrency}
                 dateRangeFilter={dateRangeFilter}
                 onDateRangeFilterChange={setDateRangeFilter}
-                rebateCreditByPurchaseOrderId={rebateCreditByPurchaseOrderId}
+                orderRevenueById={productOrderRevenueById}
                 rebateDeductionByPoItemId={rebateDeductionByPoItemId}
                 poLineSubtotalByOrderId={poLineSubtotalByOrderId}
                 reservationByKey={reservationByKey}
@@ -1157,7 +1159,7 @@ export default function KeyAccountAnalyticsPage() {
                 usePageDateFilter
                 dateRangeFilter={dateRangeFilter}
                 onDateRangeFilterChange={setDateRangeFilter}
-                rebateCreditByPurchaseOrderId={rebateCreditByPurchaseOrderId}
+                orderRevenueById={productOrderRevenueById}
               />
             </TabsContent>
 

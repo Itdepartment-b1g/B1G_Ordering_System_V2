@@ -17,7 +17,7 @@ export function ClientHierarchyPage() {
         </h1>
         <p className="text-muted-foreground">
           {isKeyAccountManager
-            ? 'View the Key Account clients assigned to you'
+            ? 'View and manage your assigned Key Account clients, shops, and addresses'
             : 'Manage parent clients, shops, and delivery addresses'}
         </p>
       </div>

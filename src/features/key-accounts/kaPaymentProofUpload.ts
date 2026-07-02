@@ -2,6 +2,23 @@ import { supabase } from '@/lib/supabase';
 
 const BUCKET = 'ka-po-payment-proofs';
 
+export function isPaymentProofImage(file: File) {
+  return file.type.startsWith('image/');
+}
+
+export function isPaymentProofPdf(file: File) {
+  return file.type === 'application/pdf';
+}
+
+export function paymentProofPathIsImage(path: string) {
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  return ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext);
+}
+
+export function paymentProofPathIsPdf(path: string) {
+  return path.split('.').pop()?.toLowerCase() === 'pdf';
+}
+
 export async function uploadKeyAccountPaymentProof(
   companyId: string,
   purchaseOrderId: string,

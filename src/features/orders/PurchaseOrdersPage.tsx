@@ -38,6 +38,10 @@ import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { generateAndOpenCofPdf } from './cof/generateCofPdf';
+import {
+  generateAndOpenKeyAccountCofPdf,
+  orderToKeyAccountPoForCof,
+} from '@/features/key-accounts/cof/generateKeyAccountCofPdf';
 import { generateAndOpenDrPdf } from './dr/generateDrPdf';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
@@ -301,6 +305,10 @@ export default function PurchaseOrdersPage() {
 
   const openCofForOrder = async (order: any) => {
     try {
+      if (order.company_account_type === 'Key Accounts') {
+        await generateAndOpenKeyAccountCofPdf(orderToKeyAccountPoForCof(order));
+        return;
+      }
       await generateAndOpenCofPdf(order);
     } catch (e: any) {
       toast({

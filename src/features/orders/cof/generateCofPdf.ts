@@ -14,6 +14,21 @@ type RequestorInfo = {
   } | null;
 };
 
+/** Optional COF field overrides (e.g. Key Account client / shop / payment details). */
+export type CofFieldOverrides = {
+  clientName?: string;
+  tradeName?: string;
+  vapeShop?: string;
+  tinNumber?: string;
+  contactNumber?: string;
+  address?: string;
+  deliveryAddress?: string;
+  salesAccount?: string;
+  paymentTerms?: string;
+  downPayment?: number;
+  remainingBalance?: number;
+};
+
 async function fetchRequestorInfo(poId: string): Promise<RequestorInfo> {
   try {
     const { data, error } = await supabase.rpc('get_po_requestor_info', { p_po_id: poId });
@@ -47,16 +62,10 @@ async function fetchRequestorInfo(poId: string): Promise<RequestorInfo> {
  * headers, light blue client fields, gray SELECT BRAND band, right sidebar
  * with pricing/payment/bank details, yellow totals block).
  */
-export async function generateAndOpenCofPdf(po: PurchaseOrder) {
-  const requestor = await fetchRequestorInfo(po.id);
-  const html = buildCofHtml(po, requestor);
-
+export function openCofHtmlInNewTab(html: string) {
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
 
-  // Open in a new tab via a click on a transient anchor. This reliably
-  // produces a tab (not a popup window) and is not blocked when invoked
-  // from a user gesture (e.g. the "COF" button click).
   const a = document.createElement('a');
   a.href = url;
   a.target = '_blank';
@@ -66,8 +75,16 @@ export async function generateAndOpenCofPdf(po: PurchaseOrder) {
   a.click();
   document.body.removeChild(a);
 
-  // Release the blob URL after the new tab has had time to load.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+export async function generateAndOpenCofPdf(
+  po: PurchaseOrder,
+  overrides?: CofFieldOverrides
+) {
+  const requestor = await fetchRequestorInfo(po.id);
+  const html = buildCofHtml(po, requestor, overrides);
+  openCofHtmlInNewTab(html);
 }
 
 // ----------------------------------------------------------------------------
@@ -217,7 +234,11 @@ function aggregateItems(items: PurchaseOrderItem[]): PurchaseOrderItem[] {
   return Array.from(map.values());
 }
 
-function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
+export function buildCofHtml(
+  po: PurchaseOrder,
+  requestor: RequestorInfo,
+  overrides?: CofFieldOverrides
+): string {
   const aggregated = aggregateItems(po.items || []);
   const flavors = aggregated.filter((it) => it.variant_type === 'flavor');
   const devices = aggregated.filter((it) => it.variant_type === 'battery');
@@ -239,11 +260,15 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
     .filter(Boolean)
     .join(', ');
 
-  const clientName = requestorCompanyName;
-  const tradeName = requestorCompanyName;
-  const contactPerson = requestorFullName;
-  const contactNumber = requestorPhone;
-  const address = requestorAddress;
+  const clientName = overrides?.clientName ?? requestorCompanyName;
+  const tradeName = overrides?.tradeName ?? requestorCompanyName;
+  const vapeShop = overrides?.vapeShop ?? '';
+  const tinNumber = overrides?.tinNumber ?? '';
+  const contactPerson = overrides?.salesAccount ?? requestorFullName;
+  const contactNumber = overrides?.contactNumber ?? requestorPhone;
+  const address = overrides?.address ?? requestorAddress;
+  const deliveryAddress = overrides?.deliveryAddress ?? address;
+  const paymentTerms = overrides?.paymentTerms ?? '';
   const remarks = po.notes || '';
 
   const vatable = Number(po.subtotal || 0);
@@ -251,7 +276,12 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
   const total = Number(po.total_amount || 0);
   const discount = Number(po.discount || 0);
   const grand = Math.max(0, total);
-  const remaining = Math.max(0, total);
+  const downPayment =
+    overrides?.downPayment !== undefined ? Math.max(0, overrides.downPayment) : 0;
+  const remaining =
+    overrides?.remainingBalance !== undefined
+      ? Math.max(0, overrides.remainingBalance)
+      : Math.max(0, total);
 
   const otherSectionHtml =
     others.length > 0
@@ -613,11 +643,11 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
         </div>
         <div class="field-row">
           <div class="flabel">Vape Shop:</div>
-          <div class="finput"></div>
+          <div class="finput">${escapeHtml(vapeShop)}</div>
         </div>
         <div class="field-row">
           <div class="flabel">TIN Number:</div>
-          <div class="finput"></div>
+          <div class="finput">${escapeHtml(tinNumber)}</div>
         </div>
         <div class="field-row">
           <div class="flabel">Contact Number:</div>
@@ -629,7 +659,7 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
         </div>
         <div class="field-row">
           <div class="flabel">Delivery Address:</div>
-          <div class="finput">${escapeHtml(address)}</div>
+          <div class="finput">${escapeHtml(deliveryAddress)}</div>
         </div>
       </div>
 
@@ -754,7 +784,7 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
 
         <div class="side-block">
           <div class="sb-title">PAYMENT TERMS:</div>
-          <div class="empty-box"></div>
+          <div class="empty-box">${escapeHtml(paymentTerms)}</div>
         </div>
 
         <div class="side-block plain bank">
@@ -813,7 +843,7 @@ function buildCofHtml(po: PurchaseOrder, requestor: RequestorInfo): string {
         </tr>
         <tr>
           <td class="tlabel">DOWN PAYMENT (WILL BE DEDUCTED TO THE TOTAL PAYMENT)</td>
-          <td class="tvalue">${peso(0)}</td>
+          <td class="tvalue">${peso(downPayment)}</td>
         </tr>
         <tr class="tbold">
           <td class="tlabel">REMAINING BALANCE</td>

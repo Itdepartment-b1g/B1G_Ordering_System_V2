@@ -34,7 +34,7 @@ import {
   paginateAnalyticsRows,
 } from './AnalyticsTablePagination';
 import {
-  getKeyAccountOrderRevenueBreakdown,
+  getKeyAccountOrderNetRevenueFromAttribution,
   isDeliveredKeyAccountOrder,
   isKeyAccountAnalyticsEligibleOrder,
   isKeyAccountPartialDeliveredOrder,
@@ -42,7 +42,7 @@ import {
   isKeyAccountProductAnalyticsOrder,
   isRebateFulfillmentReplacementOrder,
   sumKeyAccountOrderPoLineCounts,
-  sumKeyAccountOrderRevenueSplit,
+  type KeyAccountOrderRevenueAttribution,
   type KeyAccountOrderRevenueSplitContext,
   type KeyAccountProductLineItemInput,
 } from './keyAccountAnalyticsShared';
@@ -79,14 +79,14 @@ interface KeyAccountKamAnalyticsTabProps {
   formatCurrency: (value: number) => string;
   dateRangeFilter: DateRangeFilterValue;
   onDateRangeFilterChange: (value: DateRangeFilterValue) => void;
-  rebateCreditByPurchaseOrderId?: Map<string, number>;
+  orderRevenueById?: Map<string, KeyAccountOrderRevenueAttribution>;
   rebateDeductionByPoItemId?: Map<string, number>;
   poLineSubtotalByOrderId?: Map<string, number>;
   reservationByKey?: Map<string, { quantity_fulfilled: number; quantity_reserved: number }>;
   locationStatusByKey?: Map<string, string>;
 }
 
-const EMPTY_REBATE_CREDIT_MAP = new Map<string, number>();
+const EMPTY_ORDER_REVENUE_MAP = new Map<string, KeyAccountOrderRevenueAttribution>();
 const EMPTY_REBATE_DEDUCTION_MAP = new Map<string, number>();
 const EMPTY_PO_LINE_SUBTOTAL_MAP = new Map<string, number>();
 const EMPTY_RESERVATION_MAP = new Map<string, { quantity_fulfilled: number; quantity_reserved: number }>();
@@ -297,7 +297,7 @@ export default function KeyAccountKamAnalyticsTab({
   formatCurrency,
   dateRangeFilter,
   onDateRangeFilterChange,
-  rebateCreditByPurchaseOrderId = EMPTY_REBATE_CREDIT_MAP,
+  orderRevenueById = EMPTY_ORDER_REVENUE_MAP,
   rebateDeductionByPoItemId = EMPTY_REBATE_DEDUCTION_MAP,
   poLineSubtotalByOrderId = EMPTY_PO_LINE_SUBTOTAL_MAP,
   reservationByKey = EMPTY_RESERVATION_MAP,
@@ -403,27 +403,19 @@ export default function KeyAccountKamAnalyticsTab({
   );
   const deliveredOrderById = useMemo(() => new Map(deliveredOrders.map((order) => [order.id, order])), [deliveredOrders]);
 
-  const computeAgentPeriodRevenue = (
-    agentOrders: AnalyticsOrder[],
-    context: KeyAccountOrderRevenueSplitContext
-  ) => {
+  const computeAgentPeriodRevenue = (agentOrders: AnalyticsOrder[]) => {
     let grossDelivered = 0;
     let grossPending = 0;
     let rebatedDelivered = 0;
     let rebatedPending = 0;
 
     agentOrders.forEach((order) => {
-      const split = sumKeyAccountOrderRevenueSplit(
-        order,
-        items,
-        context,
-        rebateCreditByPurchaseOrderId
-      );
-      if (!split) return;
-      grossDelivered += split.grossDelivered;
-      grossPending += split.grossPending;
-      rebatedDelivered += split.rebatedDelivered;
-      rebatedPending += split.rebatedPending;
+      if (!isKeyAccountProductAnalyticsOrder(order)) return;
+      const revenue = getKeyAccountOrderNetRevenueFromAttribution(orderRevenueById.get(order.id));
+      grossDelivered += revenue.grossDelivered;
+      grossPending += revenue.grossPending;
+      rebatedDelivered += revenue.rebatedDelivered;
+      rebatedPending += revenue.rebatedPending;
     });
 
     const netDelivered = grossDelivered - rebatedDelivered;
@@ -479,7 +471,7 @@ export default function KeyAccountKamAnalyticsTab({
         const periodPoLineOrders = productAnalyticsOrders.filter(isAgentOrder);
 
         if (selectedMetric === 'revenue') {
-          const revenue = computeAgentPeriodRevenue(periodRevenueOrders, revenueSplitContext);
+          const revenue = computeAgentPeriodRevenue(periodRevenueOrders);
           point[agentId] = revenue.netDelivered;
           point[revenueDeliveredNetKey(agentId)] = revenue.netDelivered;
           point[revenuePendingNetKey(agentId)] = revenue.netPending;
@@ -516,7 +508,7 @@ export default function KeyAccountKamAnalyticsTab({
     items,
     orders,
     productAnalyticsOrders,
-    rebateCreditByPurchaseOrderId,
+    orderRevenueById,
     revenueSplitContext,
     selectedMetric,
     visibleAgents,
@@ -531,8 +523,12 @@ export default function KeyAccountKamAnalyticsTab({
       deliveredOrders: number;
       pendingOrders: number;
       grossDeliveredRevenue: number;
+      grossPendingRevenue: number;
       rebatedDeliveredRevenue: number;
+      rebatedPendingRevenue: number;
       deliveredRevenue: number;
+      pendingRevenue: number;
+      totalRevenue: number;
       clientIds: Set<string>;
       productQty: Map<string, number>;
     }>();
@@ -546,8 +542,12 @@ export default function KeyAccountKamAnalyticsTab({
         deliveredOrders: 0,
         pendingOrders: 0,
         grossDeliveredRevenue: 0,
+        grossPendingRevenue: 0,
         rebatedDeliveredRevenue: 0,
+        rebatedPendingRevenue: 0,
         deliveredRevenue: 0,
+        pendingRevenue: 0,
+        totalRevenue: 0,
         clientIds: new Set<string>(),
         productQty: new Map<string, number>(),
       });
@@ -561,17 +561,24 @@ export default function KeyAccountKamAnalyticsTab({
       row.totalOrders += 1;
       if (isKeyAccountPendingWorkflowOrder(order)) row.pendingOrders += 1;
       if (isDeliveredKeyAccountOrder(order)) {
-        const breakdown = getKeyAccountOrderRevenueBreakdown(
-          order.id,
-          order.total_amount,
-          rebateCreditByPurchaseOrderId
-        );
         row.deliveredOrders += 1;
-        row.grossDeliveredRevenue += breakdown.gross;
-        row.rebatedDeliveredRevenue += breakdown.rebated;
-        row.deliveredRevenue += breakdown.net;
         if (order.key_account_client_id) row.clientIds.add(order.key_account_client_id);
       }
+    });
+
+    productAnalyticsOrders.forEach((order) => {
+      const kamId = order.kam_id || 'unassigned';
+      const row = rowMap.get(kamId);
+      if (!row) return;
+
+      const revenue = getKeyAccountOrderNetRevenueFromAttribution(orderRevenueById.get(order.id));
+      row.grossDeliveredRevenue += revenue.grossDelivered;
+      row.grossPendingRevenue += revenue.grossPending;
+      row.rebatedDeliveredRevenue += revenue.rebatedDelivered;
+      row.rebatedPendingRevenue += revenue.rebatedPending;
+      row.deliveredRevenue += revenue.deliveredRevenue;
+      row.pendingRevenue += revenue.pendingRevenue;
+      row.totalRevenue += revenue.totalRevenue;
     });
 
     items.forEach((item) => {
@@ -593,14 +600,18 @@ export default function KeyAccountKamAnalyticsTab({
         deliveredOrders: row.deliveredOrders,
         pendingOrders: row.pendingOrders,
         grossDeliveredRevenue: row.grossDeliveredRevenue,
+        grossPendingRevenue: row.grossPendingRevenue,
         rebatedDeliveredRevenue: row.rebatedDeliveredRevenue,
+        rebatedPendingRevenue: row.rebatedPendingRevenue,
         deliveredRevenue: row.deliveredRevenue,
+        pendingRevenue: row.pendingRevenue,
+        totalRevenue: row.totalRevenue,
         uniqueClients: row.clientIds.size,
         avgOrderValue: row.deliveredOrders > 0 ? row.deliveredRevenue / row.deliveredOrders : 0,
         topProduct: Array.from(row.productQty.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || 'No delivered products',
       }))
-      .sort((a, b) => b.deliveredRevenue - a.deliveredRevenue);
-  }, [deliveredOrderById, filteredOrders, items, rebateCreditByPurchaseOrderId, visibleAgents]);
+      .sort((a, b) => b.totalRevenue - a.totalRevenue);
+  }, [deliveredOrderById, filteredOrders, items, orderRevenueById, productAnalyticsOrders, visibleAgents]);
 
   const paginatedRows = useMemo(
     () => paginateAnalyticsRows(rows, agentTablePage),
@@ -628,14 +639,26 @@ export default function KeyAccountKamAnalyticsTab({
 
   const totals = rows.reduce(
     (acc, row) => ({
-      grossRevenue: acc.grossRevenue + row.grossDeliveredRevenue,
-      rebatedRevenue: acc.rebatedRevenue + row.rebatedDeliveredRevenue,
-      revenue: acc.revenue + row.deliveredRevenue,
+      grossRevenue: acc.grossRevenue + row.grossDeliveredRevenue + row.grossPendingRevenue,
+      rebatedRevenue:
+        acc.rebatedRevenue + row.rebatedDeliveredRevenue + row.rebatedPendingRevenue,
+      deliveredRevenue: acc.deliveredRevenue + row.deliveredRevenue,
+      pendingRevenue: acc.pendingRevenue + row.pendingRevenue,
+      totalRevenue: acc.totalRevenue + row.totalRevenue,
       totalOrders: acc.totalOrders + row.totalOrders,
       deliveredOrders: acc.deliveredOrders + row.deliveredOrders,
       clients: acc.clients + row.uniqueClients,
     }),
-    { grossRevenue: 0, rebatedRevenue: 0, revenue: 0, totalOrders: 0, deliveredOrders: 0, clients: 0 }
+    {
+      grossRevenue: 0,
+      rebatedRevenue: 0,
+      deliveredRevenue: 0,
+      pendingRevenue: 0,
+      totalRevenue: 0,
+      totalOrders: 0,
+      deliveredOrders: 0,
+      clients: 0,
+    }
   );
 
   const metricLabel = selectedMetric === 'revenue' ? 'Revenue' : selectedMetric === 'orders' ? 'Delivered Orders' : 'Buying Clients';
@@ -670,8 +693,12 @@ export default function KeyAccountKamAnalyticsTab({
           name: row.name,
           email: row.email,
           grossDeliveredRevenue: row.grossDeliveredRevenue,
+          grossPendingRevenue: row.grossPendingRevenue,
           rebatedDeliveredRevenue: row.rebatedDeliveredRevenue,
+          rebatedPendingRevenue: row.rebatedPendingRevenue,
           deliveredRevenue: row.deliveredRevenue,
+          pendingRevenue: row.pendingRevenue,
+          totalRevenue: row.totalRevenue,
           deliveredOrders: row.deliveredOrders,
           totalOrders: row.totalOrders,
           pendingOrders: row.pendingOrders,
@@ -1076,13 +1103,17 @@ export default function KeyAccountKamAnalyticsTab({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Delivered revenue (net)
+              Total product revenue
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totals.revenue)}</div>
+            <div className="text-2xl font-bold">{formatCurrency(totals.totalRevenue)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Net after rebates · Delivered {formatCurrency(totals.deliveredRevenue)} · Pending{' '}
+              {formatCurrency(totals.pendingRevenue)}
+            </p>
             {totals.rebatedRevenue > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground mt-0.5">
                 Gross {formatCurrency(totals.grossRevenue)} · Rebated{' '}
                 <span className="text-amber-700 dark:text-amber-400">
                   −{formatCurrency(totals.rebatedRevenue)}
@@ -1130,8 +1161,9 @@ export default function KeyAccountKamAnalyticsTab({
           <CardTitle>Agent Performance Overview</CardTitle>
           <CardDescription>
             Compare Key Account user performance across different metrics and time periods. Revenue
-            is net after money/credit rebates on source POs; change-item replacements at the same
-            value do not deduct. Click a data point or period label to view the breakdown.
+            uses the same product analytics rules as the summary cards (line items, money/credit
+            rebates, and change-item swaps on the source PO month). Click a data point or period
+            label to view the breakdown.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1346,15 +1378,15 @@ export default function KeyAccountKamAnalyticsTab({
                         </div>
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
-                        {formatCurrency(row.grossDeliveredRevenue)}
+                        {formatCurrency(row.grossDeliveredRevenue + row.grossPendingRevenue)}
                       </TableCell>
                       <TableCell className="text-right text-amber-700 dark:text-amber-400">
-                        {row.rebatedDeliveredRevenue > 0
-                          ? `−${formatCurrency(row.rebatedDeliveredRevenue)}`
+                        {row.rebatedDeliveredRevenue + row.rebatedPendingRevenue > 0
+                          ? `−${formatCurrency(row.rebatedDeliveredRevenue + row.rebatedPendingRevenue)}`
                           : '—'}
                       </TableCell>
                       <TableCell className="text-right font-medium">
-                        {formatCurrency(row.deliveredRevenue)}
+                        {formatCurrency(row.totalRevenue)}
                       </TableCell>
                       <TableCell className="text-right">{row.deliveredOrders}</TableCell>
                       <TableCell className="text-right">{row.totalOrders}</TableCell>
