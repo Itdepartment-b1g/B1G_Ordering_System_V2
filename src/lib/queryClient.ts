@@ -38,6 +38,8 @@ export const persister = createSyncStoragePersister({
 const NON_PERSISTED_QUERY_KEYS = new Set([
     SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY,
     'inventory',
+    'warehouse-stock-board',
+    'warehouse-stock-board-settings',
     'variant-batch-lots',
     'batch-lot-adjustments',
     'warehouse-batch-aging',

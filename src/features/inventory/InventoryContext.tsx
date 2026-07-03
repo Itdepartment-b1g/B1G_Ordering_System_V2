@@ -16,6 +16,8 @@ export interface Variant {
   dspPrice?: number;
   rspPrice?: number;
   status: 'in-stock' | 'low-stock' | 'out-of-stock';
+  /** Per-SKU low-stock cutoff from `main_inventory.reorder_level` when present. */
+  reorderLevel?: number;
   /** Present when this row is backed by `main_inventory` (used for warehouse remove-stock). */
   mainInventoryId?: string;
 }
@@ -79,6 +81,7 @@ export const groupBrands = (brandsData: any[]): Brand[] => {
           dspPrice: inventory.dsp_price ?? 0,
           rspPrice: inventory.rsp_price ?? 0,
           status: calculateStatus(inventory.stock, inventory.reorder_level ?? LOW_STOCK_THRESHOLD),
+          reorderLevel: inventory.reorder_level ?? LOW_STOCK_THRESHOLD,
           mainInventoryId: inventory.id,
         };
       })
@@ -297,12 +300,22 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
 
     const channel = supabase
       .channel('inventory_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'brands' }, () => qc.invalidateQueries({ queryKey: ['inventory'] }))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'variants' }, () => qc.invalidateQueries({ queryKey: ['inventory'] }))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'brands' }, () => {
+        qc.invalidateQueries({ queryKey: ['inventory'] });
+        qc.invalidateQueries({ queryKey: ['warehouse-stock-board'] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'variants' }, () => {
+        qc.invalidateQueries({ queryKey: ['inventory'] });
+        qc.invalidateQueries({ queryKey: ['warehouse-stock-board'] });
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'main_inventory' }, () => {
         qc.invalidateQueries({ queryKey: ['inventory'] });
+        qc.invalidateQueries({ queryKey: ['warehouse-stock-board'] });
         qc.invalidateQueries({ queryKey: ['variant-batch-lots'] });
         qc.invalidateQueries({ queryKey: ['warehouse-batch-aging'] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warehouse_location_inventory' }, () => {
+        qc.invalidateQueries({ queryKey: ['warehouse-stock-board'] });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_batch_lots' }, () => {
         qc.invalidateQueries({ queryKey: ['inventory'] });

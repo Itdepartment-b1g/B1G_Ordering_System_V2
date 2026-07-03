@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart3, Clock, LayoutGrid, List, Package, RefreshCw, Search } from 'lucide-react';
-import { useInventory, groupFlatInventoryRowsIntoBrands, type Brand, type Variant } from './InventoryContext';
-import { fetchAllPaginated } from '@/lib/supabasePaginate';
+import { type Brand, type Variant } from './InventoryContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,6 +16,20 @@ import { useWarehouseLocationMembership } from './useWarehouseLocationMembership
 import { WarehouseBatchAgingPanel } from './components/WarehouseBatchAgingPanel';
 import { WarehouseFsnPanel } from './components/WarehouseFsnPanel';
 import { WarehouseProductMovementPanel } from './components/WarehouseProductMovementPanel';
+import { WarehouseStockBoardSettingsButton } from './components/WarehouseStockBoardSettingsDialog';
+import {
+  getDisplayedStock,
+  getStockBoardBadgeStyle,
+  DEFAULT_WAREHOUSE_STOCK_BOARD_SETTINGS,
+  type StockBoardViewMode,
+  type WarehouseStockBoardSettings,
+} from './warehouseStockBoard';
+import {
+  invalidateWarehouseStockBoard,
+  useWarehouseStockBoard,
+  useWarehouseStockBoardSettings,
+  type WarehouseStockBoardScope,
+} from './useWarehouseStockBoard';
 import { useWarehouseBatchAging } from './useWarehouseBatchAging';
 import { useWarehouseFsnAnalysis } from './useWarehouseFsnAnalysis';
 import { useWarehouseProductMovement } from './useWarehouseProductMovement';
@@ -31,7 +44,7 @@ import {
 /** Order variant-type columns: known types first, then alphabetical. */
 const TYPE_SORT_ORDER: string[] = ['flavor', 'battery', 'POSM', 'posm'];
 
-type DashboardViewMode = 'available' | 'overall' | 'sub';
+type DashboardViewMode = StockBoardViewMode;
 type DashboardSection = 'stock' | 'movement' | 'fsn' | 'aging';
 
 function getVariantsByTypeEntries(brand: Brand): [string, Variant[]][] {
@@ -56,48 +69,27 @@ function sortTypeEntries(entries: [string, Variant[]][]): [string, Variant[]][] 
     });
 }
 
-function getDisplayedStock(v: Variant, opts: { mode: DashboardViewMode; isMainWarehouseUser: boolean }): number {
-  // Sub-warehouse view uses location stock directly.
-  if (opts.mode === 'sub') return v.stock;
-  // Non-main warehouse users shouldn't be able to see "overall/available" main inventory anyway,
-  // but if they do, treat displayed stock as their current stock value.
-  if (!opts.isMainWarehouseUser) return v.stock;
-  if (opts.mode === 'overall') return v.stock;
-  // available
-  return Math.max(0, v.stock - (v.allocatedStock || 0));
+function getDisplayedStockForBoard(
+  v: Variant,
+  opts: { mode: DashboardViewMode; isMainWarehouseUser: boolean }
+): number {
+  return getDisplayedStock(v, opts);
 }
 
 function totalStock(variants: Variant[], opts: { mode: DashboardViewMode; isMainWarehouseUser: boolean }): number {
-  return variants.reduce((s, v) => s + getDisplayedStock(v, opts), 0);
-}
-
-function stockBadgeClass(status: Variant['status']): string {
-  switch (status) {
-    case 'out-of-stock':
-      return 'bg-destructive text-destructive-foreground';
-    case 'low-stock':
-      return 'bg-amber-400 text-amber-950 dark:bg-amber-500 dark:text-amber-950';
-    default:
-      return 'bg-emerald-600 text-white';
-  }
-}
-
-/** Footer label per `variant_type` (matches common warehouse wording). */
-function totalLabelForType(typeKey: string): string {
-  const t = typeKey.toLowerCase();
-  if (t === 'flavor') return 'TOTAL PODS';
-  if (t === 'battery') return 'TOTAL DEVICE';
-  return `TOTAL ${typeKey.toUpperCase()}`;
+  return variants.reduce((s, v) => s + getDisplayedStockForBoard(v, opts), 0);
 }
 
 function VariantRows({
   variants,
   mode,
   isMainWarehouseUser,
+  settings,
 }: {
   variants: Variant[];
   mode: DashboardViewMode;
   isMainWarehouseUser: boolean;
+  settings: WarehouseStockBoardSettings;
 }) {
   return (
     <div className="flex flex-col min-h-0 bg-background">
@@ -110,12 +102,10 @@ function VariantRows({
             {v.name}
           </span>
           <span
-            className={cn(
-              'shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold tabular-nums min-w-[2.75rem] text-center',
-              stockBadgeClass(v.status)
-            )}
+            className="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold tabular-nums min-w-[2.75rem] text-center"
+            style={getStockBoardBadgeStyle(v.status, settings.colors)}
           >
-            {getDisplayedStock(v, { mode, isMainWarehouseUser })}
+            {getDisplayedStockForBoard(v, { mode, isMainWarehouseUser })}
           </span>
         </div>
       ))}
@@ -123,17 +113,27 @@ function VariantRows({
   );
 }
 
+/** Footer label per `variant_type` (matches common warehouse wording). */
+function totalLabelForType(typeKey: string): string {
+  const t = typeKey.toLowerCase();
+  if (t === 'flavor') return 'TOTAL PODS';
+  if (t === 'battery') return 'TOTAL DEVICE';
+  return `TOTAL ${typeKey.toUpperCase()}`;
+}
+
 function TypeColumn({
   typeKey,
   variants,
   mode,
   isMainWarehouseUser,
+  settings,
   className,
 }: {
   typeKey: string;
   variants: Variant[];
   mode: DashboardViewMode;
   isMainWarehouseUser: boolean;
+  settings: WarehouseStockBoardSettings;
   className?: string;
 }) {
   const sum = totalStock(variants, { mode, isMainWarehouseUser });
@@ -145,7 +145,12 @@ function TypeColumn({
         className="max-h-[min(55vh,520px)] min-h-[120px] flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
         style={{ scrollbarGutter: 'stable' }}
       >
-        <VariantRows variants={variants} mode={mode} isMainWarehouseUser={isMainWarehouseUser} />
+        <VariantRows
+          variants={variants}
+          mode={mode}
+          isMainWarehouseUser={isMainWarehouseUser}
+          settings={settings}
+        />
       </div>
       <div className="mt-auto flex shrink-0 items-center justify-between gap-2 border-t border-primary/20 bg-primary px-2 py-2 text-[10px] font-bold uppercase tracking-wide text-primary-foreground">
         <span className="min-w-0 leading-tight">{label}:</span>
@@ -164,10 +169,12 @@ function BrandColumn({
   brand,
   mode,
   isMainWarehouseUser,
+  settings,
 }: {
   brand: Brand;
   mode: DashboardViewMode;
   isMainWarehouseUser: boolean;
+  settings: WarehouseStockBoardSettings;
 }) {
   const typeEntries = sortTypeEntries(getVariantsByTypeEntries(brand));
 
@@ -217,6 +224,7 @@ function BrandColumn({
             variants={variants}
             mode={mode}
             isMainWarehouseUser={isMainWarehouseUser}
+            settings={settings}
           />
         ))}
       </div>
@@ -227,7 +235,6 @@ function BrandColumn({
 export default function WarehouseInventoryDashboardPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
-  const { brands, loading, refreshInventory } = useInventory();
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState<DashboardViewMode>('available');
@@ -239,9 +246,17 @@ export default function WarehouseInventoryDashboardPage() {
   });
 
   const isWarehouse = user?.role === 'warehouse';
+  const canEditStockBoardSettings =
+    user?.role === 'warehouse' || user?.role === 'admin' || user?.role === 'super_admin';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
   const isUnlinkedWarehouseUser = isWarehouse && membership.status === 'unlinked';
+
+  const { data: stockBoardSettings = DEFAULT_WAREHOUSE_STOCK_BOARD_SETTINGS } =
+    useWarehouseStockBoardSettings({
+      companyId: user?.company_id,
+      enabled: !!user?.company_id,
+    });
 
   type LocationRow = { id: string; name: string; is_main: boolean };
 
@@ -260,56 +275,38 @@ export default function WarehouseInventoryDashboardPage() {
     },
   });
 
-  const { data: subWarehouseBrands = [], isLoading: loadingSubWarehouseBrands } = useQuery({
-    queryKey: ['warehouse-location-inventory-brands', user?.company_id, selectedLocationId],
-    enabled: !!user?.company_id && isWarehouse && isMainWarehouseUser && viewMode === 'sub' && !!selectedLocationId,
-    // Override global cache defaults so Ctrl+R and tab revisit always fetch fresh
-    // sub-warehouse stock instead of restoring a still-"fresh" persisted snapshot.
-    staleTime: 0,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    queryFn: async () => {
-      const companyId = user!.company_id!;
-      const rows = await fetchAllPaginated(async (from, to) => {
-        const { data, error } = await supabase
-          .from('warehouse_location_inventory')
-          .select(
-            `
-            stock,
-            variant_id,
-            variants:variant_id (
-              id,
-              name,
-              variant_type,
-              created_at,
-              is_active,
-              brands:brand_id (
-                id,
-                name,
-                is_active
-              )
-            )
-          `
-          )
-          .eq('company_id', companyId)
-          .eq('location_id', selectedLocationId)
-          .order('variant_id')
-          .range(from, to);
-        return { data, error };
-      });
+  const stockBoardScope = useMemo((): WarehouseStockBoardScope | null => {
+    if (!user?.company_id) return null;
+    if (membership.status === 'sub') {
+      return { kind: 'sub', locationId: membership.locationId ?? user.id ?? 'sub-user' };
+    }
+    if (viewMode === 'sub') {
+      if (!selectedLocationId) return null;
+      return { kind: 'sub', locationId: selectedLocationId };
+    }
+    return { kind: 'main', mode: viewMode };
+  }, [user?.company_id, user?.id, membership.status, membership.locationId, viewMode, selectedLocationId]);
 
-      return groupFlatInventoryRowsIntoBrands(rows, (row, variantId) => ({
-        id: `loc:${selectedLocationId}:${variantId}`,
-        stock: row.stock ?? 0,
-        allocated_stock: 0,
-        unit_price: 0,
-        selling_price: 0,
-        dsp_price: 0,
-        rsp_price: 0,
-        reorder_level: 10,
-      }));
-    },
+  const stockBoardCatalogEnabled =
+    !!user?.company_id &&
+    !!stockBoardScope &&
+    (dashboardSection === 'stock' ||
+      dashboardSection === 'movement' ||
+      dashboardSection === 'fsn' ||
+      dashboardSection === 'aging');
+
+  const {
+    brands: stockBoardBrands,
+    isLoading: loadingStockBoard,
+    isFetching: fetchingStockBoard,
+    refetch: refetchStockBoard,
+  } = useWarehouseStockBoard({
+    companyId: user?.company_id,
+    userId: user?.id,
+    membershipStatus: membership.status,
+    scope: stockBoardScope,
+    settings: stockBoardSettings,
+    enabled: stockBoardCatalogEnabled,
   });
 
   const subLocations = useMemo(() => locations.filter((l) => !l.is_main), [locations]);
@@ -374,10 +371,7 @@ export default function WarehouseInventoryDashboardPage() {
     }
   };
 
-  const displayedBrands = useMemo(() => {
-    if (isMainWarehouseUser && viewMode === 'sub') return subWarehouseBrands;
-    return brands;
-  }, [brands, isMainWarehouseUser, subWarehouseBrands, viewMode]);
+  const displayedBrands = stockBoardBrands;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -474,15 +468,12 @@ export default function WarehouseInventoryDashboardPage() {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      // Always refresh main inventory cache.
-      await refreshInventory();
-
-      // If we're currently looking at a specific sub-warehouse, also refresh its dashboard cache.
-      if (isMainWarehouseUser && viewMode === 'sub' && selectedLocationId) {
-        await qc.invalidateQueries({
-          queryKey: ['warehouse-location-inventory-brands', user?.company_id, selectedLocationId],
-        });
+      if (dashboardSection === 'stock') {
+        await refetchStockBoard();
+      } else {
+        await invalidateWarehouseStockBoard(qc, user?.company_id);
       }
+
       if (fsnLocationId) {
         await qc.invalidateQueries({
           queryKey: ['warehouse-product-movement', user?.company_id, fsnLocationId],
@@ -626,8 +617,19 @@ export default function WarehouseInventoryDashboardPage() {
               Main inventory
             </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading || refreshing}>
-            <RefreshCw className={cn('mr-2 h-4 w-4', (loading || refreshing) && 'animate-spin')} aria-hidden />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void onRefresh()}
+            disabled={(dashboardSection === 'stock' ? loadingStockBoard : false) || refreshing || fetchingStockBoard}
+          >
+            <RefreshCw
+              className={cn(
+                'mr-2 h-4 w-4',
+                (refreshing || fetchingStockBoard || loadingStockBoard) && 'animate-spin'
+              )}
+              aria-hidden
+            />
             Refresh
           </Button>
         </div>
@@ -679,37 +681,54 @@ export default function WarehouseInventoryDashboardPage() {
             />
           </div>
           {dashboardSection === 'stock' ? (
-            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="h-3 w-3 rounded-sm bg-destructive" aria-hidden />
-                Out of stock
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-3 w-3 rounded-sm bg-amber-400" aria-hidden />
-                Low stock
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-3 w-3 rounded-sm bg-emerald-600" aria-hidden />
-                In stock
-              </span>
+            <div className="flex flex-wrap items-center gap-3">
+              {canEditStockBoardSettings ? (
+                <WarehouseStockBoardSettingsButton
+                  companyId={user?.company_id}
+                  settings={stockBoardSettings}
+                />
+              ) : null}
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="h-3 w-3 rounded-sm"
+                    style={{ backgroundColor: stockBoardSettings.colors.outOfStock }}
+                    aria-hidden
+                  />
+                  Out of stock
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="h-3 w-3 rounded-sm"
+                    style={{ backgroundColor: stockBoardSettings.colors.lowStock }}
+                    aria-hidden
+                  />
+                  Low stock (≤
+                  {stockBoardSettings.usePerSkuReorderLevel ? ' SKU or ' : ' '}
+                  {stockBoardSettings.lowStockThreshold})
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="h-3 w-3 rounded-sm"
+                    style={{ backgroundColor: stockBoardSettings.colors.inStock }}
+                    aria-hidden
+                  />
+                  In stock
+                </span>
+              </div>
             </div>
           ) : null}
         </div>
 
         <TabsContent value="stock" className="mt-0 space-y-0">
-      {loading && brands.length === 0 ? (
+      {loadingStockBoard && displayedBrands.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <LayoutGrid className="mb-3 h-10 w-10 opacity-40" aria-hidden />
           <p>Loading inventory…</p>
         </div>
-      ) : (viewMode === 'sub' && isMainWarehouseUser && !selectedLocationId) ? (
+      ) : isMainWarehouseUser && viewMode === 'sub' && !selectedLocationId ? (
         <div className="rounded-lg border border-dashed border-border bg-muted/30 py-16 text-center text-muted-foreground">
           Select a sub-warehouse to view its stock.
-        </div>
-      ) : (isMainWarehouseUser && viewMode === 'sub' && loadingSubWarehouseBrands) ? (
-        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-          <LayoutGrid className="mb-3 h-10 w-10 opacity-40" aria-hidden />
-          <p>Loading sub-warehouse stock…</p>
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-muted/30 py-16 text-center text-muted-foreground">
@@ -723,6 +742,7 @@ export default function WarehouseInventoryDashboardPage() {
                 brand={brand}
                 mode={isMainWarehouseUser ? viewMode : 'sub'}
                 isMainWarehouseUser={isMainWarehouseUser}
+                settings={stockBoardSettings}
               />
             ))}
         </div>
