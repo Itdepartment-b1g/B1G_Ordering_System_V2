@@ -1,6 +1,12 @@
 import ExcelJS from 'exceljs';
 
-import { downloadExcelWorkbook } from '@/lib/excel.helpers';
+import {
+  downloadExcelWorkbook,
+  EXCEL_EXPORT_HEADER_FILL,
+  formatExportGeneratedAt,
+  writeExcelExportMetaRow,
+  writeExcelExportTitleRow,
+} from '@/lib/excel.helpers';
 
 export type AttendanceTimeInOutExportRow = {
   business_date: string;
@@ -103,20 +109,31 @@ export async function downloadAttendanceTimeInOutExcel(
     { width: 22 },
   ];
 
-  const headerRow = worksheet.addRow([...COLUMN_HEADERS]);
+  const lastCol = COLUMN_HEADERS.length;
+  let rowCursor = writeExcelExportTitleRow(worksheet, 1, 'Attendance Time In / Out Report', lastCol, {
+    fillArgb: EXCEL_EXPORT_HEADER_FILL,
+  });
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Generated at', formatExportGeneratedAt());
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Records exported', rows.length);
+  rowCursor += 1;
+
+  const headerRow = worksheet.getRow(rowCursor);
+  COLUMN_HEADERS.forEach((label, index) => {
+    headerRow.getCell(index + 1).value = label;
+  });
   styleHeaderRow(headerRow);
+  rowCursor += 1;
 
   rows.forEach(row => {
     const isPresent = row.status === 'present';
-    const dataRow = worksheet.addRow([
-      formatManilaBusinessDateLabel(row.business_date),
-      row.agent?.full_name ?? '',
-      row.agent?.email ?? '',
-      row.agent?.role ?? '',
-      attendanceStatusLabel(row.status),
-      isPresent ? formatManilaDateTime(row.time_in) : '',
-      isPresent ? formatManilaDateTime(row.time_out) : '',
-    ]);
+    const dataRow = worksheet.getRow(rowCursor++);
+    dataRow.getCell(1).value = formatManilaBusinessDateLabel(row.business_date);
+    dataRow.getCell(2).value = row.agent?.full_name ?? '';
+    dataRow.getCell(3).value = row.agent?.email ?? '';
+    dataRow.getCell(4).value = row.agent?.role ?? '';
+    dataRow.getCell(5).value = attendanceStatusLabel(row.status);
+    dataRow.getCell(6).value = isPresent ? formatManilaDateTime(row.time_in) : '';
+    dataRow.getCell(7).value = isPresent ? formatManilaDateTime(row.time_out) : '';
 
     applyStatusCellStyle(dataRow.getCell(5), row.status);
   });

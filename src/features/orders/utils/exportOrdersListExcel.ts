@@ -1,5 +1,7 @@
 import ExcelJS from 'exceljs';
 
+import { formatExportGeneratedAt } from '@/lib/excel.helpers';
+
 import type { Order } from '@/features/orders/OrderContext';
 import { formatDateForInput } from '@/lib/dateRangePresets';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
@@ -276,6 +278,7 @@ function writeMetaRows(
     row.getCell(2).value = value;
   };
 
+  addMetaRow('Generated at', formatExportGeneratedAt());
   addMetaRow(
     'Export',
     meta.exportType === 'filtered' ? 'Filtered (current filters)' : 'All orders (no filters)'

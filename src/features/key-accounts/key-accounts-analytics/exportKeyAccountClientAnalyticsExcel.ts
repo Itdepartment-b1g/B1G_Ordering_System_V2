@@ -1,5 +1,7 @@
 import ExcelJS from 'exceljs';
 
+import { formatExportGeneratedAt } from '@/lib/excel.helpers';
+
 export interface KeyAccountClientAnalyticsExportRow {
   poNumber: string;
   orderDate: string;
@@ -86,6 +88,7 @@ export async function exportKeyAccountClientAnalyticsExcel(
   titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
 
   let cursor = 3;
+  cursor = addMetaRow(worksheet, cursor, 'Generated at', formatExportGeneratedAt());
   cursor = addMetaRow(worksheet, cursor, 'Export', 'Filtered (date range)');
   cursor = addMetaRow(worksheet, cursor, 'Section', 'Client PO History');
   cursor = addMetaRow(worksheet, cursor, 'Date range', meta.dateRangeLabel);

@@ -1,7 +1,13 @@
 import ExcelJS from 'exceljs';
 
 import { resolveAttendanceTotalHours } from '@/lib/agentAttendanceTotalHours';
-import { downloadExcelWorkbook } from '@/lib/excel.helpers';
+import {
+  downloadExcelWorkbook,
+  EXCEL_EXPORT_HEADER_FILL,
+  formatExportGeneratedAt,
+  writeExcelExportMetaRow,
+  writeExcelExportTitleRow,
+} from '@/lib/excel.helpers';
 
 export type BusinessHoursExportRow = {
   business_date: string;
@@ -76,18 +82,35 @@ export async function downloadBusinessHoursReportExcel(
     { width: 16 },
   ];
 
-  const headerRow = worksheet.addRow([...COLUMN_HEADERS]);
+  const lastCol = COLUMN_HEADERS.length;
+  let rowCursor = writeExcelExportTitleRow(worksheet, 1, 'Business Hours Report', lastCol, {
+    fillArgb: EXCEL_EXPORT_HEADER_FILL,
+  });
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Generated at', formatExportGeneratedAt());
+  rowCursor = writeExcelExportMetaRow(
+    worksheet,
+    rowCursor,
+    'Business date range',
+    `${meta.businessDateFrom || '—'} to ${meta.businessDateTo || '—'}`
+  );
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Records exported', rows.length);
+  rowCursor += 1;
+
+  const headerRow = worksheet.getRow(rowCursor);
+  COLUMN_HEADERS.forEach((label, index) => {
+    headerRow.getCell(index + 1).value = label;
+  });
   styleHeaderRow(headerRow);
+  rowCursor += 1;
 
   rows.forEach(row => {
     const hours = computedHoursForExportRow(row);
-    const dataRow = worksheet.addRow([
-      meta.businessDateFrom,
-      meta.businessDateTo,
-      row.agent?.full_name ?? '',
-      row.agent?.email ?? '',
-      hours,
-    ]);
+    const dataRow = worksheet.getRow(rowCursor++);
+    dataRow.getCell(1).value = meta.businessDateFrom;
+    dataRow.getCell(2).value = meta.businessDateTo;
+    dataRow.getCell(3).value = row.agent?.full_name ?? '';
+    dataRow.getCell(4).value = row.agent?.email ?? '';
+    dataRow.getCell(5).value = hours;
 
     const hoursCell = dataRow.getCell(5);
     hoursCell.alignment = { horizontal: 'right' };

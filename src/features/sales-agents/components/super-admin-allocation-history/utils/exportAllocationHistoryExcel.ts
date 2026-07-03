@@ -1,5 +1,12 @@
 import ExcelJS from 'exceljs';
 
+import {
+  EXCEL_EXPORT_HEADER_FILL,
+  formatExportGeneratedAt,
+  writeExcelExportMetaRow,
+  writeExcelExportTitleRow,
+} from '@/lib/excel.helpers';
+
 import type { AllocationHistoryGroup } from './allocationHistoryMappers';
 import { allocationTypeLabel, formatManilaDateTime } from '../table/TableRow';
 
@@ -38,7 +45,13 @@ export async function exportAllocationHistoryExcel(
 
   const tableHeader = ['Date', 'Allocated To', 'Flow', 'Brand', 'Allocated By', 'SKUs', 'Total Units'];
   const variantHeader = ['Brand', 'Variant', 'Type', 'Quantity'];
-  let rowCursor = 1;
+  const lastCol = tableHeader.length;
+  let rowCursor = writeExcelExportTitleRow(worksheet, 1, 'Allocation History Export', lastCol, {
+    fillArgb: EXCEL_EXPORT_HEADER_FILL,
+  });
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Generated at', formatExportGeneratedAt());
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Allocations exported', rows.length);
+  rowCursor += 1;
 
   rows.forEach((group, index) => {
     const headerRow = worksheet.getRow(rowCursor++);
