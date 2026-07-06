@@ -73,7 +73,6 @@ interface CreatePurchaseOrderDialogProps {
         discount: number;
         notes: string;
     }) => Promise<{ success: boolean; error?: string }>;
-    refreshData: () => void;
 }
 
 export function CreatePurchaseOrderDialog({
@@ -83,7 +82,6 @@ export function CreatePurchaseOrderDialog({
     user,
     linkedWarehouseCompanyId,
     onCreateOrder,
-    refreshData
 }: CreatePurchaseOrderDialogProps) {
     const { toast } = useToast();
 
@@ -703,10 +701,8 @@ export function CreatePurchaseOrderDialog({
 
             if (!success) throw new Error(error);
 
-            toast({ title: 'Success', description: 'Purchase Order created successfully' });
             setItems([]);
             onOpenChange(false);
-            refreshData();
 
         } catch (err: any) {
             console.error(err);

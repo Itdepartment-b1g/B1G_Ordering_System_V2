@@ -15,6 +15,73 @@ const WAREHOUSE_PLACEHOLDER_SUPPLIER: Supplier = {
   status: 'active',
 };
 
+const PO_ITEMS_SELECT = `
+  id,
+  variant_id,
+  warehouse_location_id,
+  quantity,
+  unit_price,
+  total_price,
+  warehouse_locations:warehouse_location_id (
+    id,
+    name,
+    is_main
+  ),
+  variants (
+    id,
+    name,
+    variant_type,
+    brands (
+      name
+    )
+  )
+`;
+
+function formatPoItem(item: any): PurchaseOrderItem {
+  return {
+    id: item.id,
+    variant_id: item.variant_id,
+    warehouse_location_id: item.warehouse_location_id ?? null,
+    warehouse_location: item.warehouse_locations ?? null,
+    brand_name: item.variants?.brands?.name || 'Unknown',
+    variant_name: item.variants?.name || 'Unknown',
+    variant_type: item.variants?.variant_type || 'flavor',
+    quantity: item.quantity,
+    unit_price: parseFloat(item.unit_price),
+    total_price: parseFloat(item.total_price),
+  };
+}
+
+function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
+  const rawSup = Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers;
+  const rawLoc = Array.isArray(order.warehouse_locations)
+    ? order.warehouse_locations[0]
+    : order.warehouse_locations;
+  const supplier =
+    order.fulfillment_type === 'warehouse_transfer' ? WAREHOUSE_PLACEHOLDER_SUPPLIER : rawSup;
+
+  const rawClient = Array.isArray(order.client) ? order.client[0] : order.client;
+  const rawShop = Array.isArray(order.shop) ? order.shop[0] : order.shop;
+  const rawAddress = Array.isArray(order.address) ? order.address[0] : order.address;
+  const rawKam = Array.isArray(order.kam) ? order.kam[0] : order.kam;
+
+  return {
+    ...order,
+    supplier,
+    warehouse_location: rawLoc ?? null,
+    subtotal: parseFloat(order.subtotal),
+    tax_rate: parseFloat(order.tax_rate),
+    tax_amount: parseFloat(order.tax_amount),
+    discount: parseFloat(order.discount),
+    total_amount: parseFloat(order.total_amount),
+    items: items.map(formatPoItem),
+    client: rawClient ?? null,
+    shop: rawShop ?? null,
+    address: rawAddress ?? null,
+    kam: rawKam ?? null,
+  };
+}
+
 export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -22,9 +89,19 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
   const { toast } = useToast();
+  const manualRefreshUntilRef = useRef(0);
 
-  // Fetch all purchase orders with items
-  const fetchPurchaseOrders = async (showLoading = true) => {
+  const markManualRefresh = () => {
+    manualRefreshUntilRef.current = Date.now() + 3000;
+  };
+
+  const scheduleBackgroundRefresh = () => {
+    void fetchPurchaseOrders(false, true);
+  };
+
+  // Fetch all purchase orders with items (single query — no N+1)
+  const fetchPurchaseOrders = async (showLoading = true, dedupeRealtime = false) => {
+    if (dedupeRealtime) markManualRefresh();
     try {
       if (showLoading) setLoading(true);
 
@@ -52,7 +129,8 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           client:key_account_clients(client_name),
           shop:key_account_shops(shop_name, cor_pdf_path),
           address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
-          kam:profiles!purchase_orders_kam_id_fkey(full_name,email)
+          kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
+          purchase_order_items (${PO_ITEMS_SELECT})
         `);
 
       if (user?.role === 'warehouse' && user.company_id) {
@@ -72,90 +150,12 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       if (ordersError) throw ordersError;
 
-      // For each order, fetch its items with brand and variant info
-      const ordersWithItems = await Promise.all(
-        (orders || []).map(async (order) => {
-          const { data: items, error: itemsError } = await supabase
-            .from('purchase_order_items')
-            .select(`
-              id,
-              variant_id,
-              warehouse_location_id,
-              quantity,
-              unit_price,
-              total_price,
-              warehouse_locations:warehouse_location_id (
-                id,
-                name,
-                is_main
-              ),
-              variants (
-                id,
-                name,
-                variant_type,
-                brands (
-                  name
-                )
-              )
-            `)
-            .eq('purchase_order_id', order.id);
-
-          if (itemsError) {
-            console.error('Error fetching items for order:', order.id, itemsError);
-            const rawSup = Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers;
-            const supplier =
-              order.fulfillment_type === 'warehouse_transfer' ? WAREHOUSE_PLACEHOLDER_SUPPLIER : rawSup;
-            return {
-              ...order,
-              supplier,
-              items: [],
-            };
-          }
-
-          const formattedItems: PurchaseOrderItem[] = (items || []).map((item: any) => ({
-            id: item.id,
-            variant_id: item.variant_id,
-            warehouse_location_id: item.warehouse_location_id ?? null,
-            warehouse_location: item.warehouse_locations ?? null,
-            brand_name: item.variants?.brands?.name || 'Unknown',
-            variant_name: item.variants?.name || 'Unknown',
-            variant_type: item.variants?.variant_type || 'flavor',
-            quantity: item.quantity,
-            unit_price: parseFloat(item.unit_price),
-            total_price: parseFloat(item.total_price),
-          }));
-
-          const rawSup = Array.isArray(order.suppliers) ? order.suppliers[0] : order.suppliers;
-          const rawLoc = Array.isArray((order as any).warehouse_locations)
-            ? (order as any).warehouse_locations[0]
-            : (order as any).warehouse_locations;
-          const supplier =
-            order.fulfillment_type === 'warehouse_transfer' ? WAREHOUSE_PLACEHOLDER_SUPPLIER : rawSup;
-
-          // Extract Key Account relations (handle both array and object formats)
-          const rawClient = Array.isArray((order as any).client) ? (order as any).client[0] : (order as any).client;
-          const rawShop = Array.isArray((order as any).shop) ? (order as any).shop[0] : (order as any).shop;
-          const rawAddress = Array.isArray((order as any).address) ? (order as any).address[0] : (order as any).address;
-          const rawKam = Array.isArray((order as any).kam) ? (order as any).kam[0] : (order as any).kam;
-
-          return {
-            ...order,
-            supplier,
-            warehouse_location: rawLoc ?? null,
-            subtotal: parseFloat(order.subtotal),
-            tax_rate: parseFloat(order.tax_rate),
-            tax_amount: parseFloat(order.tax_amount),
-            discount: parseFloat(order.discount),
-            total_amount: parseFloat(order.total_amount),
-            items: formattedItems,
-            // Key Account fields
-            client: rawClient ?? null,
-            shop: rawShop ?? null,
-            address: rawAddress ?? null,
-            kam: rawKam ?? null,
-          };
-        })
-      );
+      const ordersWithItems = (orders || []).map((order: any) => {
+        const nestedItems = order.purchase_order_items;
+        const items = Array.isArray(nestedItems) ? nestedItems : [];
+        const { purchase_order_items: _poItems, ...orderFields } = order;
+        return formatPurchaseOrder(orderFields, items);
+      });
 
       setPurchaseOrders(ordersWithItems);
     } catch (error) {
@@ -365,8 +365,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           description: `Purchase Order ${poNumber} created successfully`,
         });
 
-        // Refresh the list
-        await fetchPurchaseOrders();
+        scheduleBackgroundRefresh();
 
         return { success: true };
       } catch (error: any) {
@@ -438,8 +437,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         duration: 5000,
       });
 
-      // Refresh the list
-      await fetchPurchaseOrders();
+      scheduleBackgroundRefresh();
 
       return { success: true };
     } catch (error: any) {
@@ -469,7 +467,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
       if (error) throw error;
 
       toast({ title: 'Purchase Order Rejected', description: 'The PO has been rejected.' });
-      await fetchPurchaseOrders();
+      scheduleBackgroundRefresh();
       return { success: true };
     } catch (error: any) {
       console.error('Error rejecting purchase order:', error);
@@ -516,9 +514,11 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const schedulePurchaseOrdersRefresh = (showLoading = false) => {
+    if (Date.now() < manualRefreshUntilRef.current) return;
     if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
     refreshDebounceRef.current = setTimeout(() => {
       refreshDebounceRef.current = null;
+      if (Date.now() < manualRefreshUntilRef.current) return;
       void fetchPurchaseOrders(showLoading);
     }, 400);
   };

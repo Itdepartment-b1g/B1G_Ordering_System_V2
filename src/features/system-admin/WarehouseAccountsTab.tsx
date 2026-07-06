@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Plus, Package, Search, Edit, Building2 } from 'lucide-react';
+import { Loader2, Plus, Package, Search, Edit, Building2, MapPin } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -28,6 +28,63 @@ interface WarehouseWithAssignments extends Profile {
   assignedClientCompanies?: Company[];
   /** New blank company row used for this warehouse's main inventory */
   inventoryCompany?: Company | null;
+  locationName?: string | null;
+  isMainLocation?: boolean;
+}
+
+interface WarehouseGroup {
+  companyId: string;
+  inventoryCompany: Company | null;
+  mainUser: WarehouseWithAssignments | null;
+  subUsers: WarehouseWithAssignments[];
+  assignedClientCompanies: Company[];
+}
+
+function resolveLocationRow(raw: unknown): { name: string; is_main: boolean } | null {
+  const loc = Array.isArray(raw) ? raw[0] : raw;
+  if (!loc || typeof loc !== 'object') return null;
+  const row = loc as { name?: string; is_main?: boolean };
+  if (!row.name) return null;
+  return { name: row.name, is_main: !!row.is_main };
+}
+
+function buildWarehouseGroups(warehouses: WarehouseWithAssignments[]): WarehouseGroup[] {
+  const byCompany = new Map<string, WarehouseWithAssignments[]>();
+
+  for (const w of warehouses) {
+    const key = w.company_id || `orphan-${w.id}`;
+    const list = byCompany.get(key) || [];
+    list.push(w);
+    byCompany.set(key, list);
+  }
+
+  const groups: WarehouseGroup[] = [];
+
+  for (const [companyId, users] of byCompany) {
+    const sorted = [...users].sort((a, b) => {
+      if (a.isMainLocation !== b.isMainLocation) return a.isMainLocation ? -1 : 1;
+      return (a.locationName || a.full_name).localeCompare(b.locationName || b.full_name);
+    });
+
+    const mainUser =
+      sorted.find((u) => u.isMainLocation) ||
+      sorted.find((u) => (u.assignments?.length || 0) > 0) ||
+      sorted[0] ||
+      null;
+    const subUsers = sorted.filter((u) => u.id !== mainUser?.id);
+
+    groups.push({
+      companyId,
+      inventoryCompany: mainUser?.inventoryCompany ?? users[0]?.inventoryCompany ?? null,
+      mainUser,
+      subUsers,
+      assignedClientCompanies: mainUser?.assignedClientCompanies || [],
+    });
+  }
+
+  return groups.sort((a, b) =>
+    (a.inventoryCompany?.company_name || '').localeCompare(b.inventoryCompany?.company_name || '')
+  );
 }
 
 export function WarehouseAccountsTab() {
@@ -97,11 +154,23 @@ export function WarehouseAccountsTab() {
       }
 
       const ids = whData.map((w) => w.id);
-      const { data: assignData, error: aErr } = await supabase
-        .from('warehouse_company_assignments')
-        .select('*')
-        .in('warehouse_user_id', ids);
+      const [assignRes, locRes] = await Promise.all([
+        supabase.from('warehouse_company_assignments').select('*').in('warehouse_user_id', ids),
+        supabase
+          .from('warehouse_location_users')
+          .select('user_id, warehouse_locations ( name, is_main )')
+          .in('user_id', ids),
+      ]);
+      const { data: assignData, error: aErr } = assignRes;
       if (aErr) throw aErr;
+      const { data: locData, error: locErr } = locRes;
+      if (locErr) throw locErr;
+
+      const locationByUser = new Map<string, { name: string; is_main: boolean }>();
+      for (const row of locData || []) {
+        const loc = resolveLocationRow((row as { warehouse_locations?: unknown }).warehouse_locations);
+        if (loc) locationByUser.set(row.user_id, loc);
+      }
 
       const clientIds = [...new Set((assignData || []).map((a) => a.client_company_id))];
       const invIds = [...new Set(whData.map((w) => w.company_id).filter(Boolean))] as string[];
@@ -118,11 +187,14 @@ export function WarehouseAccountsTab() {
         const clientCos = assigns
           .map((a) => companyMap.get(a.client_company_id))
           .filter(Boolean) as Company[];
+        const loc = locationByUser.get(w.id);
         return {
           ...w,
           assignments: assigns as WarehouseCompanyAssignment[],
           assignedClientCompanies: clientCos,
           inventoryCompany: w.company_id ? invMap.get(w.company_id) ?? null : null,
+          locationName: loc?.name ?? null,
+          isMainLocation: loc?.is_main ?? (assigns.length > 0),
         };
       });
 
@@ -277,15 +349,25 @@ export function WarehouseAccountsTab() {
     }
   };
 
-  const filtered = warehouses.filter(
-    (w) =>
-      w.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      w.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (w.inventoryCompany?.company_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (w.assignedClientCompanies || []).some((c) =>
-        c.company_name.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-  );
+  const warehouseGroups = useMemo(() => buildWarehouseGroups(warehouses), [warehouses]);
+
+  const filteredGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return warehouseGroups;
+
+    return warehouseGroups.filter((g) => {
+      const companyMatch = (g.inventoryCompany?.company_name || '').toLowerCase().includes(q);
+      const clientMatch = g.assignedClientCompanies.some((c) => c.company_name.toLowerCase().includes(q));
+      const userMatch = [g.mainUser, ...g.subUsers].some(
+        (u) =>
+          u &&
+          (u.full_name.toLowerCase().includes(q) ||
+            u.email.toLowerCase().includes(q) ||
+            (u.locationName || '').toLowerCase().includes(q))
+      );
+      return companyMatch || clientMatch || userMatch;
+    });
+  }, [warehouseGroups, searchQuery]);
 
   if (isLoading) {
     return (
@@ -308,9 +390,9 @@ export function WarehouseAccountsTab() {
             WAREHOUSE <span className="text-primary italic">ACCOUNTS</span>
           </h2>
           <p className="text-muted-foreground mt-2 max-w-xl">
-            Each account creates a <strong>new warehouse company</strong> (blank inventory) plus a warehouse login, like adding a company and an
-            executive. The user signs in and fills <strong>Main inventory</strong> (and catalog) for that company, then fulfills internal POs for the
-            client companies you assign.
+            Each account creates a <strong>new warehouse company</strong> (blank inventory) plus a main warehouse login.
+            Sub-warehouses created under the same company are grouped here. The main user manages inventory and client PO
+            fulfillment; sub-warehouse logins are shown under their parent company.
           </p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -431,37 +513,81 @@ export function WarehouseAccountsTab() {
         />
       </div>
 
-      {filtered.length === 0 ? (
+      {filteredGroups.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">No warehouse accounts yet.</CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((w) => (
-            <Card key={w.id} className="border-2">
-              <CardContent className="pt-6 space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="font-bold">{w.full_name}</h3>
-                    <p className="text-sm text-muted-foreground">{w.email}</p>
+          {filteredGroups.map((group) => (
+            <Card key={group.companyId} className="border-2">
+              <CardContent className="pt-6 space-y-4">
+                <div className="flex items-start gap-2">
+                  <Building2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-bold leading-tight">
+                      {group.inventoryCompany?.company_name || 'Unknown warehouse company'}
+                    </h3>
+                    {group.subUsers.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {1 + group.subUsers.length} location{group.subUsers.length > 0 ? 's' : ''}
+                      </p>
+                    )}
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => openEdit(w)}>
-                    <Edit className="h-3 w-3 mr-1" />
-                    Edit
-                  </Button>
+                  {group.mainUser && (
+                    <Button size="sm" variant="outline" className="shrink-0" onClick={() => openEdit(group.mainUser!)}>
+                      <Edit className="h-3 w-3 mr-1" />
+                      Edit
+                    </Button>
+                  )}
                 </div>
-                <div className="text-sm border-t pt-2">
-                  <span className="text-muted-foreground">Inventory company: </span>
-                  <span className="font-medium">{w.inventoryCompany?.company_name || '—'}</span>
-                </div>
+
                 <div className="flex flex-wrap gap-1">
-                  {(w.assignedClientCompanies || []).slice(0, 6).map((c) => (
+                  {group.assignedClientCompanies.slice(0, 6).map((c) => (
                     <Badge key={c.id} variant="secondary" className="text-xs">
                       {c.company_name}
                     </Badge>
                   ))}
-                  {(w.assignedClientCompanies?.length || 0) > 6 && (
-                    <Badge variant="outline">+{(w.assignedClientCompanies?.length || 0) - 6}</Badge>
+                  {group.assignedClientCompanies.length > 6 && (
+                    <Badge variant="outline">+{group.assignedClientCompanies.length - 6}</Badge>
+                  )}
+                  {group.assignedClientCompanies.length === 0 && (
+                    <span className="text-xs text-muted-foreground">No client companies assigned</span>
+                  )}
+                </div>
+
+                <div className="border-t pt-3 space-y-2">
+                  {group.mainUser && (
+                    <div className="rounded-md bg-muted/40 px-3 py-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant="default" className="text-[10px] uppercase">
+                          Main
+                        </Badge>
+                        <span className="text-xs text-muted-foreground truncate">
+                          {group.mainUser.locationName || 'Main Warehouse'}
+                        </span>
+                      </div>
+                      <p className="font-medium text-sm">{group.mainUser.full_name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{group.mainUser.email}</p>
+                    </div>
+                  )}
+
+                  {group.subUsers.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                        Sub-warehouses
+                      </p>
+                      {group.subUsers.map((sub) => (
+                        <div key={sub.id} className="rounded-md border px-3 py-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <MapPin className="h-3 w-3 text-muted-foreground shrink-0" />
+                            <span className="text-xs font-medium truncate">{sub.locationName || 'Sub-warehouse'}</span>
+                          </div>
+                          <p className="font-medium text-sm">{sub.full_name}</p>
+                          <p className="text-xs text-muted-foreground truncate">{sub.email}</p>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </CardContent>
@@ -474,7 +600,10 @@ export function WarehouseAccountsTab() {
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit warehouse account</DialogTitle>
-            <DialogDescription>Update profile details and which client companies this user fulfills.</DialogDescription>
+            <DialogDescription>
+              Update the main warehouse profile and which client companies this warehouse fulfills. Sub-warehouse
+              accounts are managed from the warehouse app.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">

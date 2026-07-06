@@ -889,7 +889,7 @@ export default function PurchaseOrdersPage() {
       setOrderToFulfill(null);
       setFulfillLocationId(null);
       setFulfillLocationName(null);
-      await fetchPurchaseOrders();
+      void fetchPurchaseOrders(false, true);
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to fulfill', variant: 'destructive' });
     } finally {
@@ -1008,7 +1008,6 @@ export default function PurchaseOrdersPage() {
             linkedWarehouseCompanyId={linkedWarehouseCompanyId}
             user={user}
             onCreateOrder={createPurchaseOrder}
-            refreshData={fetchPurchaseOrders}
           />
         )}
       </div>
@@ -1835,25 +1834,9 @@ export default function PurchaseOrdersPage() {
                     if (!fulfillData?.success) throw new Error(fulfillData?.error || 'Fulfillment failed');
 
                     const fileExt = riderPhotoFile.name.split('.').pop() || 'jpg';
-                    const filePath = `${storageBasePath}/${Date.now()}_rider.${fileExt}`;
+                    const uploadTs = Date.now();
+                    const filePath = `${storageBasePath}/${uploadTs}_rider.${fileExt}`;
 
-                    const { error: uploadError } = await supabase.storage
-                      .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
-                      .upload(filePath, riderPhotoFile, {
-                        upsert: false,
-                        contentType: riderPhotoFile.type || 'image/jpeg',
-                      });
-                    if (uploadError) throw uploadError;
-
-                    const { data: urlData, error: urlErr } = await supabase.storage
-                      .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
-                      .createSignedUrl(filePath, 60 * 60 * 24 * 365);
-                    if (urlErr) throw urlErr;
-                    const riderPhotoUrl = urlData?.signedUrl;
-                    if (!riderPhotoUrl) throw new Error('Failed to create signed URL');
-
-                    // Upload warehouse signature
-                    let signatureBlob: Blob;
                     const base64Data = warehouseSignatureDataUrl.split(',')[1];
                     if (!base64Data) throw new Error('Invalid warehouse signature data');
                     const binaryString = atob(base64Data);
@@ -1861,22 +1844,40 @@ export default function PurchaseOrdersPage() {
                     for (let i = 0; i < binaryString.length; i++) {
                       bytes[i] = binaryString.charCodeAt(i);
                     }
-                    signatureBlob = new Blob([bytes], { type: 'image/png' });
+                    const signatureBlob = new Blob([bytes], { type: 'image/png' });
+                    const signaturePath = `${storageBasePath}/${uploadTs}_warehouse-signature.png`;
 
-                    const signaturePath = `${storageBasePath}/${Date.now()}_warehouse-signature.png`;
-                    const { error: sigUploadError } = await supabase.storage
-                      .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
-                      .upload(signaturePath, signatureBlob, {
-                        contentType: 'image/png',
-                        upsert: false,
-                      });
+                    const [{ error: uploadError }, { error: sigUploadError }] = await Promise.all([
+                      supabase.storage
+                        .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
+                        .upload(filePath, riderPhotoFile, {
+                          upsert: false,
+                          contentType: riderPhotoFile.type || 'image/jpeg',
+                        }),
+                      supabase.storage
+                        .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
+                        .upload(signaturePath, signatureBlob, {
+                          contentType: 'image/png',
+                          upsert: false,
+                        }),
+                    ]);
+                    if (uploadError) throw uploadError;
                     if (sigUploadError) throw sigUploadError;
 
-                    const { data: sigUrlData, error: sigUrlErr } = await supabase.storage
-                      .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
-                      .createSignedUrl(signaturePath, 60 * 60 * 24 * 365);
+                    const [{ data: urlData, error: urlErr }, { data: sigUrlData, error: sigUrlErr }] =
+                      await Promise.all([
+                        supabase.storage
+                          .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
+                          .createSignedUrl(filePath, 60 * 60 * 24 * 365),
+                        supabase.storage
+                          .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
+                          .createSignedUrl(signaturePath, 60 * 60 * 24 * 365),
+                      ]);
+                    if (urlErr) throw urlErr;
                     if (sigUrlErr) throw sigUrlErr;
+                    const riderPhotoUrl = urlData?.signedUrl;
                     const warehouseSignatureUrl = sigUrlData?.signedUrl;
+                    if (!riderPhotoUrl) throw new Error('Failed to create signed URL');
                     if (!warehouseSignatureUrl) throw new Error('Failed to create signature URL');
 
                     // 2) Create DR number (WH + first letter of warehouse_locations.name, e.g. Bacoor → WHB)
@@ -1955,20 +1956,10 @@ export default function PurchaseOrdersPage() {
                       approveLocationNames[locId] ||
                       resolveWarehouseNameForLocation(dispatchPo, locId);
 
-                    try {
-                      await generateAndOpenDrPdf(dispatchPo, {
-                        drNumber,
-                        warehouseLocationId: locId,
-                        warehouseLocationName: whName,
-                      });
-                    } catch (drPdfErr: any) {
-                      console.warn('[DR] auto-open after dispatch failed', drPdfErr);
-                      toast({
-                        title: 'DR opened with issues',
-                        description: drPdfErr?.message || 'Delivery saved but DR preview could not open.',
-                        variant: 'destructive',
-                      });
-                    }
+                    const pdfPo = dispatchPo;
+                    const pdfDrNumber = drNumber;
+                    const pdfLocId = locId;
+                    const pdfWhName = whName;
 
                     setMyLocationDrByPo((prev) => ({
                       ...prev,
@@ -1988,7 +1979,20 @@ export default function PurchaseOrdersPage() {
                     setOrderToFulfill(null);
                     setFulfillLocationId(null);
                     setFulfillLocationName(null);
-                    await fetchPurchaseOrders();
+                    void fetchPurchaseOrders(false, true);
+
+                    void generateAndOpenDrPdf(pdfPo, {
+                      drNumber: pdfDrNumber,
+                      warehouseLocationId: pdfLocId,
+                      warehouseLocationName: pdfWhName,
+                    }).catch((drPdfErr: any) => {
+                      console.warn('[DR] auto-open after dispatch failed', drPdfErr);
+                      toast({
+                        title: 'DR opened with issues',
+                        description: drPdfErr?.message || 'Delivery saved but DR preview could not open.',
+                        variant: 'destructive',
+                      });
+                    });
                   } catch (e: any) {
                     toast({ title: 'Error', description: e.message || 'Failed to save dispatch info', variant: 'destructive' });
                   } finally {
