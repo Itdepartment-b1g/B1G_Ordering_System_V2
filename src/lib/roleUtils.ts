@@ -20,19 +20,19 @@ export function isFinanceRole(role?: UserRole | string): boolean {
   return role === 'finance' || role === 'accounting';
 }
 
-/** Submit physical counts (warehouse, accounting, executive). */
+/** Submit physical counts (warehouse and executive). */
 export function canPerformPhysicalCount(role?: UserRole | string): boolean {
-  return role === 'warehouse' || role === 'accounting' || role === 'executive';
+  return role === 'warehouse' || role === 'executive';
 }
 
-/** View physical count history (perform roles + finance view-only). */
+/** View physical count history (submit roles + finance/accounting view-only). */
 export function canViewPhysicalCount(role?: UserRole | string): boolean {
-  return canPerformPhysicalCount(role) || role === 'finance';
+  return canPerformPhysicalCount(role) || role === 'finance' || role === 'accounting';
 }
 
-/** Finance users see history only — no new count submission. */
+/** Finance and accounting see history only — no new count submission. */
 export function isPhysicalCountViewOnly(role?: UserRole | string): boolean {
-  return role === 'finance';
+  return role === 'finance' || role === 'accounting';
 }
 
 /**

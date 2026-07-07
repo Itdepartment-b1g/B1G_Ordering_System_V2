@@ -1,4 +1,5 @@
 import type { PhysicalCountHistoryRow } from '../types';
+import { getPhysicalCountPerformerName } from './physicalCountPerformer';
 
 export type PhysicalCountHistorySortKey =
   | 'countedAt'
@@ -23,7 +24,7 @@ function getLocationLabel(row: PhysicalCountHistoryRow): string {
 }
 
 function getPerformedByLabel(row: PhysicalCountHistoryRow): string {
-  return row.performed_by_user?.full_name ?? '';
+  return getPhysicalCountPerformerName(row);
 }
 
 export function sortPhysicalCountHistory(

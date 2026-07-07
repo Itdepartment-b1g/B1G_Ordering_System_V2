@@ -59,6 +59,8 @@ export type PhysicalCountHistoryRow = {
   notes: string | null;
   batch: { id: string; batch_number: string } | null;
   warehouse_location: { id: string; name: string; is_main: boolean } | null;
+  performed_by: string | null;
+  performed_by_name: string | null;
   performed_by_user: { id: string; full_name: string } | null;
   line_count: number;
   total_variance: number;

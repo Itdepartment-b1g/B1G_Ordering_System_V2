@@ -29,6 +29,7 @@ import { useWarehouseLocations } from '@/features/inventory/batch-view/hooks/use
 import {
   canPerformPhysicalCount,
   canViewPhysicalCount,
+  isFinanceRole,
   isPhysicalCountViewOnly,
 } from '@/lib/roleUtils';
 import { Badge } from '@/components/ui/badge';
@@ -69,6 +70,7 @@ import {
   filterPhysicalCountHistory,
   type PhysicalCountHistoryFilterKey,
 } from './physical-count/utils/physicalCountHistoryFilters';
+import { getPhysicalCountPerformerName } from './physical-count/utils/physicalCountPerformer';
 import {
   DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_DIRECTION,
   DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_KEY,
@@ -83,6 +85,7 @@ export default function PhysicalCountPage() {
   const userRole = user?.role;
   const isWarehouse = userRole === 'warehouse';
   const isExecutive = userRole === 'executive';
+  const usesWarehousePicker = isExecutive || isFinanceRole(userRole);
   const canPerform = canPerformPhysicalCount(userRole);
   const viewOnly = isPhysicalCountViewOnly(userRole);
   const canView = canViewPhysicalCount(userRole);
@@ -92,9 +95,9 @@ export default function PhysicalCountPage() {
     canPerform && userRole !== 'warehouse' ? true : isMainWarehouseUser;
 
   const { data: warehouseHubCompanies = [], isLoading: warehouseHubsLoading } =
-    useWarehouseHubCompanies(isExecutive);
+    useWarehouseHubCompanies(usesWarehousePicker);
 
-  const [executiveWarehouseHubId, setExecutiveWarehouseHubId] = useState('');
+  const [selectedWarehouseHubId, setSelectedWarehouseHubId] = useState('');
   const [locationId, setLocationId] = useState('');
   const [batchId, setBatchId] = useState('');
   const [brandId, setBrandId] = useState('');
@@ -120,29 +123,29 @@ export default function PhysicalCountPage() {
     inventoryCompanyId: tenantInventoryCompanyId,
     hasWarehouseLink,
     isLoading: inventoryContextLoading,
-  } = useInventoryCompanyId(user?.company_id, !isExecutive && !!user?.company_id && canView);
+  } = useInventoryCompanyId(user?.company_id, !usesWarehousePicker && !!user?.company_id && canView);
 
-  const inventoryCompanyId = isExecutive
-    ? executiveWarehouseHubId || null
+  const inventoryCompanyId = usesWarehousePicker
+    ? selectedWarehouseHubId || null
     : tenantInventoryCompanyId;
 
   useEffect(() => {
-    if (!isExecutive || warehouseHubsLoading) return;
+    if (!usesWarehousePicker || warehouseHubsLoading) return;
     if (warehouseHubCompanies.length === 0) {
-      setExecutiveWarehouseHubId('');
+      setSelectedWarehouseHubId('');
       return;
     }
     if (
-      !executiveWarehouseHubId ||
-      !warehouseHubCompanies.some((company) => company.id === executiveWarehouseHubId)
+      !selectedWarehouseHubId ||
+      !warehouseHubCompanies.some((company) => company.id === selectedWarehouseHubId)
     ) {
-      setExecutiveWarehouseHubId(warehouseHubCompanies[0].id);
+      setSelectedWarehouseHubId(warehouseHubCompanies[0].id);
     }
   }, [
-    isExecutive,
+    usesWarehousePicker,
     warehouseHubsLoading,
     warehouseHubCompanies,
-    executiveWarehouseHubId,
+    selectedWarehouseHubId,
   ]);
 
   const { data: locations = [], isLoading: locationsLoading } = useWarehouseLocations(
@@ -153,7 +156,7 @@ export default function PhysicalCountPage() {
 
   const noWarehouseHubLinked =
     !isWarehouse &&
-    !isExecutive &&
+    !usesWarehousePicker &&
     !inventoryContextLoading &&
     !locationsLoading &&
     !!user?.company_id &&
@@ -178,7 +181,7 @@ export default function PhysicalCountPage() {
     setLines([]);
     setBrandId('');
     setVariantId('');
-  }, [isExecutive ? executiveWarehouseHubId : user?.company_id]);
+  }, [usesWarehousePicker ? selectedWarehouseHubId : user?.company_id]);
 
   useEffect(() => {
     setBatchId('');
@@ -528,7 +531,7 @@ export default function PhysicalCountPage() {
     );
   }
 
-  if (isExecutive && warehouseHubsLoading) {
+  if (usesWarehousePicker && warehouseHubsLoading) {
     return (
       <div className="flex items-center justify-center p-12 text-muted-foreground gap-2">
         <Loader2 className="h-5 w-5 animate-spin" />
@@ -537,7 +540,7 @@ export default function PhysicalCountPage() {
     );
   }
 
-  if (isExecutive && warehouseHubCompanies.length === 0) {
+  if (usesWarehousePicker && warehouseHubCompanies.length === 0) {
     return (
       <div className="container mx-auto p-4 md:p-6 space-y-6">
         <div>
@@ -554,7 +557,7 @@ export default function PhysicalCountPage() {
     );
   }
 
-  if (!isExecutive && inventoryContextLoading && user?.company_id) {
+  if (!usesWarehousePicker && inventoryContextLoading && user?.company_id) {
     return (
       <div className="flex items-center justify-center p-12 text-muted-foreground gap-2">
         <Loader2 className="h-5 w-5 animate-spin" />
@@ -572,10 +575,10 @@ export default function PhysicalCountPage() {
             Physical Count
           </h1>
         </div>
-        {isExecutive && (
+        {usesWarehousePicker && (
           <div className="max-w-md space-y-2">
             <Label>Company Warehouse</Label>
-            <Select value={executiveWarehouseHubId} onValueChange={setExecutiveWarehouseHubId}>
+            <Select value={selectedWarehouseHubId} onValueChange={setSelectedWarehouseHubId}>
               <SelectTrigger>
                 <SelectValue placeholder="Select warehouse" />
               </SelectTrigger>
@@ -605,8 +608,8 @@ export default function PhysicalCountPage() {
         </h1>
         {viewOnly ? (
           <p className="text-muted-foreground mt-1 max-w-2xl">
-            View-only access to warehouse physical counts. Counts are submitted by warehouse or
-            accounting staff; variances are recorded for audit without changing system stock.
+            View-only access to warehouse physical counts. Counts are submitted by warehouse staff;
+            variances are recorded for audit without changing system stock.
           </p>
         ) : (
           <p className="text-muted-foreground mt-1 max-w-2xl">
@@ -617,10 +620,10 @@ export default function PhysicalCountPage() {
         )}
       </div>
 
-      {isExecutive && (
+      {usesWarehousePicker && (
         <div className="max-w-md space-y-2">
           <Label>Company Warehouse</Label>
-          <Select value={executiveWarehouseHubId} onValueChange={setExecutiveWarehouseHubId}>
+          <Select value={selectedWarehouseHubId} onValueChange={setSelectedWarehouseHubId}>
             <SelectTrigger>
               <SelectValue placeholder="Select warehouse" />
             </SelectTrigger>
@@ -923,7 +926,7 @@ export default function PhysicalCountPage() {
                         </TableCell>
                         <TableCell>{row.batch?.batch_number ?? '—'}</TableCell>
                         <TableCell>{row.warehouse_location?.name ?? '—'}</TableCell>
-                        <TableCell>{row.performed_by_user?.full_name ?? '—'}</TableCell>
+                        <TableCell>{getPhysicalCountPerformerName(row)}</TableCell>
                         <TableCell className="text-right tabular-nums">{row.line_count}</TableCell>
                         <TableCell
                           className={`text-right tabular-nums font-medium ${

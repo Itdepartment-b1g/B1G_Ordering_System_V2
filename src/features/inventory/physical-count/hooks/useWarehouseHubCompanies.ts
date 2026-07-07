@@ -6,7 +6,7 @@ export type WarehouseHubCompany = {
   company_name: string;
 };
 
-/** Active warehouse hub companies (companies.role = 'Warehouse') for executive physical count picker. */
+/** Active warehouse hub companies (companies.role = 'Warehouse') for executive/finance/accounting physical count picker. */
 export function useWarehouseHubCompanies(enabled: boolean) {
   return useQuery({
     queryKey: ['physical-count-warehouse-hub-companies'],
