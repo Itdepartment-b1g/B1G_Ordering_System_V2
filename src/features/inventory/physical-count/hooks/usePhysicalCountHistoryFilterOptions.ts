@@ -43,7 +43,7 @@ export function usePhysicalCountHistoryFilterOptions({
           .from('profiles')
           .select('id, full_name')
           .eq('company_id', companyId!)
-          .eq('role', 'warehouse')
+          .in('role', ['warehouse', 'accounting', 'executive'])
           .order('full_name'),
       ]);
 

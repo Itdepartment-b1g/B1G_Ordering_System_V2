@@ -26,6 +26,11 @@ import {
 } from '@/features/shared/utils/tableSortCycle';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { useWarehouseLocations } from '@/features/inventory/batch-view/hooks/useWarehouseLocations';
+import {
+  canPerformPhysicalCount,
+  canViewPhysicalCount,
+  isPhysicalCountViewOnly,
+} from '@/lib/roleUtils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -56,6 +61,8 @@ import {
   usePhysicalCountSessionDetail,
 } from './physical-count/hooks/usePhysicalCountHistory';
 import { usePhysicalCountHistoryFilterOptions } from './physical-count/hooks/usePhysicalCountHistoryFilterOptions';
+import { useInventoryCompanyId } from './physical-count/hooks/useInventoryCompanyId';
+import { useWarehouseHubCompanies } from './physical-count/hooks/useWarehouseHubCompanies';
 import type { PhysicalCountLine, PhysicalCountLotOption, PhysicalCountSubmitLine } from './physical-count/types';
 import { uploadPhysicalCountSignature } from './physical-count/utils/uploadPhysicalCountSignature';
 import {
@@ -73,10 +80,21 @@ export default function PhysicalCountPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const isWarehouse = user?.role === 'warehouse';
+  const userRole = user?.role;
+  const isWarehouse = userRole === 'warehouse';
+  const isExecutive = userRole === 'executive';
+  const canPerform = canPerformPhysicalCount(userRole);
+  const viewOnly = isPhysicalCountViewOnly(userRole);
+  const canView = canViewPhysicalCount(userRole);
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
+  const isMainScope =
+    canPerform && userRole !== 'warehouse' ? true : isMainWarehouseUser;
 
+  const { data: warehouseHubCompanies = [], isLoading: warehouseHubsLoading } =
+    useWarehouseHubCompanies(isExecutive);
+
+  const [executiveWarehouseHubId, setExecutiveWarehouseHubId] = useState('');
   const [locationId, setLocationId] = useState('');
   const [batchId, setBatchId] = useState('');
   const [brandId, setBrandId] = useState('');
@@ -98,21 +116,69 @@ export default function PhysicalCountPage() {
   const [historyPage, setHistoryPage] = useState(0);
   const [historyPageSize, setHistoryPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
 
-  const { data: locations = [] } = useWarehouseLocations(
-    user?.company_id,
-    isWarehouse && isMainWarehouseUser
-  );
+  const {
+    inventoryCompanyId: tenantInventoryCompanyId,
+    hasWarehouseLink,
+    isLoading: inventoryContextLoading,
+  } = useInventoryCompanyId(user?.company_id, !isExecutive && !!user?.company_id && canView);
+
+  const inventoryCompanyId = isExecutive
+    ? executiveWarehouseHubId || null
+    : tenantInventoryCompanyId;
 
   useEffect(() => {
-    if (!isMainWarehouseUser && membership.locationId) {
+    if (!isExecutive || warehouseHubsLoading) return;
+    if (warehouseHubCompanies.length === 0) {
+      setExecutiveWarehouseHubId('');
+      return;
+    }
+    if (
+      !executiveWarehouseHubId ||
+      !warehouseHubCompanies.some((company) => company.id === executiveWarehouseHubId)
+    ) {
+      setExecutiveWarehouseHubId(warehouseHubCompanies[0].id);
+    }
+  }, [
+    isExecutive,
+    warehouseHubsLoading,
+    warehouseHubCompanies,
+    executiveWarehouseHubId,
+  ]);
+
+  const { data: locations = [], isLoading: locationsLoading } = useWarehouseLocations(
+    inventoryCompanyId ?? undefined,
+    (canPerform && isMainScope && !!inventoryCompanyId) ||
+      (!canPerform && canView && !!inventoryCompanyId)
+  );
+
+  const noWarehouseHubLinked =
+    !isWarehouse &&
+    !isExecutive &&
+    !inventoryContextLoading &&
+    !locationsLoading &&
+    !!user?.company_id &&
+    !hasWarehouseLink &&
+    locations.length === 0;
+
+  useEffect(() => {
+    if (!canPerform) return;
+    if (!isMainScope && membership.locationId) {
       setLocationId(membership.locationId);
       return;
     }
-    if (isMainWarehouseUser && locations.length > 0 && !locationId) {
+    if (isMainScope && locations.length > 0 && !locationId) {
       const mainLoc = locations.find((l) => l.is_main) ?? locations[0];
       setLocationId(mainLoc.id);
     }
-  }, [isMainWarehouseUser, membership.locationId, locations, locationId]);
+  }, [canPerform, isMainScope, membership.locationId, locations, locationId]);
+
+  useEffect(() => {
+    setLocationId('');
+    setBatchId('');
+    setLines([]);
+    setBrandId('');
+    setVariantId('');
+  }, [isExecutive ? executiveWarehouseHubId : user?.company_id]);
 
   useEffect(() => {
     setBatchId('');
@@ -127,20 +193,20 @@ export default function PhysicalCountPage() {
     setVariantId('');
   }, [batchId]);
 
-  const activeLocationId = isMainWarehouseUser ? locationId : membership.locationId ?? '';
+  const activeLocationId = isMainScope ? locationId : membership.locationId ?? '';
 
   const locationName = useMemo(() => {
     if (!activeLocationId) return 'Selected location';
     const loc = locations.find((l) => l.id === activeLocationId);
     if (loc) return loc.is_main ? `${loc.name} (main)` : loc.name;
-    if (!isMainWarehouseUser) return 'Your sub-warehouse';
+    if (!isMainScope) return 'Your sub-warehouse';
     return 'Selected location';
-  }, [activeLocationId, locations, isMainWarehouseUser]);
+  }, [activeLocationId, locations, isMainScope]);
 
   const { data: batches = [], isLoading: batchesLoading } = usePhysicalCountBatches({
-    companyId: user?.company_id,
+    companyId: inventoryCompanyId ?? undefined,
     locationId: activeLocationId,
-    enabled: isWarehouse && !!activeLocationId,
+    enabled: canPerform && !!inventoryCompanyId && !!activeLocationId,
   });
 
   const selectedBatch = useMemo(
@@ -153,10 +219,10 @@ export default function PhysicalCountPage() {
     getVariantsForBrand,
     isLoading: catalogLoading,
   } = usePhysicalCountBatchCatalog({
-    companyId: user?.company_id,
+    companyId: inventoryCompanyId ?? undefined,
     locationId: activeLocationId,
     batchId,
-    enabled: isWarehouse && !!batchId && !!activeLocationId,
+    enabled: canPerform && !!batchId && !!activeLocationId,
   });
 
   const variants = useMemo(
@@ -187,17 +253,19 @@ export default function PhysicalCountPage() {
   });
 
   const { refetch: refetchBatchLots, isFetching: loadingAllLots } = usePhysicalCountBatchLots({
-    companyId: user?.company_id,
+    companyId: inventoryCompanyId ?? undefined,
     locationId: activeLocationId,
     batchId,
     enabled: false,
   });
 
+  const historyEnabled = canView && !!inventoryCompanyId;
+
   const { data: history = [], isLoading: historyLoading } = usePhysicalCountHistory({
-    companyId: user?.company_id,
-    locationId: membership.locationId,
-    isMainWarehouseUser,
-    enabled: isWarehouse && !!user?.company_id,
+    companyId: inventoryCompanyId ?? undefined,
+    locationId: isWarehouse ? membership.locationId : null,
+    isMainWarehouseUser: isMainScope,
+    enabled: historyEnabled,
   });
 
   const {
@@ -206,8 +274,8 @@ export default function PhysicalCountPage() {
     performedByOptions,
     isLoading: historyFilterOptionsLoading,
   } = usePhysicalCountHistoryFilterOptions({
-    companyId: user?.company_id,
-    enabled: isWarehouse && !!user?.company_id,
+    companyId: inventoryCompanyId ?? undefined,
+    enabled: historyEnabled,
   });
 
   const { data: historyDetail } = usePhysicalCountSessionDetail(
@@ -394,13 +462,13 @@ export default function PhysicalCountPage() {
   };
 
   const handleSubmitWithSignature = async (signatureDataUrl: string) => {
-    if (!user?.company_id || !parsedSubmitLines || !selectedBatch) return;
+    if (!inventoryCompanyId || !parsedSubmitLines || !selectedBatch) return;
 
     setSubmitting(true);
     try {
       const { url, path } = await uploadPhysicalCountSignature({
         signatureDataUrl,
-        companyId: user.company_id,
+        companyId: inventoryCompanyId,
         batchNumber: selectedBatch.batchNumber,
       });
 
@@ -411,7 +479,7 @@ export default function PhysicalCountPage() {
         p_signature_url: url,
         p_signature_path: path,
         p_notes: notes.trim() || null,
-        p_performed_by: user.id,
+        p_performed_by: user?.id,
       });
 
       if (error) throw error;
@@ -452,10 +520,78 @@ export default function PhysicalCountPage() {
     setHistoryDetailOpen(true);
   };
 
-  if (!isWarehouse) {
+  if (!canView) {
     return (
       <div className="p-6">
-        <p className="text-muted-foreground">Warehouse access only.</p>
+        <p className="text-muted-foreground">You do not have access to physical count.</p>
+      </div>
+    );
+  }
+
+  if (isExecutive && warehouseHubsLoading) {
+    return (
+      <div className="flex items-center justify-center p-12 text-muted-foreground gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        Loading warehouses…
+      </div>
+    );
+  }
+
+  if (isExecutive && warehouseHubCompanies.length === 0) {
+    return (
+      <div className="container mx-auto p-4 md:p-6 space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <ClipboardCheck className="h-7 w-7" />
+            Physical Count
+          </h1>
+        </div>
+        <p className="text-muted-foreground max-w-2xl">
+          No warehouse companies found. Warehouse hub companies must have{' '}
+          <strong>role = Warehouse</strong> in the companies table.
+        </p>
+      </div>
+    );
+  }
+
+  if (!isExecutive && inventoryContextLoading && user?.company_id) {
+    return (
+      <div className="flex items-center justify-center p-12 text-muted-foreground gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        Loading warehouse context…
+      </div>
+    );
+  }
+
+  if (noWarehouseHubLinked) {
+    return (
+      <div className="container mx-auto p-4 md:p-6 space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <ClipboardCheck className="h-7 w-7" />
+            Physical Count
+          </h1>
+        </div>
+        {isExecutive && (
+          <div className="max-w-md space-y-2">
+            <Label>Company Warehouse</Label>
+            <Select value={executiveWarehouseHubId} onValueChange={setExecutiveWarehouseHubId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select warehouse" />
+              </SelectTrigger>
+              <SelectContent>
+                {warehouseHubCompanies.map((company) => (
+                  <SelectItem key={company.id} value={company.id}>
+                    {company.company_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        <p className="text-muted-foreground">
+          No warehouse hub is linked to this company. Physical count requires a warehouse assignment.
+        </p>
       </div>
     );
   }
@@ -467,13 +603,39 @@ export default function PhysicalCountPage() {
           <ClipboardCheck className="h-7 w-7" />
           Physical Count
         </h1>
-        <p className="text-muted-foreground mt-1 max-w-2xl">
-          Count on-hand stock by batch and lot. Select the batch that contains the lots you are
-          counting. Compare physical qty to system qty and sign to confirm. Variances are recorded
-          for audit; system stock is not changed automatically.
-        </p>
+        {viewOnly ? (
+          <p className="text-muted-foreground mt-1 max-w-2xl">
+            View-only access to warehouse physical counts. Counts are submitted by warehouse or
+            accounting staff; variances are recorded for audit without changing system stock.
+          </p>
+        ) : (
+          <p className="text-muted-foreground mt-1 max-w-2xl">
+            Count on-hand stock by batch and lot. Select the batch that contains the lots you are
+            counting. Compare physical qty to system qty and sign to confirm. Variances are recorded
+            for audit; system stock is not changed automatically.
+          </p>
+        )}
       </div>
 
+      {isExecutive && (
+        <div className="max-w-md space-y-2">
+          <Label>Company Warehouse</Label>
+          <Select value={executiveWarehouseHubId} onValueChange={setExecutiveWarehouseHubId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select warehouse" />
+            </SelectTrigger>
+            <SelectContent>
+              {warehouseHubCompanies.map((company) => (
+                <SelectItem key={company.id} value={company.id}>
+                  {company.company_name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {canPerform && (
       <Card>
         <CardHeader>
           <CardTitle>New count</CardTitle>
@@ -484,7 +646,7 @@ export default function PhysicalCountPage() {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2">
-            {isMainWarehouseUser ? (
+            {isMainScope ? (
               <div className="space-y-2">
                 <Label>Warehouse location</Label>
                 <Select value={locationId} onValueChange={setLocationId}>
@@ -670,6 +832,7 @@ export default function PhysicalCountPage() {
           </div>
         </CardContent>
       </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -684,7 +847,7 @@ export default function PhysicalCountPage() {
             batchOptions={batchOptions}
             locationOptions={locationOptions}
             performedByOptions={performedByOptions}
-            showLocationFilter={isMainWarehouseUser}
+            showLocationFilter={isMainScope}
             isLoading={historyFilterOptionsLoading}
             onSelectedFilterChange={setHistoryFilterKey}
             onFilterValueChange={setHistoryFilterValue}
@@ -802,24 +965,28 @@ export default function PhysicalCountPage() {
         </CardContent>
       </Card>
 
-      <PhysicalCountReviewDialog
-        open={reviewOpen}
-        onOpenChange={setReviewOpen}
-        batchNumber={selectedBatch?.batchNumber ?? ''}
-        locationName={locationName}
-        lines={lines}
-        onConfirm={() => {
-          setReviewOpen(false);
-          setSignatureOpen(true);
-        }}
-      />
+      {canPerform && (
+        <>
+          <PhysicalCountReviewDialog
+            open={reviewOpen}
+            onOpenChange={setReviewOpen}
+            batchNumber={selectedBatch?.batchNumber ?? ''}
+            locationName={locationName}
+            lines={lines}
+            onConfirm={() => {
+              setReviewOpen(false);
+              setSignatureOpen(true);
+            }}
+          />
 
-      <PhysicalCountSignatureDialog
-        open={signatureOpen}
-        onOpenChange={setSignatureOpen}
-        submitting={submitting}
-        onSubmitWithSignature={handleSubmitWithSignature}
-      />
+          <PhysicalCountSignatureDialog
+            open={signatureOpen}
+            onOpenChange={setSignatureOpen}
+            submitting={submitting}
+            onSubmitWithSignature={handleSubmitWithSignature}
+          />
+        </>
+      )}
 
       <PhysicalCountHistoryDetailDialog
         open={historyDetailOpen}

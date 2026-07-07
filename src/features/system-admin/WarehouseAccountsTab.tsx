@@ -130,6 +130,7 @@ export function WarehouseAccountsTab() {
         .select('*')
         .eq('status', 'active')
         .neq('id', SYSTEM_ADMIN_COMPANY_ID)
+        .neq('company_account_type', 'Warehouse')
         .order('company_name');
       if (error) throw error;
       setCompanies(data || []);
@@ -259,6 +260,23 @@ export function WarehouseAccountsTab() {
       if (!res.ok || !result.success) {
         throw new Error(result.error || 'Failed to create warehouse account');
       }
+
+      const companyId = result.data?.company_id as string | undefined;
+      if (companyId) {
+        const { error: typeErr } = await supabase
+          .from('companies')
+          .update({
+            role: 'Warehouse',
+            company_account_type: 'Warehouse',
+          })
+          .eq('id', companyId);
+        if (typeErr) {
+          throw new Error(
+            `Warehouse created but failed to set company type: ${typeErr.message}. Deploy the create-warehouse edge function.`
+          );
+        }
+      }
+
       toast({
         title: 'Success',
         description: 'Warehouse company and login created. Sign in as the warehouse user to add brands, variants, and main inventory.',

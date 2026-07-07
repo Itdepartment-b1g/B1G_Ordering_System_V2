@@ -41,7 +41,7 @@ export type KeyAccountWorkflowStatus =
   | "fulfilled"
   | "delivered";
 
-export type CompanyAccountType = "Standard Accounts" | "Key Accounts";
+export type CompanyAccountType = "Standard Accounts" | "Key Accounts" | "Warehouse";
 
 export type KeyAccountClientStatus = "active" | "inactive" | "suspended";
 export type TransactionType =
@@ -103,7 +103,7 @@ export interface Company {
   super_admin_email: string;
   role: string; // Default: 'Super Admin'
   status: UserStatus;
-  company_account_type: "Key Accounts" | "Standard Accounts";
+  company_account_type: CompanyAccountType;
   team_leader_allowed_pricing?: PricingColumn[];
   mobile_sales_allowed_pricing?: PricingColumn[];
   created_at: string;
@@ -1467,6 +1467,31 @@ export interface Database {
           p_reason: string;
         };
         Returns: FunctionResponse<{ revision_id: string }>;
+      };
+      get_inventory_company_id_for_tenant: {
+        Args: { p_tenant_company_id: string };
+        Returns: string | null;
+      };
+      get_physical_count_tenant_context: {
+        Args: { p_tenant_company_id: string };
+        Returns: {
+          success?: boolean;
+          error?: string;
+          inventory_company_id?: string | null;
+          has_warehouse_link?: boolean;
+        };
+      };
+      get_warehouse_locations_for_tenant: {
+        Args: { p_tenant_company_id: string };
+        Returns: {
+          id: string;
+          name: string;
+          is_main: boolean;
+        }[];
+      };
+      get_my_inventory_company_id: {
+        Args: Record<string, never>;
+        Returns: string | null;
       };
       submit_physical_count: {
         Args: {
