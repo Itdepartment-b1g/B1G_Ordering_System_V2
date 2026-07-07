@@ -8,7 +8,7 @@ export type WarehouseLocationOption = {
 };
 
 export function useWarehouseLocations(companyId?: string, enabled = true) {
-  return useQuery({
+  const query = useQuery({
     queryKey: ['warehouse-locations', companyId],
     enabled: enabled && !!companyId,
     queryFn: async (): Promise<WarehouseLocationOption[]> => {
@@ -22,4 +22,9 @@ export function useWarehouseLocations(companyId?: string, enabled = true) {
       return (data ?? []) as WarehouseLocationOption[];
     },
   });
+
+  return {
+    data: query.data ?? [],
+    isLoading: query.isLoading,
+  };
 }

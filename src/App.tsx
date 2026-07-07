@@ -159,7 +159,7 @@ const App = () => (
                     <Route
                       path="/inventory/physical-count"
                       element={
-                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                        <ProtectedRoute allowedRoles={['warehouse', 'accounting', 'executive', 'finance']}>
                           <PhysicalCountPage />
                         </ProtectedRoute>
                       }

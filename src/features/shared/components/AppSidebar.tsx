@@ -328,6 +328,7 @@ const systemAdminMenuItems: MenuItem[] = [
 const executiveMenuItems: MenuItem[] = [
   { title: 'Executive Dashboard', url: '/executive-dashboard', icon: LayoutDashboard },
   { title: 'War Room', url: '/war-room', icon: Map },
+  { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -400,6 +401,7 @@ const financeMenuItems: MenuItem[] = [
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
+      { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
   },
   { title: 'Analytics', url:'/analytics', icon: Brain },
@@ -419,6 +421,7 @@ const accountingMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
   },
 

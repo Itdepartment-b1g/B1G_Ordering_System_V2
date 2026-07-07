@@ -35,6 +35,8 @@ export function usePhysicalCountHistory({
           signature_url,
           signature_path,
           notes,
+          performed_by,
+          performed_by_name,
           batch:inventory_batches ( id, batch_number ),
           warehouse_location:warehouse_locations ( id, name, is_main ),
           performed_by_user:profiles!physical_count_sessions_performed_by_fkey ( id, full_name ),
@@ -65,6 +67,8 @@ export function usePhysicalCountHistory({
           warehouse_location: firstRelation(
             row.warehouse_location as PhysicalCountHistoryRow['warehouse_location']
           ),
+          performed_by: (row.performed_by as string | null) ?? null,
+          performed_by_name: (row.performed_by_name as string | null) ?? null,
           performed_by_user: firstRelation(
             row.performed_by_user as PhysicalCountHistoryRow['performed_by_user']
           ),
@@ -91,6 +95,8 @@ export function usePhysicalCountSessionDetail(sessionId: string | null, enabled:
           signature_url,
           signature_path,
           notes,
+          performed_by,
+          performed_by_name,
           batch:inventory_batches ( id, batch_number ),
           warehouse_location:warehouse_locations ( id, name, is_main ),
           performed_by_user:profiles!physical_count_sessions_performed_by_fkey ( id, full_name ),
@@ -125,6 +131,8 @@ export function usePhysicalCountSessionDetail(sessionId: string | null, enabled:
         warehouse_location: firstRelation(
           row.warehouse_location as PhysicalCountHistoryRow['warehouse_location']
         ),
+        performed_by: (row.performed_by as string | null) ?? null,
+        performed_by_name: (row.performed_by_name as string | null) ?? null,
         performed_by_user: firstRelation(
           row.performed_by_user as PhysicalCountHistoryRow['performed_by_user']
         ),

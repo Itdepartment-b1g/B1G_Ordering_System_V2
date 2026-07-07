@@ -65,6 +65,7 @@ export function usePermissions() {
       const executiveRoutes = [
         '/executive-dashboard',
         '/war-room',
+        '/inventory/physical-count',
         '/profile',
       ];
       return executiveRoutes.includes(route);

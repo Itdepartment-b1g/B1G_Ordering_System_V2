@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 
 import type { PhysicalCountHistoryFilterOption } from '../utils/physicalCountHistoryFilters';
+import { getPhysicalCountPerformerId, getPhysicalCountPerformerName } from '../utils/physicalCountPerformer';
 
 type FilterOptionsResult = {
   batchOptions: PhysicalCountHistoryFilterOption[];
@@ -27,7 +28,7 @@ export function usePhysicalCountHistoryFilterOptions({
     enabled: enabled && !!companyId,
     staleTime: 60_000,
     queryFn: async (): Promise<FilterOptionsResult> => {
-      const [batchesResult, locationsResult, performersResult] = await Promise.all([
+      const [batchesResult, locationsResult, sessionsResult] = await Promise.all([
         supabase
           .from('inventory_batches')
           .select('id, batch_number')
@@ -40,16 +41,15 @@ export function usePhysicalCountHistoryFilterOptions({
           .order('is_main', { ascending: false })
           .order('name'),
         supabase
-          .from('profiles')
-          .select('id, full_name')
+          .from('physical_count_sessions')
+          .select('performed_by, performed_by_name')
           .eq('company_id', companyId!)
-          .eq('role', 'warehouse')
-          .order('full_name'),
+          .not('performed_by', 'is', null),
       ]);
 
       if (batchesResult.error) throw batchesResult.error;
       if (locationsResult.error) throw locationsResult.error;
-      if (performersResult.error) throw performersResult.error;
+      if (sessionsResult.error) throw sessionsResult.error;
 
       const batchOptions: PhysicalCountHistoryFilterOption[] = (batchesResult.data ?? []).map(
         (row) => ({
@@ -65,12 +65,27 @@ export function usePhysicalCountHistoryFilterOptions({
         })
       );
 
-      const performedByOptions: PhysicalCountHistoryFilterOption[] = (
-        performersResult.data ?? []
-      ).map((row) => ({
-        id: row.id as string,
-        name: (row.full_name as string) || 'Unknown',
-      }));
+      const performerMap = new Map<string, string>();
+      for (const session of sessionsResult.data ?? []) {
+        const row = session as {
+          performed_by: string | null;
+          performed_by_name: string | null;
+        };
+        const performerId = getPhysicalCountPerformerId({
+          performed_by: row.performed_by,
+          performed_by_user: row.performed_by ? { id: row.performed_by, full_name: '' } : null,
+        });
+        if (!performerId) continue;
+        const label = getPhysicalCountPerformerName({
+          performed_by_name: row.performed_by_name,
+          performed_by_user: null,
+        });
+        performerMap.set(performerId, label === '—' ? 'Unknown' : label);
+      }
+
+      const performedByOptions: PhysicalCountHistoryFilterOption[] = [...performerMap.entries()]
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
 
       return { batchOptions, locationOptions, performedByOptions };
     },

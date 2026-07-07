@@ -2,6 +2,7 @@ import { isDateInRange } from '@/lib/dateRangePresets';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
 
 import type { PhysicalCountHistoryRow } from '../types';
+import { getPhysicalCountPerformerId } from './physicalCountPerformer';
 
 export type PhysicalCountHistoryFilterKey = 'all' | 'batch' | 'location' | 'performed_by';
 
@@ -32,7 +33,7 @@ export function filterPhysicalCountHistory(
       return row.warehouse_location?.id === value;
     }
     if (selectedFilter === 'performed_by') {
-      return row.performed_by_user?.id === value;
+      return getPhysicalCountPerformerId(row) === value;
     }
 
     return true;
