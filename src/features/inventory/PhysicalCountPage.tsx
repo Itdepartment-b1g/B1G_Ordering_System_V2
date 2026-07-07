@@ -614,8 +614,8 @@ export default function PhysicalCountPage() {
         ) : (
           <p className="text-muted-foreground mt-1 max-w-2xl">
             Count on-hand stock by batch and lot. Select the batch that contains the lots you are
-            counting. Compare physical qty to system qty and sign to confirm. Variances are recorded
-            for audit; system stock is not changed automatically.
+            counting, enter physical quantities, and sign to confirm. Variances are recorded for
+            audit; system stock is not changed automatically.
           </p>
         )}
       </div>

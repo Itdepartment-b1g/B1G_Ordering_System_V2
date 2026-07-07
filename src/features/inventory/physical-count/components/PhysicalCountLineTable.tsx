@@ -13,17 +13,6 @@ type PhysicalCountLineTableProps = {
   onRemoveLine: (lineId: string) => void;
 };
 
-function formatVariance(line: PhysicalCountLine): { text: string; className: string } {
-  const physical = line.physicalQty.trim() === '' ? null : Number(line.physicalQty);
-  if (physical === null || !Number.isFinite(physical)) {
-    return { text: '—', className: 'text-muted-foreground' };
-  }
-  const variance = physical - line.systemQty;
-  if (variance === 0) return { text: '0', className: 'text-muted-foreground' };
-  if (variance > 0) return { text: `+${variance}`, className: 'text-green-600 font-medium' };
-  return { text: String(variance), className: 'text-destructive font-medium' };
-}
-
 export function PhysicalCountLineTable({
   lines,
   onPhysicalQtyChange,
@@ -45,23 +34,18 @@ export function PhysicalCountLineTable({
             <TableHead>Brand</TableHead>
             <TableHead>Variant</TableHead>
             <TableHead>Expiration</TableHead>
-            <TableHead className="text-right w-28">System Qty</TableHead>
             <TableHead className="w-32">Physical Qty</TableHead>
-            <TableHead className="text-right w-24">Variance</TableHead>
             <TableHead className="w-12" />
           </TableRow>
         </TableHeader>
         <TableBody>
-          {lines.map((line) => {
-            const variance = formatVariance(line);
-            return (
+          {lines.map((line) => (
               <TableRow key={line.id}>
                 <TableCell className="font-medium">{line.brandName}</TableCell>
                 <TableCell>{line.variantName}</TableCell>
                 <TableCell className="whitespace-nowrap text-muted-foreground">
                   {formatLotDate(line.expirationDate)}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">{line.systemQty}</TableCell>
                 <TableCell>
                   <Input
                     type="number"
@@ -72,9 +56,6 @@ export function PhysicalCountLineTable({
                     onChange={(e) => onPhysicalQtyChange(line.id, e.target.value)}
                     className="h-9"
                   />
-                </TableCell>
-                <TableCell className={`text-right tabular-nums ${variance.className}`}>
-                  {variance.text}
                 </TableCell>
                 <TableCell>
                   <Button
@@ -89,8 +70,7 @@ export function PhysicalCountLineTable({
                   </Button>
                 </TableCell>
               </TableRow>
-            );
-          })}
+          ))}
         </TableBody>
       </Table>
     </div>
