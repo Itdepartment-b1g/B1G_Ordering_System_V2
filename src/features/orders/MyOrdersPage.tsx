@@ -1446,6 +1446,42 @@ export default function MyOrdersPage() {
     return paymentSplits.reduce((sum, split) => sum + (split.amount || 0), 0);
   };
 
+  const handleSplitProofFileChange = (index: number, file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const newSplits = [...paymentSplits];
+      newSplits[index] = {
+        ...newSplits[index],
+        proofFile: file,
+        proofPreview: event.target?.result as string,
+      };
+      setPaymentSplits(newSplits);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const renderSplitProofPreview = (splitIndex: number) => {
+    const split = paymentSplits[splitIndex];
+    if (!split?.proofFile) return null;
+
+    return (
+      <div className="mt-2 space-y-1">
+        {split.proofPreview && (
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-2 bg-white">
+            <img
+              src={split.proofPreview}
+              alt="Payment proof preview"
+              className="w-full max-h-48 object-contain rounded"
+            />
+          </div>
+        )}
+        <p className="text-xs text-green-600">
+          ✓ {split.proofFile.name}
+        </p>
+      </div>
+    );
+  };
+
   const validateSplitPayment = () => {
     const total = getSplitTotal();
     const orderTotal = calculateTotal();
@@ -3155,17 +3191,11 @@ export default function MyOrdersPage() {
                                       onChange={(e) => {
                                         const file = e.target.files?.[0];
                                         if (file) {
-                                          const newSplits = [...paymentSplits];
-                                          newSplits[existingIndex].proofFile = file;
-                                          setPaymentSplits(newSplits);
+                                          handleSplitProofFileChange(existingIndex, file);
                                         }
                                       }}
                                     />
-                                    {paymentSplits[existingIndex].proofFile && (
-                                      <p className="text-xs text-green-600 mt-1">
-                                        ✓ {paymentSplits[existingIndex].proofFile!.name}
-                                      </p>
-                                    )}
+                                    {renderSplitProofPreview(existingIndex)}
                                   </div>
                                 </div>
                               )}
@@ -3252,17 +3282,11 @@ export default function MyOrdersPage() {
                                     onChange={(e) => {
                                       const file = e.target.files?.[0];
                                       if (file) {
-                                        const newSplits = [...paymentSplits];
-                                        newSplits[existingIndex].proofFile = file;
-                                        setPaymentSplits(newSplits);
+                                        handleSplitProofFileChange(existingIndex, file);
                                       }
                                     }}
                                   />
-                                  {paymentSplits[existingIndex].proofFile && (
-                                    <p className="text-xs text-green-600 mt-1">
-                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
-                                    </p>
-                                  )}
+                                  {renderSplitProofPreview(existingIndex)}
                                 </div>
                               </div>
                             )}
@@ -3333,17 +3357,11 @@ export default function MyOrdersPage() {
                                     onChange={(e) => {
                                       const file = e.target.files?.[0];
                                       if (file) {
-                                        const newSplits = [...paymentSplits];
-                                        newSplits[existingIndex].proofFile = file;
-                                        setPaymentSplits(newSplits);
+                                        handleSplitProofFileChange(existingIndex, file);
                                       }
                                     }}
                                   />
-                                  {paymentSplits[existingIndex].proofFile && (
-                                    <p className="text-xs text-green-600 mt-1">
-                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
-                                    </p>
-                                  )}
+                                  {renderSplitProofPreview(existingIndex)}
                                 </div>
                               </div>
                             )}
@@ -3414,17 +3432,11 @@ export default function MyOrdersPage() {
                                     onChange={(e) => {
                                       const file = e.target.files?.[0];
                                       if (file) {
-                                        const newSplits = [...paymentSplits];
-                                        newSplits[existingIndex].proofFile = file;
-                                        setPaymentSplits(newSplits);
+                                        handleSplitProofFileChange(existingIndex, file);
                                       }
                                     }}
                                   />
-                                  {paymentSplits[existingIndex].proofFile && (
-                                    <p className="text-xs text-green-600 mt-1">
-                                      ✓ {paymentSplits[existingIndex].proofFile!.name}
-                                    </p>
-                                  )}
+                                  {renderSplitProofPreview(existingIndex)}
                                 </div>
                               </div>
                             )}

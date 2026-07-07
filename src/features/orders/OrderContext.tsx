@@ -26,6 +26,7 @@ export interface PaymentSplit {
   amount: number;
   proofUrl?: string;
   proofFile?: File; // For upload before submission
+  proofPreview?: string; // Local preview URL before upload
 }
 
 export interface Order {
