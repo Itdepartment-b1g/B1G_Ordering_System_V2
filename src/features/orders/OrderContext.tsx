@@ -176,10 +176,6 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             variant:variants(
               name,
               variant_type,
-              main_inventory(
-                selling_price,
-                unit_price
-              ),
               brand:brands(name)
             )
           )
@@ -232,8 +228,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             variant:variants(
               name,
               variant_type,
-              brand:brands(name),
-              main_inventory(selling_price, unit_price)
+              brand:brands(name)
             )
           `)
           .in('client_order_id', orderIdsNeedingItems);
@@ -263,10 +258,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           const brand = variant.brand || {};
           const brandName = (typeof brand === 'object' && brand.name) ? brand.name : (typeof brand === 'string' ? brand : 'Unknown');
 
-          const inv = Array.isArray(variant?.main_inventory) ? variant.main_inventory[0] : variant?.main_inventory;
-          const selling = inv?.selling_price;
-          const cost = inv?.unit_price;
-          const effectiveUnit = (order.status === 'approved') ? ((typeof selling === 'number') ? selling : (typeof cost === 'number' ? cost : item.unit_price)) : item.unit_price;
+          const unitPrice = Number(item.unit_price) || 0;
 
           return {
             id: item.variant_id,
@@ -274,8 +266,8 @@ export function OrderProvider({ children }: { children: ReactNode }) {
             variantName: variant?.name || 'Unknown',
             variantType: variant?.variant_type || 'flavor',
             quantity: item.quantity || 0,
-            unitPrice: effectiveUnit || item.unit_price || 0,
-            total: (item.quantity || 0) * (effectiveUnit || item.unit_price || 0),
+            unitPrice,
+            total: (item.quantity || 0) * unitPrice,
           };
         });
 
@@ -283,8 +275,6 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         if (items.length === 0 && rawItems.length > 0) {
           console.warn('Order', order.order_number, 'has raw items but transformed to empty:', rawItems);
         }
-
-        const approvedTotal = items.reduce((sum: number, it: any) => sum + it.total, 0);
 
         // Get cash deposit info if linked
         const cashDeposit = order.cash_deposit;
@@ -320,9 +310,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           subtotal: order.subtotal,
           tax: order.tax_amount,
           discount: order.discount || 0,
-          total: order.status === 'approved'
-            ? approvedTotal + (order.tax_amount || 0) - (order.discount || 0)
-            : Number(order.total_amount ?? 0),
+          total: Number(order.total_amount ?? 0),
           notes: order.notes || '',
           status: order.status,
           stage: order.stage,
