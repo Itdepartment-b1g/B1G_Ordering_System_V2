@@ -41,6 +41,7 @@ import {
   exportAgentAnalyticsExcel,
   type AgentAnalyticsExportRow,
 } from '@/features/analytics/exportAgentAnalyticsExcel';
+import { formatDateForInput, parseDateFromInput } from '@/lib/dateRangePresets';
 import { format, startOfDay, endOfDay, startOfYear, endOfYear, startOfMonth, endOfMonth, startOfWeek, endOfWeek, getWeeksInMonth, differenceInDays, subDays, subMonths } from 'date-fns';
 import { DateRange } from 'react-day-picker';
 
@@ -238,20 +239,16 @@ const ClickableChartDot = ({ cx, cy, payload, fill, r = 5, onPeriodClick }: Clic
   );
 };
 
-const bucketOrdersByStatus = (
-  orders: { status?: string; total_amount?: number }[] | null,
-  metric: 'revenue' | 'orders'
-): { approved: number; pending: number; total: number } => {
-  let approved = 0;
-  let pending = 0;
-  (orders || []).forEach((order) => {
-    if (order.status === 'approved') {
-      approved += metric === 'revenue' ? Number(order.total_amount) || 0 : 1;
-    } else if (order.status === 'pending') {
-      pending += metric === 'revenue' ? Number(order.total_amount) || 0 : 1;
+const findPeriodForDate = (
+  date: Date,
+  timePeriods: { label: string; start: Date; end: Date }[]
+): string | null => {
+  for (const period of timePeriods) {
+    if (date >= period.start && date <= period.end) {
+      return period.label;
     }
-  });
-  return { approved, pending, total: approved + pending };
+  }
+  return null;
 };
 
 interface AgentAnalyticsTabProps {
@@ -431,20 +428,6 @@ export default function AgentAnalyticsTab({
       setCustomEndDate(undefined);
     }
     setIsDatePickerOpen(false);
-  };
-
-  // Format date for input (YYYY-MM-DD)
-  const formatDateForInput = (date?: Date) => {
-    if (!date) return '';
-    return date.toISOString().split('T')[0];
-  };
-
-  // Parse date from input
-  const parseDateFromInput = (dateString: string): Date | undefined => {
-    if (!dateString) return undefined;
-    const date = new Date(dateString);
-    date.setHours(0, 0, 0, 0);
-    return date;
   };
 
   const fetchActivePeopleProfiles = async () => {
@@ -629,45 +612,81 @@ export default function AgentAnalyticsTab({
         }
       }
 
-      // Fetch data for each time period and agent
-      const timeSeriesResults: TimeSeriesDataPoint[] = await Promise.all(
-        timePeriods.map(async (period) => {
-          const dataPoint: TimeSeriesDataPoint = { period: period.label };
+      // Bulk-fetch data for all periods and agents, then aggregate in memory
+      const personIds = personInfoList.map((p) => p.id);
+      const overallStart = timePeriods[0]?.start;
+      const overallEnd = timePeriods[timePeriods.length - 1]?.end;
 
-          for (const person of personInfoList) {
-            if (selectedMetric === 'clients') {
-              const { data: clients } = await supabase
-                .from('clients')
-                .select('id')
-                .eq('agent_id', person.id)
-                .gte('created_at', period.start.toISOString())
-                .lte('created_at', period.end.toISOString());
+      const resultsMap = new Map<string, TimeSeriesDataPoint>();
+      timePeriods.forEach((period) => {
+        resultsMap.set(period.label, { period: period.label });
+      });
 
-              dataPoint[person.id] = clients?.length || 0;
-            } else {
-              const { data: orders } = await supabase
-                .from('client_orders')
-                .select('total_amount, status')
-                .eq('agent_id', person.id)
-                .in('status', ['approved', 'pending'])
-                .gte('created_at', period.start.toISOString())
-                .lte('created_at', period.end.toISOString());
+      if (selectedMetric === 'clients') {
+        let clientsQuery = supabase
+          .from('clients')
+          .select('id, agent_id, created_at')
+          .in('agent_id', personIds);
 
-              const { approved, pending, total } = bucketOrdersByStatus(
-                orders,
-                selectedMetric as 'revenue' | 'orders'
-              );
+        if (overallStart && overallEnd) {
+          clientsQuery = clientsQuery
+            .gte('created_at', overallStart.toISOString())
+            .lte('created_at', overallEnd.toISOString());
+        }
 
-              dataPoint[person.id] = total;
-              dataPoint[orderApprovedKey(person.id)] = approved;
-              dataPoint[orderPendingKey(person.id)] = pending;
-            }
+        const { data: clients, error: clientsError } = await clientsQuery;
+        if (clientsError) throw clientsError;
+
+        (clients || []).forEach((client) => {
+          const periodLabel = findPeriodForDate(new Date(client.created_at), timePeriods);
+          if (!periodLabel) return;
+          const point = resultsMap.get(periodLabel)!;
+          point[client.agent_id] = (Number(point[client.agent_id]) || 0) + 1;
+        });
+      } else {
+        const metric = selectedMetric as 'revenue' | 'orders';
+        let ordersQuery = supabase
+          .from('client_orders')
+          .select('total_amount, status, agent_id, created_at')
+          .in('agent_id', personIds)
+          .in('status', ['approved', 'pending']);
+
+        if (overallStart && overallEnd) {
+          ordersQuery = ordersQuery
+            .gte('created_at', overallStart.toISOString())
+            .lte('created_at', overallEnd.toISOString());
+        }
+
+        const { data: orders, error: ordersError } = await ordersQuery;
+        if (ordersError) throw ordersError;
+
+        (orders || []).forEach((order) => {
+          const periodLabel = findPeriodForDate(new Date(order.created_at), timePeriods);
+          if (!periodLabel || !order.agent_id) return;
+          const point = resultsMap.get(periodLabel)!;
+          const agentId = order.agent_id;
+          const value = metric === 'revenue' ? Number(order.total_amount) || 0 : 1;
+
+          if (order.status === 'approved') {
+            point[orderApprovedKey(agentId)] =
+              (Number(point[orderApprovedKey(agentId)]) || 0) + value;
+          } else if (order.status === 'pending') {
+            point[orderPendingKey(agentId)] =
+              (Number(point[orderPendingKey(agentId)]) || 0) + value;
           }
+        });
 
-          return dataPoint;
-        })
-      );
+        personInfoList.forEach((person) => {
+          timePeriods.forEach((period) => {
+            const point = resultsMap.get(period.label)!;
+            const approved = Number(point[orderApprovedKey(person.id)] ?? 0);
+            const pending = Number(point[orderPendingKey(person.id)] ?? 0);
+            point[person.id] = approved + pending;
+          });
+        });
+      }
 
+      const timeSeriesResults = timePeriods.map((p) => resultsMap.get(p.label)!);
       setTimeSeriesData(timeSeriesResults);
     } catch (error) {
       console.error('Error fetching performance data:', error);

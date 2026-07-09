@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -88,6 +88,36 @@ import {
 /** Key Account dispatch: separate private buckets (see supabase migration key_account_delivery_storage_buckets). */
 const KA_DELIVERY_RIDER_PHOTOS_BUCKET = 'ka-delivery-rider-photos';
 const KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET = 'ka-delivery-warehouse-signatures';
+const RIDER_PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif';
+const RIDER_PHOTO_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const RIDER_PHOTO_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
+const RIDER_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+
+function getRiderPhotoValidationError(file: File): string | null {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (!RIDER_PHOTO_EXTENSIONS.has(ext)) {
+    return 'Rider photo must be JPG, PNG, WEBP, or GIF.';
+  }
+  if (file.type && !RIDER_PHOTO_MIME_TYPES.has(file.type)) {
+    return 'Rider photo must be JPG, PNG, WEBP, or GIF.';
+  }
+  if (file.size > RIDER_PHOTO_MAX_BYTES) {
+    return 'Rider photo must be 5 MB or smaller.';
+  }
+  return null;
+}
+
+function riderPhotoContentType(file: File): string {
+  if (file.type && RIDER_PHOTO_MIME_TYPES.has(file.type)) {
+    return file.type;
+  }
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  return 'image/jpeg';
+}
 
 type PoWarehouseSource = { id: string; name: string };
 
@@ -231,6 +261,15 @@ export default function PurchaseOrdersPage() {
   const [riderName, setRiderName] = useState('');
   const [riderPlate, setRiderPlate] = useState('');
   const [riderPhotoFile, setRiderPhotoFile] = useState<File | null>(null);
+  const [riderPhotoPreviewUrl, setRiderPhotoPreviewUrl] = useState<string | null>(null);
+  const riderPhotoInputRef = useRef<HTMLInputElement>(null);
+
+  const clearRiderPhoto = () => {
+    setRiderPhotoFile(null);
+    if (riderPhotoInputRef.current) {
+      riderPhotoInputRef.current.value = '';
+    }
+  };
   const [warehouseSignatureDataUrl, setWarehouseSignatureDataUrl] = useState<string | null>(null);
   const [dispatchNotes, setDispatchNotes] = useState('');
   const [showWarehouseSignatureModal, setShowWarehouseSignatureModal] = useState(false);
@@ -752,7 +791,7 @@ export default function PurchaseOrdersPage() {
     setDispatchPo(order);
     setRiderName('');
     setRiderPlate('');
-    setRiderPhotoFile(null);
+    clearRiderPhoto();
     setWarehouseSignatureDataUrl(null);
     setDispatchNotes('');
     setDispatchOpen(true);
@@ -911,6 +950,36 @@ export default function PurchaseOrdersPage() {
   };
 
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (!riderPhotoFile) {
+      setRiderPhotoPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(riderPhotoFile);
+    setRiderPhotoPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [riderPhotoFile]);
+
+  const handleRiderPhotoChange = (file: File | null) => {
+    if (!file) {
+      clearRiderPhoto();
+      return;
+    }
+
+    const validationError = getRiderPhotoValidationError(file);
+    if (validationError) {
+      clearRiderPhoto();
+      toast({
+        title: 'Invalid rider photo',
+        description: validationError,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setRiderPhotoFile(file);
+  };
 
   const orderDateRange = useMemo(() => {
     return getDateRangeFromPreset(
@@ -1757,7 +1826,34 @@ export default function PurchaseOrdersPage() {
 
             <div className="space-y-2">
               <Label>Rider photo</Label>
-              <Input type="file" accept="image/*" onChange={(e) => setRiderPhotoFile(e.target.files?.[0] ?? null)} />
+              <Input
+                ref={riderPhotoInputRef}
+                type="file"
+                accept={RIDER_PHOTO_ACCEPT}
+                onChange={(e) => handleRiderPhotoChange(e.target.files?.[0] ?? null)}
+              />
+              <p className="text-xs text-muted-foreground">JPG, PNG, WEBP, or GIF only. Max 5 MB.</p>
+              {riderPhotoFile && riderPhotoPreviewUrl ? (
+                <div className="rounded-lg border p-3 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{riderPhotoFile.name}</p>
+                      <p className="text-xs text-muted-foreground">{(riderPhotoFile.size / 1024).toFixed(1)} KB</p>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={clearRiderPhoto}>
+                      <X className="h-3 w-3 mr-1" />
+                      Remove
+                    </Button>
+                  </div>
+                  <div className="border rounded-lg overflow-hidden bg-muted/30 p-2">
+                    <img
+                      src={riderPhotoPreviewUrl}
+                      alt="Rider photo preview"
+                      className="w-full h-auto max-h-48 object-contain mx-auto rounded-md"
+                    />
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -1809,6 +1905,16 @@ export default function PurchaseOrdersPage() {
                     return;
                   }
 
+                  const riderPhotoError = getRiderPhotoValidationError(riderPhotoFile);
+                  if (riderPhotoError) {
+                    toast({
+                      title: 'Invalid rider photo',
+                      description: riderPhotoError,
+                      variant: 'destructive',
+                    });
+                    return;
+                  }
+
                   const warehouseCompanyId =
                     (dispatchPo.warehouse_company_id as string | null | undefined) ?? user?.company_id ?? null;
                   if (!warehouseCompanyId) {
@@ -1852,7 +1958,7 @@ export default function PurchaseOrdersPage() {
                         .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
                         .upload(filePath, riderPhotoFile, {
                           upsert: false,
-                          contentType: riderPhotoFile.type || 'image/jpeg',
+                          contentType: riderPhotoContentType(riderPhotoFile),
                         }),
                       supabase.storage
                         .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)

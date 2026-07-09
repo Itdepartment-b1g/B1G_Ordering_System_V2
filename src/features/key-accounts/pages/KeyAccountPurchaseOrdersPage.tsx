@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -179,6 +179,25 @@ function resolveWarehouseLocationName(
   return row?.name?.trim() || null;
 }
 
+function normalizePoRow(order: any): Row {
+  const rawLoc = Array.isArray(order.warehouse_location)
+    ? order.warehouse_location[0]
+    : order.warehouse_location;
+  const rawClient = Array.isArray(order.client) ? order.client[0] : order.client;
+  const rawShop = Array.isArray(order.shop) ? order.shop[0] : order.shop;
+  const rawAddress = Array.isArray(order.address) ? order.address[0] : order.address;
+  const rawKam = Array.isArray(order.kam) ? order.kam[0] : order.kam;
+
+  return {
+    ...order,
+    warehouse_location: rawLoc ?? null,
+    client: rawClient ?? null,
+    shop: rawShop ?? null,
+    address: rawAddress ?? null,
+    kam: rawKam ?? null,
+  };
+}
+
 function itemWarehouseName(
   it: PoItemRow,
   namesById: Record<string, string>,
@@ -333,6 +352,13 @@ export function KeyAccountPurchaseOrdersPage() {
   const [rebateDetailOpen, setRebateDetailOpen] = useState(false);
   const [rebateDetailId, setRebateDetailId] = useState<string | null>(null);
 
+  const manualRefreshUntilRef = useRef(0);
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const markLocalRefresh = () => {
+    manualRefreshUntilRef.current = Date.now() + 3000;
+  };
+
   const role = user?.role;
   const openRebateDetail = (rebateId: string) => {
     setRebateDetailId(rebateId);
@@ -479,9 +505,9 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const fetchRows = async () => {
+  const fetchRows = async (showLoading = true) => {
     if (!user?.id) return;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     try {
       // RLS controls broad role access. KAMs are further scoped to only POs they created.
       let query = supabase
@@ -536,20 +562,57 @@ export function KeyAccountPurchaseOrdersPage() {
       const { data, error } = await query;
 
       if (error) throw error;
-      setRows((data as any) || []);
-    } catch (e: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error loading Key Account POs',
-        description: e?.message || 'Failed to load purchase orders',
+      const nextRows = ((data || []) as any[]).map(normalizePoRow);
+      setRows(nextRows);
+      setActive((prev) => {
+        if (!prev?.id) return prev;
+        const updated = nextRows.find((r) => r.id === prev.id);
+        if (!updated) return prev;
+        return { ...updated, items: prev.items };
       });
+    } catch (e: any) {
+      if (showLoading) {
+        toast({
+          variant: 'destructive',
+          title: 'Error loading Key Account POs',
+          description: e?.message || 'Failed to load purchase orders',
+        });
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
+  const scheduleRowsRefresh = () => {
+    if (Date.now() < manualRefreshUntilRef.current) return;
+    if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+    refreshDebounceRef.current = setTimeout(() => {
+      refreshDebounceRef.current = null;
+      if (Date.now() < manualRefreshUntilRef.current) return;
+      void fetchRows(false);
+    }, 400);
+  };
+
   useEffect(() => {
+    if (!user?.id) return;
+
     void fetchRows();
+
+    const poChannel = supabase
+      .channel('key_account_po_list_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'purchase_orders' },
+        () => {
+          scheduleRowsRefresh();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+      void poChannel.unsubscribe();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.role, user?.company_id]);
 
@@ -633,6 +696,19 @@ export function KeyAccountPurchaseOrdersPage() {
       all: filtered,
     };
   }, [filtered, user?.id]);
+
+  const paymentOutstanding = useMemo(() => {
+    const withPaymentTracking = filtered.filter((r) => r.key_account_payment_mode);
+    const unpaid = withPaymentTracking.filter(
+      (r) => (r.key_account_payment_status || 'unpaid') === 'unpaid'
+    );
+    const partial = withPaymentTracking.filter((r) => r.key_account_payment_status === 'partial');
+    return {
+      unpaid: unpaid.length,
+      partial: partial.length,
+      total: unpaid.length + partial.length,
+    };
+  }, [filtered]);
 
   const visibleTabs = useMemo<Array<{ value: TabKey; label: string }>>(
     () => [
@@ -825,10 +901,11 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const updateWorkflow = async (poId: string, patch: Partial<Row>) => {
     setActingId(poId);
+    markLocalRefresh();
     try {
       const { error } = await supabase.from('purchase_orders').update(patch).eq('id', poId);
       if (error) throw error;
-      await fetchRows();
+      await fetchRows(false);
       setViewOpen(false);
       setActive(null);
     } catch (e: any) {
@@ -921,6 +998,7 @@ export function KeyAccountPurchaseOrdersPage() {
       return;
     }
     setActingId(active.id);
+    markLocalRefresh();
     try {
       const { data, error } = await supabase.rpc('set_key_account_rfpf', {
         p_po_id: active.id,
@@ -932,7 +1010,7 @@ export function KeyAccountPurchaseOrdersPage() {
       if (!result?.success) {
         throw new Error(result?.message || 'Failed to save RFPF');
       }
-      await fetchRows();
+      await fetchRows(false);
       setActive((prev) => (prev ? { ...prev, rfpf_number: rfpf } : prev));
       toast({ title: 'RFPF saved' });
     } catch (e: any) {
@@ -982,6 +1060,7 @@ export function KeyAccountPurchaseOrdersPage() {
       return;
     }
     setSubmittingRfpfEdit(true);
+    markLocalRefresh();
     try {
       const { data, error } = await supabase.rpc('set_key_account_rfpf', {
         p_po_id: active.id,
@@ -993,7 +1072,7 @@ export function KeyAccountPurchaseOrdersPage() {
       if (!result?.success) {
         throw new Error(result?.message || 'Failed to update RFPF');
       }
-      await fetchRows();
+      await fetchRows(false);
       await fetchRfpfRevisions(active.id);
       setActive((prev) => (prev ? { ...prev, rfpf_number: rfpf } : prev));
       setRfpfDraft(rfpf);
@@ -1046,6 +1125,7 @@ export function KeyAccountPurchaseOrdersPage() {
       return;
     }
     setSavingPayment(true);
+    markLocalRefresh();
     try {
       let proofPath: string | null = null;
       if (newPayFile) {
@@ -1085,7 +1165,7 @@ export function KeyAccountPurchaseOrdersPage() {
           prev ? { ...prev, key_account_payment_status: (poRow as any).key_account_payment_status } : prev
         );
       }
-      await fetchRows();
+      await fetchRows(false);
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -1142,7 +1222,7 @@ export function KeyAccountPurchaseOrdersPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">Total</CardTitle>
@@ -1173,6 +1253,25 @@ export function KeyAccountPurchaseOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{byTab.done.length}</div>
+          </CardContent>
+        </Card>
+        <Card className="border-amber-200/80 dark:border-amber-900/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-1.5">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full bg-red-500 ring-2 ring-red-500/25"
+                aria-hidden
+              />
+              Unpaid / Partial
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-amber-700 dark:text-amber-400">
+              {paymentOutstanding.total}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {paymentOutstanding.unpaid} unpaid · {paymentOutstanding.partial} partial
+            </p>
           </CardContent>
         </Card>
       </div>

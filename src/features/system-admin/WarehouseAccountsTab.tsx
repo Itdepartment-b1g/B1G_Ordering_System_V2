@@ -102,6 +102,7 @@ export function WarehouseAccountsTab() {
   const [newWarehouse, setNewWarehouse] = useState({
     company_name: '',
     company_email: '',
+    location_name: '',
     full_name: '',
     email: '',
     phone: '',
@@ -216,6 +217,14 @@ export function WarehouseAccountsTab() {
       });
       return;
     }
+    if (!newWarehouse.location_name.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'Missing fields',
+        description: 'Main location name is required',
+      });
+      return;
+    }
     if (!newWarehouse.full_name || !newWarehouse.email || !newWarehouse.password) {
       toast({ variant: 'destructive', title: 'Missing fields', description: 'User name, email, and password are required' });
       return;
@@ -249,6 +258,7 @@ export function WarehouseAccountsTab() {
         body: JSON.stringify({
           company_name: newWarehouse.company_name.trim(),
           company_email: newWarehouse.company_email.trim(),
+          location_name: newWarehouse.location_name.trim(),
           full_name: newWarehouse.full_name,
           email: newWarehouse.email,
           password: newWarehouse.password,
@@ -285,6 +295,7 @@ export function WarehouseAccountsTab() {
       setNewWarehouse({
         company_name: '',
         company_email: '',
+        location_name: '',
         full_name: '',
         email: '',
         phone: '',
@@ -449,6 +460,17 @@ export function WarehouseAccountsTab() {
                   value={newWarehouse.company_email}
                   onChange={(e) => setNewWarehouse({ ...newWarehouse, company_email: e.target.value })}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>Main location name *</Label>
+                <Input
+                  placeholder="e.g. Central Hub, Bacoor Main"
+                  value={newWarehouse.location_name}
+                  onChange={(e) => setNewWarehouse({ ...newWarehouse, location_name: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Shown in warehouse accounts, PO warehouse pickers, and Key Account DR prefixes (first letter).
+                </p>
               </div>
 
               <div className="flex items-center gap-2 text-sm font-semibold text-foreground border-t pt-4">

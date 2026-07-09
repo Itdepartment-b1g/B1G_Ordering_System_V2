@@ -63,6 +63,7 @@ serve(async (req) => {
         const {
             company_name,
             company_email,
+            location_name,
             full_name,
             email,
             password,
@@ -83,6 +84,14 @@ serve(async (req) => {
         if (!client_company_ids || !Array.isArray(client_company_ids) || client_company_ids.length === 0) {
             return new Response(
                 JSON.stringify({ error: 'At least one client company must be assigned' }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+            )
+        }
+
+        const mainLocationName = String(location_name || company_name || 'Main Warehouse').trim()
+        if (!mainLocationName) {
+            return new Response(
+                JSON.stringify({ error: 'Main location name is required' }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
             )
         }
@@ -116,7 +125,7 @@ serve(async (req) => {
             )
         }
 
-        if (clientRows.some((row) => row.company_account_type === 'Warehouse')) {
+        if (clientRows.some((row: { company_account_type: string }) => row.company_account_type === 'Warehouse')) {
             return new Response(
                 JSON.stringify({ error: 'Warehouse hub companies cannot be assigned as clients' }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
@@ -242,7 +251,7 @@ serve(async (req) => {
         if (!mainLocationId) {
             const { data: createdLoc, error: createLocErr } = await supabaseClient
                 .from('warehouse_locations')
-                .insert({ company_id: inventoryCompanyId, name: 'Main Warehouse', is_main: true, created_by: user.id })
+                .insert({ company_id: inventoryCompanyId, name: mainLocationName, is_main: true, created_by: user.id })
                 .select('id')
                 .single()
 
@@ -282,6 +291,7 @@ serve(async (req) => {
                     user_id: userId,
                     company_id: inventoryCompanyId,
                     company_name: company.company_name,
+                    location_name: mainLocationName,
                     email,
                     full_name,
                     client_companies: uniqueClientIds.length,
