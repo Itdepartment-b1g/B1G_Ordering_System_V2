@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Building, Camera, Upload, X, MapPin, RefreshCw, Eye, Loader2, CheckCircle, User, Mail, FileText, Phone, ExternalLink, Tag, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useAuth } from '@/features/auth';
@@ -41,6 +41,11 @@ import {
   sortMyClientsList,
   type MyClientListSortKey,
 } from '@/features/clients/utils/myClientsListSorting';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 
 /** Normalize N/A-style email inputs to na@gmail.com */
 function normalizeEmail(value: string): string {
@@ -62,6 +67,8 @@ export default function MyClientsPage() {
     .filter((c) => c.length > 0);
   const [searchQuery, setSearchQuery] = useState('');
   const [cityFilter, setCityFilter] = useState<string>('');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [clientSortState, setClientSortState] =
     useState<TableSortCycleState<MyClientListSortKey>>(createInitialTableSortCycle);
@@ -188,18 +195,55 @@ export default function MyClientsPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [clients]);
 
+  const clientCreatedDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
+  const dateRangeLabel = useMemo(() => {
+    if (dateRangeFilter.preset === 'custom') {
+      if (dateRangeFilter.customStart && dateRangeFilter.customEnd) {
+        const start = dateRangeFilter.customStart.toLocaleDateString();
+        const end = dateRangeFilter.customEnd.toLocaleDateString();
+        return `${start} – ${end}`;
+      }
+      return 'Custom range';
+    }
+    return getDatePresetLabel(dateRangeFilter.preset);
+  }, [dateRangeFilter]);
+
   const filteredClients = useMemo(
     () =>
       clients.filter((client) => {
         const matchesSearch =
           client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           client.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          client.company.toLowerCase().includes(searchQuery.toLowerCase());
+          client.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          client.phone.toLowerCase().includes(searchQuery.toLowerCase());
         const clientCity = client.city?.trim() || '';
         const matchesCity = !cityFilter || clientCity === cityFilter;
-        return matchesSearch && matchesCity;
+
+        const createdDate = client.createdAt?.includes('T')
+          ? client.createdAt.split('T')[0]
+          : client.createdAt;
+        const matchesDate = isDateInRange(
+          createdDate ?? '',
+          clientCreatedDateRange.start,
+          clientCreatedDateRange.end
+        );
+
+        const clientCategory = client.category || 'Open';
+        const matchesCategory =
+          categoryFilter === 'all' || clientCategory === categoryFilter;
+
+        return matchesSearch && matchesCity && matchesDate && matchesCategory;
       }),
-    [clients, searchQuery, cityFilter]
+    [clients, searchQuery, cityFilter, clientCreatedDateRange, categoryFilter]
   );
 
   const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
@@ -234,7 +278,7 @@ export default function MyClientsPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, cityFilter, clientSortState]);
+  }, [searchQuery, cityFilter, dateRangeFilter, categoryFilter, clientSortState]);
 
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
@@ -2546,30 +2590,77 @@ export default function MyClientsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search clients..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
+          <div className="space-y-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search clients..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <DateRangeFilterPopover
+                  value={dateRangeFilter}
+                  onChange={setDateRangeFilter}
+                />
+                <Select value={cityFilter || 'all'} onValueChange={(v) => setCityFilter(v === 'all' ? '' : v)}>
+                  <SelectTrigger className="w-full sm:w-[200px]">
+                    <MapPin className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
+                    <SelectValue placeholder="All cities" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All cities</SelectItem>
+                    {citiesInList.map((city) => (
+                      <SelectItem key={city} value={city}>
+                        {city}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="w-full sm:w-[200px]">
+                      <SelectValue placeholder="All categories" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Categories</SelectItem>
+                      <SelectItem value="Open">Open</SelectItem>
+                      <SelectItem value="Renovating">Renovating</SelectItem>
+                      <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
-            <Select value={cityFilter || 'all'} onValueChange={(v) => setCityFilter(v === 'all' ? '' : v)}>
-              <SelectTrigger className="w-full sm:w-[200px]">
-                <MapPin className="h-4 w-4 mr-2 text-muted-foreground shrink-0" />
-                <SelectValue placeholder="All cities" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All cities</SelectItem>
-                {citiesInList.map((city) => (
-                  <SelectItem key={city} value={city}>
-                    {city}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {(searchQuery || cityFilter || dateRangeFilter.preset !== 'all' || categoryFilter !== 'all') && (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span>Showing {filteredClients.length} of {clients.length} clients</span>
+                {dateRangeFilter.preset !== 'all' && (
+                  <Badge variant="secondary" className="text-xs">
+                    Date: {dateRangeLabel}
+                  </Badge>
+                )}
+                {cityFilter && (
+                  <Badge variant="secondary" className="text-xs">
+                    City: {cityFilter}
+                  </Badge>
+                )}
+                {categoryFilter !== 'all' && (
+                  <Badge variant="secondary" className="text-xs">
+                    Category: {categoryFilter}
+                  </Badge>
+                )}
+                {searchQuery && (
+                  <Badge variant="secondary" className="text-xs">
+                    Search: &quot;{searchQuery}&quot;
+                  </Badge>
+                )}
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -2586,6 +2677,18 @@ export default function MyClientsPage() {
                       <div className="text-xs text-muted-foreground truncate">{client.company}</div>
                     </div>
                     <div className="flex flex-col items-end gap-1">
+                      <Badge
+                        variant={
+                          (client.category ?? 'Open') === 'Open'
+                            ? 'default'
+                            : (client.category ?? 'Open') === 'Renovating'
+                            ? 'secondary'
+                            : 'destructive'
+                        }
+                        className="text-xs"
+                      >
+                        {client.category ?? 'Open'}
+                      </Badge>
                       <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approvalStatus).className}`}>
                         {getApprovalStatusBadge(client.approvalStatus).label}
                       </Badge>
@@ -2617,7 +2720,7 @@ export default function MyClientsPage() {
 
           {/* Desktop/Tablet: table */}
           <div className="hidden md:block w-full overflow-x-auto">
-            <Table className="min-w-[820px]">
+            <Table className="min-w-[920px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-center">Photo</TableHead>
@@ -2646,6 +2749,13 @@ export default function MyClientsPage() {
                     label="Phone"
                     sortKey="phone"
                     sortDirection={getTableSortDisplayDirection(clientSortState, 'phone')}
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
+                  <SortableTableHead
+                    label="Category"
+                    sortKey="category"
+                    sortDirection={getTableSortDisplayDirection(clientSortState, 'category')}
                     onSort={handleClientSort}
                     className="text-center"
                   />
@@ -2720,6 +2830,20 @@ export default function MyClientsPage() {
                     <TableCell className="text-center">{client.company}</TableCell>
                     <TableCell className="text-center">{client.email}</TableCell>
                     <TableCell className="text-center">{client.phone}</TableCell>
+                    <TableCell className="text-center">
+                      <Badge
+                        variant={
+                          (client.category ?? 'Open') === 'Open'
+                            ? 'default'
+                            : (client.category ?? 'Open') === 'Renovating'
+                            ? 'secondary'
+                            : 'destructive'
+                        }
+                        className="text-xs"
+                      >
+                        {client.category ?? 'Open'}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-center">{client.totalOrders}</TableCell>
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center gap-1 font-medium text-purple-600">

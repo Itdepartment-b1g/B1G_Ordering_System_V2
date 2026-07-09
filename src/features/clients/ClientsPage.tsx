@@ -132,6 +132,7 @@ export default function ClientsPage() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   // Edit Dialog States
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -1147,9 +1148,13 @@ export default function ClientsPage() {
         clientCreatedDateRange.end
       );
 
-      return matchesSearch && matchesCity && matchesDate;
+      const clientCategory = client.category || 'Open';
+      const matchesCategory =
+        categoryFilter === 'all' || clientCategory === categoryFilter;
+
+      return matchesSearch && matchesCity && matchesDate && matchesCategory;
     });
-  }, [clients, searchQuery, cityFilter, clientCreatedDateRange]);
+  }, [clients, searchQuery, cityFilter, clientCreatedDateRange, categoryFilter]);
 
   const clientSortContext = useMemo(
     (): ClientListSortContext => ({
@@ -1200,7 +1205,7 @@ export default function ClientsPage() {
   // Reset to first page when filters, page size, or sort change
   useEffect(() => {
     setPage(0);
-  }, [searchQuery, cityFilter, dateRangeFilter, pageSize, clientSortState]);
+  }, [searchQuery, cityFilter, dateRangeFilter, categoryFilter, pageSize, clientSortState]);
 
   const getApprovalStatusBadge = (status: Client['approval_status']) => {
     switch (status) {
@@ -2834,6 +2839,7 @@ export default function ClientsPage() {
 
   const hasActiveClientFilters =
     dateRangeFilter.preset !== 'all' ||
+    categoryFilter !== 'all' ||
     searchQuery.trim().length > 0 ||
     (cityFilter && cityFilter !== 'all');
 
@@ -3777,10 +3783,21 @@ export default function ClientsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="All categories" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Categories</SelectItem>
+                      <SelectItem value="Open">Open</SelectItem>
+                      <SelectItem value="Renovating">Renovating</SelectItem>
+                      <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </div>
-            {(searchQuery || (cityFilter && cityFilter !== 'all') || dateRangeFilter.preset !== 'all') && (
+            {(searchQuery || (cityFilter && cityFilter !== 'all') || dateRangeFilter.preset !== 'all' || categoryFilter !== 'all') && (
               <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                 <span>Showing {filteredClients.length} of {totalClientCount.toLocaleString()} clients</span>
                 {dateRangeFilter.preset !== 'all' && (
@@ -3793,9 +3810,14 @@ export default function ClientsPage() {
                     City: {cityFilter}
                   </Badge>
                 )}
+                {categoryFilter !== 'all' && (
+                  <Badge variant="secondary" className="text-xs">
+                    Category: {categoryFilter}
+                  </Badge>
+                )}
                 {searchQuery && (
                   <Badge variant="secondary" className="text-xs">
-                    Search: "{searchQuery}"
+                    Search: &quot;{searchQuery}&quot;
                   </Badge>
                 )}
               </div>

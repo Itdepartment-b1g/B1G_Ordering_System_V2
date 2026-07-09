@@ -37,6 +37,11 @@ import {
   type ClientListSortContext,
   type ClientListSortKey,
 } from '@/features/clients/utils/clientsListSorting';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 
 interface Client {
   id: string;
@@ -82,6 +87,8 @@ export default function MyTeamsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<string>('all');
   const [cityFilter, setCityFilter] = useState<string>('all');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -457,6 +464,28 @@ export default function MyTeamsPage() {
   };
 
   // Filter clients
+  const clientCreatedDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
+  const dateRangeLabel = useMemo(() => {
+    if (dateRangeFilter.preset === 'custom') {
+      if (dateRangeFilter.customStart && dateRangeFilter.customEnd) {
+        const start = dateRangeFilter.customStart.toLocaleDateString();
+        const end = dateRangeFilter.customEnd.toLocaleDateString();
+        return `${start} – ${end}`;
+      }
+      return 'Custom range';
+    }
+    return getDatePresetLabel(dateRangeFilter.preset);
+  }, [dateRangeFilter]);
+
   const filteredClients = useMemo(
     () =>
       clients.filter((client) => {
@@ -470,9 +499,22 @@ export default function MyTeamsPage() {
         const matchesCity =
           cityFilter === 'all' || (client.city || '').toLowerCase() === cityFilter.toLowerCase();
 
-        return matchesSearch && matchesAgent && matchesCity;
+        const createdDate = client.created_at?.includes('T')
+          ? client.created_at.split('T')[0]
+          : client.created_at;
+        const matchesDate = isDateInRange(
+          createdDate ?? '',
+          clientCreatedDateRange.start,
+          clientCreatedDateRange.end
+        );
+
+        const clientCategory = client.category || 'Open';
+        const matchesCategory =
+          categoryFilter === 'all' || clientCategory === categoryFilter;
+
+        return matchesSearch && matchesAgent && matchesCity && matchesDate && matchesCategory;
       }),
-    [clients, searchQuery, selectedAgent, cityFilter]
+    [clients, searchQuery, selectedAgent, cityFilter, clientCreatedDateRange, categoryFilter]
   );
 
   const clientSortContext = useMemo(
@@ -526,7 +568,7 @@ export default function MyTeamsPage() {
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, selectedAgent, cityFilter, clientSortState]);
+  }, [searchQuery, selectedAgent, cityFilter, dateRangeFilter, categoryFilter, clientSortState]);
 
   if (!user || user.role !== 'team_leader') {
     return (
@@ -614,7 +656,7 @@ export default function MyTeamsPage() {
         <CardHeader>
           <div className="space-y-4">
             <CardTitle className="text-lg">Clients ({filteredClients.length})</CardTitle>
-            <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4 flex-wrap">
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -625,7 +667,11 @@ export default function MyTeamsPage() {
                 />
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <Filter className="h-4 w-4 text-muted-foreground" />
+                <DateRangeFilterPopover
+                  value={dateRangeFilter}
+                  onChange={setDateRangeFilter}
+                />
+                <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
                 <Select value={cityFilter} onValueChange={setCityFilter}>
                   <SelectTrigger className="w-[180px]">
                     <SelectValue placeholder="Filter by city" />
@@ -637,6 +683,17 @@ export default function MyTeamsPage() {
                         {city}
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="All categories" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    <SelectItem value="Open">Open</SelectItem>
+                    <SelectItem value="Renovating">Renovating</SelectItem>
+                    <SelectItem value="Permanently Closed">Permanently Closed</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={selectedAgent} onValueChange={setSelectedAgent}>
@@ -654,12 +711,22 @@ export default function MyTeamsPage() {
                 </Select>
               </div>
             </div>
-            {(searchQuery || (cityFilter && cityFilter !== 'all') || (selectedAgent && selectedAgent !== 'all')) && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            {(searchQuery || (cityFilter && cityFilter !== 'all') || (selectedAgent && selectedAgent !== 'all') || dateRangeFilter.preset !== 'all' || categoryFilter !== 'all') && (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                 <span>Showing {filteredClients.length} of {clients.length} clients</span>
+                {dateRangeFilter.preset !== 'all' && (
+                  <Badge variant="secondary" className="text-xs">
+                    Date: {dateRangeLabel}
+                  </Badge>
+                )}
                 {cityFilter && cityFilter !== 'all' && (
                   <Badge variant="secondary" className="text-xs">
                     City: {cityFilter}
+                  </Badge>
+                )}
+                {categoryFilter !== 'all' && (
+                  <Badge variant="secondary" className="text-xs">
+                    Category: {categoryFilter}
                   </Badge>
                 )}
                 {selectedAgent && selectedAgent !== 'all' && (
@@ -669,7 +736,7 @@ export default function MyTeamsPage() {
                 )}
                 {searchQuery && (
                   <Badge variant="secondary" className="text-xs">
-                    Search: "{searchQuery}"
+                    Search: &quot;{searchQuery}&quot;
                   </Badge>
                 )}
               </div>

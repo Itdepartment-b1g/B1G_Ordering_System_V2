@@ -5,6 +5,7 @@ export type MyClientListSortKey =
   | 'shopName'
   | 'email'
   | 'phone'
+  | 'category'
   | 'orders'
   | 'visits'
   | 'lastOrder'
@@ -20,6 +21,7 @@ export type MyClientListSortable = {
   company: string;
   email: string;
   phone: string;
+  category?: string;
   totalOrders: number;
   visitCount: number;
   lastOrder: string | null;
@@ -58,6 +60,9 @@ export function sortMyClientsList<T extends MyClientListSortable>(
         break;
       case 'phone':
         result = compareStrings(a.phone, b.phone);
+        break;
+      case 'category':
+        result = compareStrings(a.category, b.category);
         break;
       case 'orders':
         result = a.totalOrders - b.totalOrders;

@@ -25,6 +25,7 @@ export interface Client {
     };
     accountType?: 'Key Accounts' | 'Standard Accounts';
     category?: 'Permanently Closed' | 'Renovating' | 'Open';
+    createdAt?: string;
     approvalStatus: 'pending' | 'approved' | 'rejected';
     approvalRequestedAt?: string;
     approvedAt?: string;
@@ -203,6 +204,7 @@ export function useMyClients() {
                         city: c.city || '',
                         accountType: c.account_type || 'Standard Accounts',
                         category: c.category || 'Open',
+                        createdAt: c.created_at || undefined,
                         address: c.address || '',
                         totalOrders: ordersByClient[c.id]?.totalOrders ?? 0,
                         totalSpent: ordersByClient[c.id]?.totalSpent ?? 0,
