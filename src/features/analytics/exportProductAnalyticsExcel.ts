@@ -1,5 +1,7 @@
 import ExcelJS from 'exceljs';
 
+import { formatExportGeneratedAt } from '@/lib/excel.helpers';
+
 export interface ProductAnalyticsExportRow {
   brand: string;
   variant: string;
@@ -62,6 +64,7 @@ export function writeProductAnalyticsSection(
   titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
 
   let cursor = startRow + 2;
+  cursor = addMetaRow(worksheet, cursor, 'Generated at', formatExportGeneratedAt());
   cursor = addMetaRow(worksheet, cursor, 'Export', 'Filtered (date range)');
   cursor = addMetaRow(worksheet, cursor, 'Section', 'Product Performance');
   cursor = addMetaRow(

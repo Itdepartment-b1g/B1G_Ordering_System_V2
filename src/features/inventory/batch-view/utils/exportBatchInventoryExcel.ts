@@ -2,6 +2,12 @@ import ExcelJS from 'exceljs';
 
 import { BATCH_SOURCE_LABELS } from '@/features/inventory/warehouseBatchAging';
 import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
+import {
+  EXCEL_EXPORT_HEADER_FILL,
+  formatExportGeneratedAt,
+  writeExcelExportMetaRow,
+  writeExcelExportTitleRow,
+} from '@/lib/excel.helpers';
 
 import type { BatchInventoryGroup } from '../types';
 import { formatManilaDateTime } from '../table/BatchViewRow';
@@ -44,7 +50,13 @@ export async function exportBatchInventoryExcel(
 
   const tableHeader = ['Batch', 'Warehouse', 'SKUs', 'Total Units', 'Date', 'Source'];
   const variantHeader = ['Brand', 'Variant', 'Type', 'Expiration', 'Quantity'];
-  let rowCursor = 1;
+  const lastCol = tableHeader.length;
+  let rowCursor = writeExcelExportTitleRow(worksheet, 1, 'Batch View Export', lastCol, {
+    fillArgb: EXCEL_EXPORT_HEADER_FILL,
+  });
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Generated at', formatExportGeneratedAt());
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Batches exported', rows.length);
+  rowCursor += 1;
 
   rows.forEach((group, index) => {
     const headerRow = worksheet.getRow(rowCursor++);

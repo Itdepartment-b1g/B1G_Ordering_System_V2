@@ -1,6 +1,64 @@
 
 import ExcelJS from 'exceljs';
 
+export const EXCEL_EXPORT_HEADER_FILL = 'FFF3F4F6';
+
+export function formatExportGeneratedAt(date: Date = new Date()): string {
+  return date.toLocaleString('en-PH', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+}
+
+export type WriteExcelExportMetaRowOptions = {
+  valueMergeEndCol?: number;
+};
+
+export function writeExcelExportTitleRow(
+  worksheet: ExcelJS.Worksheet,
+  startRow: number,
+  title: string,
+  lastCol: number,
+  options?: { fillArgb?: string; height?: number }
+): number {
+  worksheet.mergeCells(startRow, 1, startRow, lastCol);
+  const cell = worksheet.getRow(startRow).getCell(1);
+  cell.value = title;
+  cell.font = { bold: true, size: 14 };
+  cell.alignment = { vertical: 'middle', horizontal: 'left' };
+  if (options?.fillArgb) {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: options.fillArgb } };
+  }
+  if (options?.height) {
+    worksheet.getRow(startRow).height = options.height;
+  }
+  return startRow + 2;
+}
+
+export function writeExcelExportMetaRow(
+  worksheet: ExcelJS.Worksheet,
+  rowIndex: number,
+  label: string,
+  value: string | number,
+  options?: WriteExcelExportMetaRowOptions
+): number {
+  const row = worksheet.getRow(rowIndex);
+  row.getCell(1).value = label;
+  row.getCell(1).font = { bold: true };
+  const mergeEnd = options?.valueMergeEndCol;
+  if (mergeEnd && mergeEnd > 2) {
+    worksheet.mergeCells(rowIndex, 2, rowIndex, mergeEnd);
+  }
+  row.getCell(2).value = value;
+  return rowIndex + 1;
+}
+
 /**
  * Exports data to a CSV file which can be opened in Excel.
  * @param data Array of objects to export

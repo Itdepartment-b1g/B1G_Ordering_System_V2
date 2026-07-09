@@ -1,6 +1,12 @@
 import ExcelJS from 'exceljs';
 
 import { formatLotDate } from '@/features/inventory/physical-count/utils/formatLotDate';
+import {
+  EXCEL_EXPORT_HEADER_FILL,
+  formatExportGeneratedAt,
+  writeExcelExportMetaRow,
+  writeExcelExportTitleRow,
+} from '@/lib/excel.helpers';
 
 import type { WarehouseAllocationGroup } from '../types';
 import { formatManilaDateTime } from '../table/TableRow';
@@ -39,7 +45,13 @@ export async function exportWarehouseAllocationHistoryExcel(
 
   const tableHeader = ['Date', 'Sub-Warehouse', 'Brand', 'Performed By', 'SKUs', 'Total Units'];
   const variantHeader = ['Brand', 'Variant', 'Type', 'Quantity', 'Batch', 'Expiration', 'Batch Qty'];
-  let rowCursor = 1;
+  const lastCol = tableHeader.length;
+  let rowCursor = writeExcelExportTitleRow(worksheet, 1, 'Warehouse Allocation History Export', lastCol, {
+    fillArgb: EXCEL_EXPORT_HEADER_FILL,
+  });
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Generated at', formatExportGeneratedAt());
+  rowCursor = writeExcelExportMetaRow(worksheet, rowCursor, 'Allocations exported', rows.length);
+  rowCursor += 1;
 
   rows.forEach((group, index) => {
     const headerRow = worksheet.getRow(rowCursor++);

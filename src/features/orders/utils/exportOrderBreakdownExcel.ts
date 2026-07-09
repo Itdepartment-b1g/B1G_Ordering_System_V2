@@ -3,7 +3,13 @@ import ExcelJS from 'exceljs';
 import type { Order } from '@/features/orders/OrderContext';
 import { mapOrderToListExportRow } from '@/features/orders/utils/exportOrdersListExcel';
 import { formatDateForInput } from '@/lib/dateRangePresets';
-import { downloadExcelWorkbook } from '@/lib/excel.helpers';
+import {
+  downloadExcelWorkbook,
+  EXCEL_EXPORT_HEADER_FILL,
+  formatExportGeneratedAt,
+  writeExcelExportMetaRow,
+  writeExcelExportTitleRow,
+} from '@/lib/excel.helpers';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
 
 const YELLOW = 'FFFDE68A';
@@ -256,6 +262,29 @@ function aggregateByAgent(orders: WideExportOrder[], brands: string[]) {
       total: v.approved + v.pending,
     }))
     .sort((a, b) => b.total - a.total);
+}
+
+function writeExportHeader(
+  ws: ExcelJS.Worksheet,
+  startRow: number,
+  lastCol: number,
+  meta: OrderBreakdownExportMeta,
+  generatedAt: Date
+): number {
+  const dateRangeLabel =
+    meta.periodStart === 'all' && meta.periodEnd === 'all'
+      ? 'All time'
+      : meta.dateRangeLabel;
+
+  let row = writeExcelExportTitleRow(ws, startRow, 'Order Breakdown Export', lastCol, {
+    fillArgb: EXCEL_EXPORT_HEADER_FILL,
+    height: 22,
+  });
+  row = writeExcelExportMetaRow(ws, row, 'Generated at', formatExportGeneratedAt(generatedAt));
+  row = writeExcelExportMetaRow(ws, row, 'Tab', meta.tabLabel);
+  row = writeExcelExportMetaRow(ws, row, 'Date range', dateRangeLabel);
+  row = writeExcelExportMetaRow(ws, row, 'Orders exported', meta.orderCount);
+  return row + 1;
 }
 
 function writeBrandGrandSummary(
@@ -755,6 +784,7 @@ export async function exportOrderBreakdownExcel(
       : meta.dateRangeLabel;
 
   let row = 1;
+  row = writeExportHeader(ws, row, layout.lastCol, meta, new Date());
   row = writeTopSummarySection(ws, row, wideOrders, layout.brands, dateRangeLabel);
 
   row += 1;
