@@ -1,12 +1,9 @@
--- ============================================================================
--- APPROVE ORDER AND VERIFY CASH DEPOSIT FUNCTION
--- ============================================================================
--- This function handles order approval for finance team with different logic
--- based on payment method:
--- 1. BANK_TRANSFER/GCASH: Simply approve the order
--- 2. CASH/CHEQUE (FULL or SPLIT): Approve the order AND verify the linked cash_deposit
--- 3. FOC (total_amount = 0): Skip deposit requirement entirely
--- ============================================================================
+-- Fix: SPLIT (and other cash/cheque) order approve must reliably verify cash_deposits.
+-- Problems addressed:
+-- 1) Silent 0-row UPDATE still returned deposit_verified=true
+-- 2) RLS could block SECURITY DEFINER updates depending on function owner
+-- 3) SPLIT cash detection only ran when payment_mode = 'SPLIT' exactly
+-- 4) Stuck deposits where all linked orders are already admin_approved
 
 DROP FUNCTION IF EXISTS approve_order_and_verify_deposit(UUID);
 DROP FUNCTION IF EXISTS approve_order_and_verify_deposit(UUID, UUID);
@@ -36,7 +33,6 @@ BEGIN
     RETURN json_build_object('success', false, 'message', 'Approver is required');
   END IF;
 
-  -- 1. Get order details
   SELECT payment_method, payment_mode, payment_splits, deposit_id, company_id, total_amount
   INTO v_order_payment_method, v_order_payment_mode, v_order_payment_splits, v_deposit_id, v_company_id, v_order_total
   FROM client_orders
@@ -46,11 +42,12 @@ BEGIN
     RETURN json_build_object('success', false, 'message', 'Order not found');
   END IF;
 
-  -- 2. Determine whether this order has any CASH/CHEQUE component (FULL or SPLIT)
-  -- IMPORTANT: COALESCE so NULL payment_method (SPLIT) is FALSE, not NULL.
-  -- Otherwise `IF NOT NULL` skips payment_splits detection and deposit verify.
+  -- FULL cash/cheque.
+  -- IMPORTANT: use COALESCE so NULL payment_method (typical for SPLIT) becomes FALSE,
+  -- not NULL. `IF NOT NULL` never enters, which skipped SPLIT payment_splits detection.
   v_has_cash_or_cheque := (COALESCE(v_order_payment_method, '') IN ('CASH', 'CHEQUE'));
 
+  -- SPLIT (or any order with payment_splits array containing CASH/CHEQUE)
   IF NOT v_has_cash_or_cheque
      AND v_order_payment_splits IS NOT NULL
      AND jsonb_typeof(v_order_payment_splits) = 'array'
@@ -62,8 +59,6 @@ BEGIN
     );
   END IF;
 
-  -- 3. CRITICAL CHECK: Cash/Cheque (FULL or SPLIT) orders require a deposit_id before approval
-  --    EXCEPTION: FOC orders (total_amount = 0) have nothing to remit/deposit, so they bypass this rule.
   IF v_has_cash_or_cheque
      AND v_deposit_id IS NULL
      AND COALESCE(v_order_total, 0) > 0
@@ -74,7 +69,6 @@ BEGIN
     );
   END IF;
 
-  -- 4. Update order status to approved
   UPDATE client_orders
   SET
     status = 'approved',
@@ -84,7 +78,6 @@ BEGIN
     updated_at = NOW()
   WHERE id = p_order_id;
 
-  -- 4b. Deduct sold quantities from main_inventory (stock and allocated_stock)
   FOR v_item IN
     SELECT variant_id, quantity
     FROM client_order_items
@@ -99,7 +92,6 @@ BEGIN
       AND company_id = v_company_id;
   END LOOP;
 
-  -- 5. If order has CASH/CHEQUE component and deposit_id exists, verify the cash_deposit
   IF v_has_cash_or_cheque AND v_deposit_id IS NOT NULL THEN
     UPDATE cash_deposits
     SET
@@ -111,6 +103,7 @@ BEGIN
     GET DIAGNOSTICS v_deposit_rows = ROW_COUNT;
 
     IF v_deposit_rows = 0 THEN
+      -- Roll back order approval (EXCEPTION handler returns success=false)
       RAISE EXCEPTION 'Failed to verify cash deposit % for order % (deposit not found or company mismatch)',
         v_deposit_id, p_order_id;
     END IF;
@@ -148,3 +141,20 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION approve_order_and_verify_deposit(UUID, UUID) TO authenticated;
+
+-- Repair stuck deposits: all non-rejected linked orders are already finance-approved
+UPDATE cash_deposits d
+SET
+  status = 'verified',
+  updated_at = NOW()
+WHERE d.status = 'pending_verification'
+  AND EXISTS (
+    SELECT 1 FROM client_orders o WHERE o.deposit_id = d.id
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM client_orders o
+    WHERE o.deposit_id = d.id
+      AND COALESCE(o.status, '') <> 'rejected'
+      AND COALESCE(o.stage, '') <> 'admin_approved'
+  );

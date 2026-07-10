@@ -670,16 +670,26 @@ export default function OrdersPage() {
 
     try {
       if (isFinance) {
-        await updateOrderStatus(orderToApprove.id, 'approved');
+        const result = await updateOrderStatus(orderToApprove.id, 'approved');
+        const depositVerified =
+          result && typeof result === 'object' ? result.depositVerified : undefined;
 
-        // Show appropriate success message
-        const successMessage = hasCashOrCheque && orderToApprove.depositId
-          ? 'Order approved and deposit verified.'
-          : 'Order approval complete.';
+        const successMessage =
+          depositVerified
+            ? 'Order approved and deposit verified.'
+            : hasCashOrCheque && orderToApprove.depositId
+              ? 'Order approved, but the linked cash deposit was not verified. Check Cash Deposits.'
+              : 'Order approval complete.';
 
         toast({
-          title: 'Approved',
-          description: successMessage
+          title: depositVerified === false && hasCashOrCheque && orderToApprove.depositId
+            ? 'Approved with warning'
+            : 'Approved',
+          description: successMessage,
+          variant:
+            depositVerified === false && hasCashOrCheque && orderToApprove.depositId
+              ? 'destructive'
+              : undefined,
         });
       } else {
         throw new Error('Not authorized to approve');

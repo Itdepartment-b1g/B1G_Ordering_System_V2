@@ -69,7 +69,11 @@ interface OrderContextType {
   orders: Order[];
   loading: boolean;
   addOrder: (order: Order, orderNumber?: string) => Promise<string>; // Returns the generated order number, accepts optional pre-generated number
-  updateOrderStatus: (orderId: string, status: 'pending' | 'approved' | 'rejected', reason?: string) => void;
+  updateOrderStatus: (
+    orderId: string,
+    status: 'pending' | 'approved' | 'rejected',
+    reason?: string
+  ) => Promise<{ depositVerified?: boolean } | undefined>;
   getOrdersByAgent: (agentId: string) => Order[];
   getAllOrders: () => Order[];
 }
@@ -813,7 +817,13 @@ export function OrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateOrderStatus = async (orderId: string, status: 'pending' | 'approved' | 'rejected', reason?: string) => {
+  const updateOrderStatus = async (
+    orderId: string,
+    status: 'pending' | 'approved' | 'rejected',
+    reason?: string
+  ): Promise<{ depositVerified?: boolean } | undefined> => {
+    let depositVerified: boolean | undefined;
+
     try {
       console.log(`📋 Updating order ${orderId} to status: ${status}`);
 
@@ -853,13 +863,17 @@ export function OrderProvider({ children }: { children: ReactNode }) {
               'Zero-value order: RPC deposit check failed; approving via direct update. Deploy supabase/migrations/20260525130000_approve_order_zero_value_bypass.sql on Supabase for permanent fix.'
             );
             await approveZeroValueOrderDirect(orderId, orderMeta.company_id, authUser.id);
+            depositVerified = false;
           } else {
             throw new Error(data?.message || 'Failed to approve order');
           }
         } else {
           console.log('✅ Order approved:', data);
+          depositVerified = !!data.deposit_verified;
           if (data.deposit_verified) {
             console.log('💰 Cash deposit verified as part of order approval');
+          } else {
+            console.warn('⚠️ Order approved but deposit was not verified', data);
           }
         }
       } else if (status === 'rejected') {
@@ -958,6 +972,10 @@ export function OrderProvider({ children }: { children: ReactNode }) {
       );
 
       // Real-time will handle the UI update
+
+      if (status === 'approved') {
+        return { depositVerified };
+      }
     } catch (err: any) {
       console.error('Error updating order status:', err);
       throw new Error(err.message || 'Failed to update order status');
