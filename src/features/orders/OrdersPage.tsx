@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
+import { getDatePresetLabel, getDateRangeFromPreset, isDateInRange, formatDateForInput } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
@@ -27,6 +27,10 @@ import {
   mapOrderToListExportRow,
 } from '@/features/orders/utils/exportOrdersListExcel';
 import {
+  buildOrderBreakdownExportFilename,
+  exportOrderBreakdownExcel,
+} from '@/features/orders/utils/exportOrderBreakdownExcel';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -37,6 +41,20 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import * as XLSX from 'xlsx';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_CLIENT_ORDER_LIST_SORT_DIRECTION,
+  DEFAULT_CLIENT_ORDER_LIST_SORT_KEY,
+  sortClientOrderList,
+  type ClientOrderListSortKey,
+} from '@/features/orders/utils/clientOrderListSorting';
 
 /** Zero-value orders skip deposit/remittance requirements (handles "0.00" strings from Supabase). */
 function isZeroValueOrder(order: {
@@ -50,6 +68,294 @@ function isZeroValueOrder(order: {
   const computed =
     Number(order.subtotal ?? 0) + Number(order.tax ?? 0) - Number(order.discount ?? 0);
   return !Number.isNaN(computed) && Math.abs(computed) < 0.01;
+}
+
+function getStatusLabel(order: Order) {
+  if (order.stage === 'needs_revision') return 'Needs Revision';
+  if (order.status === 'pending' || order.stage === 'finance_pending') return 'Pending Finance Review';
+  if (order.status === 'approved' || order.stage === 'admin_approved') return 'Approved';
+  if (order.status === 'rejected' || order.stage === 'admin_rejected') return 'Rejected';
+  return order.status;
+}
+
+function getStatusVariant(order: Order) {
+  const label = getStatusLabel(order);
+  if (label === 'Needs Revision') return 'secondary';
+  if (label.startsWith('Approved')) return 'default';
+  if (label.startsWith('Pending')) return 'secondary';
+  return 'destructive';
+}
+
+type OrderTableProps = {
+  orderList: Order[];
+  onViewOrder: (order: Order) => void;
+};
+
+function OrderTable({ orderList, onViewOrder }: OrderTableProps) {
+  const [currentPage, setCurrentPage] = useState(1);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<ClientOrderListSortKey>>(createInitialTableSortCycle);
+  const ordersPerPage = 10;
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_CLIENT_ORDER_LIST_SORT_KEY,
+        DEFAULT_CLIENT_ORDER_LIST_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedOrders = useMemo(
+    () => sortClientOrderList(orderList, resolvedSortKey, resolvedSortDirection),
+    [orderList, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const handleSort = (key: ClientOrderListSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [orderList.length, sortState]);
+
+  const totalPages = Math.ceil(sortedOrders.length / ordersPerPage);
+  const startIndex = (currentPage - 1) * ordersPerPage;
+  const endIndex = startIndex + ordersPerPage;
+  const paginatedOrders = sortedOrders.slice(startIndex, endIndex);
+
+  return (
+    <>
+      {sortedOrders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center border rounded-lg bg-muted/20">
+          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
+            <Package className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <p className="font-medium">No orders found</p>
+          <p className="text-sm text-muted-foreground">Orders will appear here once created by your sales agents.</p>
+        </div>
+      ) : (
+        <>
+          <div className="md:hidden space-y-3">
+            {paginatedOrders.map((order) => (
+              <div key={order.id} className="rounded-lg border bg-background p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Order #</div>
+                    <div className="font-mono font-semibold">{order.orderNumber}</div>
+                  </div>
+                  <div className="flex flex-col gap-1 items-end">
+                    <Badge variant={getStatusVariant(order) as any}>
+                      {getStatusLabel(order)}
+                    </Badge>
+                    {(order.stage === 'finance_pending' || order.status === 'pending') && (
+                      !isZeroValueOrder(order) &&
+                      (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
+                    ) && (
+                      order.depositId && order.depositBankAccount ? (
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                          Deposit Recorded
+                        </Badge>
+                      ) : order.depositId ? (
+                        <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
+                          Awaiting Desposit slip
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+                          Awaiting Remittance
+                        </Badge>
+                      )
+                    )}
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Client</div>
+                    <div className="truncate">{order.clientName}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">Agent</div>
+                    <div className="truncate">{order.agentName}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Date</div>
+                    <div>{new Date(order.date).toLocaleDateString()}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">Items</div>
+                    <div>{order.items.reduce((sum, item) => sum + (item.quantity || 0), 0)}</div>
+                  </div>
+                  <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
+                    <span>Amount</span>
+                    <span>₱{order.total.toLocaleString()}</span>
+                  </div>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Button variant="ghost" size="sm" onClick={() => onViewOrder(order)}>
+                    <Eye className="h-4 w-4 mr-1" /> View
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="hidden md:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <SortableTableHead
+                    label="Order #"
+                    sortKey="orderNumber"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'orderNumber')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Client"
+                    sortKey="clientName"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'clientName')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Sales Agent"
+                    sortKey="agentName"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'agentName')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Date"
+                    sortKey="date"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'date')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Items"
+                    sortKey="items"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'items')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Amount"
+                    sortKey="total"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'total')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                    onSort={handleSort}
+                  />
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedOrders.map((order) => (
+                  <TableRow key={order.id}>
+                    <TableCell className="font-mono font-medium">{order.orderNumber}</TableCell>
+                    <TableCell>{order.clientName}</TableCell>
+                    <TableCell>{order.agentName}</TableCell>
+                    <TableCell>{new Date(order.date).toLocaleDateString()}</TableCell>
+                    <TableCell className="text-right">{order.items.reduce((sum, item) => sum + (item.quantity || 0), 0)}</TableCell>
+                    <TableCell className="text-right font-semibold">
+                      ₱{order.total.toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1">
+                        <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
+                        {(order.stage === 'finance_pending' || (order.status === 'pending' && order.stage !== 'needs_revision')) && (
+                          !isZeroValueOrder(order) &&
+                          (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
+                        ) && (
+                          order.depositId && order.depositBankAccount ? (
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                              Deposit Recorded
+                            </Badge>
+                          ) : order.depositId ? (
+                            <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
+                              Awaiting Deposit Slip
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
+                              Awaiting Remittance
+                            </Badge>
+                          )
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onViewOrder(order)}
+                        title="View Order Details"
+                        className="hover:bg-gray-100"
+                      >
+                        <Eye className="h-4 w-4 text-gray-600" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4 pt-4 border-t">
+              <div className="text-sm text-muted-foreground">
+                Showing {startIndex + 1} to {Math.min(endIndex, sortedOrders.length)} of {sortedOrders.length} orders
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setCurrentPage(pageNum)}
+                      className="min-w-[40px]"
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
 }
 
 //orderpage
@@ -66,6 +372,7 @@ export default function OrdersPage() {
   const [activeOrderTab, setActiveOrderTab] = useState<OrderListTab>('all');
   const [isExportingOrdersFiltered, setIsExportingOrdersFiltered] = useState(false);
   const [isExportingOrdersAll, setIsExportingOrdersAll] = useState(false);
+  const [isExportingOrderBreakdown, setIsExportingOrderBreakdown] = useState(false);
 
   const orderDateRange = useMemo(() => {
     return getDateRangeFromPreset(
@@ -103,6 +410,8 @@ export default function OrdersPage() {
   const canViewCompanyOrders =
     isAdmin || user?.role === 'accounting';
   const canApproveAsFinance = canApproveFinance(user?.role);
+  /** Finance role only — order approve/reject in the order list (not super_admin) */
+  const isFinance = user?.role === 'finance';
   const isSuperAdmin = user?.role === 'super_admin';
   const isLeader = user?.role === 'team_leader';
   /** Same order list visibility as tabs/table — export uses `visibleOrders` / `filterOrders`. */
@@ -291,24 +600,6 @@ export default function OrdersPage() {
     return list.reduce((sum, o) => sum + o.total, 0);
   }, [approvedOrdersAll, orderDateRange]);
 
-  // Map legacy status + stage to a clearer label for display
-  const getStatusLabel = (order: Order) => {
-    // status is canonical: if status='pending', treat as pending even if stage is stale (e.g. after manual DB un-reject)
-    if (order.stage === 'needs_revision') return 'Needs Revision';
-    if (order.status === 'pending' || order.stage === 'finance_pending') return 'Pending Finance Review';
-    if (order.status === 'approved' || order.stage === 'admin_approved') return 'Approved';
-    if (order.status === 'rejected' || order.stage === 'admin_rejected') return 'Rejected';
-    return order.status;
-  };
-
-  const getStatusVariant = (order: Order) => {
-    const label = getStatusLabel(order);
-    if (label === 'Needs Revision') return 'secondary';
-    if (label.startsWith('Approved')) return 'default';
-    if (label.startsWith('Pending')) return 'secondary';
-    return 'destructive';
-  };
-
   const handleViewOrder = async (order: Order) => {
     setViewingOrder(order);
     setViewDialogOpen(true);
@@ -378,17 +669,27 @@ export default function OrdersPage() {
     }
 
     try {
-      if (isAdmin) {
-        await updateOrderStatus(orderToApprove.id, 'approved');
+      if (isFinance) {
+        const result = await updateOrderStatus(orderToApprove.id, 'approved');
+        const depositVerified =
+          result && typeof result === 'object' ? result.depositVerified : undefined;
 
-        // Show appropriate success message
-        const successMessage = hasCashOrCheque && orderToApprove.depositId
-          ? 'Order approved and deposit verified.'
-          : 'Order approval complete.';
+        const successMessage =
+          depositVerified
+            ? 'Order approved and deposit verified.'
+            : hasCashOrCheque && orderToApprove.depositId
+              ? 'Order approved, but the linked cash deposit was not verified. Check Cash Deposits.'
+              : 'Order approval complete.';
 
         toast({
-          title: 'Approved',
-          description: successMessage
+          title: depositVerified === false && hasCashOrCheque && orderToApprove.depositId
+            ? 'Approved with warning'
+            : 'Approved',
+          description: successMessage,
+          variant:
+            depositVerified === false && hasCashOrCheque && orderToApprove.depositId
+              ? 'destructive'
+              : undefined,
         });
       } else {
         throw new Error('Not authorized to approve');
@@ -471,7 +772,7 @@ export default function OrdersPage() {
       }
 
       // ========== STEP 2: REJECT THE ORDER ==========
-      if (isAdmin) {
+      if (isFinance) {
         await updateOrderStatus(orderToReject.id, 'rejected', rejectionReason);
         toast({
           title: 'Order Rejected',
@@ -624,9 +925,18 @@ export default function OrdersPage() {
     hasActiveOrderFilters &&
     filteredOrdersForExport.length > 0 &&
     !isExportingOrdersFiltered &&
-    !isExportingOrdersAll;
+    !isExportingOrdersAll &&
+    !isExportingOrderBreakdown;
   const canExportAll =
-    visibleOrders.length > 0 && !isExportingOrdersFiltered && !isExportingOrdersAll;
+    visibleOrders.length > 0 &&
+    !isExportingOrdersFiltered &&
+    !isExportingOrdersAll &&
+    !isExportingOrderBreakdown;
+  const canExportOrderBreakdown =
+    filteredOrdersForExport.length > 0 &&
+    !isExportingOrdersFiltered &&
+    !isExportingOrdersAll &&
+    !isExportingOrderBreakdown;
 
   const runOrdersListExport = async (
     ordersToExport: Order[],
@@ -726,6 +1036,57 @@ export default function OrdersPage() {
       });
     } finally {
       setIsExportingOrdersAll(false);
+    }
+  };
+
+  const handleExportOrderBreakdown = async () => {
+    const ordersToExport = filteredOrdersForExport;
+    const dateLabel = getDatePresetLabel(
+      dateRangeFilter.preset,
+      dateRangeFilter.customStart,
+      dateRangeFilter.customEnd
+    );
+    const tabLabel = orderListTabLabels[activeOrderTab];
+
+    if (!ordersToExport.length) {
+      toast({
+        title: 'No data to export',
+        description: `No orders in ${tabLabel} for ${dateLabel}.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsExportingOrderBreakdown(true);
+    try {
+      const periodStart =
+        dateRangeFilter.preset === 'all' ? 'all' : formatDateForInput(orderDateRange.start);
+      const periodEnd =
+        dateRangeFilter.preset === 'all' ? 'all' : formatDateForInput(orderDateRange.end);
+      const filenamePrefix = buildOrderBreakdownExportFilename(
+        dateRangeFilter,
+        activeOrderTab
+      );
+      await exportOrderBreakdownExcel(ordersToExport, filenamePrefix, {
+        dateRangeLabel: dateLabel,
+        periodStart,
+        periodEnd,
+        tabLabel,
+        orderCount: ordersToExport.length,
+      });
+      toast({
+        title: 'Order breakdown export successful',
+        description: `Exported ${ordersToExport.length} order(s) · ${tabLabel} · ${dateLabel}.`,
+      });
+    } catch (error) {
+      console.error('Order breakdown export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the order breakdown report. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingOrderBreakdown(false);
     }
   };
 
@@ -1381,6 +1742,14 @@ export default function OrdersPage() {
 
   const handleBulkApprove = async () => {
     if (agentOrders.length === 0) return;
+    if (!isFinance) {
+      toast({
+        title: 'Not authorized',
+        description: 'Only the Finance team can approve orders.',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     // Check for cash/cheque orders (FULL or SPLIT) without deposits OR without bank details recorded
     const ordersWithoutDeposit = agentOrders.filter(order => {
@@ -1455,218 +1824,6 @@ export default function OrdersPage() {
     }
   };
 
-  const OrderTable = ({ orderList }: { orderList: Order[] }) => {
-    const [currentPage, setCurrentPage] = useState(1);
-    const ordersPerPage = 10;
-
-    // Reset to page 1 when order list changes
-    useEffect(() => {
-      setCurrentPage(1);
-    }, [orderList.length]);
-
-    const totalPages = Math.ceil(orderList.length / ordersPerPage);
-    const startIndex = (currentPage - 1) * ordersPerPage;
-    const endIndex = startIndex + ordersPerPage;
-    const paginatedOrders = orderList.slice(startIndex, endIndex);
-
-    return (
-      <>
-        {orderList.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center border rounded-lg bg-muted/20">
-            <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
-              <Package className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <p className="font-medium">No orders found</p>
-            <p className="text-sm text-muted-foreground">Orders will appear here once created by your sales agents.</p>
-          </div>
-        ) : (
-          <>
-            {/* Mobile: card list */}
-            <div className="md:hidden space-y-3">
-              {paginatedOrders.map((order) => (
-                <div key={order.id} className="rounded-lg border bg-background p-4 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Order #</div>
-                      <div className="font-mono font-semibold">{order.orderNumber}</div>
-                    </div>
-                    <div className="flex flex-col gap-1 items-end">
-                      <Badge variant={getStatusVariant(order) as any}>
-                        {getStatusLabel(order)}
-                      </Badge>
-                      {(order.stage === 'finance_pending' || order.status === 'pending') && (
-                        !isZeroValueOrder(order) &&
-                        (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
-                      ) && (
-                        order.depositId && order.depositBankAccount ? (
-                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
-                            Deposit Recorded
-                          </Badge>
-                        ) : order.depositId ? (
-                          <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
-                            Awaiting Desposit slip
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
-                            Awaiting Remittance
-                          </Badge>
-                        )
-                      )}
-                    </div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Client</div>
-                      <div className="truncate">{order.clientName}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Agent</div>
-                      <div className="truncate">{order.agentName}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-muted-foreground">Date</div>
-                      <div>{new Date(order.date).toLocaleDateString()}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-muted-foreground">Items</div>
-                      <div>{order.items.reduce((sum, item) => sum + (item.quantity || 0), 0)}</div>
-                    </div>
-                    <div className="col-span-2 flex justify-between border-t pt-2 font-medium">
-                      <span>Amount</span>
-                      <span>₱{order.total.toLocaleString()}</span>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex justify-end">
-                    <Button variant="ghost" size="sm" onClick={() => handleViewOrder(order)}>
-                      <Eye className="h-4 w-4 mr-1" /> View
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Desktop: table */}
-            <div className="hidden md:block">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Order #</TableHead>
-                    <TableHead>Client</TableHead>
-                    <TableHead>Sales Agent</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Items</TableHead>
-                    <TableHead className="text-right">Amount</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {paginatedOrders.map((order) => (
-                    <TableRow key={order.id}>
-                      <TableCell className="font-mono font-medium">{order.orderNumber}</TableCell>
-                      <TableCell>{order.clientName}</TableCell>
-                      <TableCell>{order.agentName}</TableCell>
-                      <TableCell>{new Date(order.date).toLocaleDateString()}</TableCell>
-                      <TableCell className="text-right">{order.items.reduce((sum, item) => sum + (item.quantity || 0), 0)}</TableCell>
-                      <TableCell className="text-right font-semibold">
-                        ₱{order.total.toLocaleString()}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <Badge variant={getStatusVariant(order) as any}>{getStatusLabel(order)}</Badge>
-                          {(order.stage === 'finance_pending' || (order.status === 'pending' && order.stage !== 'needs_revision')) && (
-                            !isZeroValueOrder(order) &&
-                            (order.paymentMethod === 'CASH' || order.paymentMethod === 'CHEQUE' || (order.paymentMode === 'SPLIT' && order.paymentSplits?.some(s => s.method === 'CASH' || s.method === 'CHEQUE')))
-                          ) && (
-                            order.depositId && order.depositBankAccount ? (
-                              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
-                                Deposit Recorded
-                              </Badge>
-                            ) : order.depositId ? (
-                              <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
-                                Awaiting Deposit Slip
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-xs">
-                            Awaiting Remittance
-                            </Badge>
-                            )
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleViewOrder(order)}
-                          title="View Order Details"
-                          className="hover:bg-gray-100"
-                        >
-                          <Eye className="h-4 w-4 text-gray-600" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-
-            {/* Pagination Controls */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                <div className="text-sm text-muted-foreground">
-                  Showing {startIndex + 1} to {Math.min(endIndex, orderList.length)} of {orderList.length} orders
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    Previous
-                  </Button>
-                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                      let pageNum;
-                      if (totalPages <= 5) {
-                        pageNum = i + 1;
-                      } else if (currentPage <= 3) {
-                        pageNum = i + 1;
-                      } else if (currentPage >= totalPages - 2) {
-                        pageNum = totalPages - 4 + i;
-                      } else {
-                        pageNum = currentPage - 2 + i;
-                      }
-                      return (
-                        <Button
-                          key={pageNum}
-                          variant={currentPage === pageNum ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setCurrentPage(pageNum)}
-                          className="min-w-[40px]"
-                        >
-                          {pageNum}
-                        </Button>
-                      );
-                    })}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                  >
-                    Next
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </>
-    );
-  };
   if (!user || (user.role !== 'admin' && user.role !== 'finance' && user.role !== 'accounting' && user.role !== 'super_admin' && user.role !== 'team_leader')) {
     return (
       <div className="p-8 text-center">
@@ -1730,9 +1887,22 @@ export default function OrdersPage() {
                   )}
                   {isExportingOrdersAll ? 'Exporting...' : 'Export all'}
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleExportOrderBreakdown}
+                  disabled={!canExportOrderBreakdown}
+                  className="gap-2"
+                >
+                  {isExportingOrderBreakdown ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  {isExportingOrderBreakdown ? 'Exporting...' : 'Export order breakdown'}
+                </Button>
               </>
             ) : null}
-            {canApproveAsFinance && (
+            {isFinance && (
               <Button onClick={handleOpenBulkApprove} className="gap-2">
                 <CheckSquare className="h-4 w-4" />
                 Bulk Approve Orders
@@ -1862,16 +2032,16 @@ export default function OrdersPage() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="pending" className="mt-4">
-              <OrderTable orderList={filterOrders('pending')} />
+              <OrderTable orderList={filterOrders('pending')} onViewOrder={handleViewOrder} />
             </TabsContent>
             <TabsContent value="approved" className="mt-4">
-              <OrderTable orderList={filterOrders('approved')} />
+              <OrderTable orderList={filterOrders('approved')} onViewOrder={handleViewOrder} />
             </TabsContent>
             <TabsContent value="rejected" className="mt-4">
-              <OrderTable orderList={filterOrders('rejected')} />
+              <OrderTable orderList={filterOrders('rejected')} onViewOrder={handleViewOrder} />
             </TabsContent>
             <TabsContent value="all" className="mt-4">
-              <OrderTable orderList={filterOrders()} />
+              <OrderTable orderList={filterOrders()} onViewOrder={handleViewOrder} />
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -2045,6 +2215,29 @@ export default function OrdersPage() {
                   {getStatusLabel(viewingOrder)}
                 </Badge>
               </div>
+
+              {(viewingOrder.status === 'approved' || viewingOrder.status === 'rejected') &&
+                (viewingOrder.approvedBy || viewingOrder.approvedByName) && (
+                <div className="p-4 bg-muted/50 border rounded-lg">
+                  <Label className="text-muted-foreground">
+                    {viewingOrder.status === 'approved' ? 'Approved By' : 'Rejected By'}
+                  </Label>
+                  <p className="font-medium mt-1">
+                    {viewingOrder.approvedByName || '—'}
+                  </p>
+                  {viewingOrder.approvedAt && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {new Date(viewingOrder.approvedAt).toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Client & Agent Info */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2304,7 +2497,7 @@ export default function OrdersPage() {
                 ) : null
               )}
 
-              {canApproveAsFinance && (viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
+              {(viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
                 (() => {
                   // Zero-value orders have nothing to remit/deposit, so deposit checks are bypassed.
                   const isFreeOfCharge = isZeroValueOrder(viewingOrder);
@@ -2318,9 +2511,37 @@ export default function OrdersPage() {
                   const needsDeposit = hasCashOrChequeComponent && !viewingOrder.depositId;
                   const needsBankDetails = hasCashOrChequeComponent && viewingOrder.depositId && !viewingOrder.depositBankAccount;
                   const depositReady = hasCashOrChequeComponent && viewingOrder.depositId && viewingOrder.depositBankAccount;
+                  const actionsDisabled = !isFinance || needsDeposit || needsBankDetails;
+                  const financeOnlyTitle = 'Only users with the Finance role can approve or reject this order';
+                  const approveTitle = !isFinance
+                    ? financeOnlyTitle
+                    : needsDeposit
+                      ? 'Cannot approve: Order awaiting remittance from agent to leader'
+                      : needsBankDetails
+                        ? 'Cannot approve: Order awaiting deposit slip from team leader'
+                        : undefined;
+                  const denyTitle = !isFinance
+                    ? financeOnlyTitle
+                    : needsDeposit
+                      ? 'Cannot deny: Order awaiting remittance from agent to leader'
+                      : needsBankDetails
+                        ? 'Cannot deny: Order awaiting deposit slip from team leader'
+                        : undefined;
 
                   return (
                     <>
+                      {!isFinance && (
+                        <div className="flex items-start gap-3 p-4 bg-muted border rounded-lg">
+                          <AlertCircle className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-semibold">Finance review required</p>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {financeOnlyTitle}.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Show warning if CASH/CHEQUE component without deposit */}
                       {needsDeposit && (
                         <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
@@ -2367,7 +2588,8 @@ export default function OrdersPage() {
                             setViewDialogOpen(false);
                             handleOpenApprove(viewingOrder);
                           }}
-                          disabled={needsDeposit || needsBankDetails}
+                          disabled={actionsDisabled}
+                          title={approveTitle}
                         >
                           <CheckCircle className="h-4 w-4 mr-2" />
                           {depositReady
@@ -2381,8 +2603,8 @@ export default function OrdersPage() {
                             setViewDialogOpen(false);
                             handleOpenReject(viewingOrder);
                           }}
-                          disabled={needsDeposit || needsBankDetails}
-                          title={needsDeposit ? 'Cannot deny: Order awaiting remittance from agent to leader' : needsBankDetails ? 'Cannot deny: Order awaiting deposit slip from team leader' : undefined}
+                          disabled={actionsDisabled}
+                          title={denyTitle}
                         >
                           <XCircle className="h-4 w-4 mr-2" />
                           Finance Deny

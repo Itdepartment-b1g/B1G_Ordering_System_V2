@@ -12,6 +12,20 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Textarea } from '@/components/ui/textarea';
 import { Search, Check, XCircle } from 'lucide-react';
 import { sendNotification } from '@/features/shared/lib/notification.helpers';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_PENDING_CLIENT_SORT_DIRECTION,
+  DEFAULT_PENDING_CLIENT_SORT_KEY,
+  sortPendingClients,
+  type PendingClientSortKey,
+} from '@/features/clients/utils/pendingClientsSorting';
 
 interface PendingClient {
   id: string;
@@ -50,6 +64,8 @@ const PendingClientsPage = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [clientToReject, setClientToReject] = useState<PendingClient | null>(null);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<PendingClientSortKey>>(createInitialTableSortCycle);
 
   const fetchClients = async () => {
     try {
@@ -118,6 +134,25 @@ const PendingClientsPage = () => {
       );
     });
   }, [clients, searchQuery]);
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_PENDING_CLIENT_SORT_KEY,
+        DEFAULT_PENDING_CLIENT_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedClients = useMemo(
+    () => sortPendingClients(filteredClients, resolvedSortKey, resolvedSortDirection),
+    [filteredClients, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const handleSort = (key: PendingClientSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const handleApprove = async (client: PendingClient) => {
     try {
@@ -277,20 +312,65 @@ const PendingClientsPage = () => {
               <Table className="min-w-[900px]">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Client</TableHead>
-                    <TableHead>Shop Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead>City</TableHead>
-                    <TableHead>Agent</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Requested</TableHead>
-                    <TableHead>Notes</TableHead>
+                    <SortableTableHead
+                      label="Client"
+                      sortKey="name"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'name')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Shop Name"
+                      sortKey="shopName"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'shopName')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Email"
+                      sortKey="email"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'email')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Phone"
+                      sortKey="phone"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'phone')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="City"
+                      sortKey="city"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'city')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Agent"
+                      sortKey="agent"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'agent')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Status"
+                      sortKey="status"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Requested"
+                      sortKey="requested"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'requested')}
+                      onSort={handleSort}
+                    />
+                    <SortableTableHead
+                      label="Notes"
+                      sortKey="notes"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'notes')}
+                      onSort={handleSort}
+                    />
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredClients.map((client) => (
+                  {sortedClients.map((client) => (
                     <TableRow key={client.id}>
                       <TableCell className="font-medium">{client.name}</TableCell>
                       <TableCell>{client.company || '—'}</TableCell>

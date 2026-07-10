@@ -5,22 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   KeyAccountWorkflowStatusBadge,
-  isKeyAccountPendingWorkflow,
 } from '@/features/key-accounts/keyAccountWorkflowStatus';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend
-} from 'recharts';
 import {
   Users,
   Building2,
@@ -34,6 +23,15 @@ import {
   Eye
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { KeyAccountDashboardRevenueCard } from './KeyAccountDashboardRevenueCard';
+import { KeyAccountDashboardRevenueOverview } from './KeyAccountDashboardRevenueOverview';
+import {
+  EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE,
+  formatKeyAccountDashboardCurrency,
+  loadKeyAccountDashboardRevenue,
+  type KeyAccountDashboardOrder,
+  type KeyAccountDashboardRevenueResult,
+} from './keyAccountDashboardRevenue';
 
 interface KAMWithStats {
   id: string;
@@ -101,7 +99,9 @@ export function SalesDirectorDashboard() {
   const [kamStats, setKamStats] = useState<KAMWithStats[]>([]);
   const [clients, setClients] = useState<ClientWithLastOrder[]>([]);
   const [orders, setOrders] = useState<DirectorOrder[]>([]);
-  const [revenueData, setRevenueData] = useState<{ month: string; revenue: number }[]>([]);
+  const [revenueMetrics, setRevenueMetrics] = useState<KeyAccountDashboardRevenueResult>(
+    EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE
+  );
   const [alertPage, setAlertPage] = useState(1);
   const [recentOrdersPage, setRecentOrdersPage] = useState(1);
   const [clientPage, setClientPage] = useState(1);
@@ -111,7 +111,6 @@ export function SalesDirectorDashboard() {
     totalKAMs: 0,
     totalClients: 0,
     totalOrders: 0,
-    totalRevenue: 0,
     pendingOrders: 0,
     inactiveClients: 0
   });
@@ -133,6 +132,21 @@ export function SalesDirectorDashboard() {
       if (kamError) throw kamError;
 
       const kamIds = kamAssignments?.map((a: any) => a.kam_id) || [];
+
+      if (kamIds.length === 0) {
+        setKamStats([]);
+        setClients([]);
+        setOrders([]);
+        setRevenueMetrics(EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE);
+        setStats({
+          totalKAMs: 0,
+          totalClients: 0,
+          totalOrders: 0,
+          pendingOrders: 0,
+          inactiveClients: 0,
+        });
+        return;
+      }
 
       // Get stats for each KAM
       const kamsWithStats: KAMWithStats[] = [];
@@ -241,20 +255,35 @@ export function SalesDirectorDashboard() {
         .select(`
           id,
           total_amount,
+          subtotal,
           status,
           workflow_status,
+          po_order_kind,
+          source_rebate_id,
+          warehouse_location_id,
           order_date,
           dr_number,
+          key_account_client_id,
           client:key_account_clients(client_name),
           shop:key_account_shops(shop_name),
           kam:profiles!purchase_orders_kam_id_fkey(full_name)
         `)
+        .eq('company_id', user?.company_id)
         .in('kam_id', kamIds)
+        .eq('company_account_type', 'Key Accounts')
         .gte('order_date', `${selectedYear}-01-01`)
         .lte('order_date', `${selectedYear}-12-31`)
         .order('order_date', { ascending: false });
 
       if (ordersError) throw ordersError;
+
+      const analyticsOrders = (ordersData || []) as KeyAccountDashboardOrder[];
+      const revenueResult = await loadKeyAccountDashboardRevenue(
+        supabase,
+        analyticsOrders,
+        selectedYear
+      );
+      setRevenueMetrics(revenueResult);
 
       const formattedOrders: DirectorOrder[] = ordersData?.map((o: any) => ({
         id: o.id,
@@ -270,43 +299,16 @@ export function SalesDirectorDashboard() {
 
       setOrders(formattedOrders);
 
-      // Revenue overview: fulfilled POs with workflow delivered (total_amount per PO)
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const revenueByMonth: Record<string, number> = {};
-      monthNames.forEach(m => {
-        revenueByMonth[m] = 0;
-      });
-
-      ordersData?.forEach((o: any) => {
-        if (!isDeliveredRevenue(o)) return;
-        const month = monthNames[new Date(o.order_date).getMonth()];
-        revenueByMonth[month] += o.total_amount || 0;
-      });
-
-      setRevenueData(
-        monthNames.map(month => ({
-          month,
-          revenue: revenueByMonth[month]
-        }))
-      );
-
-      // Calculate overall stats
-      const inactiveThreshold = 30; // days
+      const inactiveThreshold = 30;
       const inactiveClients = clientsWithOrders.filter(
         c => c.daysSinceLastOrder === null || c.daysSinceLastOrder > inactiveThreshold
-      ).length;
-
-      const totalRevenue = clientsWithOrders.reduce((sum, c) => sum + c.totalRevenue, 0);
-      const pendingCount = formattedOrders.filter((o) =>
-        isKeyAccountPendingWorkflow(o.workflow_status)
       ).length;
 
       setStats({
         totalKAMs: kamsWithStats.length,
         totalClients: clientsWithOrders.length,
         totalOrders: formattedOrders.length,
-        totalRevenue,
-        pendingOrders: pendingCount,
+        pendingOrders: revenueResult.pendingOrderCount,
         inactiveClients
       });
       setAlertPage(1);
@@ -439,21 +441,20 @@ export function SalesDirectorDashboard() {
             <div className="text-2xl font-bold">{stats.totalOrders}</div>
           </CardContent>
         </Card>
+        <KeyAccountDashboardRevenueCard summary={revenueMetrics.summary} />
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Delivered revenue</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground mt-1">Fulfilled and delivered POs</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Pending</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" />
+              Pending POs
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{stats.pendingOrders}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              In workflow · Pending revenue{' '}
+              {formatKeyAccountDashboardCurrency(revenueMetrics.summary.pendingRevenue)}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -466,60 +467,11 @@ export function SalesDirectorDashboard() {
         </Card>
       </div>
 
-      {/* Revenue Chart */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5" />
-            Revenue Overview
-          </CardTitle>
-          <div className="flex items-center gap-3">
-            <span className="hidden text-xs font-normal text-muted-foreground text-right sm:block">
-              Fulfilled POs, delivered workflow
-            </span>
-            <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(parseInt(v))}>
-              <SelectTrigger className="h-9 w-[120px]">
-                <SelectValue placeholder="Select year" />
-              </SelectTrigger>
-              <SelectContent>
-                {[2024, 2025, 2026].map(y => (
-                  <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent className="px-2 md:px-6">
-          <div className="w-full h-[250px] md:h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={revenueData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip
-                  content={({ active, payload, label }) => {
-                    if (!active || !payload || payload.length === 0) return null;
-                    const revenue = payload.find(p => p.dataKey === 'revenue')?.value as number || 0;
-                    return (
-                      <div className="bg-white border rounded-lg p-3 shadow-lg">
-                        <p className="font-semibold mb-2">{label}</p>
-                        <div className="space-y-1 text-sm">
-                          <div className="flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-                            <span>Delivered revenue: ₱{revenue.toLocaleString()}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }}
-                />
-                <Legend />
-                <Bar dataKey="revenue" fill="#3b82f6" name="Delivered revenue" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      <KeyAccountDashboardRevenueOverview
+        monthlyData={revenueMetrics.monthlyData}
+        selectedYear={selectedYear}
+        onYearChange={setSelectedYear}
+      />
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>

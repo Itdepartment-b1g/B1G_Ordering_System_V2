@@ -1,5 +1,7 @@
 import ExcelJS from 'exceljs';
 
+import { formatExportGeneratedAt } from '@/lib/excel.helpers';
+
 export interface KeyAccountProductAnalyticsExportRow {
   brand: string;
   variant: string;
@@ -82,6 +84,7 @@ export async function exportKeyAccountProductAnalyticsExcel(
   titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
 
   let cursor = 3;
+  cursor = addMetaRow(worksheet, cursor, 'Generated at', formatExportGeneratedAt());
   cursor = addMetaRow(worksheet, cursor, 'Export', 'Filtered (date range)');
   cursor = addMetaRow(worksheet, cursor, 'Section', 'Product Performance');
   cursor = addMetaRow(worksheet, cursor, 'Date range', meta.dateRangeLabel);
@@ -101,7 +104,7 @@ export async function exportKeyAccountProductAnalyticsExcel(
     worksheet,
     cursor,
     'Rebated',
-    'Money/credit rebates on source PO lines (submitted, approved, executed). Change-item replacements at same value = ₱0 rebated.'
+    'Money/credit rebates on source PO lines. Change-item rebates swap the disputed SKU for the replacement SKU (same value = no rebate deduction; top-up adds replacement value).'
   );
   cursor = addMetaRow(
     worksheet,

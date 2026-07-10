@@ -1,5 +1,7 @@
 import ExcelJS from 'exceljs';
 
+import { formatExportGeneratedAt } from '@/lib/excel.helpers';
+
 import { formatDateForInput } from '@/lib/dateRangePresets';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
 
@@ -207,6 +209,7 @@ function writeMetaRows(worksheet: ExcelJS.Worksheet, meta: ClientListExportMeta)
     row.getCell(2).value = value;
   };
 
+  addMetaRow('Generated at', formatExportGeneratedAt());
   addMetaRow(
     'Export',
     meta.exportType === 'filtered' ? 'Filtered (current filters)' : 'All clients (no filters)'

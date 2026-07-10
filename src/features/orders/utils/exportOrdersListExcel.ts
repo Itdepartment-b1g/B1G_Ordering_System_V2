@@ -1,5 +1,7 @@
 import ExcelJS from 'exceljs';
 
+import { formatExportGeneratedAt } from '@/lib/excel.helpers';
+
 import type { Order } from '@/features/orders/OrderContext';
 import { formatDateForInput } from '@/lib/dateRangePresets';
 import type { DateRangeFilterValue } from '@/features/shared/components/DateRangeFilterPopover';
@@ -256,8 +258,12 @@ function writeAmountSummaryRow(
   return rowIndex + 1;
 }
 
-function writeMetaRows(worksheet: ExcelJS.Worksheet, meta: OrderListExportMeta): number {
-  let rowIndex = 1;
+function writeMetaRows(
+  worksheet: ExcelJS.Worksheet,
+  meta: OrderListExportMeta,
+  startRow = 1
+): number {
+  let rowIndex = startRow;
 
   const titleRow = worksheet.getRow(rowIndex++);
   worksheet.mergeCells(rowIndex - 1, 1, rowIndex - 1, COLUMN_COUNT);
@@ -272,6 +278,7 @@ function writeMetaRows(worksheet: ExcelJS.Worksheet, meta: OrderListExportMeta):
     row.getCell(2).value = value;
   };
 
+  addMetaRow('Generated at', formatExportGeneratedAt());
   addMetaRow(
     'Export',
     meta.exportType === 'filtered' ? 'Filtered (current filters)' : 'All orders (no filters)'
@@ -342,24 +349,13 @@ function writeMetaRows(worksheet: ExcelJS.Worksheet, meta: OrderListExportMeta):
   return rowIndex;
 }
 
-export async function exportOrdersListExcel(
+export function writeOrdersListSection(
+  worksheet: ExcelJS.Worksheet,
   rows: OrderListExportRow[],
-  filenamePrefix: string,
-  meta: OrderListExportMeta
-): Promise<void> {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('Orders');
-  worksheet.columns = [
-    { width: 22 },
-    { width: 28 },
-    { width: 22 },
-    { width: 14 },
-    { width: 10 },
-    { width: 14 },
-    { width: 32 },
-  ];
-
-  const dataStartRow = writeMetaRows(worksheet, meta);
+  meta: OrderListExportMeta,
+  startRow = 1
+): number {
+  const dataStartRow = writeMetaRows(worksheet, meta, startRow);
 
   const headerRow = worksheet.getRow(dataStartRow);
   HEADERS.forEach((label, i) => {
@@ -385,6 +381,28 @@ export async function exportOrdersListExcel(
       excelRow.height = Math.max(excelRow.height ?? 15, 36);
     }
   });
+
+  return dataStartRow + rows.length + 1;
+}
+
+export async function exportOrdersListExcel(
+  rows: OrderListExportRow[],
+  filenamePrefix: string,
+  meta: OrderListExportMeta
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Orders');
+  worksheet.columns = [
+    { width: 22 },
+    { width: 28 },
+    { width: 22 },
+    { width: 14 },
+    { width: 10 },
+    { width: 14 },
+    { width: 32 },
+  ];
+
+  writeOrdersListSection(worksheet, rows, meta);
 
   const fileBuffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([fileBuffer], {

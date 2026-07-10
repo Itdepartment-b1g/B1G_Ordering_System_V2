@@ -5,6 +5,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -62,7 +63,11 @@ import {
   AnalyticsTablePagination,
   paginateAnalyticsRows,
 } from './AnalyticsTablePagination';
-import { getKeyAccountOrderRevenueBreakdown } from './keyAccountAnalyticsShared';
+import {
+  getKeyAccountOrderNetRevenueFromAttribution,
+  isKeyAccountProductAnalyticsOrder,
+  type KeyAccountOrderRevenueAttribution,
+} from './keyAccountAnalyticsShared';
 
 interface ClientOption {
   id: string;
@@ -128,10 +133,10 @@ interface KeyAccountClientAnalyticsTabProps {
   usePageDateFilter?: boolean;
   dateRangeFilter?: DateRangeFilterValue;
   onDateRangeFilterChange?: (value: DateRangeFilterValue) => void;
-  rebateCreditByPurchaseOrderId?: Map<string, number>;
+  orderRevenueById?: Map<string, KeyAccountOrderRevenueAttribution>;
 }
 
-const EMPTY_REBATE_CREDIT_MAP = new Map<string, number>();
+const EMPTY_ORDER_REVENUE_MAP = new Map<string, KeyAccountOrderRevenueAttribution>();
 
 type DatePreset = 'all' | 'this_month' | 'last_month' | 'last_3_months' | 'last_6_months' | 'this_year' | 'last_year' | 'custom';
 
@@ -333,7 +338,7 @@ export default function KeyAccountClientAnalyticsTab({
   usePageDateFilter = false,
   dateRangeFilter,
   onDateRangeFilterChange,
-  rebateCreditByPurchaseOrderId = EMPTY_REBATE_CREDIT_MAP,
+  orderRevenueById = EMPTY_ORDER_REVENUE_MAP,
 }: KeyAccountClientAnalyticsTabProps) {
   const { toast } = useToast();
   const [selectedClient, setSelectedClient] = useState('all');
@@ -420,26 +425,39 @@ export default function KeyAccountClientAnalyticsTab({
     [dateRange, orderIdsByBrand, orders, selectedClient, usePageDateFilter]
   );
 
+  const productRevenueOrders = useMemo(
+    () => baseOrders.filter(isKeyAccountProductAnalyticsOrder),
+    [baseOrders]
+  );
+
   const monthlySalesData = useMemo(() => {
     const periods = buildMonthlyPeriods(orders, effectiveDateRange);
-    const delivered = baseOrders.filter(isDeliveredRevenue);
     return periods.map((period) => {
-      const sales = delivered
-        .filter((order) => {
-          const d = new Date(order.order_date);
-          return d >= period.start && d <= period.end;
-        })
-        .reduce((sum, order) => {
-          const { net } = getKeyAccountOrderRevenueBreakdown(
-            order.id,
-            order.total_amount,
-            rebateCreditByPurchaseOrderId
-          );
-          return sum + net;
-        }, 0);
-      return { month: period.label, sales: Math.round(sales) };
+      let grossRevenue = 0;
+      let rebatedRevenue = 0;
+      let deliveredRevenue = 0;
+      let pendingRevenue = 0;
+
+      productRevenueOrders.forEach((order) => {
+        const orderDate = new Date(order.order_date);
+        if (orderDate < period.start || orderDate > period.end) return;
+        const revenue = getKeyAccountOrderNetRevenueFromAttribution(orderRevenueById.get(order.id));
+        grossRevenue += revenue.grossRevenue;
+        rebatedRevenue += revenue.rebatedRevenue;
+        deliveredRevenue += revenue.deliveredRevenue;
+        pendingRevenue += revenue.pendingRevenue;
+      });
+
+      return {
+        month: period.label,
+        deliveredRevenue: Math.round(deliveredRevenue),
+        pendingRevenue: Math.round(pendingRevenue),
+        grossRevenue: Math.round(grossRevenue),
+        rebatedRevenue: Math.round(rebatedRevenue),
+        totalRevenue: Math.round(deliveredRevenue + pendingRevenue),
+      };
     });
-  }, [baseOrders, effectiveDateRange, orders, rebateCreditByPurchaseOrderId]);
+  }, [effectiveDateRange, orderRevenueById, orders, productRevenueOrders]);
 
   const poHistory = useMemo(
     () =>
@@ -472,30 +490,34 @@ export default function KeyAccountClientAnalyticsTab({
   ]);
 
   const summary = useMemo(() => {
-    const delivered = baseOrders.filter(isDeliveredRevenue);
-    let grossDeliveredRevenue = 0;
-    let rebatedDeliveredRevenue = 0;
+    let grossRevenue = 0;
+    let rebatedRevenue = 0;
     let deliveredRevenue = 0;
-    delivered.forEach((order) => {
-      const breakdown = getKeyAccountOrderRevenueBreakdown(
-        order.id,
-        order.total_amount,
-        rebateCreditByPurchaseOrderId
-      );
-      grossDeliveredRevenue += breakdown.gross;
-      rebatedDeliveredRevenue += breakdown.rebated;
-      deliveredRevenue += breakdown.net;
+    let pendingRevenue = 0;
+    let totalRevenue = 0;
+
+    productRevenueOrders.forEach((order) => {
+      const revenue = getKeyAccountOrderNetRevenueFromAttribution(orderRevenueById.get(order.id));
+      grossRevenue += revenue.grossRevenue;
+      rebatedRevenue += revenue.rebatedRevenue;
+      deliveredRevenue += revenue.deliveredRevenue;
+      pendingRevenue += revenue.pendingRevenue;
+      totalRevenue += revenue.totalRevenue;
     });
+
+    const deliveredPos = baseOrders.filter(isDeliveredRevenue).length;
     const paidCount = baseOrders.filter((o) => o.key_account_payment_status === 'paid').length;
     return {
       totalPos: baseOrders.length,
-      deliveredPos: delivered.length,
-      grossDeliveredRevenue,
-      rebatedDeliveredRevenue,
+      deliveredPos,
+      grossRevenue,
+      rebatedRevenue,
       deliveredRevenue,
+      pendingRevenue,
+      totalRevenue,
       paidCount,
     };
-  }, [baseOrders, rebateCreditByPurchaseOrderId]);
+  }, [baseOrders, orderRevenueById, productRevenueOrders]);
 
   const clientOptions = useMemo(() => {
     const map = new Map<string, ClientOption>();
@@ -664,11 +686,7 @@ export default function KeyAccountClientAnalyticsTab({
         poHistory.map((order) => {
           const client = firstRelation(order.client);
           const clientOption = clientOptions.find((c) => c.id === order.key_account_client_id);
-          const breakdown = getKeyAccountOrderRevenueBreakdown(
-            order.id,
-            order.total_amount,
-            rebateCreditByPurchaseOrderId
-          );
+          const revenue = getKeyAccountOrderNetRevenueFromAttribution(orderRevenueById.get(order.id));
           const poKind = String(order.po_order_kind || '');
           let poKindLabel = 'Standard';
           if (poKind === 'rebate_fulfillment') poKindLabel = 'Rebate replacement';
@@ -681,9 +699,9 @@ export default function KeyAccountClientAnalyticsTab({
               : '—',
             clientName: client?.client_name || clientOption?.client_name || '—',
             clientCode: clientOption?.client_code || '',
-            grossAmount: breakdown.gross,
-            rebatedAmount: breakdown.rebated,
-            netAmount: breakdown.net,
+            grossAmount: revenue.grossRevenue,
+            rebatedAmount: revenue.rebatedRevenue,
+            netAmount: revenue.totalRevenue,
             paymentStatus: String(order.key_account_payment_status || 'unpaid').replace(/_/g, ' '),
             workflowStatus: String(order.workflow_status || order.status || '—').replace(/_/g, ' '),
             poKind: poKindLabel,
@@ -697,9 +715,9 @@ export default function KeyAccountClientAnalyticsTab({
           brandLabel: selectedBrand === 'all' ? 'All brands' : selectedBrand,
           totalPos: summary.totalPos,
           deliveredPos: summary.deliveredPos,
-          grossDeliveredRevenue: summary.grossDeliveredRevenue,
-          rebatedDeliveredRevenue: summary.rebatedDeliveredRevenue,
-          deliveredRevenue: summary.deliveredRevenue,
+          grossDeliveredRevenue: summary.grossRevenue,
+          rebatedDeliveredRevenue: summary.rebatedRevenue,
+          deliveredRevenue: summary.totalRevenue,
           paidCount: summary.paidCount,
         }
       );
@@ -737,20 +755,24 @@ export default function KeyAccountClientAnalyticsTab({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Delivered sales (net)
+              Total product revenue
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(summary.deliveredRevenue)}</div>
-            <p className="text-xs text-muted-foreground mt-1">{summary.deliveredPos} delivered POs</p>
-            {summary.rebatedDeliveredRevenue > 0 && (
+            <div className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Net after rebates · Delivered {formatCurrency(summary.deliveredRevenue)} · Pending{' '}
+              {formatCurrency(summary.pendingRevenue)}
+            </p>
+            {summary.rebatedRevenue > 0 && (
               <p className="text-xs text-muted-foreground mt-0.5">
-                Gross {formatCurrency(summary.grossDeliveredRevenue)} · Rebated{' '}
+                Gross {formatCurrency(summary.grossRevenue)} · Rebated{' '}
                 <span className="text-amber-700 dark:text-amber-400">
-                  −{formatCurrency(summary.rebatedDeliveredRevenue)}
+                  −{formatCurrency(summary.rebatedRevenue)}
                 </span>
               </p>
             )}
+            <p className="text-xs text-muted-foreground mt-0.5">{summary.deliveredPos} delivered POs</p>
           </CardContent>
         </Card>
         <Card>
@@ -778,7 +800,8 @@ export default function KeyAccountClientAnalyticsTab({
         <CardHeader>
           <CardTitle>Client Sales Overview</CardTitle>
           <CardDescription>
-            Filter by client, brand, and date range. Monthly chart uses fulfilled and delivered PO sales.
+            Filter by client, brand, and date range. Monthly chart uses the same product analytics
+            rules as the summary — net revenue after rebates, delivered vs pending.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1036,25 +1059,73 @@ export default function KeyAccountClientAnalyticsTab({
             <div className="space-y-6 min-w-0">
               <div>
                 <p className="text-sm font-medium text-muted-foreground mb-3">
-                  Net delivered sales by month (after rebate credits)
+                  Net revenue by month — delivered vs pending (after rebates)
                 </p>
                 <div className="h-[320px]">
-                  {monthlySalesData.some((row) => row.sales > 0) ? (
+                  {monthlySalesData.some((row) => row.totalRevenue > 0) ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={monthlySalesData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="month" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" height={70} />
                         <YAxis tick={{ fontSize: 12 }} />
                         <Tooltip
-                          formatter={(value) => formatCurrency(Number(value))}
-                          labelFormatter={(label) => `Month: ${label}`}
+                          content={({ active, payload, label }) => {
+                            if (!active || !payload?.length) return null;
+                            const row = payload[0].payload as {
+                              deliveredRevenue: number;
+                              pendingRevenue: number;
+                              grossRevenue: number;
+                              rebatedRevenue: number;
+                              totalRevenue: number;
+                            };
+                            const delivered = row.deliveredRevenue || 0;
+                            const pending = row.pendingRevenue || 0;
+                            const gross = row.grossRevenue || 0;
+                            const rebated = row.rebatedRevenue || 0;
+                            const total = row.totalRevenue || delivered + pending;
+
+                            return (
+                              <div className="bg-white border rounded-lg p-3 shadow-lg text-sm max-w-xs">
+                                <p className="font-semibold mb-2">{label}</p>
+                                <p className="text-lg font-bold">{formatCurrency(total)}</p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Net after rebates · Delivered {formatCurrency(delivered)} · Pending{' '}
+                                  {formatCurrency(pending)}
+                                </p>
+                                {rebated > 0 && (
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    Gross {formatCurrency(gross)} · Rebated{' '}
+                                    <span className="text-amber-700 dark:text-amber-400">
+                                      −{formatCurrency(rebated)}
+                                    </span>
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          }}
                         />
-                        <Bar dataKey="sales" name="Sales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                        <Legend
+                          formatter={(value: string) =>
+                            value === 'deliveredRevenue' ? 'Delivered' : 'Pending'
+                          }
+                        />
+                        <Bar
+                          dataKey="deliveredRevenue"
+                          stackId="revenue"
+                          fill="#3b82f6"
+                          name="deliveredRevenue"
+                        />
+                        <Bar
+                          dataKey="pendingRevenue"
+                          stackId="revenue"
+                          fill="#f97316"
+                          name="pendingRevenue"
+                        />
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (
                     <div className="flex h-full items-center justify-center text-muted-foreground">
-                      No delivered sales for the selected filters.
+                      No revenue for the selected filters.
                     </div>
                   )}
                 </div>
@@ -1068,8 +1139,8 @@ export default function KeyAccountClientAnalyticsTab({
         <CardHeader>
           <CardTitle>Client PO History</CardTitle>
           <CardDescription>
-            Purchase orders for the selected client and filters. Amounts show net after money/credit
-            rebates; change-item replacements at the same value are not deducted.
+            Purchase orders for the selected client and filters. Net amounts use the same product
+            analytics rules as the summary cards (line items, rebates, and change-item swaps).
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1097,10 +1168,8 @@ export default function KeyAccountClientAnalyticsTab({
                   paginatedPoHistory.map((order) => {
                     const client = firstRelation(order.client);
                     const paymentStatus = order.key_account_payment_status || 'unpaid';
-                    const amountBreakdown = getKeyAccountOrderRevenueBreakdown(
-                      order.id,
-                      order.total_amount,
-                      rebateCreditByPurchaseOrderId
+                    const amountRevenue = getKeyAccountOrderNetRevenueFromAttribution(
+                      orderRevenueById.get(order.id)
                     );
                     return (
                       <TableRow key={order.id}>
@@ -1125,10 +1194,10 @@ export default function KeyAccountClientAnalyticsTab({
                         </TableCell>
                         <TableCell>{client?.client_name || '—'}</TableCell>
                         <TableCell className="text-right font-medium">
-                          <div>{formatCurrency(amountBreakdown.net)}</div>
-                          {amountBreakdown.rebated > 0 && (
+                          <div>{formatCurrency(amountRevenue.totalRevenue)}</div>
+                          {amountRevenue.rebatedRevenue > 0 && (
                             <p className="text-xs text-amber-700 dark:text-amber-400 font-normal">
-                              −{formatCurrency(amountBreakdown.rebated)} rebated
+                              −{formatCurrency(amountRevenue.rebatedRevenue)} rebated
                             </p>
                           )}
                         </TableCell>

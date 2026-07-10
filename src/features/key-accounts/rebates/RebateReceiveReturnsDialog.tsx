@@ -1,32 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2 } from 'lucide-react';
-
-export type RebateReturnInspectLine = {
-  rebate_line_id: string;
-  brand_name: string;
-  variant_name: string;
-  variant_type: string;
-  warehouse_location_id: string;
-  warehouse_location_name: string;
-  disputed_quantity: number;
-  qty_good: number;
-  qty_damaged: number;
-};
+  filterRebateReturnLinesForWarehouseUser,
+  type WarehouseReceiveMembership,
+} from '@/features/key-accounts/rebates/keyAccountRebateShared';
+import {
+  buildRebateInspectPayload,
+  createRebateInspectSplit,
+  getRebateInspectValidationError,
+  type RebateInspectItem,
+} from './keyAccountRebateReturnInspectShared';
+import {
+  RebateReturnInspectDialog,
+  type RebateInspectLotOption,
+} from './RebateReturnInspectDialog';
 
 function rpcErrorMessage(error: unknown, fallback: string): string {
   if (error && typeof error === 'object') {
@@ -38,12 +28,29 @@ function rpcErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function firstRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+function formatLotDate(date: string | null): string {
+  if (!date) return '—';
+  return format(new Date(date), 'MMM d, yyyy');
+}
+
+function formatRebateLotLabel(lot: RebateInspectLotOption): string {
+  const exp = lot.expiration_date ? ` · exp ${formatLotDate(lot.expiration_date)}` : '';
+  return `${lot.batch_number}${exp} · ${lot.quantity_remaining} in lot`;
+}
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   fulfillmentPoId: string;
   sourceRebateId: string;
   warehouseNamesById?: Record<string, string>;
+  warehouseLocationIsMainById?: Record<string, boolean>;
+  warehouseMembership?: WarehouseReceiveMembership;
   hubCompanyId?: string | null;
   onSuccess?: () => void;
 };
@@ -54,6 +61,8 @@ export function RebateReceiveReturnsDialog({
   fulfillmentPoId,
   sourceRebateId,
   warehouseNamesById = {},
+  warehouseLocationIsMainById = {},
+  warehouseMembership = { isMain: true, locationId: null },
   hubCompanyId,
   onSuccess,
 }: Props) {
@@ -61,7 +70,7 @@ export function RebateReceiveReturnsDialog({
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState<RebateReturnInspectLine[]>([]);
+  const [items, setItems] = useState<RebateInspectItem[]>([]);
   const [alreadyReceived, setAlreadyReceived] = useState(false);
 
   useEffect(() => {
@@ -82,6 +91,7 @@ export function RebateReceiveReturnsDialog({
             .select(
               `
               id,
+              variant_id,
               disputed_quantity,
               purchase_order_item:purchase_order_items (
                 warehouse_location_id
@@ -102,6 +112,7 @@ export function RebateReceiveReturnsDialog({
 
         const raw = (linesData || []) as Array<{
           id: string;
+          variant_id: string;
           disputed_quantity: number;
           purchase_order_item?: { warehouse_location_id?: string | null } | null;
           variant?: {
@@ -111,6 +122,8 @@ export function RebateReceiveReturnsDialog({
           } | null;
         }>;
 
+        let nameById = { ...warehouseNamesById };
+        let isMainById = { ...warehouseLocationIsMainById };
         const locationIds = [
           ...new Set(
             raw
@@ -119,38 +132,43 @@ export function RebateReceiveReturnsDialog({
           ),
         ];
 
-        let nameById = { ...warehouseNamesById };
         if (hubCompanyId && locationIds.length > 0) {
-          const missing = locationIds.filter((id) => !nameById[id]);
+          const missing = locationIds.filter((id) => !nameById[id] || isMainById[id] === undefined);
           if (missing.length > 0) {
             const { data: locRows } = await supabase
               .from('warehouse_locations')
-              .select('id, name')
+              .select('id, name, is_main')
               .eq('company_id', hubCompanyId)
               .in('id', missing);
             for (const row of locRows || []) {
               if (row?.id && row?.name) nameById[row.id] = row.name;
+              if (row?.id) isMainById[row.id] = !!row.is_main;
             }
           }
         }
 
-        setLines(
-          raw.map((r) => {
-            const whId = r.purchase_order_item?.warehouse_location_id ?? '';
-            const disputed = Number(r.disputed_quantity) || 0;
-            return {
-              rebate_line_id: r.id,
-              brand_name: r.variant?.brand?.name ?? '—',
-              variant_name: r.variant?.name ?? '—',
-              variant_type: r.variant?.variant_type ?? '—',
-              warehouse_location_id: whId,
-              warehouse_location_name: whId ? nameById[whId] || '—' : '—',
-              disputed_quantity: disputed,
-              qty_good: disputed,
-              qty_damaged: 0,
-            };
-          })
-        );
+        const mapped: RebateInspectItem[] = raw.map((r) => {
+          const whId = r.purchase_order_item?.warehouse_location_id ?? '';
+          const disputed = Number(r.disputed_quantity) || 0;
+          return {
+            rebate_line_id: r.id,
+            variant_id: r.variant_id,
+            brand_name: r.variant?.brand?.name ?? '—',
+            variant_name: r.variant?.name ?? '—',
+            variant_type: r.variant?.variant_type ?? '—',
+            warehouse_location_id: whId,
+            warehouse_location_name: whId ? nameById[whId] || '—' : '—',
+            disputed_quantity: disputed,
+            splits: [
+              createRebateInspectSplit({
+                qty_good: disputed,
+                qty_damaged: 0,
+              }),
+            ],
+          };
+        });
+
+        setItems(filterRebateReturnLinesForWarehouseUser(mapped, warehouseMembership, isMainById));
         setNotes('');
       } catch (e: unknown) {
         if (!cancelled) {
@@ -159,7 +177,7 @@ export function RebateReceiveReturnsDialog({
             title: 'Error loading return items',
             description: e instanceof Error ? e.message : 'Failed to load',
           });
-          setLines([]);
+          setItems([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -169,47 +187,111 @@ export function RebateReceiveReturnsDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, sourceRebateId, warehouseNamesById, hubCompanyId, toast]);
+  }, [
+    open,
+    sourceRebateId,
+    warehouseNamesById,
+    warehouseLocationIsMainById,
+    warehouseMembership,
+    hubCompanyId,
+    toast,
+  ]);
 
-  const validationError = useMemo(() => {
-    for (const l of lines) {
-      if (l.qty_good < 0 || l.qty_damaged < 0) return 'Quantities cannot be negative';
-      if (l.qty_good + l.qty_damaged <= 0) return 'Each line needs at least one received unit';
-      if (l.qty_good + l.qty_damaged > l.disputed_quantity) {
-        return `${l.variant_name}: good + damaged cannot exceed disputed qty (${l.disputed_quantity})`;
-      }
-    }
-    return null;
-  }, [lines]);
+  const variantIds = useMemo(
+    () => [...new Set(items.map((item) => item.variant_id))],
+    [items]
+  );
 
-  const updateLine = (rebateLineId: string, patch: Partial<Pick<RebateReturnInspectLine, 'qty_good' | 'qty_damaged'>>) => {
-    setLines((prev) =>
-      prev.map((l) => (l.rebate_line_id === rebateLineId ? { ...l, ...patch } : l))
+  const locationIds = useMemo(
+    () => [...new Set(items.map((item) => item.warehouse_location_id).filter(Boolean))],
+    [items]
+  );
+
+  const { data: warehouseLots = [], isLoading: loadingLots } = useQuery({
+    queryKey: ['rebate-return-inspect-lots', hubCompanyId, locationIds, variantIds],
+    enabled: open && !alreadyReceived && !!hubCompanyId && variantIds.length > 0 && locationIds.length > 0,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    queryFn: async (): Promise<RebateInspectLotOption[]> => {
+      const { data, error } = await supabase
+        .from('inventory_batch_lots')
+        .select(
+          `
+          id,
+          variant_id,
+          warehouse_location_id,
+          quantity_remaining,
+          expiration_date,
+          batch:inventory_batches ( batch_number )
+        `
+        )
+        .in('variant_id', variantIds)
+        .in('warehouse_location_id', locationIds)
+        .order('received_at', { ascending: true });
+      if (error) throw error;
+
+      return (data ?? [])
+        .map((row) => {
+          const r = row as Record<string, unknown>;
+          const batch = firstRelation(r.batch as { batch_number?: string } | null);
+          const remaining = Number(r.quantity_remaining);
+          if (!Number.isFinite(remaining)) return null;
+          return {
+            lot_id: r.id as string,
+            variant_id: r.variant_id as string,
+            warehouse_location_id: r.warehouse_location_id as string,
+            batch_number: batch?.batch_number ?? '—',
+            expiration_date: (r.expiration_date as string | null) ?? null,
+            quantity_remaining: Math.max(0, remaining),
+          } satisfies RebateInspectLotOption;
+        })
+        .filter(Boolean) as RebateInspectLotOption[];
+    },
+  });
+
+  useEffect(() => {
+    if (!open || warehouseLots.length === 0) return;
+    setItems((prev) =>
+      prev.map((item) => {
+        const options = warehouseLots.filter(
+          (lot) =>
+            lot.variant_id === item.variant_id &&
+            lot.warehouse_location_id === item.warehouse_location_id
+        );
+        if (options.length !== 1) return item;
+        return {
+          ...item,
+          splits: item.splits.map((split) =>
+            split.destination_lot_id ? split : { ...split, destination_lot_id: options[0].lot_id }
+          ),
+        };
+      })
     );
-  };
+  }, [open, warehouseLots]);
 
-  const setAllGood = (line: RebateReturnInspectLine) => {
-    updateLine(line.rebate_line_id, { qty_good: line.disputed_quantity, qty_damaged: 0 });
-  };
-
-  const setAllDamaged = (line: RebateReturnInspectLine) => {
-    updateLine(line.rebate_line_id, { qty_good: 0, qty_damaged: line.disputed_quantity });
-  };
+  const validationError = useMemo(() => getRebateInspectValidationError(items), [items]);
 
   const submit = async () => {
     if (validationError) {
       toast({ variant: 'destructive', title: 'Invalid inspection', description: validationError });
       return;
     }
+
+    const lines = buildRebateInspectPayload(items);
+    if (lines.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Nothing to receive',
+        description: 'Enter good or damaged quantities for at least one distribution row.',
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
       const { data, error } = await supabase.rpc('receive_key_account_rebate_returns', {
         p_fulfillment_po_id: fulfillmentPoId,
-        p_lines: lines.map((l) => ({
-          rebate_line_id: l.rebate_line_id,
-          qty_good: l.qty_good,
-          qty_damaged: l.qty_damaged,
-        })),
+        p_lines: lines,
         p_notes: notes.trim() || null,
       });
       if (error) throw error;
@@ -217,7 +299,7 @@ export function RebateReceiveReturnsDialog({
 
       toast({
         title: 'Returns processed',
-        description: 'Good units restocked; damaged units logged to disposal.',
+        description: 'Good units restocked to selected batches; damaged units logged to disposal.',
       });
       onOpenChange(false);
       onSuccess?.();
@@ -233,125 +315,25 @@ export function RebateReceiveReturnsDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Inspect returned items</DialogTitle>
-          <DialogDescription>
-            For each disputed line, split quantity between good condition (restock) and damaged (disposal).
-            Good stock returns to the original ship-from warehouse; damaged is recorded in disposal only.
-          </DialogDescription>
-        </DialogHeader>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-10 text-muted-foreground">
-            <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading…
-          </div>
-        ) : alreadyReceived ? (
-          <p className="text-sm text-muted-foreground py-4">
-            Returns for this rebate were already received and cannot be processed again.
-          </p>
-        ) : lines.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4">No disputed lines to inspect.</p>
-        ) : (
-          <div className="flex-1 min-h-0 overflow-auto space-y-4">
-            <div className="rounded-md border overflow-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Warehouse</TableHead>
-                    <TableHead className="text-right">Disputed</TableHead>
-                    <TableHead className="text-right w-24">Good</TableHead>
-                    <TableHead className="text-right w-24">Damaged</TableHead>
-                    <TableHead className="text-right">Quick</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {lines.map((l) => (
-                    <TableRow key={l.rebate_line_id}>
-                      <TableCell>
-                        <div className="font-medium">{l.brand_name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {l.variant_name} ({l.variant_type})
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{l.warehouse_location_name}</TableCell>
-                      <TableCell className="text-right font-semibold">{l.disputed_quantity}</TableCell>
-                      <TableCell className="text-right">
-                        <Input
-                          type="number"
-                          min={0}
-                          max={l.disputed_quantity}
-                          className="w-20 ml-auto text-right"
-                          value={l.qty_good}
-                          onChange={(e) =>
-                            updateLine(l.rebate_line_id, {
-                              qty_good: Math.max(0, parseInt(e.target.value, 10) || 0),
-                            })
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Input
-                          type="number"
-                          min={0}
-                          max={l.disputed_quantity}
-                          className="w-20 ml-auto text-right"
-                          value={l.qty_damaged}
-                          onChange={(e) =>
-                            updateLine(l.rebate_line_id, {
-                              qty_damaged: Math.max(0, parseInt(e.target.value, 10) || 0),
-                            })
-                          }
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex flex-col gap-1 items-end">
-                          <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => setAllGood(l)}>
-                            All good
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-destructive"
-                            onClick={() => setAllDamaged(l)}
-                          >
-                            All damaged
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-            <div className="space-y-2">
-              <Label>Notes (optional)</Label>
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Inspection notes…"
-                rows={2}
-              />
-            </div>
-          </div>
-        )}
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => void submit()}
-            disabled={loading || submitting || alreadyReceived || lines.length === 0 || !!validationError}
-          >
-            {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Confirm receive
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <RebateReturnInspectDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      items={items}
+      onItemsChange={setItems}
+      warehouseLots={warehouseLots}
+      loadingLots={loadingLots}
+      formatLotLabel={formatRebateLotLabel}
+      notes={notes}
+      onNotesChange={setNotes}
+      validationError={validationError}
+      submitting={submitting}
+      onConfirm={() => void submit()}
+      initialLoading={loading}
+      blockedMessage={
+        alreadyReceived
+          ? 'Returns for this rebate were already received and cannot be processed again.'
+          : null
+      }
+    />
   );
 }

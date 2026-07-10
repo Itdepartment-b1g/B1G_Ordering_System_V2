@@ -41,7 +41,7 @@ export type KeyAccountWorkflowStatus =
   | "fulfilled"
   | "delivered";
 
-export type CompanyAccountType = "Standard Accounts" | "Key Accounts";
+export type CompanyAccountType = "Standard Accounts" | "Key Accounts" | "Warehouse";
 
 export type KeyAccountClientStatus = "active" | "inactive" | "suspended";
 export type TransactionType =
@@ -56,7 +56,10 @@ export type TransactionType =
   | 'warehouse_allocate_to_sub'
   | 'warehouse_return_from_sub'
   | 'rebate_return_in'
-  | 'rebate_return_disposed';
+  | 'rebate_return_disposed'
+  | 'warehouse_stock_receive'
+  | 'warehouse_return_in'
+  | 'warehouse_return_disposed';
 export type FinancialTransactionType = 'revenue' | 'expense' | 'commission' | 'refund';
 export type FinancialTransactionStatus = 'pending' | 'completed' | 'cancelled';
 export type StockRequestStatus = 'pending' | 'approved_by_leader' | 'approved_by_admin' | 'rejected' | 'fulfilled';
@@ -100,7 +103,7 @@ export interface Company {
   super_admin_email: string;
   role: string; // Default: 'Super Admin'
   status: UserStatus;
-  company_account_type: "Key Accounts" | "Standard Accounts";
+  company_account_type: CompanyAccountType;
   team_leader_allowed_pricing?: PricingColumn[];
   mobile_sales_allowed_pricing?: PricingColumn[];
   created_at: string;
@@ -583,6 +586,167 @@ export interface InventoryTransaction {
   created_at: string;
 }
 
+export type InventoryBatchSourceType =
+  | 'opening_balance'
+  | 'stock_request_receive'
+  | 'adjustment_in';
+
+export type InventoryBatchStatus = 'partial' | 'complete';
+
+export type InventoryBatchMovementType =
+  | 'receive'
+  | 'allocate_out'
+  | 'allocate_in'
+  | 'return_out'
+  | 'return_in'
+  | 'fulfill_out'
+  | 'adjustment_in'
+  | 'adjustment_out'
+  | 'opening_balance'
+  | 'rebate_return_in';
+
+export interface InventoryBatch {
+  id: string;
+  company_id: string;
+  batch_number: string;
+  source_type: InventoryBatchSourceType;
+  stock_request_id?: string | null;
+  status: InventoryBatchStatus;
+  received_at: string;
+  total_amount: number;
+  notes?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryBatchLot {
+  id: string;
+  company_id: string;
+  batch_id: string;
+  variant_id: string;
+  warehouse_location_id: string;
+  quantity_received: number;
+  quantity_remaining: number;
+  received_at: string;
+  manufactured_date?: string | null;
+  expiration_date?: string | null;
+  unit_cost?: number | null;
+  line_amount?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryBatchMovement {
+  id: string;
+  company_id: string;
+  lot_id: string;
+  batch_id: string;
+  variant_id: string;
+  warehouse_location_id: string;
+  movement_type: InventoryBatchMovementType;
+  quantity: number;
+  reference_type?: string | null;
+  reference_id?: string | null;
+  from_location_id?: string | null;
+  to_location_id?: string | null;
+  performed_by?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+/** Lot row with batch metadata for aging reports */
+export type InventoryBatchLotWithBatch = InventoryBatchLot & {
+  batch_number: string;
+  source_type: InventoryBatchSourceType;
+  days_in_warehouse: number;
+};
+
+export type WarehouseStockRequestStatus =
+  | 'pending_receive'
+  | 'partially_received'
+  | 'fully_received'
+  | 'cancelled';
+
+export interface WarehouseStockRequest {
+  id: string;
+  company_id: string;
+  request_number: string;
+  brand_id: string;
+  status: WarehouseStockRequestStatus;
+  expected_delivery_date?: string | null;
+  notes?: string | null;
+  created_by?: string | null;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancellation_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WarehouseStockRequestItem {
+  id: string;
+  request_id: string;
+  variant_id: string;
+  ordered_quantity: number;
+  received_quantity: number;
+  created_at: string;
+}
+
+export interface WarehouseStockRequestReceive {
+  id: string;
+  request_id: string;
+  batch_id: string;
+  received_by?: string | null;
+  received_at: string;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface WarehouseStockAdjustment {
+  id: string;
+  company_id: string;
+  warehouse_location_id: string;
+  variant_id: string;
+  direction: 'in' | 'out';
+  quantity: number;
+  reason: string;
+  notes?: string | null;
+  batch_id?: string | null;
+  lot_id?: string | null;
+  performed_by?: string | null;
+  created_at: string;
+}
+
+export interface PhysicalCountSession {
+  id: string;
+  company_id: string;
+  warehouse_location_id: string;
+  batch_id: string;
+  performed_by?: string | null;
+  counted_at: string;
+  signature_url: string;
+  signature_path: string;
+  notes?: string | null;
+  status: 'submitted';
+  created_at: string;
+}
+
+export interface PhysicalCountLineRecord {
+  id: string;
+  session_id: string;
+  lot_id?: string | null;
+  variant_id: string;
+  brand_name: string;
+  variant_name: string;
+  system_qty_snapshot: number;
+  physical_qty: number;
+  variance: number;
+  adjustment_id?: string | null;
+  expiration_date?: string | null;
+  created_at: string;
+}
+
 export interface AllocationHistory {
   id: string;
   company_id: string;
@@ -590,6 +754,16 @@ export interface AllocationHistory {
   allocated_by: string;
   brand_id: string | null;
   allocation_type: "main_to_leader" | "leader_to_agent";
+  created_at: string;
+}
+
+export interface WarehouseAllocationHistory {
+  id: string;
+  company_id: string;
+  location_id: string;
+  performed_by: string;
+  brand_id: string | null;
+  notes: string | null;
   created_at: string;
 }
 
@@ -609,6 +783,17 @@ export interface RemittanceLog {
   signature_path?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface CashDepositSlipRevision {
+  id: string;
+  company_id: string;
+  cash_deposit_id: string;
+  previous_slip_url: string;
+  new_slip_url: string;
+  reason: string;
+  changed_by: string;
+  created_at: string;
 }
 
 export interface FinancialTransaction {
@@ -1044,14 +1229,69 @@ export interface Database {
         Insert: Omit<RemittanceLog, "id" | "created_at" | "updated_at">;
         Update: Partial<Omit<RemittanceLog, "id" | "created_at">>;
       };
+      cash_deposit_slip_revisions: {
+        Row: CashDepositSlipRevision;
+        Insert: Omit<CashDepositSlipRevision, "id" | "created_at">;
+        Update: never;
+      };
       inventory_transactions: {
         Row: InventoryTransaction;
         Insert: Omit<InventoryTransaction, "id" | "created_at">;
         Update: never;
       };
+      inventory_batches: {
+        Row: InventoryBatch;
+        Insert: Omit<InventoryBatch, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<InventoryBatch, "id" | "created_at">>;
+      };
+      inventory_batch_lots: {
+        Row: InventoryBatchLot;
+        Insert: Omit<InventoryBatchLot, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<InventoryBatchLot, "id" | "created_at">>;
+      };
+      inventory_batch_movements: {
+        Row: InventoryBatchMovement;
+        Insert: Omit<InventoryBatchMovement, "id" | "created_at">;
+        Update: never;
+      };
+      warehouse_stock_requests: {
+        Row: WarehouseStockRequest;
+        Insert: Omit<WarehouseStockRequest, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<WarehouseStockRequest, "id" | "created_at">>;
+      };
+      warehouse_stock_request_items: {
+        Row: WarehouseStockRequestItem;
+        Insert: Omit<WarehouseStockRequestItem, "id" | "created_at">;
+        Update: Partial<Omit<WarehouseStockRequestItem, "id" | "created_at">>;
+      };
+      warehouse_stock_request_receives: {
+        Row: WarehouseStockRequestReceive;
+        Insert: Omit<WarehouseStockRequestReceive, "id" | "created_at">;
+        Update: never;
+      };
+      warehouse_stock_adjustments: {
+        Row: WarehouseStockAdjustment;
+        Insert: Omit<WarehouseStockAdjustment, "id" | "created_at">;
+        Update: never;
+      };
+      physical_count_sessions: {
+        Row: PhysicalCountSession;
+        Insert: Omit<PhysicalCountSession, "id" | "created_at">;
+        Update: never;
+      };
+      physical_count_lines: {
+        Row: PhysicalCountLineRecord;
+        Insert: Omit<PhysicalCountLineRecord, "id" | "created_at">;
+        Update: never;
+      };
       allocation_history: {
         Row: AllocationHistory;
         Insert: Omit<AllocationHistory, "id" | "created_at">;
+        Update: never;
+      };
+      warehouse_allocation_history: {
+        Row: WarehouseAllocationHistory;
+        Insert: Omit<WarehouseAllocationHistory, "id" | "created_at">;
         Update: never;
       };
       financial_transactions: {
@@ -1219,6 +1459,61 @@ export interface Database {
       get_available_stock: {
         Args: { p_variant_id: string; p_company_id: string };
         Returns: number;
+      };
+      replace_cash_deposit_slip: {
+        Args: {
+          p_deposit_id: string;
+          p_new_slip_url: string;
+          p_reason: string;
+        };
+        Returns: FunctionResponse<{ revision_id: string }>;
+      };
+      get_inventory_company_id_for_tenant: {
+        Args: { p_tenant_company_id: string };
+        Returns: string | null;
+      };
+      get_physical_count_tenant_context: {
+        Args: { p_tenant_company_id: string };
+        Returns: {
+          success?: boolean;
+          error?: string;
+          inventory_company_id?: string | null;
+          has_warehouse_link?: boolean;
+        };
+      };
+      get_warehouse_locations_for_tenant: {
+        Args: { p_tenant_company_id: string };
+        Returns: {
+          id: string;
+          name: string;
+          is_main: boolean;
+        }[];
+      };
+      get_my_inventory_company_id: {
+        Args: Record<string, never>;
+        Returns: string | null;
+      };
+      submit_physical_count: {
+        Args: {
+          p_warehouse_location_id: string;
+          p_batch_id: string;
+          p_lines: {
+            variant_id: string;
+            lot_id?: string | null;
+            physical_qty: number;
+            system_qty_snapshot: number;
+            brand_name?: string;
+            variant_name?: string;
+            expiration_date?: string | null;
+          }[];
+          p_signature_url: string;
+          p_signature_path: string;
+          p_notes?: string | null;
+          p_performed_by?: string | null;
+        };
+        Returns: FunctionResponse<{
+          session_id: string;
+        }>;
       };
     };
   };

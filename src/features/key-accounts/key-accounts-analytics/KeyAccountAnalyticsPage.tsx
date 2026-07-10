@@ -52,18 +52,20 @@ import {
 } from '@/lib/dateRangePresets';
 import { isRebateDerivedPurchaseOrder } from '../rebates/keyAccountRebateShared';
 import {
-  allocateRebateDeductionAcrossSplit,
+  buildKeyAccountProductAnalyticsRows,
   buildRebateCreditDeductionByPurchaseOrderId,
   buildRebateDeductionByPoItemId,
+  buildRebateSwapByPoItemId,
   firstRelation,
   getKeyAccountProductWorkflowBucket,
-  getKeyAccountProductLineAnalyticsRevenue,
   isKeyAccountAnalyticsEligibleOrder,
   isDeliveredKeyAccountOrder,
   isRebateFulfillmentReplacementOrder,
+  isKeyAccountCommercialProductAnalyticsOrder,
   isKeyAccountPartialDeliveredOrder,
-  isKeyAccountProductAnalyticsOrder,
-  splitKeyAccountProductLineItem,
+  normalizeRebateReplacements,
+  rebateResolutionHasReplacement,
+  type KeyAccountProductAnalyticsRow,
   type KeyAccountRebateAnalyticsRecord,
   warehouseTransferLocationStatusKey,
   warehouseTransferReservationKey,
@@ -137,28 +139,6 @@ interface WarehouseTransferLocationStatusRow {
   status: string;
 }
 
-interface ProductAnalyticsRow {
-  key: string;
-  brand: string;
-  variant: string;
-  quantity: number;
-  grossRevenue: number;
-  rebatedRevenue: number;
-  revenue: number;
-  deliveredOrders: number;
-  deliveredQuantity: number;
-  grossDeliveredRevenue: number;
-  grossPendingRevenue: number;
-  rebatedDeliveredRevenue: number;
-  rebatedPendingRevenue: number;
-  deliveredRevenue: number;
-  pendingOrders: number;
-  pendingQuantity: number;
-  pendingRevenue: number;
-  orderCount: number;
-  clientCount: number;
-}
-
 function formatCurrency(value: number) {
   return `₱${Math.round(value).toLocaleString()}`;
 }
@@ -182,7 +162,7 @@ export default function KeyAccountAnalyticsPage() {
   const [selectedBrand, setSelectedBrand] = useState('all');
   const [productTablePage, setProductTablePage] = useState(1);
   const [productExporting, setProductExporting] = useState(false);
-  const [selectedProductRevenue, setSelectedProductRevenue] = useState<ProductAnalyticsRow | null>(null);
+  const [selectedProductRevenue, setSelectedProductRevenue] = useState<KeyAccountProductAnalyticsRow | null>(null);
   const [productRevenueDialogOpen, setProductRevenueDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -237,7 +217,7 @@ export default function KeyAccountAnalyticsPage() {
 
       const nextOrders = (ordersResult.data || []) as KeyAccountOrder[];
       const productAnalyticsOrderIds = nextOrders
-        .filter(isKeyAccountProductAnalyticsOrder)
+        .filter(isKeyAccountCommercialProductAnalyticsOrder)
         .map((order) => order.id);
       let nextItems: PurchaseOrderItemRow[] = [];
 
@@ -264,34 +244,6 @@ export default function KeyAccountAnalyticsPage() {
         nextItems = (itemData || []) as PurchaseOrderItemRow[];
       }
 
-      const partialDeliveredIds = nextOrders
-        .filter(isKeyAccountPartialDeliveredOrder)
-        .map((order) => order.id);
-      let nextReservations: WarehouseTransferReservationRow[] = [];
-      let nextLocationStatuses: WarehouseTransferLocationStatusRow[] = [];
-
-      if (partialDeliveredIds.length > 0) {
-        const [reservationsResult, locationStatusResult] = await Promise.all([
-          supabase
-            .from('warehouse_transfer_reservations')
-            .select(
-              'purchase_order_id, warehouse_location_id, variant_id, quantity_reserved, quantity_fulfilled'
-            )
-            .in('purchase_order_id', partialDeliveredIds),
-          supabase
-            .from('warehouse_transfer_location_status')
-            .select('purchase_order_id, warehouse_location_id, status')
-            .in('purchase_order_id', partialDeliveredIds),
-        ]);
-
-        if (reservationsResult.error) throw reservationsResult.error;
-        if (locationStatusResult.error) throw locationStatusResult.error;
-
-        nextReservations = (reservationsResult.data || []) as WarehouseTransferReservationRow[];
-        nextLocationStatuses = (locationStatusResult.data ||
-          []) as WarehouseTransferLocationStatusRow[];
-      }
-
       const sourcePoIdsForRebates = nextOrders
         .filter((order) => !isRebateDerivedPurchaseOrder(order))
         .map((order) => order.id);
@@ -307,13 +259,64 @@ export default function KeyAccountAnalyticsPage() {
             status,
             credit_amount,
             disputed_total,
-            lines:key_account_po_rebate_lines(purchase_order_item_id, line_total)
+            fulfillment_purchase_order_id,
+            lines:key_account_po_rebate_lines(
+              purchase_order_item_id,
+              line_total,
+              disputed_quantity
+            ),
+            replacements:key_account_po_rebate_replacements(
+              variant_id,
+              warehouse_location_id,
+              quantity,
+              total_price,
+              variants (
+                name,
+                brands (name)
+              )
+            )
           `)
           .in('purchase_order_id', sourcePoIdsForRebates)
           .in('status', ['submitted', 'approved', 'executed']);
 
         if (rebateError) throw rebateError;
         nextRebates = (rebateData || []) as KeyAccountRebateAnalyticsRecord[];
+      }
+
+      const reservationPoIds = new Set(
+        nextOrders.filter(isKeyAccountPartialDeliveredOrder).map((order) => order.id)
+      );
+      nextRebates.forEach((rebate) => {
+        if (!rebateResolutionHasReplacement(rebate.resolution_type)) return;
+        if (rebate.fulfillment_purchase_order_id) {
+          reservationPoIds.add(rebate.fulfillment_purchase_order_id);
+        }
+      });
+
+      let nextReservations: WarehouseTransferReservationRow[] = [];
+      let nextLocationStatuses: WarehouseTransferLocationStatusRow[] = [];
+
+      if (reservationPoIds.size > 0) {
+        const poIds = Array.from(reservationPoIds);
+        const [reservationsResult, locationStatusResult] = await Promise.all([
+          supabase
+            .from('warehouse_transfer_reservations')
+            .select(
+              'purchase_order_id, warehouse_location_id, variant_id, quantity_reserved, quantity_fulfilled'
+            )
+            .in('purchase_order_id', poIds),
+          supabase
+            .from('warehouse_transfer_location_status')
+            .select('purchase_order_id, warehouse_location_id, status')
+            .in('purchase_order_id', poIds),
+        ]);
+
+        if (reservationsResult.error) throw reservationsResult.error;
+        if (locationStatusResult.error) throw locationStatusResult.error;
+
+        nextReservations = (reservationsResult.data || []) as WarehouseTransferReservationRow[];
+        nextLocationStatuses = (locationStatusResult.data ||
+          []) as WarehouseTransferLocationStatusRow[];
       }
 
       setOrders(nextOrders);
@@ -365,7 +368,7 @@ export default function KeyAccountAnalyticsPage() {
   const dateFilteredOrders = useMemo(
     () =>
       orders.filter((order) =>
-        isDateInRange(order.order_date, orderDateRange.start, orderDateRange.end)
+        isDateInRange(new Date(order.order_date), orderDateRange.start, orderDateRange.end)
       ),
     [orders, orderDateRange]
   );
@@ -381,6 +384,8 @@ export default function KeyAccountAnalyticsPage() {
     [filteredOrders]
   );
 
+  const dateFilteredOrderIds = filteredOrderIds;
+
   const filteredItems = useMemo(
     () => items.filter((item) => filteredOrderIds.has(item.purchase_order_id)),
     [items, filteredOrderIds]
@@ -391,7 +396,7 @@ export default function KeyAccountAnalyticsPage() {
   const deliveredOrders = useMemo(() => productOrders.filter(isDeliveredKeyAccountOrder), [productOrders]);
 
   const productAnalyticsOrders = useMemo(
-    () => productOrders.filter(isKeyAccountProductAnalyticsOrder),
+    () => productOrders.filter(isKeyAccountCommercialProductAnalyticsOrder),
     [productOrders]
   );
 
@@ -403,6 +408,16 @@ export default function KeyAccountAnalyticsPage() {
   const rebateDeductionByPoItemId = useMemo(
     () => buildRebateDeductionByPoItemId(rebates),
     [rebates]
+  );
+
+  const rebateSwapByPoItemId = useMemo(
+    () => buildRebateSwapByPoItemId(rebates),
+    [rebates]
+  );
+
+  const allOrdersById = useMemo(
+    () => new Map(orders.map((order) => [order.id, order])),
+    [orders]
   );
 
   const rebateCreditByPurchaseOrderId = useMemo(
@@ -450,127 +465,32 @@ export default function KeyAccountAnalyticsPage() {
     return map;
   }, [transferLocationStatuses]);
 
-  const productRows = useMemo(() => {
-    const productMap = new Map<string, {
-      brand: string;
-      variant: string;
-      deliveredOrders: number;
-      deliveredQuantity: number;
-      grossDeliveredRevenue: number;
-      grossPendingRevenue: number;
-      rebatedDeliveredRevenue: number;
-      rebatedPendingRevenue: number;
-      pendingOrders: number;
-      pendingQuantity: number;
-      orderIds: Set<string>;
-      clientIds: Set<string>;
-    }>();
-
-    filteredItems.forEach((item) => {
-      const order = productAnalyticsOrderById.get(item.purchase_order_id);
-      if (!order) return;
-
-      const rawLineRevenue = Number(
-        item.total_price ?? Number(item.quantity || 0) * Number(item.unit_price || 0)
-      );
-      const lineRevenue = getKeyAccountProductLineAnalyticsRevenue(
-        order,
-        rawLineRevenue,
-        poLineSubtotalByOrderId.get(item.purchase_order_id) || rawLineRevenue
-      );
-
-      const split = splitKeyAccountProductLineItem({
-        workflowStatus: order.workflow_status,
-        itemQuantity: Number(item.quantity || 0),
-        lineRevenue,
-        variantId: item.variant_id,
-        warehouseLocationId: item.warehouse_location_id,
-        orderWarehouseLocationId: order.warehouse_location_id,
-        purchaseOrderId: item.purchase_order_id,
-        reservationByKey,
-        locationStatusByKey,
-      });
-      if (!split) return;
-
-      const lineRebateDeduction = Math.min(
-        rebateDeductionByPoItemId.get(item.id) || 0,
-        split.deliveredRevenue + split.pendingRevenue
-      );
-      const rebateAllocation = allocateRebateDeductionAcrossSplit(split, lineRebateDeduction);
-
-      const variant = firstRelation(item.variants);
-      const brand = firstRelation(variant?.brands)?.name || 'Unknown Brand';
-      const variantName = variant?.name || 'Unknown Variant';
-      const key = `${brand}::${variantName}`;
-      const existing = productMap.get(key) || {
-        brand,
-        variant: variantName,
-        deliveredOrders: 0,
-        deliveredQuantity: 0,
-        grossDeliveredRevenue: 0,
-        grossPendingRevenue: 0,
-        rebatedDeliveredRevenue: 0,
-        rebatedPendingRevenue: 0,
-        pendingOrders: 0,
-        pendingQuantity: 0,
-        orderIds: new Set<string>(),
-        clientIds: new Set<string>(),
-      };
-
-      existing.deliveredOrders += split.deliveredLineItems;
-      existing.deliveredQuantity += split.deliveredQuantity;
-      existing.grossDeliveredRevenue += split.deliveredRevenue;
-      existing.grossPendingRevenue += split.pendingRevenue;
-      existing.rebatedDeliveredRevenue += rebateAllocation.delivered;
-      existing.rebatedPendingRevenue += rebateAllocation.pending;
-      existing.pendingOrders += split.pendingLineItems;
-      existing.pendingQuantity += split.pendingQuantity;
-
-      existing.orderIds.add(item.purchase_order_id);
-      if (order.key_account_client_id) existing.clientIds.add(order.key_account_client_id);
-      productMap.set(key, existing);
+  const { productRows, productOrderRevenueById } = useMemo(() => {
+    const result = buildKeyAccountProductAnalyticsRows({
+      items: filteredItems,
+      productAnalyticsOrderById,
+      orderById: allOrdersById,
+      dateFilteredOrderIds,
+      poLineSubtotalByOrderId,
+      rebateDeductionByPoItemId,
+      rebateSwapByPoItemId,
+      rebates,
+      reservationByKey,
+      locationStatusByKey,
     });
-
-    return Array.from(productMap.entries())
-      .map(([key, value]) => {
-        const quantity = value.deliveredQuantity + value.pendingQuantity;
-        const grossDeliveredRevenue = value.grossDeliveredRevenue;
-        const grossPendingRevenue = value.grossPendingRevenue;
-        const rebatedDeliveredRevenue = value.rebatedDeliveredRevenue;
-        const rebatedPendingRevenue = value.rebatedPendingRevenue;
-        const grossRevenue = grossDeliveredRevenue + grossPendingRevenue;
-        const rebatedRevenue = rebatedDeliveredRevenue + rebatedPendingRevenue;
-        const deliveredRevenue = grossDeliveredRevenue - rebatedDeliveredRevenue;
-        const pendingRevenue = grossPendingRevenue - rebatedPendingRevenue;
-        const revenue = deliveredRevenue + pendingRevenue;
-        return {
-          key,
-          brand: value.brand,
-          variant: value.variant,
-          quantity,
-          grossRevenue,
-          rebatedRevenue,
-          revenue,
-          deliveredOrders: value.deliveredOrders,
-          deliveredQuantity: value.deliveredQuantity,
-          grossDeliveredRevenue,
-          grossPendingRevenue,
-          rebatedDeliveredRevenue,
-          rebatedPendingRevenue,
-          deliveredRevenue,
-          pendingOrders: value.pendingOrders,
-          pendingQuantity: value.pendingQuantity,
-          pendingRevenue,
-          orderCount: value.orderIds.size,
-          clientCount: value.clientIds.size,
-        };
-      })
-      .sort((a, b) => b.revenue - a.revenue);
+    return {
+      productRows: result.rows,
+      productOrderRevenueById: result.orderRevenueById,
+    };
   }, [
     productAnalyticsOrderById,
     filteredItems,
+    allOrdersById,
+    dateFilteredOrderIds,
     poLineSubtotalByOrderId,
     rebateDeductionByPoItemId,
+    rebateSwapByPoItemId,
+    rebates,
     reservationByKey,
     locationStatusByKey,
   ]);
@@ -587,8 +507,18 @@ export default function KeyAccountAnalyticsPage() {
       const brand = firstRelation(variant?.brands)?.name;
       if (brand) brandSet.add(brand);
     });
+    const productAnalyticsPoIds = new Set(productAnalyticsOrders.map((order) => order.id));
+    rebates.forEach((rebate) => {
+      if (!productAnalyticsPoIds.has(rebate.purchase_order_id)) return;
+      if (!rebateResolutionHasReplacement(rebate.resolution_type)) return;
+      normalizeRebateReplacements(rebate.replacements).forEach((replacement) => {
+        const variant = firstRelation(replacement.variants);
+        const brand = firstRelation(variant?.brands)?.name;
+        if (brand) brandSet.add(brand);
+      });
+    });
     return Array.from(brandSet).sort();
-  }, [filteredItems]);
+  }, [filteredItems, rebates, productAnalyticsOrders]);
 
   const visibleProductRows = useMemo(
     () => productRows.filter((row) => selectedBrand === 'all' || row.brand === selectedBrand),
@@ -610,6 +540,10 @@ export default function KeyAccountAnalyticsPage() {
     const deliveredRevenue = productRows.reduce((sum, row) => sum + row.deliveredRevenue, 0);
     const pendingRevenue = productRows.reduce((sum, row) => sum + row.pendingRevenue, 0);
     const totalRevenue = deliveredRevenue + pendingRevenue;
+    const poTableGrossTotal = filteredOrders.reduce(
+      (sum, order) => sum + Math.max(0, Number(order.total_amount) || 0),
+      0
+    );
     const deliveredClients = new Set(deliveredOrders.map((order) => order.key_account_client_id).filter(Boolean));
     const cardDeliveredOrders = dateFilteredOrders.filter(isDeliveredKeyAccountOrder);
     const pendingWorkflowOrders = dateFilteredOrders.filter(
@@ -623,6 +557,7 @@ export default function KeyAccountAnalyticsPage() {
       deliveredRevenue,
       pendingRevenue,
       totalRevenue,
+      poTableGrossTotal,
       totalOrders: dateFilteredOrders.length,
       deliveredOrders: cardDeliveredOrders.length,
       pendingWorkflowOrders,
@@ -631,7 +566,7 @@ export default function KeyAccountAnalyticsPage() {
       clients: deliveredClients.size,
       avgOrderValue: deliveredOrders.length > 0 ? deliveredRevenue / deliveredOrders.length : 0,
     };
-  }, [dateFilteredOrders, deliveredOrders, productRows]);
+  }, [dateFilteredOrders, deliveredOrders, filteredOrders, productRows]);
 
   const productDateRangeLabel = dateRangeLabel;
 
@@ -770,6 +705,12 @@ export default function KeyAccountAnalyticsPage() {
                     </span>
                   </p>
                 )}
+                {Math.abs(summary.poTableGrossTotal - summary.totalRevenue) > 0.5 &&
+                  Math.abs(summary.poTableGrossTotal - summary.grossRevenue) > 0.5 && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      PO table gross (sum of PO totals): {formatCurrency(summary.poTableGrossTotal)}
+                    </p>
+                  )}
               </CardContent>
             </Card>
             <Card>
@@ -856,10 +797,10 @@ export default function KeyAccountAnalyticsPage() {
                   <div>
                     <CardTitle>Top Products by Revenue</CardTitle>
                     <CardDescription>
-                      Net revenue after rebates — {productDateRangeLabel}. Money/credit rebates reduce
-                      source PO line revenue; change-item replacements at the same value do not deduct
-                      (no money out). Free replacement POs (₱0 due) are excluded; top-up replacements
-                      count only the amount due.
+                      Net revenue after rebates — {productDateRangeLabel}. Change-item rebates show the
+                      replacement SKU instead of the disputed line (same value keeps total revenue; top-up
+                      adds the client payment to the replacement value). Money/credit rebates reduce source
+                      PO line revenue.
                     </CardDescription>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
@@ -998,8 +939,8 @@ export default function KeyAccountAnalyticsPage() {
                       </p>
                       <p>
                         <span className="font-medium text-foreground">Rebated</span> — money/credit taken
-                        off the source PO (submitted, approved, or executed rebates). Change-item
-                        replacements at the same value show ₱0 rebated.
+                        off the source PO. Change-item rebates show the replacement SKU instead of the
+                        disputed line (same value keeps total revenue; top-up adds the extra client payment).
                       </p>
                       <p>
                         <span className="font-medium text-foreground">Net revenue</span> — gross line
@@ -1199,7 +1140,7 @@ export default function KeyAccountAnalyticsPage() {
                 formatCurrency={formatCurrency}
                 dateRangeFilter={dateRangeFilter}
                 onDateRangeFilterChange={setDateRangeFilter}
-                rebateCreditByPurchaseOrderId={rebateCreditByPurchaseOrderId}
+                orderRevenueById={productOrderRevenueById}
                 rebateDeductionByPoItemId={rebateDeductionByPoItemId}
                 poLineSubtotalByOrderId={poLineSubtotalByOrderId}
                 reservationByKey={reservationByKey}
@@ -1218,7 +1159,7 @@ export default function KeyAccountAnalyticsPage() {
                 usePageDateFilter
                 dateRangeFilter={dateRangeFilter}
                 onDateRangeFilterChange={setDateRangeFilter}
-                rebateCreditByPurchaseOrderId={rebateCreditByPurchaseOrderId}
+                orderRevenueById={productOrderRevenueById}
               />
             </TabsContent>
 

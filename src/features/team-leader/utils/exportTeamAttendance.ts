@@ -1,3 +1,4 @@
+import { downloadAttendanceTimeInOutExcel } from '@/lib/attendanceTimeInOutReportExcel';
 import {
   downloadBusinessHoursReportExcel,
   type BusinessHoursReportMeta,
@@ -103,8 +104,8 @@ export async function fetchTeamAttendanceForExport(
   return all;
 }
 
-/** Fetch rows for the current filters, apply name/email filters, and download Excel. Returns row count. */
-export async function exportFilteredTeamAttendanceExcel(
+/** Fetch rows for the current filters, apply name/email filters, and download computed hours report. */
+export async function exportFilteredTeamAttendanceComputedHoursExcel(
   filters: TeamAttendanceExportFilters,
   fileNameDate = new Date().toISOString().split('T')[0]
 ): Promise<number> {
@@ -115,10 +116,26 @@ export async function exportFilteredTeamAttendanceExcel(
 
   if (rows.length === 0) return 0;
 
-  downloadBusinessHoursReportExcel(rows, {
+  await downloadBusinessHoursReportExcel(rows, {
     businessDateFrom: filters.businessDateFrom.trim(),
     businessDateTo: filters.businessDateTo.trim(),
   }, fileNameDate);
+  return rows.length;
+}
+
+/** Fetch rows for the current filters, apply name/email filters, and download time in / time out report. */
+export async function exportFilteredTeamAttendanceTimeInOutExcel(
+  filters: TeamAttendanceExportFilters,
+  fileNameDate = new Date().toISOString().split('T')[0]
+): Promise<number> {
+  if (filters.teamAgentIds.length === 0) return 0;
+
+  let rows = await fetchTeamAttendanceForExport(filters);
+  rows = filterTeamAttendanceExportRows(rows, filters);
+
+  if (rows.length === 0) return 0;
+
+  await downloadAttendanceTimeInOutExcel(rows, fileNameDate);
   return rows.length;
 }
 

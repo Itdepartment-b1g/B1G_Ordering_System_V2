@@ -36,7 +36,10 @@ import {
   Plus,
   Package2Icon,
   RotateCcw,
-  PackageX
+  PackageX,
+  Scale,
+  Layers,
+  ClipboardCheck,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -124,7 +127,7 @@ const adminMenuItems: MenuItem[] = [
     ]
   },
 
-  { title: 'AI Analytics', url: '/analytics', icon: Brain },
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
@@ -325,6 +328,7 @@ const systemAdminMenuItems: MenuItem[] = [
 const executiveMenuItems: MenuItem[] = [
   { title: 'Executive Dashboard', url: '/executive-dashboard', icon: LayoutDashboard },
   { title: 'War Room', url: '/war-room', icon: Map },
+  { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
 
@@ -337,6 +341,7 @@ const warehouseMenuItems: MenuItem[] = [
     hasSubmenu: true,
     submenu: [
       { title: 'Purchase Orders', url: '/purchase-orders', icon: ClipboardList },
+      { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
       { title: 'Brands & Variants', url: '/brands', icon: Tag },
       { title: 'Variant Types', url: '/variant-types', icon: Tag },
     ],
@@ -347,8 +352,15 @@ const warehouseMenuItems: MenuItem[] = [
     icon: Package,
     hasSubmenu: true,
     submenu: [
+
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', icon: Building2 },
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
+      { title: 'Allocation History', url: '/inventory/allocation-history', icon: Package2Icon },
+      { title: 'Stock Requests', url: '/inventory/stock-requests', icon: ClipboardList },
+      { title: 'Stock Returns', url: '/inventory/stock-returns', icon: RotateCcw },
+      { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', icon: Scale },
+      { title: 'Batch View', url: '/inventory/batches', icon: Layers },
+      { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
       { title: 'Disposal Log', url: '/inventory/disposals', icon: PackageX },
     ],
   },
@@ -389,8 +401,10 @@ const financeMenuItems: MenuItem[] = [
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
       { title: 'Payment Settings', url: '/finance/payment-settings', icon: CreditCard },
+      { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
   },
+  { title: 'Analytics', url:'/analytics', icon: Brain },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -407,9 +421,11 @@ const accountingMenuItems: MenuItem[] = [
       { title: 'Finance Page', url: '/finance', icon: DollarSign },
       { title: 'Order List', url: '/orders', icon: ShoppingCart },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: BanknoteIcon },
+      { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
     ]
   },
-  { title: 'Product Analytics', url: '/product-analytics', icon: Package },
+
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   { title: 'System History', url: '/system-history', icon: History },
   { title: 'Profile', url: '/profile', icon: UserCircle },
 ];
@@ -476,7 +492,8 @@ const superAdminMenuItems: MenuItem[] = [
     ]
   },
   { title: 'Agent Attendance', url: '/agent-attendance-overview', icon: Calendar},
-  { title: 'AI Analytics', url: '/analytics', icon: Brain },
+  { title: 'Task Calendar', url: '/calendar', icon: Calendar },
+  { title: 'Analytics', url: '/analytics', icon: Brain },
   { title: 'War Room', url: '/war-room', icon: Map },
   {
     title: 'History',

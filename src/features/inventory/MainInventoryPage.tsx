@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/features/auth';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -10,14 +10,31 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar, Plus, Unlink, Building2, Clock } from 'lucide-react';
+import { Search, Edit, Package, ChevronRight, Users, TrendingUp, Eye, RefreshCw, Filter, Download, BarChart3, TrendingDown, AlertTriangle, CheckCircle, Trash2, RotateCcw, Loader2, Calendar, Plus, Unlink, Building2, Clock, ClipboardList, Scale } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useInventory, type Variant, type Brand } from './InventoryContext';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { InventoryImportExport } from './components/InventoryImportExport';
 import { format } from 'date-fns';
 import { usePendingMobileSalesAllocations, type PendingMobileSalesAllocation } from './requestHooks';
+import { VariantBatchLotsDialog } from './VariantBatchLotsDialog';
+import { InventoryVariantTableHeader } from './components/InventoryVariantTableHeader';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_MAIN_INVENTORY_VARIANT_SORT_DIRECTION,
+  DEFAULT_MAIN_INVENTORY_VARIANT_SORT_KEY,
+  sortMainInventoryVariants,
+  type MainInventoryVariantSortContext,
+  type MainInventoryVariantSortKey,
+} from './utils/mainInventoryVariantSorting';
 
 interface ReturnHistoryEntry {
   id: string;
@@ -40,6 +57,9 @@ export default function MainInventoryPage() {
   const { brands, setBrands, updateBrandName, updateVariant, refreshInventory } = useInventory();
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBrands, setExpandedBrands] = useState<string[]>([]);
+  const [variantSortStates, setVariantSortStates] = useState<
+    Record<string, TableSortCycleState<MainInventoryVariantSortKey>>
+  >({});
 
   // Dialog states
   const [editVariantOpen, setEditVariantOpen] = useState(false);
@@ -104,9 +124,18 @@ export default function MainInventoryPage() {
     items: PendingMobileSalesAllocation[];
   } | null>(null);
 
+  const [batchViewTarget, setBatchViewTarget] = useState<{
+    variantId: string;
+    variantName: string;
+    brandName: string;
+  } | null>(null);
+
   const isWarehouse = user?.role === 'warehouse';
+  const { hasWarehouseHubLink } = usePermissions();
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const isMainWarehouseUser = membership.isMain;
+  /** Hub-linked tenants and warehouse accounts must not edit stock inline. */
+  const isStockFieldLocked = isWarehouse || hasWarehouseHubLink;
 
   // Fetch sub-warehouse location name for display
   const { data: myLocationName } = useQuery({
@@ -122,145 +151,12 @@ export default function MainInventoryPage() {
     },
   });
 
-  const [addStockDialogOpen, setAddStockDialogOpen] = useState(false);
   const [addBrandDialogOpen, setAddBrandDialogOpen] = useState(false);
   const [warehouseBrandForm, setWarehouseBrandForm] = useState({ name: '', description: '' });
-  const [addStockBrandId, setAddStockBrandId] = useState('');
-  /** Per-variant stock inputs for warehouse batch add (variant id → qty). */
-  const [addStockQuantities, setAddStockQuantities] = useState<Record<string, number>>({});
-  const [addStockSubmitting, setAddStockSubmitting] = useState(false);
   const [warehouseBrandSubmitting, setWarehouseBrandSubmitting] = useState(false);
   const [removeStockSubmitting, setRemoveStockSubmitting] = useState(false);
 
   const { toast } = useToast();
-
-  const { data: warehouseCatalog = [] } = useQuery({
-    queryKey: ['warehouse-inventory-catalog', user?.company_id],
-    queryFn: async () => {
-      const cid = user!.company_id!;
-      // Two-step load (same idea as Brands & Variants): nested brand→variants embed can drop rows under RLS / PostgREST.
-      const { data: brandRows, error: brandsError } = await supabase
-        .from('brands')
-        .select('id, name, is_active')
-        .eq('company_id', cid)
-        .order('name');
-      if (brandsError) throw brandsError;
-
-      const brands = (brandRows ?? []).filter((b) => b.is_active !== false);
-      if (brands.length === 0) return [];
-
-      const brandIds = brands.map((b) => b.id);
-      const { data: variantRows, error: variantsError } = await supabase
-        .from('variants')
-        .select(
-          `
-          id,
-          name,
-          variant_type,
-          is_active,
-          brand_id,
-          main_inventory (
-            id,
-            stock
-          )
-        `
-        )
-        .in('brand_id', brandIds)
-        .eq('company_id', cid);
-      if (variantsError) throw variantsError;
-
-      const byBrand = new Map<string, NonNullable<typeof variantRows>[number][]>();
-      for (const row of variantRows ?? []) {
-        if (row.is_active === false) continue;
-        const bid = row.brand_id;
-        if (!bid) continue;
-        const list = byBrand.get(bid) ?? [];
-        list.push(row);
-        byBrand.set(bid, list);
-      }
-
-      return brands.map((b) => ({
-        id: b.id,
-        name: b.name,
-        variants: byBrand.get(b.id) ?? [],
-      }));
-    },
-    enabled: !!user?.company_id && isWarehouse && addStockDialogOpen,
-    staleTime: 0,
-    refetchOnWindowFocus: true,
-    refetchOnMount: 'always',
-  });
-
-  const catalogVariantHasMainRow = (v: { main_inventory?: unknown }) => {
-    const mi = v.main_inventory;
-    if (mi == null) return false;
-    if (Array.isArray(mi)) return mi.length > 0;
-    return typeof mi === 'object' && mi !== null && 'id' in (mi as object);
-  };
-
-  type CatalogVariantRow = {
-    id: string;
-    name: string;
-    variant_type: string;
-    is_active?: boolean | null;
-    main_inventory?: unknown;
-  };
-
-  const addStockBrandVariants = useMemo((): CatalogVariantRow[] => {
-    const b = (warehouseCatalog as { id: string; variants?: CatalogVariantRow[] }[]).find((x) => x.id === addStockBrandId);
-    if (!b?.variants) return [];
-    return b.variants
-      .filter((v) => v.is_active !== false)
-      .sort((a, b) => {
-        const t = a.variant_type.localeCompare(b.variant_type);
-        if (t !== 0) return t;
-        return a.name.localeCompare(b.name);
-      });
-  }, [warehouseCatalog, addStockBrandId]);
-
-  const addStockVariantsByType = useMemo(() => {
-    const map = new Map<string, CatalogVariantRow[]>();
-    for (const v of addStockBrandVariants) {
-      const typeKey = v.variant_type?.trim() || 'Other';
-      if (!map.has(typeKey)) map.set(typeKey, []);
-      map.get(typeKey)!.push(v);
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  }, [addStockBrandVariants]);
-
-  const getCatalogVariantStock = (v: CatalogVariantRow): number => {
-    const mi = v.main_inventory;
-    if (mi == null) return 0;
-    const row = Array.isArray(mi) ? mi[0] : mi;
-    if (!row || typeof row !== 'object') return 0;
-    const s = (row as { stock?: number }).stock;
-    return typeof s === 'number' ? s : 0;
-  };
-
-  useEffect(() => {
-    if (!addStockBrandId) {
-      setAddStockQuantities((prev) => (Object.keys(prev).length === 0 ? prev : {}));
-      return;
-    }
-    const b = (warehouseCatalog as { id: string; variants?: CatalogVariantRow[] }[]).find((x) => x.id === addStockBrandId);
-    const next: Record<string, number> = {};
-    for (const v of b?.variants || []) {
-      if (v.is_active === false) continue;
-      const mi = v.main_inventory;
-      const row = mi == null ? null : Array.isArray(mi) ? mi[0] : mi;
-      const s = row && typeof row === 'object' && 'stock' in row ? (row as { stock?: number }).stock : 0;
-      next[v.id] = typeof s === 'number' ? s : 0;
-    }
-    setAddStockQuantities((prev) => {
-      const prevKeys = Object.keys(prev);
-      const nextKeys = Object.keys(next);
-      if (prevKeys.length !== nextKeys.length) return next;
-      for (const k of nextKeys) {
-        if (prev[k] !== next[k]) return next;
-      }
-      return prev;
-    });
-  }, [addStockBrandId, warehouseCatalog]);
 
   const fetchReturnHistory = async () => {
     if (!user?.company_id) return;
@@ -403,13 +299,6 @@ export default function MainInventoryPage() {
     }
   };
 
-  const defaultReorderLevel = (variantType: string) => {
-    const t = variantType.toLowerCase();
-    if (t === 'flavor') return 50;
-    if (t === 'battery') return 30;
-    return 20;
-  };
-
   const handleRemoveMainInventoryRow = async (variant: Variant) => {
     if (!user?.company_id || !variant.mainInventoryId) return;
     if ((variant.allocatedStock || 0) > 0) {
@@ -436,82 +325,6 @@ export default function MainInventoryPage() {
       toast({ title: 'Error', description: message, variant: 'destructive' });
     } finally {
       setRemoveStockSubmitting(false);
-    }
-  };
-
-  const handleWarehouseAddStock = async () => {
-    if (!user?.company_id || !addStockBrandId) {
-      toast({ title: 'Error', description: 'Select a brand.', variant: 'destructive' });
-      return;
-    }
-    const brandRow = (warehouseCatalog as { id: string; variants?: CatalogVariantRow[] }[]).find((b) => b.id === addStockBrandId);
-    const variants = brandRow?.variants?.filter((v) => v.is_active !== false) ?? [];
-    if (variants.length === 0) {
-      toast({ title: 'Error', description: 'No variants for this brand.', variant: 'destructive' });
-      return;
-    }
-
-    setAddStockSubmitting(true);
-    try {
-      const inserts: Record<string, unknown>[] = [];
-      const updatePromises: Promise<void>[] = [];
-
-      for (const v of variants) {
-        const qty = Math.max(0, addStockQuantities[v.id] ?? 0);
-        const hasRow = catalogVariantHasMainRow(v);
-        if (hasRow) {
-          const prev = getCatalogVariantStock(v);
-          if (qty !== prev) {
-            updatePromises.push(
-              updateVariant(v.id, v.name, qty, 0, 0, 0, 0, true, true)
-            );
-          }
-        } else if (qty > 0) {
-          inserts.push({
-            variant_id: v.id,
-            company_id: user.company_id,
-            stock: qty,
-            unit_price: 0,
-            selling_price: 0,
-            dsp_price: 0,
-            rsp_price: 0,
-            reorder_level: defaultReorderLevel(v.variant_type || ''),
-          });
-        }
-      }
-
-      if (inserts.length > 0) {
-        const { error } = await supabase.from('main_inventory').insert(inserts);
-        if (error) throw error;
-      }
-      if (updatePromises.length > 0) {
-        await Promise.all(updatePromises);
-      }
-
-      if (inserts.length === 0 && updatePromises.length === 0) {
-        toast({
-          title: 'No changes',
-          description: 'Adjust at least one stock quantity, or add stock for variants that are not on main inventory yet.',
-        });
-        setAddStockSubmitting(false);
-        return;
-      }
-
-      toast({
-        title: 'Success',
-        description: `Saved stock (${inserts.length} new line(s), ${updatePromises.length} update(s)).`,
-      });
-      setAddStockDialogOpen(false);
-      setAddStockBrandId('');
-      setAddStockQuantities({});
-      await refreshInventory();
-      queryClient.invalidateQueries({ queryKey: ['warehouse-inventory-catalog'] });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to save stock';
-      console.error(err);
-      toast({ title: 'Error', description: message, variant: 'destructive' });
-    } finally {
-      setAddStockSubmitting(false);
     }
   };
 
@@ -659,6 +472,7 @@ export default function MainInventoryPage() {
         undefined,
         isWarehouse
       );
+      await refreshInventory();
 
       toast({
         title: "Success",
@@ -858,7 +672,29 @@ export default function MainInventoryPage() {
 
 
   const isSubWarehouseUser = isWarehouse && !isMainWarehouseUser;
-  const showPendingAllocations = !isSubWarehouseUser;
+  const showPendingAllocations = !isWarehouse;
+
+  const renderBatchViewButton = (variant: { id: string; name: string }, brandName: string) => {
+    if (!isWarehouse) return null;
+    if (isSubWarehouseUser && !membership.locationId) return null;
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          void queryClient.invalidateQueries({ queryKey: ['variant-batch-lots'] });
+          setBatchViewTarget({
+            variantId: variant.id,
+            variantName: variant.name,
+            brandName,
+          });
+        }}
+      >
+        <Eye className="h-3 w-3 mr-1" />
+        View
+      </Button>
+    );
+  };
 
   const { data: pendingMobileSalesAllocations = [] } = usePendingMobileSalesAllocations(showPendingAllocations);
 
@@ -946,6 +782,49 @@ export default function MainInventoryPage() {
     );
   };
 
+  const variantHasNoPrice = (variant: Variant) => {
+    const sellingPriceRaw = (variant as { sellingPrice?: number | null }).sellingPrice;
+    return (
+      !isWarehouse &&
+      (sellingPriceRaw === null ||
+        sellingPriceRaw === undefined ||
+        (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)))
+    );
+  };
+
+  const getVariantSortState = (sectionId: string) =>
+    variantSortStates[sectionId] ?? createInitialTableSortCycle();
+
+  const variantSortContext = useMemo(
+    (): MainInventoryVariantSortContext => ({
+      getGrossAllocated: getVariantGrossAllocated,
+      getRemainingAllocated: getVariantRemainingAllocated,
+      getAvailable: getVariantAvailableStock,
+      hasNoPrice: variantHasNoPrice,
+    }),
+    [isWarehouse, pendingByVariantId, showPendingAllocations]
+  );
+
+  const sortVariantsForSection = <T extends Variant>(sectionId: string, variants: T[]) => {
+    const sortState = getVariantSortState(sectionId);
+    const { key, direction } = resolveTableSortDirection(
+      sortState,
+      DEFAULT_MAIN_INVENTORY_VARIANT_SORT_KEY,
+      DEFAULT_MAIN_INVENTORY_VARIANT_SORT_DIRECTION
+    );
+    return sortMainInventoryVariants(variants, key, direction, variantSortContext);
+  };
+
+  const handleVariantSort = (sectionId: string, key: MainInventoryVariantSortKey) => {
+    setVariantSortStates((current) => ({
+      ...current,
+      [sectionId]: getNextTableSortCycleState(
+        current[sectionId] ?? createInitialTableSortCycle(),
+        key
+      ),
+    }));
+  };
+
   // Calculate stats
   const totalBrands = brands.length;
   const totalVariants = brands.reduce((sum, brand) => sum + brand.flavors.length + brand.batteries.length + (brand.posms || []).length, 0);
@@ -976,9 +855,17 @@ export default function MainInventoryPage() {
         <div className="flex flex-wrap gap-2">
           {isWarehouse && isMainWarehouseUser && (
             <>
-              <Button onClick={() => setAddStockDialogOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add stock
+              <Button variant="outline" asChild>
+                <Link to="/inventory/stock-requests">
+                  <ClipboardList className="mr-2 h-4 w-4" />
+                  Stock requests
+                </Link>
+              </Button>
+              <Button variant="outline" asChild>
+                <Link to="/inventory/stock-adjustments">
+                  <Scale className="mr-2 h-4 w-4" />
+                  Adjustments
+                </Link>
               </Button>
               <Button variant="outline" onClick={() => setAddBrandDialogOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -986,10 +873,19 @@ export default function MainInventoryPage() {
               </Button>
             </>
           )}
-          <Button variant="outline" onClick={handleOpenReturnHistory} className="gap-2">
-            <RotateCcw className="h-4 w-4" />
-            View Returns
-          </Button>
+          {isWarehouse ? (
+            <Button variant="outline" asChild>
+              <Link to="/inventory/stock-returns">
+                <RotateCcw className="mr-2 h-4 w-4" />
+                View Returns
+              </Link>
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={handleOpenReturnHistory} className="gap-2">
+              <RotateCcw className="h-4 w-4" />
+              View Returns
+            </Button>
+          )}
           {!isWarehouse && <InventoryImportExport brands={brands} />}
           <Button
             onClick={refreshInventory}
@@ -1000,6 +896,22 @@ export default function MainInventoryPage() {
           </Button>
         </div>
       </div>
+
+      {isWarehouse && isMainWarehouseUser && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50/60 px-4 py-3 text-sm text-blue-950">
+          New variants appear here after you <strong>receive a stock request</strong> or apply a{' '}
+          <strong>positive stock adjustment</strong>. Create SKUs under Brands &amp; Variants, then
+          use Stock Requests for inbound deliveries.
+        </div>
+      )}
+
+      {!isWarehouse && hasWarehouseHubLink && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
+          This company is linked to a warehouse. <strong>Stock counts are read-only</strong> here
+          and update when you receive inventory through <strong>purchase orders to the warehouse</strong>.
+          You can still edit pricing on each variant.
+        </div>
+      )}
 
       {/* Stats Overview */}
       <div className={`grid grid-cols-2 ${isSubWarehouseUser ? 'md:grid-cols-3' : 'md:grid-cols-5'} gap-4`}>
@@ -1197,22 +1109,17 @@ export default function MainInventoryPage() {
                           </div>
                         </div>
                         <Table>
-                          <TableHeader>
-                            <TableRow className="bg-blue-50/30">
-                              <TableHead className="text-blue-800 text-center">Flavor Name</TableHead>
-                              <TableHead className="text-blue-800 text-center">Total Stock</TableHead>
-                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Allocated (Remaing)</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-blue-800 text-center">Available</TableHead>}
-                              {!isWarehouse && <TableHead className="text-blue-800 text-center">Selling Price</TableHead>}
-                              {!isWarehouse && <TableHead className="text-blue-800 text-center">DSP</TableHead>}
-                              {!isWarehouse && <TableHead className="text-blue-800 text-center">RSP</TableHead>}
-                              <TableHead className="text-blue-800 text-center">Status</TableHead>
-                              <TableHead className="text-blue-800 text-center">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
+                          <InventoryVariantTableHeader
+                            nameLabel="Flavor Name"
+                            rowClassName="bg-blue-50/30"
+                            headClassName="text-blue-800"
+                            isSubWarehouseUser={isSubWarehouseUser}
+                            isWarehouse={isWarehouse}
+                            sortState={getVariantSortState('flavor')}
+                            onSort={(key) => handleVariantSort('flavor', key)}
+                          />
                           <TableBody>
-                            {brand.flavors.map((flavor) => {
+                            {sortVariantsForSection('flavor', brand.flavors).map((flavor) => {
                               const available = isSubWarehouseUser ? flavor.stock : getVariantAvailableStock(flavor);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (flavor as any).sellingPrice;
@@ -1265,6 +1172,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="text-center">
                                     <div className="flex items-center justify-center gap-1">
+                                      {!isWarehouse && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
@@ -1272,6 +1180,7 @@ export default function MainInventoryPage() {
                                       >
                                         <Edit className="h-4 w-4" />
                                       </Button>
+                                      )}
 
                                       {isWarehouse && flavor.mainInventoryId && (
                                         <AlertDialog>
@@ -1304,6 +1213,8 @@ export default function MainInventoryPage() {
                                           </AlertDialogContent>
                                         </AlertDialog>
                                       )}
+
+                                      {renderBatchViewButton(flavor, brand.name)}
 
                                       {!isWarehouse && (
                                         <AlertDialog>
@@ -1370,22 +1281,17 @@ export default function MainInventoryPage() {
                           </div>
                         </div>
                         <Table>
-                          <TableHeader>
-                            <TableRow className="bg-green-50/30">
-                              <TableHead className="text-green-800 text-center">Battery Name</TableHead>
-                              <TableHead className="text-green-800 text-center">Total Stock</TableHead>
-                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Allocated (Remaining)</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-green-800 text-center">Available</TableHead>}
-                              {!isWarehouse && <TableHead className="text-green-800 text-center">Selling Price</TableHead>}
-                              {!isWarehouse && <TableHead className="text-green-800 text-center">DSP</TableHead>}
-                              {!isWarehouse && <TableHead className="text-green-800 text-center">RSP</TableHead>}
-                              <TableHead className="text-green-800 text-center">Status</TableHead>
-                              <TableHead className="text-green-800 text-center">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
+                          <InventoryVariantTableHeader
+                            nameLabel="Battery Name"
+                            rowClassName="bg-green-50/30"
+                            headClassName="text-green-800"
+                            isSubWarehouseUser={isSubWarehouseUser}
+                            isWarehouse={isWarehouse}
+                            sortState={getVariantSortState('battery')}
+                            onSort={(key) => handleVariantSort('battery', key)}
+                          />
                           <TableBody>
-                            {brand.batteries.map((battery) => {
+                            {sortVariantsForSection('battery', brand.batteries).map((battery) => {
                               const available = isSubWarehouseUser ? battery.stock : getVariantAvailableStock(battery);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (battery as any).sellingPrice;
@@ -1428,6 +1334,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="text-center">
                                     <div className="flex items-center justify-center gap-1">
+                                      {!isWarehouse && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
@@ -1435,6 +1342,7 @@ export default function MainInventoryPage() {
                                       >
                                         <Edit className="h-4 w-4" />
                                       </Button>
+                                      )}
 
                                       {isWarehouse && battery.mainInventoryId && (
                                         <AlertDialog>
@@ -1467,6 +1375,8 @@ export default function MainInventoryPage() {
                                           </AlertDialogContent>
                                         </AlertDialog>
                                       )}
+
+                                      {renderBatchViewButton(battery, brand.name)}
 
                                       {!isWarehouse && (
                                         <AlertDialog>
@@ -1520,22 +1430,17 @@ export default function MainInventoryPage() {
                           </div>
                         </div>
                         <Table>
-                          <TableHeader>
-                            <TableRow className="bg-purple-50/30">
-                              <TableHead className="text-purple-800 text-center">POSM Name</TableHead>
-                              <TableHead className="text-purple-800 text-center">Total Stock</TableHead>
-                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Allocated</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Allocated Pending</TableHead>}
-                              {!isSubWarehouseUser && <TableHead className="text-purple-800 text-center">Available</TableHead>}
-                              {!isWarehouse && <TableHead className="text-purple-800 text-center">Selling Price</TableHead>}
-                              {!isWarehouse && <TableHead className="text-purple-800 text-center">DSP</TableHead>}
-                              {!isWarehouse && <TableHead className="text-purple-800 text-center">RSP</TableHead>}
-                              <TableHead className="text-purple-800 text-center">Status</TableHead>
-                              <TableHead className="text-purple-800 text-center">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
+                          <InventoryVariantTableHeader
+                            nameLabel="POSM Name"
+                            rowClassName="bg-purple-50/30"
+                            headClassName="text-purple-800"
+                            isSubWarehouseUser={isSubWarehouseUser}
+                            isWarehouse={isWarehouse}
+                            sortState={getVariantSortState('posm')}
+                            onSort={(key) => handleVariantSort('posm', key)}
+                          />
                           <TableBody>
-                            {(brand as any).posms.map((posm: any) => {
+                            {sortVariantsForSection('posm', (brand as Brand).posms ?? []).map((posm) => {
                               const available = isSubWarehouseUser ? posm.stock : getVariantAvailableStock(posm);
                               // Only flag as invalid if null, undefined, or NaN (allow 0 as valid price)
                               const sellingPriceRaw = (posm as any).sellingPrice;
@@ -1586,6 +1491,7 @@ export default function MainInventoryPage() {
                                   </TableCell>
                                   <TableCell className="text-center">
                                     <div className="flex items-center justify-center gap-1">
+                                      {!isWarehouse && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
@@ -1594,6 +1500,7 @@ export default function MainInventoryPage() {
                                       >
                                         <Edit className="h-4 w-4" />
                                       </Button>
+                                      )}
                                       {isWarehouse && posm.mainInventoryId && (
                                         <AlertDialog>
                                           <AlertDialogTrigger asChild>
@@ -1625,6 +1532,7 @@ export default function MainInventoryPage() {
                                           </AlertDialogContent>
                                         </AlertDialog>
                                       )}
+                                      {renderBatchViewButton(posm, brand.name)}
                                       {!isWarehouse && (
                                         <AlertDialog>
                                           <AlertDialogTrigger asChild>
@@ -1688,22 +1596,17 @@ export default function MainInventoryPage() {
                               </div>
                             </div>
                             <Table>
-                              <TableHeader>
-                                <TableRow className="bg-gray-50/30">
-                                  <TableHead className="text-gray-800 text-center">Name</TableHead>
-                                  <TableHead className="text-gray-800 text-center">Total Stock</TableHead>
-                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated</TableHead>}
-                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Allocated (Remaining)</TableHead>}
-                                  {!isSubWarehouseUser && <TableHead className="text-gray-800 text-center">Available</TableHead>}
-                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">Selling Price</TableHead>}
-                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">DSP</TableHead>}
-                                  {!isWarehouse && <TableHead className="text-gray-800 text-center">RSP</TableHead>}
-                                  <TableHead className="text-gray-800 text-center">Status</TableHead>
-                                  <TableHead className="text-gray-800 text-center">Actions</TableHead>
-                                </TableRow>
-                              </TableHeader>
+                              <InventoryVariantTableHeader
+                                nameLabel="Name"
+                                rowClassName="bg-gray-50/30"
+                                headClassName="text-gray-800"
+                                isSubWarehouseUser={isSubWarehouseUser}
+                                isWarehouse={isWarehouse}
+                                sortState={getVariantSortState(variantType)}
+                                onSort={(key) => handleVariantSort(variantType, key)}
+                              />
                               <TableBody>
-                                {variants.map((variant) => {
+                                {sortVariantsForSection(variantType, variants).map((variant) => {
                                   const available = isSubWarehouseUser ? variant.stock : getVariantAvailableStock(variant);
                                   const sellingPriceRaw = (variant as any).sellingPrice;
                                   const hasNoPrice = !isWarehouse && (sellingPriceRaw === null || sellingPriceRaw === undefined || (typeof sellingPriceRaw === 'number' && Number.isNaN(sellingPriceRaw)));
@@ -1755,6 +1658,7 @@ export default function MainInventoryPage() {
                                       </TableCell>
                                       <TableCell className="text-center">
                                         <div className="flex items-center justify-center gap-1">
+                                          {!isWarehouse && (
                                           <Button
                                             variant="ghost"
                                             size="sm"
@@ -1762,6 +1666,7 @@ export default function MainInventoryPage() {
                                           >
                                             <Edit className="h-4 w-4" />
                                           </Button>
+                                          )}
                                           {isWarehouse && variant.mainInventoryId && (
                                             <AlertDialog>
                                               <AlertDialogTrigger asChild>
@@ -1793,6 +1698,7 @@ export default function MainInventoryPage() {
                                               </AlertDialogContent>
                                             </AlertDialog>
                                           )}
+                                          {renderBatchViewButton(variant, brand.name)}
                                           {!isWarehouse && (
                                             <AlertDialog>
                                               <AlertDialogTrigger asChild>
@@ -1864,104 +1770,6 @@ export default function MainInventoryPage() {
 
       {isWarehouse && (
       <>
-      {/* Warehouse: Add stock */}
-      <Dialog
-        open={addStockDialogOpen}
-        onOpenChange={(open) => {
-          if (open && user?.company_id) {
-            void queryClient.invalidateQueries({ queryKey: ['warehouse-inventory-catalog', user.company_id] });
-          }
-          setAddStockDialogOpen(open);
-          if (!open) {
-            setAddStockBrandId('');
-            setAddStockQuantities({});
-          }
-        }}
-      >
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col gap-0">
-          <DialogHeader>
-            <DialogTitle>Add stock to main inventory</DialogTitle>
-            <p className="text-sm text-muted-foreground font-normal">
-              Choose a brand, enter stock per variant (grouped by type). New main-inventory lines use ₱0 pricing until sales sets prices.
-            </p>
-          </DialogHeader>
-          <div className="space-y-4 py-2 flex-1 min-h-0 flex flex-col">
-            <div className="space-y-2 shrink-0">
-              <Label>Brand</Label>
-              <Select value={addStockBrandId || undefined} onValueChange={setAddStockBrandId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select brand" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(warehouseCatalog as { id: string; name: string }[]).map((b) => (
-                    <SelectItem key={b.id} value={b.id}>
-                      {b.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="overflow-y-auto flex-1 min-h-[200px] max-h-[55vh] space-y-5 pr-1 border rounded-md p-3 bg-muted/20">
-              {!addStockBrandId && (
-                <p className="text-sm text-muted-foreground text-center py-8">Select a brand to list all variants.</p>
-              )}
-              {addStockBrandId && addStockVariantsByType.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-8">No active variants for this brand.</p>
-              )}
-              {addStockVariantsByType.map(([typeLabel, list]) => (
-                <div key={typeLabel}>
-                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                    {typeLabel}
-                  </h4>
-                  <div className="space-y-2 rounded-lg border bg-background p-3">
-                    {list.map((v) => (
-                      <div key={v.id} className="flex items-center justify-between gap-3">
-                        <span className="text-sm font-medium truncate" title={v.name}>
-                          {v.name}
-                        </span>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Label htmlFor={`add-stock-${v.id}`} className="text-xs text-muted-foreground whitespace-nowrap">
-                            Stock
-                          </Label>
-                          <Input
-                            id={`add-stock-${v.id}`}
-                            type="number"
-                            min={0}
-                            className="w-24 h-9"
-                            value={addStockQuantities[v.id] ?? 0}
-                            onChange={(e) =>
-                              setAddStockQuantities((q) => ({
-                                ...q,
-                                [v.id]: Math.max(0, parseInt(e.target.value, 10) || 0),
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <DialogFooter className="shrink-0 border-t pt-4 mt-2">
-            <Button variant="outline" onClick={() => setAddStockDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => void handleWarehouseAddStock()} disabled={addStockSubmitting || !addStockBrandId}>
-              {addStockSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                'Save stock'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Warehouse: Add brand */}
       <Dialog
         open={addBrandDialogOpen}
@@ -2040,15 +1848,20 @@ export default function MainInventoryPage() {
                   type="number"
                   min="0"
                   value={editingVariant.stock}
+                  disabled={isStockFieldLocked}
+                  className={isStockFieldLocked ? 'bg-muted cursor-not-allowed' : undefined}
                   onChange={(e) => {
+                    if (isStockFieldLocked) return;
                     const value = Math.max(0, parseInt(e.target.value) || 0);
                     setEditingVariant({ ...editingVariant, stock: value });
                   }}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
                   {isWarehouse
-                    ? 'Warehouse accounts can only change stock. Pricing is managed by admin or sales roles.'
-                    : 'Update the total stock count for this variant'}
+                    ? 'Use Stock Requests or Stock Adjustments to change warehouse stock.'
+                    : hasWarehouseHubLink
+                      ? 'Stock is managed via purchase orders to your linked warehouse.'
+                      : 'Update the total stock count for this variant'}
                 </p>
               </div>
               {!isWarehouse && (
@@ -2544,6 +2357,25 @@ export default function MainInventoryPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <VariantBatchLotsDialog
+        open={!!batchViewTarget}
+        onOpenChange={(open) => {
+          if (!open) setBatchViewTarget(null);
+        }}
+        variantId={batchViewTarget?.variantId ?? null}
+        variantName={batchViewTarget?.variantName ?? ''}
+        brandName={batchViewTarget?.brandName ?? ''}
+        companyId={user?.company_id}
+        locationId={membership.locationId}
+        locationLabel={
+          isSubWarehouseUser && myLocationName
+            ? myLocationName
+            : isMainWarehouseUser
+              ? 'Main warehouse'
+              : undefined
+        }
+      />
     </div>
   );
 }

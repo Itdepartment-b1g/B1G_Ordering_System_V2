@@ -56,6 +56,7 @@ import {
     useExecutiveTeamLeaders,
     type ExecutiveMainStockMode,
     type ExecutiveStockLayer,
+    type ExecutiveTeamLeaderMode,
 } from './executiveInventoryHooks';
 import { ExecutiveInventoryBoard } from './components/ExecutiveInventoryBoard';
 import { useExecutiveRealtime } from './useExecutiveRealtime';
@@ -136,6 +137,7 @@ export default function ExecutiveDashboardPage() {
     const [inventoryStockLayer, setInventoryStockLayer] = useState<ExecutiveStockLayer>('main');
     const [inventoryMainMode, setInventoryMainMode] = useState<ExecutiveMainStockMode>('available');
     const [selectedLeaderId, setSelectedLeaderId] = useState<string | null>(null);
+    const [teamLeaderMode, setTeamLeaderMode] = useState<ExecutiveTeamLeaderMode>('leader_only');
 
     // Get date range from preset
     const dateRange = getDateRange(datePreset, customStartDate, customEndDate);
@@ -190,11 +192,13 @@ export default function ExecutiveDashboardPage() {
     const { data: teamLeaders = [], isLoading: teamLeadersLoading, refetch: refetchTeamLeaders } = useExecutiveTeamLeaders(inventoryCompanyId);
     const { data: leaderInventoryBrands = [], isLoading: leaderInventoryLoading, refetch: refetchLeaderInventory } = useExecutiveLeaderInventory(
         inventoryCompanyId,
-        inventoryStockLayer === 'team_leader' ? selectedLeaderId : null
+        inventoryStockLayer === 'team_leader' ? selectedLeaderId : null,
+        teamLeaderMode
     );
 
     useEffect(() => {
         setSelectedLeaderId(null);
+        setTeamLeaderMode('leader_only');
     }, [inventoryCompanyId]);
 
     useEffect(() => {
@@ -692,6 +696,7 @@ export default function ExecutiveDashboardPage() {
                         </div>
                     ) : (
                         <ExecutiveInventoryBoard
+                            companyId={inventoryCompanyId}
                             companyName={selectedCompany?.company_name ?? 'Selected company'}
                             brands={inventoryBrands}
                             loading={inventoryLoading}
@@ -699,6 +704,8 @@ export default function ExecutiveDashboardPage() {
                             onStockLayerChange={setInventoryStockLayer}
                             mainMode={inventoryMainMode}
                             onMainModeChange={setInventoryMainMode}
+                            teamLeaderMode={teamLeaderMode}
+                            onTeamLeaderModeChange={setTeamLeaderMode}
                             teamLeaders={teamLeaders}
                             loadingTeamLeaders={teamLeadersLoading}
                             selectedLeaderId={selectedLeaderId}

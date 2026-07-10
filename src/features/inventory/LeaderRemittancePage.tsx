@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +16,20 @@ import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { canLeadTeam } from '@/lib/roleUtils';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_LEADER_REMITTANCE_SORT_DIRECTION,
+  DEFAULT_LEADER_REMITTANCE_SORT_KEY,
+  sortLeaderRemittances,
+  type LeaderRemittanceSortKey,
+} from '@/features/inventory/utils/leaderRemittanceSorting';
 
 // Orders with order_date before this are v1 imports; exclude from team remittance list/detail.
 const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
@@ -52,6 +66,8 @@ export default function LeaderRemittancePage() {
   const [teamAgents, setTeamAgents] = useState<{ id: string; name: string }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<LeaderRemittanceSortKey>>(createInitialTableSortCycle);
   const PAGE_SIZE = 10;
 
   // Mobile detection
@@ -144,10 +160,10 @@ export default function LeaderRemittancePage() {
     };
   }, [user?.id, user?.role, selectedDate, selectedAgentId, selectedRemittance]);
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters or sort change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedDate, selectedAgentId]);
+  }, [selectedDate, selectedAgentId, sortState]);
 
   // Fetch team agents for filter (team leaders only)
   useEffect(() => {
@@ -457,13 +473,32 @@ export default function LeaderRemittancePage() {
   const totalRevenue = remittances.reduce((sum, r) => sum + r.total_revenue, 0);
   const totalOrders = remittances.reduce((sum, r) => sum + r.orders_count, 0);
 
-  const totalPages = Math.max(1, Math.ceil(totalRemittances / PAGE_SIZE));
-  const paginatedRemittances = remittances.slice(
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_LEADER_REMITTANCE_SORT_KEY,
+        DEFAULT_LEADER_REMITTANCE_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedRemittances = useMemo(
+    () => sortLeaderRemittances(remittances, resolvedSortKey, resolvedSortDirection),
+    [remittances, resolvedSortKey, resolvedSortDirection]
+  );
+
+  const handleSort = (key: LeaderRemittanceSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
+  const totalPages = Math.max(1, Math.ceil(sortedRemittances.length / PAGE_SIZE));
+  const paginatedRemittances = sortedRemittances.slice(
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE
   );
-  const rangeStart = totalRemittances === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
-  const rangeEnd = Math.min(currentPage * PAGE_SIZE, totalRemittances);
+  const rangeStart = sortedRemittances.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(currentPage * PAGE_SIZE, sortedRemittances.length);
 
   if (!canLeadTeam(user?.role)) {
     return (
@@ -665,11 +700,39 @@ export default function LeaderRemittancePage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Date & Time</TableHead>
-                  <TableHead>Agent</TableHead>
-                  <TableHead className="text-right">Items</TableHead>
-                  <TableHead className="text-right">Orders</TableHead>
-                  <TableHead className="text-right">Revenue</TableHead>
+                  <SortableTableHead
+                    label="Date & Time"
+                    sortKey="date"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'date')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Agent"
+                    sortKey="agentName"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'agentName')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Items"
+                    sortKey="items"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'items')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Orders"
+                    sortKey="orders"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'orders')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Revenue"
+                    sortKey="revenue"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'revenue')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>

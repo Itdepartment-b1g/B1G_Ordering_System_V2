@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -6,15 +6,30 @@ import {
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, MapPin, Store } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter } from 'lucide-react';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
@@ -23,12 +38,42 @@ import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 import { generateAndOpenCofPdf } from './cof/generateCofPdf';
+import {
+  generateAndOpenKeyAccountCofPdf,
+  orderToKeyAccountPoForCof,
+} from '@/features/key-accounts/cof/generateKeyAccountCofPdf';
+import { generateAndOpenDrPdf } from './dr/generateDrPdf';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
-import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
+  import { Textarea } from '@/components/ui/textarea';
+import { PurchaseOrderDeliveryDetailsPanel, purchaseOrderDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
 import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  createInitialTableSortCycle,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_PO_SORT_DIRECTION,
+  DEFAULT_PO_SORT_KEY,
+  sortPurchaseOrders,
+  type PurchaseOrderSortKey,
+} from './utils/purchaseOrderSorting';
+import {
+  PO_STATUS_FILTER_OPTIONS,
+  PO_STATUS_FILTER_LABELS,
+  purchaseOrderMatchesStatusFilter,
+  type PurchaseOrderStatusFilter,
+} from './utils/purchaseOrderFilters';
+import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import { RebateReplacementPricingSummary, RebateReceiveReturnsDialog } from '@/features/key-accounts/rebates';
+import {
+  filterRebateReturnLinesForWarehouseUser,
+} from '@/features/key-accounts/rebates/keyAccountRebateShared';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +88,135 @@ import {
 /** Key Account dispatch: separate private buckets (see supabase migration key_account_delivery_storage_buckets). */
 const KA_DELIVERY_RIDER_PHOTOS_BUCKET = 'ka-delivery-rider-photos';
 const KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET = 'ka-delivery-warehouse-signatures';
+const RIDER_PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif';
+const RIDER_PHOTO_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const RIDER_PHOTO_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
+const RIDER_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+
+function getRiderPhotoValidationError(file: File): string | null {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (!RIDER_PHOTO_EXTENSIONS.has(ext)) {
+    return 'Rider photo must be JPG, PNG, WEBP, or GIF.';
+  }
+  if (file.type && !RIDER_PHOTO_MIME_TYPES.has(file.type)) {
+    return 'Rider photo must be JPG, PNG, WEBP, or GIF.';
+  }
+  if (file.size > RIDER_PHOTO_MAX_BYTES) {
+    return 'Rider photo must be 5 MB or smaller.';
+  }
+  return null;
+}
+
+function riderPhotoContentType(file: File): string {
+  if (file.type && RIDER_PHOTO_MIME_TYPES.has(file.type)) {
+    return file.type;
+  }
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  return 'image/jpeg';
+}
+
+type PoWarehouseSource = { id: string; name: string };
+
+function poItemWarehouseLabel(item: any): string | null {
+  const raw = Array.isArray(item?.warehouse_location) ? item.warehouse_location[0] : item?.warehouse_location;
+  if (raw?.name) return raw.is_main ? `${raw.name} (Main)` : raw.name;
+  const raw2 = Array.isArray(item?.warehouse_locations) ? item.warehouse_locations[0] : item?.warehouse_locations;
+  if (raw2?.name) return raw2.is_main ? `${raw2.name} (Main)` : raw2.name;
+  return null;
+}
+
+function resolveWarehouseLocationName(
+  loc: { name: string } | { name: string }[] | null | undefined
+): string | null {
+  if (!loc) return null;
+  const row = Array.isArray(loc) ? loc[0] : loc;
+  return row?.name?.trim() || null;
+}
+
+type PoViewRequestorInfo = {
+  company: { id: string; company_name: string } | null;
+  profile: {
+    id: string;
+    full_name: string | null;
+    email: string | null;
+    phone: string | null;
+    address: string | null;
+    city: string | null;
+    country: string | null;
+  } | null;
+};
+
+function formatPoRequestorAddress(
+  profile: PoViewRequestorInfo['profile'] | null | undefined
+): string {
+  if (!profile) return 'N/A';
+  const line = [profile.address, profile.city, profile.country].filter(Boolean).join(', ');
+  return line || 'N/A';
+}
+
+function formatPoHeaderWarehouse(order: any): string | null {
+  const loc = Array.isArray(order?.warehouse_locations) ? order.warehouse_locations[0] : order?.warehouse_location;
+  if (!loc?.name) return null;
+  return loc.is_main ? `${loc.name} (Main)` : loc.name;
+}
+
+/** Source hub locations for a transfer PO (header and/or line items). */
+function getPoSourceWarehouses(order: any): PoWarehouseSource[] {
+  const items = (order?.items || []) as any[];
+  const seen = new Map<string, string>();
+  for (const it of items) {
+    const locId = String(it.warehouse_location_id || '');
+    if (!locId || seen.has(locId)) continue;
+    seen.set(locId, poItemWarehouseLabel(it) || `Warehouse ${locId.slice(0, 8)}…`);
+  }
+  if (seen.size > 0) {
+    return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
+  }
+  const headerId = String(order?.warehouse_location_id || order?.warehouse_location?.id || '');
+  const headerName = formatPoHeaderWarehouse(order);
+  if (headerId && headerName) {
+    return [{ id: headerId, name: headerName }];
+  }
+  return [];
+}
+
+function formatPoRequestedWarehouseSummary(order: any): string {
+  const sources = getPoSourceWarehouses(order);
+  if (sources.length > 1) return sources.map((s) => s.name).join(', ');
+  if (sources.length === 1) return sources[0].name;
+  return formatPoHeaderWarehouse(order) ?? '—';
+}
+
+function RequestedWarehouseSources({
+  order,
+  fallbackStatuses = [],
+}: {
+  order: any;
+  fallbackStatuses?: Array<{ location_id: string; location_name: string }>;
+}) {
+  let sources = getPoSourceWarehouses(order);
+  if (sources.length === 0 && fallbackStatuses.length > 0) {
+    sources = fallbackStatuses.map((s) => ({ id: s.location_id, name: s.location_name }));
+  }
+
+  if (sources.length === 0) {
+    return <p className="font-medium">—</p>;
+  }
+  if (sources.length === 1) {
+    return <p className="font-medium">{sources[0].name}</p>;
+  }
+  return (
+    <ul className="space-y-1 text-sm font-medium">
+      {sources.map((s) => (
+        <li key={s.id}>{s.name}</li>
+      ))}
+    </ul>
+  );
+}
 
 export default function PurchaseOrdersPage() {
   const { user } = useAuth();
@@ -57,10 +231,13 @@ export default function PurchaseOrdersPage() {
     fetchPurchaseOrders,
   } = usePurchaseOrders();
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<PurchaseOrderStatusFilter>('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
   });
   const [poPage, setPoPage] = useState(1);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<PurchaseOrderSortKey>>(createInitialTableSortCycle);
   // Form states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
@@ -78,13 +255,23 @@ export default function PurchaseOrdersPage() {
   // Warehouse view tabs (supplier POs will be removed later; keep tabs by account type)
   const [poTab, setPoTab] = useState<'all' | 'key_accounts' | 'standard_accounts'>('all');
 
-  // Key Account dispatch capture (after fulfillment)
+  // Dispatch capture for warehouse transfer fulfill (Key + Standard accounts)
   const [dispatchOpen, setDispatchOpen] = useState(false);
   const [dispatchPo, setDispatchPo] = useState<any>(null);
   const [riderName, setRiderName] = useState('');
   const [riderPlate, setRiderPlate] = useState('');
   const [riderPhotoFile, setRiderPhotoFile] = useState<File | null>(null);
+  const [riderPhotoPreviewUrl, setRiderPhotoPreviewUrl] = useState<string | null>(null);
+  const riderPhotoInputRef = useRef<HTMLInputElement>(null);
+
+  const clearRiderPhoto = () => {
+    setRiderPhotoFile(null);
+    if (riderPhotoInputRef.current) {
+      riderPhotoInputRef.current.value = '';
+    }
+  };
   const [warehouseSignatureDataUrl, setWarehouseSignatureDataUrl] = useState<string | null>(null);
+  const [dispatchNotes, setDispatchNotes] = useState('');
   const [showWarehouseSignatureModal, setShowWarehouseSignatureModal] = useState(false);
   const [savingDispatch, setSavingDispatch] = useState(false);
 
@@ -102,16 +289,18 @@ export default function PurchaseOrdersPage() {
 
   // Track fulfillment status for current user's warehouse location
   const [myLocationStatuses, setMyLocationStatuses] = useState<Record<string, string>>({});
+  const [myLocationDrByPo, setMyLocationDrByPo] = useState<
+    Record<string, { dr_number: string; warehouse_location_id: string; warehouse_name: string }>
+  >({});
 
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [orderToView, setOrderToView] = useState<any>(null);
   const [transferLocationStatuses, setTransferLocationStatuses] = useState<Array<{ location_id: string; location_name: string; status: string }>>([]);
 
-  // Company info for view dialog
-  const [companyInfo, setCompanyInfo] = useState<{ company_name: string } | null>(null);
-
   const [isMobile, setIsMobile] = useState(false);
+  const [viewRequestorInfo, setViewRequestorInfo] = useState<PoViewRequestorInfo | null>(null);
+  const [loadingViewRequestor, setLoadingViewRequestor] = useState(false);
 
   // Detect mobile
   useEffect(() => {
@@ -120,27 +309,6 @@ export default function PurchaseOrdersPage() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
-
-  // Fetch company info for view dialog
-  useEffect(() => {
-    const fetchCompanyInfo = async () => {
-      if (!user?.company_id) return;
-      try {
-        const { data, error } = await supabase
-          .from('companies')
-          .select('company_name')
-          .eq('id', user.company_id)
-          .maybeSingle();
-        if (error) throw error;
-        setCompanyInfo(data);
-      } catch (error) {
-        console.error('Error fetching company info:', error);
-      }
-    };
-    fetchCompanyInfo();
-  }, [user?.company_id]);
-
-  const [viewBuyerCompanyName, setViewBuyerCompanyName] = useState<string | null>(null);
 
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
@@ -176,11 +344,53 @@ export default function PurchaseOrdersPage() {
 
   const openCofForOrder = async (order: any) => {
     try {
+      if (order.company_account_type === 'Key Accounts') {
+        await generateAndOpenKeyAccountCofPdf(orderToKeyAccountPoForCof(order));
+        return;
+      }
       await generateAndOpenCofPdf(order);
     } catch (e: any) {
       toast({
         title: 'COF Error',
         description: e?.message || 'Failed to generate COF',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const resolveWarehouseNameForLocation = (order: any, locationId: string): string => {
+    const fromApprove = approveLocationNames[locationId];
+    if (fromApprove) return fromApprove;
+    const items = (order?.items || []) as any[];
+    for (const it of items) {
+      if (String(it.warehouse_location_id) !== String(locationId)) continue;
+      const label = poItemWarehouseLabel(it);
+      if (label) return label;
+    }
+    const headerLoc = Array.isArray(order?.warehouse_locations)
+      ? order.warehouse_locations[0]
+      : order?.warehouse_location;
+    if (headerLoc?.id && String(headerLoc.id) === String(locationId) && headerLoc.name) {
+      return headerLoc.is_main ? `${headerLoc.name} (Main)` : headerLoc.name;
+    }
+    return `Warehouse ${shortId(locationId)}`;
+  };
+
+  const canPrintDrForOrder = (order: { id: string }) => !!myLocationDrByPo[order.id]?.dr_number;
+
+  const openDrForOrder = async (order: any) => {
+    const drMeta = myLocationDrByPo[order.id];
+    if (!drMeta?.dr_number) return;
+    try {
+      await generateAndOpenDrPdf(order, {
+        drNumber: drMeta.dr_number,
+        warehouseLocationId: drMeta.warehouse_location_id,
+        warehouseLocationName: drMeta.warehouse_name,
+      });
+    } catch (e: any) {
+      toast({
+        title: 'DR Error',
+        description: e?.message || 'Failed to generate delivery receipt',
         variant: 'destructive',
       });
     }
@@ -228,6 +438,7 @@ export default function PurchaseOrdersPage() {
     return 'Warehouse';
   };
 
+
   // Fetch my location fulfillment statuses for warehouse transfer POs
   useEffect(() => {
     if (!isWarehouse || !membership.locationId || purchaseOrders.length === 0) {
@@ -262,6 +473,63 @@ export default function PurchaseOrdersPage() {
           statusMap[row.purchase_order_id] = row.status;
         });
         setMyLocationStatuses(statusMap);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [purchaseOrders, membership.locationId, isWarehouse]);
+
+  // DR numbers issued by this warehouse user's location (for Print DR button visibility).
+  useEffect(() => {
+    if (!isWarehouse || !membership.locationId || purchaseOrders.length === 0) {
+      setMyLocationDrByPo({});
+      return;
+    }
+
+    const transferPoIds = purchaseOrders
+      .filter((o) => o.fulfillment_type === 'warehouse_transfer')
+      .map((o) => o.id);
+
+    if (transferPoIds.length === 0) {
+      setMyLocationDrByPo({});
+      return;
+    }
+
+    let cancelled = false;
+    supabase
+      .from('purchase_order_deliveries')
+      .select(
+        'purchase_order_id, dr_number, warehouse_location_id, warehouse_locations:warehouse_location_id(name)'
+      )
+      .in('purchase_order_id', transferPoIds)
+      .eq('warehouse_location_id', membership.locationId)
+      .not('dr_number', 'is', null)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn('[PO List] Failed to load DR numbers', error);
+          setMyLocationDrByPo({});
+          return;
+        }
+        const drMap: Record<
+          string,
+          { dr_number: string; warehouse_location_id: string; warehouse_name: string }
+        > = {};
+        for (const row of (data || []) as any[]) {
+          const poId = String(row.purchase_order_id || '');
+          const drNumber = String(row.dr_number || '').trim();
+          const locId = String(row.warehouse_location_id || '');
+          if (!poId || !drNumber || !locId) continue;
+          const locName =
+            resolveWarehouseLocationName(row.warehouse_locations) || `Warehouse ${shortId(locId)}`;
+          drMap[poId] = {
+            dr_number: drNumber,
+            warehouse_location_id: locId,
+            warehouse_name: locName,
+          };
+        }
+        setMyLocationDrByPo(drMap);
       });
 
     return () => {
@@ -366,29 +634,49 @@ export default function PurchaseOrdersPage() {
 
 
   useEffect(() => {
-    if (!orderToView?.company_id) {
-      setViewBuyerCompanyName(null);
+    if (!viewDialogOpen || !orderToView?.id) {
+      setViewRequestorInfo(null);
+      setLoadingViewRequestor(false);
       return;
     }
-    const buyerId =
-      user?.role === 'warehouse' ? orderToView.company_id : user?.company_id;
-    if (!buyerId) {
-      setViewBuyerCompanyName(null);
+    if (orderToView.key_account_client_id) {
+      setViewRequestorInfo(null);
+      setLoadingViewRequestor(false);
       return;
     }
+
     let cancelled = false;
-    (async () => {
-      const { data, error } = await supabase
-        .from('companies')
-        .select('company_name')
-        .eq('id', buyerId)
-        .maybeSingle();
-      if (!cancelled && !error) setViewBuyerCompanyName(data?.company_name ?? null);
+    setLoadingViewRequestor(true);
+    void (async () => {
+      try {
+        const { data, error } = await supabase.rpc('get_po_requestor_info', {
+          p_po_id: orderToView.id,
+        });
+        if (cancelled) return;
+        if (error) {
+          console.warn('[PO View] get_po_requestor_info error:', error);
+          setViewRequestorInfo(null);
+          return;
+        }
+        const obj = (data || {}) as Partial<PoViewRequestorInfo>;
+        setViewRequestorInfo({
+          company: obj.company ?? null,
+          profile: obj.profile ?? null,
+        });
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('[PO View] get_po_requestor_info exception:', e);
+          setViewRequestorInfo(null);
+        }
+      } finally {
+        if (!cancelled) setLoadingViewRequestor(false);
+      }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [orderToView?.company_id, orderToView?.id, user?.role, user?.company_id]);
+  }, [viewDialogOpen, orderToView?.id, orderToView?.key_account_client_id]);
 
   // For warehouse_transfer POs: load per-location fulfillment statuses for progress view.
   useEffect(() => {
@@ -499,17 +787,22 @@ export default function PurchaseOrdersPage() {
     setRejectDialogOpen(true);
   };
 
+  const openDispatchCaptureForFulfill = (order: any) => {
+    setDispatchPo(order);
+    setRiderName('');
+    setRiderPlate('');
+    clearRiderPhoto();
+    setWarehouseSignatureDataUrl(null);
+    setDispatchNotes('');
+    setDispatchOpen(true);
+  };
+
   const handleOpenFulfillDialog = (order: any) => {
     setOrderToFulfill(order);
     setFulfillLocationId(membership.locationId ?? null);
     setFulfillLocationName(null);
-    if (String(order?.company_account_type || '') === 'Key Accounts') {
-      setDispatchPo(order);
-      setRiderName('');
-      setRiderPlate('');
-      setRiderPhotoFile(null);
-      setWarehouseSignatureDataUrl(null);
-      setDispatchOpen(true);
+    if (order?.fulfillment_type === 'warehouse_transfer') {
+      openDispatchCaptureForFulfill(order);
       return;
     }
     setFulfillDialogOpen(true);
@@ -519,20 +812,15 @@ export default function PurchaseOrdersPage() {
     setOrderToFulfill(order);
     setFulfillLocationId(locationId);
     setFulfillLocationName(locationName ?? null);
-    if (String(order?.company_account_type || '') === 'Key Accounts') {
-      setDispatchPo(order);
-      setRiderName('');
-      setRiderPlate('');
-      setRiderPhotoFile(null);
-      setWarehouseSignatureDataUrl(null);
-      setDispatchOpen(true);
+    if (order?.fulfillment_type === 'warehouse_transfer') {
+      openDispatchCaptureForFulfill(order);
       return;
     }
     setFulfillDialogOpen(true);
   };
 
   useEffect(() => {
-    if (!fulfillDialogOpen || !orderToFulfill?.id) return;
+    if ((!fulfillDialogOpen && !dispatchOpen) || !orderToFulfill?.id) return;
     if (String(orderToFulfill.po_order_kind || '') !== 'rebate_fulfillment' || !orderToFulfill.source_rebate_id) {
       setFulfillRebateReturnLines([]);
       return;
@@ -607,6 +895,7 @@ export default function PurchaseOrdersPage() {
     };
   }, [
     fulfillDialogOpen,
+    dispatchOpen,
     orderToFulfill?.id,
     orderToFulfill?.po_order_kind,
     orderToFulfill?.source_rebate_id,
@@ -639,7 +928,7 @@ export default function PurchaseOrdersPage() {
       setOrderToFulfill(null);
       setFulfillLocationId(null);
       setFulfillLocationName(null);
-      await fetchPurchaseOrders();
+      void fetchPurchaseOrders(false, true);
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to fulfill', variant: 'destructive' });
     } finally {
@@ -661,6 +950,36 @@ export default function PurchaseOrdersPage() {
   };
 
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (!riderPhotoFile) {
+      setRiderPhotoPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(riderPhotoFile);
+    setRiderPhotoPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [riderPhotoFile]);
+
+  const handleRiderPhotoChange = (file: File | null) => {
+    if (!file) {
+      clearRiderPhoto();
+      return;
+    }
+
+    const validationError = getRiderPhotoValidationError(file);
+    if (validationError) {
+      clearRiderPhoto();
+      toast({
+        title: 'Invalid rider photo',
+        description: validationError,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setRiderPhotoFile(file);
+  };
 
   const orderDateRange = useMemo(() => {
     return getDateRangeFromPreset(
@@ -684,28 +1003,43 @@ export default function PurchaseOrdersPage() {
   const filteredOrders = useMemo(() => {
     const q = searchQuery.toLowerCase();
     return scopedOrders.filter((order) => {
+      if (!purchaseOrderMatchesStatusFilter(order, statusFilter)) return false;
       const typeLabel = order.fulfillment_type === 'warehouse_transfer' ? 'internal warehouse' : 'supplier';
       return (
         order.po_number.toLowerCase().includes(q) ||
         (order.supplier?.company_name || '').toLowerCase().includes(q) ||
         typeLabel.includes(q) ||
         (order.fulfillment_type === 'warehouse_transfer' &&
-          (order.warehouse_location?.name || '').toLowerCase().includes(q))
+          formatPoRequestedWarehouseSummary(order).toLowerCase().includes(q))
       );
     });
-  }, [scopedOrders, searchQuery]);
+  }, [scopedOrders, searchQuery, statusFilter]);
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () => resolveTableSortDirection(sortState, DEFAULT_PO_SORT_KEY, DEFAULT_PO_SORT_DIRECTION),
+    [sortState]
+  );
+
+  const sortedOrders = useMemo(
+    () => sortPurchaseOrders(filteredOrders, resolvedSortKey, resolvedSortDirection),
+    [filteredOrders, resolvedSortKey, resolvedSortDirection]
+  );
 
   const summaryOrders = isWarehouse ? scopedOrders : purchaseOrders;
 
+  const handleSort = (key: PurchaseOrderSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
+
   useEffect(() => {
     setPoPage(1);
-  }, [searchQuery, poTab, orderDateRange.start, orderDateRange.end]);
+  }, [searchQuery, poTab, orderDateRange.start, orderDateRange.end, sortState, statusFilter]);
 
   // Pagination: 10 purchase orders per page
   const PO_PER_PAGE = 10;
-  const totalPoPages = Math.max(1, Math.ceil(filteredOrders.length / PO_PER_PAGE));
+  const totalPoPages = Math.max(1, Math.ceil(sortedOrders.length / PO_PER_PAGE));
   const currentPoPage = Math.min(Math.max(1, poPage), totalPoPages);
-  const paginatedOrders = filteredOrders.slice(
+  const paginatedOrders = sortedOrders.slice(
     (currentPoPage - 1) * PO_PER_PAGE,
     currentPoPage * PO_PER_PAGE
   );
@@ -743,7 +1077,6 @@ export default function PurchaseOrdersPage() {
             linkedWarehouseCompanyId={linkedWarehouseCompanyId}
             user={user}
             onCreateOrder={createPurchaseOrder}
-            refreshData={fetchPurchaseOrders}
           />
         )}
       </div>
@@ -812,9 +1145,25 @@ export default function PurchaseOrdersPage() {
                 placeholder="Search orders..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-10 h-10"
               />
             </div>
+            <Select
+              value={statusFilter}
+              onValueChange={(value) => setStatusFilter(value as PurchaseOrderStatusFilter)}
+            >
+              <SelectTrigger className="h-10 w-full sm:w-[220px] gap-2">
+                <Filter className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                {PO_STATUS_FILTER_OPTIONS.map((key) => (
+                  <SelectItem key={key} value={key}>
+                    {PO_STATUS_FILTER_LABELS[key]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {isWarehouse && (
               <DateRangeFilterPopover
                 value={dateRangeFilter}
@@ -858,7 +1207,7 @@ export default function PurchaseOrdersPage() {
                     <div className="truncate">{order.supplier?.company_name ?? '—'}</div>
                     {order.fulfillment_type === 'warehouse_transfer' && (
                       <div className="text-xs text-muted-foreground truncate">
-                        Requested: {order.warehouse_location?.name ?? '—'}
+                        Requested: {formatPoRequestedWarehouseSummary(order)}
                       </div>
                     )}
                   </div>
@@ -901,6 +1250,12 @@ export default function PurchaseOrdersPage() {
                     <FileText className="h-4 w-4 mr-1" />
                     COF
                   </Button>
+                  {canPrintDrForOrder(order) && (
+                    <Button variant="outline" size="sm" onClick={() => void openDrForOrder(order)} title="Print delivery receipt for your warehouse">
+                      <Receipt className="h-4 w-4 mr-1" />
+                      DR
+                    </Button>
+                  )}
                   <Button variant="ghost" size="sm" onClick={() => handleViewOrder(order)}>
                     <Eye className="h-4 w-4 mr-1" /> View
                   </Button>
@@ -914,14 +1269,56 @@ export default function PurchaseOrdersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>PO Number</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Seller</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Expected Delivery</TableHead>
-                  <TableHead className="text-right">Items</TableHead>
-                  <TableHead className="text-right">Total Amount</TableHead>
-                  <TableHead>Status</TableHead>
+                  <SortableTableHead
+                    label="PO Number"
+                    sortKey="poNumber"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'poNumber')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Type"
+                    sortKey="type"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'type')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Seller"
+                    sortKey="seller"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'seller')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Date"
+                    sortKey="orderDate"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'orderDate')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Expected Delivery"
+                    sortKey="expectedDeliveryDate"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'expectedDeliveryDate')}
+                    onSort={handleSort}
+                  />
+                  <SortableTableHead
+                    label="Items"
+                    sortKey="itemCount"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'itemCount')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Total Amount"
+                    sortKey="totalAmount"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'totalAmount')}
+                    onSort={handleSort}
+                    className="text-right"
+                  />
+                  <SortableTableHead
+                    label="Status"
+                    sortKey="status"
+                    sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                    onSort={handleSort}
+                  />
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -956,7 +1353,7 @@ export default function PurchaseOrdersPage() {
                           <p className="text-xs text-muted-foreground">{order.supplier?.contact_person ?? ''}</p>
                           {order.fulfillment_type === 'warehouse_transfer' && (
                             <p className="text-xs text-muted-foreground">
-                              Requested: <span className="font-medium text-foreground/80">{order.warehouse_location?.name ?? '—'}</span>
+                              Requested: <span className="font-medium text-foreground/80">{formatPoRequestedWarehouseSummary(order)}</span>
                             </p>
                           )}
                         </div>
@@ -1023,6 +1420,16 @@ export default function PurchaseOrdersPage() {
                           <Button variant="outline" size="icon" onClick={() => void openCofForOrder(order)} title="View / Print COF">
                             <FileText className="h-4 w-4" />
                           </Button>
+                          {canPrintDrForOrder(order) && (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => void openDrForOrder(order)}
+                              title="Print delivery receipt for your warehouse"
+                            >
+                              <Receipt className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1032,7 +1439,7 @@ export default function PurchaseOrdersPage() {
             </Table>
 
             {/* Pagination controls */}
-            {filteredOrders.length > PO_PER_PAGE && (
+            {sortedOrders.length > PO_PER_PAGE && (
               <div className="flex items-center justify-between mt-4">
                 <div className="text-xs text-muted-foreground">
                   Showing{' '}
@@ -1358,43 +1765,102 @@ export default function PurchaseOrdersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Key Account Dispatch Dialog (after fulfillment) */}
+      {/* Dispatch / Delivery Dialog (warehouse transfer fulfill) */}
       <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Dispatch / Delivery (Key Accounts)</DialogTitle>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-3 shrink-0 space-y-1">
+            <DialogTitle>Dispatch / Delivery</DialogTitle>
+            <DialogDescription>
+              {dispatchPo?.po_number ? `PO: ${dispatchPo.po_number}` : 'Complete delivery details below.'}
+            </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="text-sm text-muted-foreground">
-              {dispatchPo?.po_number ? `PO: ${dispatchPo.po_number}` : 'PO'}
-            </div>
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4 space-y-4">
+            {dispatchPo?.po_order_kind === 'rebate_fulfillment' && (
+              <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                <div className="text-sm font-medium">Expected return items (disputed lines)</div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Replacement stock is deducted on delivery. Disputed items are restocked only after physical receive.
+                </p>
+                {loadingFulfillRebateReturnLines ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading return items…
+                  </div>
+                ) : fulfillRebateReturnLines.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">—</div>
+                ) : (
+                  <div className="max-h-28 overflow-auto rounded-md border bg-background">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="h-8 text-xs">Brand</TableHead>
+                          <TableHead className="h-8 text-xs">Variant</TableHead>
+                          <TableHead className="h-8 text-xs text-right">Qty</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {fulfillRebateReturnLines.map((l, idx) => (
+                          <TableRow key={`${l.variant_name}-${idx}`}>
+                            <TableCell className="py-2 text-xs font-medium">{l.brand_name}</TableCell>
+                            <TableCell className="py-2 text-xs">{l.variant_name}</TableCell>
+                            <TableCell className="py-2 text-xs text-right font-semibold">{l.disputed_quantity}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            )}
 
-            <div className="space-y-2">
-              <Label>Rider name</Label>
-              <Input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="e.g. Juan Dela Cruz" />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Plate number</Label>
-              <Input value={riderPlate} onChange={(e) => setRiderPlate(e.target.value)} placeholder="e.g. ABC-1234" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Rider name</Label>
+                <Input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="e.g. Juan Dela Cruz" />
+              </div>
+              <div className="space-y-2">
+                <Label>Plate number</Label>
+                <Input value={riderPlate} onChange={(e) => setRiderPlate(e.target.value)} placeholder="e.g. ABC-1234" />
+              </div>
             </div>
 
             <div className="space-y-2">
               <Label>Rider photo</Label>
-              <Input type="file" accept="image/*" onChange={(e) => setRiderPhotoFile(e.target.files?.[0] ?? null)} />
-              <p className="text-xs text-muted-foreground">
-                Rider photo → <span className="font-medium">{KA_DELIVERY_RIDER_PHOTOS_BUCKET}</span>
-                {' · '}
-                Signature → <span className="font-medium">{KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET}</span>
-              </p>
+              <Input
+                ref={riderPhotoInputRef}
+                type="file"
+                accept={RIDER_PHOTO_ACCEPT}
+                onChange={(e) => handleRiderPhotoChange(e.target.files?.[0] ?? null)}
+              />
+              <p className="text-xs text-muted-foreground">JPG, PNG, WEBP, or GIF only. Max 5 MB.</p>
+              {riderPhotoFile && riderPhotoPreviewUrl ? (
+                <div className="rounded-lg border p-3 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{riderPhotoFile.name}</p>
+                      <p className="text-xs text-muted-foreground">{(riderPhotoFile.size / 1024).toFixed(1)} KB</p>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={clearRiderPhoto}>
+                      <X className="h-3 w-3 mr-1" />
+                      Remove
+                    </Button>
+                  </div>
+                  <div className="border rounded-lg overflow-hidden bg-muted/30 p-2">
+                    <img
+                      src={riderPhotoPreviewUrl}
+                      alt="Rider photo preview"
+                      className="w-full h-auto max-h-48 object-contain mx-auto rounded-md"
+                    />
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-2">
               <Label>Warehouse e-signature</Label>
               {warehouseSignatureDataUrl ? (
                 <div className="border rounded-md p-3 bg-muted/30 space-y-2">
-                  <img src={warehouseSignatureDataUrl} alt="Warehouse signature" className="max-h-24 mx-auto" />
+                  <img src={warehouseSignatureDataUrl} alt="Warehouse signature" className="max-h-20 mx-auto" />
                   <div className="flex justify-end">
                     <Button variant="ghost" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
                       Change signature
@@ -1402,7 +1868,7 @@ export default function PurchaseOrdersPage() {
                   </div>
                 </div>
               ) : (
-                <div className="border rounded-md p-3 bg-muted/30 flex items-center justify-between">
+                <div className="border rounded-md p-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm text-muted-foreground">Draw warehouse signature before delivering.</p>
                   <Button type="button" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
                     Add signature
@@ -1411,7 +1877,18 @@ export default function PurchaseOrdersPage() {
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2">
+            <div className="space-y-2">
+              <Label>Notes <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Textarea
+                value={dispatchNotes}
+                onChange={(e) => setDispatchNotes(e.target.value)}
+                placeholder="Delivery instructions, gate pass, etc."
+                rows={2}
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="px-6 py-4 border-t shrink-0 bg-background">
               <Button
                 variant="outline"
                 onClick={() => setDispatchOpen(false)}
@@ -1425,6 +1902,16 @@ export default function PurchaseOrdersPage() {
                   if (!dispatchPo?.id || !dispatchPo?.company_id || !locId) return;
                   if (!riderName.trim() || !riderPlate.trim() || !riderPhotoFile || !warehouseSignatureDataUrl) {
                     toast({ title: 'Missing info', description: 'Rider name, plate number, rider photo, and warehouse signature are required.', variant: 'destructive' });
+                    return;
+                  }
+
+                  const riderPhotoError = getRiderPhotoValidationError(riderPhotoFile);
+                  if (riderPhotoError) {
+                    toast({
+                      title: 'Invalid rider photo',
+                      description: riderPhotoError,
+                      variant: 'destructive',
+                    });
                     return;
                   }
 
@@ -1453,25 +1940,9 @@ export default function PurchaseOrdersPage() {
                     if (!fulfillData?.success) throw new Error(fulfillData?.error || 'Fulfillment failed');
 
                     const fileExt = riderPhotoFile.name.split('.').pop() || 'jpg';
-                    const filePath = `${storageBasePath}/${Date.now()}_rider.${fileExt}`;
+                    const uploadTs = Date.now();
+                    const filePath = `${storageBasePath}/${uploadTs}_rider.${fileExt}`;
 
-                    const { error: uploadError } = await supabase.storage
-                      .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
-                      .upload(filePath, riderPhotoFile, {
-                        upsert: false,
-                        contentType: riderPhotoFile.type || 'image/jpeg',
-                      });
-                    if (uploadError) throw uploadError;
-
-                    const { data: urlData, error: urlErr } = await supabase.storage
-                      .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
-                      .createSignedUrl(filePath, 60 * 60 * 24 * 365);
-                    if (urlErr) throw urlErr;
-                    const riderPhotoUrl = urlData?.signedUrl;
-                    if (!riderPhotoUrl) throw new Error('Failed to create signed URL');
-
-                    // Upload warehouse signature
-                    let signatureBlob: Blob;
                     const base64Data = warehouseSignatureDataUrl.split(',')[1];
                     if (!base64Data) throw new Error('Invalid warehouse signature data');
                     const binaryString = atob(base64Data);
@@ -1479,22 +1950,40 @@ export default function PurchaseOrdersPage() {
                     for (let i = 0; i < binaryString.length; i++) {
                       bytes[i] = binaryString.charCodeAt(i);
                     }
-                    signatureBlob = new Blob([bytes], { type: 'image/png' });
+                    const signatureBlob = new Blob([bytes], { type: 'image/png' });
+                    const signaturePath = `${storageBasePath}/${uploadTs}_warehouse-signature.png`;
 
-                    const signaturePath = `${storageBasePath}/${Date.now()}_warehouse-signature.png`;
-                    const { error: sigUploadError } = await supabase.storage
-                      .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
-                      .upload(signaturePath, signatureBlob, {
-                        contentType: 'image/png',
-                        upsert: false,
-                      });
+                    const [{ error: uploadError }, { error: sigUploadError }] = await Promise.all([
+                      supabase.storage
+                        .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
+                        .upload(filePath, riderPhotoFile, {
+                          upsert: false,
+                          contentType: riderPhotoContentType(riderPhotoFile),
+                        }),
+                      supabase.storage
+                        .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
+                        .upload(signaturePath, signatureBlob, {
+                          contentType: 'image/png',
+                          upsert: false,
+                        }),
+                    ]);
+                    if (uploadError) throw uploadError;
                     if (sigUploadError) throw sigUploadError;
 
-                    const { data: sigUrlData, error: sigUrlErr } = await supabase.storage
-                      .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
-                      .createSignedUrl(signaturePath, 60 * 60 * 24 * 365);
+                    const [{ data: urlData, error: urlErr }, { data: sigUrlData, error: sigUrlErr }] =
+                      await Promise.all([
+                        supabase.storage
+                          .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
+                          .createSignedUrl(filePath, 60 * 60 * 24 * 365),
+                        supabase.storage
+                          .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
+                          .createSignedUrl(signaturePath, 60 * 60 * 24 * 365),
+                      ]);
+                    if (urlErr) throw urlErr;
                     if (sigUrlErr) throw sigUrlErr;
+                    const riderPhotoUrl = urlData?.signedUrl;
                     const warehouseSignatureUrl = sigUrlData?.signedUrl;
+                    if (!riderPhotoUrl) throw new Error('Failed to create signed URL');
                     if (!warehouseSignatureUrl) throw new Error('Failed to create signature URL');
 
                     // 2) Create DR number (WH + first letter of warehouse_locations.name, e.g. Bacoor → WHB)
@@ -1520,6 +2009,7 @@ export default function PurchaseOrdersPage() {
                       warehouse_signature_path: signaturePath,
                       dr_number: drNumber,
                       status: 'dispatched',
+                      notes: dispatchNotes.trim() || null,
                       created_by: user.id,
                     } as any);
                     if (insErr) throw insErr;
@@ -1566,15 +2056,49 @@ export default function PurchaseOrdersPage() {
                           ? `All warehouses dispatched. DR: ${poUpdate.dr_number || drNumber}`
                           : `Dispatch saved for this warehouse. DR: ${drNumber}. Other warehouse(s) still pending.`,
                     });
+
+                    const whName =
+                      fulfillLocationName?.trim() ||
+                      approveLocationNames[locId] ||
+                      resolveWarehouseNameForLocation(dispatchPo, locId);
+
+                    const pdfPo = dispatchPo;
+                    const pdfDrNumber = drNumber;
+                    const pdfLocId = locId;
+                    const pdfWhName = whName;
+
+                    setMyLocationDrByPo((prev) => ({
+                      ...prev,
+                      [dispatchPo.id]: {
+                        dr_number: drNumber,
+                        warehouse_location_id: locId,
+                        warehouse_name: whName,
+                      },
+                    }));
+
                     // Update local status so Fulfill button hides immediately
                     setMyLocationStatuses((prev) => ({ ...prev, [dispatchPo.id]: 'fulfilled' }));
                     setDispatchOpen(false);
                     setDispatchPo(null);
                     setWarehouseSignatureDataUrl(null);
+                    setDispatchNotes('');
                     setOrderToFulfill(null);
                     setFulfillLocationId(null);
                     setFulfillLocationName(null);
-                    await fetchPurchaseOrders();
+                    void fetchPurchaseOrders(false, true);
+
+                    void generateAndOpenDrPdf(pdfPo, {
+                      drNumber: pdfDrNumber,
+                      warehouseLocationId: pdfLocId,
+                      warehouseLocationName: pdfWhName,
+                    }).catch((drPdfErr: any) => {
+                      console.warn('[DR] auto-open after dispatch failed', drPdfErr);
+                      toast({
+                        title: 'DR opened with issues',
+                        description: drPdfErr?.message || 'Delivery saved but DR preview could not open.',
+                        variant: 'destructive',
+                      });
+                    });
                   } catch (e: any) {
                     toast({ title: 'Error', description: e.message || 'Failed to save dispatch info', variant: 'destructive' });
                   } finally {
@@ -1592,8 +2116,7 @@ export default function PurchaseOrdersPage() {
                 {savingDispatch || fulfillingOrderId === dispatchPo?.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                 Deliver
               </Button>
-            </div>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1605,7 +2128,7 @@ export default function PurchaseOrdersPage() {
           </DialogHeader>
           <SignatureCanvas
             title="Draw the warehouse signature in the area below"
-            description="This signature confirms the warehouse personnel who fulfilled and dispatched this Key Account PO."
+            description="This signature confirms the warehouse personnel who fulfilled and dispatched this PO."
             onSave={(sigDataUrl) => {
               setWarehouseSignatureDataUrl(sigDataUrl);
               setShowWarehouseSignatureModal(false);
@@ -1632,6 +2155,9 @@ export default function PurchaseOrdersPage() {
             <ScrollArea className="h-[calc(95vh-80px)]">
               {orderToView && (
                 <div className="p-4">
+                  {orderToView.key_account_client_id ? (
+                    <KeyAccountPOView order={orderToView} />
+                  ) : (
                   <Accordion type="multiple" defaultValue={["info", "buyer", "seller", "items", "pricing"]} className="space-y-2">
                     {/* PO Info Section */}
                     <AccordionItem value="info" className="border rounded-lg px-4">
@@ -1658,24 +2184,41 @@ export default function PurchaseOrdersPage() {
                     {/* Buyer Info Section */}
                     <AccordionItem value="buyer" className="border rounded-lg px-4">
                       <AccordionTrigger className="hover:no-underline">
-                        <span className="font-semibold">Buyer (Our Company)</span>
+                        <span className="font-semibold">Buyer information</span>
                       </AccordionTrigger>
                       <AccordionContent>
                         <div className="space-y-2 text-sm pt-4">
-                          <div>
-                            <p className="font-medium">{(viewBuyerCompanyName ?? companyInfo?.company_name) || 'N/A'}</p>
-                            <p className="text-muted-foreground text-xs">{user?.address || 'N/A'}</p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <p className="text-muted-foreground">Contact</p>
-                              <p>{user?.full_name || 'N/A'}</p>
-                            </div>
-                            <div>
-                              <p className="text-muted-foreground">Phone</p>
-                              <p>{user?.phone || 'N/A'}</p>
-                            </div>
-                          </div>
+                          {loadingViewRequestor ? (
+                            <p className="text-muted-foreground text-xs flex items-center gap-2">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Loading buyer details…
+                            </p>
+                          ) : (
+                            <>
+                              <div>
+                                <p className="font-medium">
+                                  {viewRequestorInfo?.company?.company_name || 'N/A'}
+                                </p>
+                                <p className="text-muted-foreground text-xs">
+                                  {formatPoRequestorAddress(viewRequestorInfo?.profile)}
+                                </p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <p className="text-muted-foreground">Placed by</p>
+                                  <p>{viewRequestorInfo?.profile?.full_name || 'N/A'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Phone</p>
+                                  <p>{viewRequestorInfo?.profile?.phone || 'N/A'}</p>
+                                </div>
+                                <div className="col-span-2">
+                                  <p className="text-muted-foreground">Email</p>
+                                  <p>{viewRequestorInfo?.profile?.email || 'N/A'}</p>
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </AccordionContent>
                     </AccordionItem>
@@ -1689,29 +2232,57 @@ export default function PurchaseOrdersPage() {
                       </AccordionTrigger>
                       <AccordionContent>
                         <div className="space-y-2 text-sm pt-4">
-                          {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                          {orderToView.fulfillment_type === 'warehouse_transfer' ? (
                             <div className="rounded-md border bg-muted/40 p-3">
                               <Label className="text-muted-foreground text-xs">Requested warehouse / sub-warehouse</Label>
-                              <p className="font-medium">{orderToView.warehouse_location?.name ?? '—'}</p>
+                              <div className="mt-1">
+                                <RequestedWarehouseSources
+                                  order={orderToView}
+                                  fallbackStatuses={transferLocationStatuses}
+                                />
+                              </div>
                             </div>
+                          ) : (
+                            <>
+                              <div>
+                                <p className="font-medium">{orderToView.supplier.company_name}</p>
+                                <p className="text-muted-foreground text-xs">{orderToView.supplier.address}</p>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <p className="text-muted-foreground">Contact</p>
+                                  <p>{orderToView.supplier.contact_person}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Phone</p>
+                                  <p>{orderToView.supplier.phone}</p>
+                                </div>
+                              </div>
+                            </>
                           )}
-                          <div>
-                            <p className="font-medium">{orderToView.supplier.company_name}</p>
-                            <p className="text-muted-foreground text-xs">{orderToView.supplier.address}</p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <p className="text-muted-foreground">Contact</p>
-                              <p>{orderToView.supplier.contact_person}</p>
-                            </div>
-                            <div>
-                              <p className="text-muted-foreground">Phone</p>
-                              <p>{orderToView.supplier.phone}</p>
-                            </div>
-                          </div>
                         </div>
                       </AccordionContent>
                     </AccordionItem>
+
+                    {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                      <KeyAccountPoWarehouseProgress
+                        purchaseOrderId={orderToView.id}
+                        workflowStatus={orderToView.workflow_status}
+                        fulfillmentType={orderToView.fulfillment_type}
+                      />
+                    )}
+
+                    {purchaseOrderDeliveryDetailsEnabled(orderToView) && (
+                      <PurchaseOrderDeliveryDetailsPanel
+                        purchaseOrderId={orderToView.id}
+                        enabled
+                        purchaseOrder={orderToView}
+                        filterWarehouseLocationId={isWarehouse ? membership.locationId : null}
+                        warehouseNamesById={Object.fromEntries(
+                          transferLocationStatuses.map((s) => [s.location_id, s.location_name])
+                        )}
+                      />
+                    )}
 
                     {/* Items Section */}
                     <AccordionItem value="items" className="border rounded-lg px-4">
@@ -1800,15 +2371,6 @@ export default function PurchaseOrdersPage() {
                       </div>
                     )}
                   </Accordion>
-
-                  {orderToView.key_account_client_id && keyAccountDeliveryDetailsEnabled(orderToView) && (
-                    <div className="mt-4">
-                      <PurchaseOrderDeliveryDetailsPanel
-                        purchaseOrderId={orderToView.id}
-                        enabled
-                        warehouseNamesById={{}}
-                      />
-                    </div>
                   )}
                 </div>
               )}
@@ -1862,11 +2424,30 @@ export default function PurchaseOrdersPage() {
                     <div className="space-y-2">
                       <h4 className="font-semibold text-lg">Buyer Information</h4>
                       <div className="bg-muted p-4 rounded-lg space-y-1">
-                        <p className="font-medium">{(viewBuyerCompanyName ?? companyInfo?.company_name) || 'N/A'}</p>
-                        <p className="text-sm text-muted-foreground">{user?.address || 'N/A'}</p>
-                        <p className="text-sm">Contact: {user?.full_name || 'N/A'}</p>
-                        <p className="text-sm">Phone: {user?.phone || 'N/A'}</p>
-                        <p className="text-sm">Email: {user?.email || 'N/A'}</p>
+                        {loadingViewRequestor ? (
+                          <p className="text-sm text-muted-foreground flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading buyer details…
+                          </p>
+                        ) : (
+                          <>
+                            <p className="font-medium">
+                              {viewRequestorInfo?.company?.company_name || 'N/A'}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              {formatPoRequestorAddress(viewRequestorInfo?.profile)}
+                            </p>
+                            <p className="text-sm">
+                              Placed by: {viewRequestorInfo?.profile?.full_name || 'N/A'}
+                            </p>
+                            <p className="text-sm">
+                              Phone: {viewRequestorInfo?.profile?.phone || 'N/A'}
+                            </p>
+                            <p className="text-sm">
+                              Email: {viewRequestorInfo?.profile?.email || 'N/A'}
+                            </p>
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="space-y-2">
@@ -1874,47 +2455,54 @@ export default function PurchaseOrdersPage() {
                         {orderToView.fulfillment_type === 'warehouse_transfer' ? 'Warehouse Information' : 'Seller Information'}
                       </h4>
                       <div className="bg-muted p-4 rounded-lg space-y-1">
-                        {orderToView.fulfillment_type === 'warehouse_transfer' && (
-                          <div className="pb-2 border-b">
-                            <p className="text-xs text-muted-foreground">Requested warehouse / sub-warehouse</p>
-                            <p className="font-medium">{orderToView.warehouse_location?.name ?? '—'}</p>
-                          </div>
-                        )}
-                        {orderToView.fulfillment_type === 'warehouse_transfer' && transferLocationStatuses.length > 0 && (
-                          <div className="pt-3 mt-2 border-t space-y-2">
-                            <p className="text-xs font-semibold text-muted-foreground">Fulfillment progress (by location)</p>
-                            <div className="space-y-1">
-                              {transferLocationStatuses.map((s) => (
-                                <div key={s.location_id} className="flex items-center justify-between gap-2 text-sm">
-                                  <span className="font-medium">{s.location_name}</span>
-                                  <div className="flex items-center gap-2">
-                                    <Badge
-                                      variant={
-                                        s.status === 'fulfilled'
-                                          ? 'default'
-                                          : s.status === 'ready'
-                                            ? 'secondary'
-                                            : s.status === 'partial'
-                                              ? 'secondary'
-                                              : 'outline'
-                                      }
-                                    >
-                                      {s.status.toUpperCase()}
-                                    </Badge>
-                                  </div>
-                                </div>
-                              ))}
+                        {orderToView.fulfillment_type === 'warehouse_transfer' ? (
+                          <>
+                            <div className="pb-2 border-b">
+                              <p className="text-xs text-muted-foreground">Fulfillment type</p>
+                              <p className="font-medium">Internal warehouse transfer</p>
                             </div>
-                          </div>
+                            <div className="pb-2 border-b">
+                              <p className="text-xs text-muted-foreground">Requested warehouse / sub-warehouse</p>
+                              <div className="mt-0.5">
+                                <RequestedWarehouseSources
+                                  order={orderToView}
+                                  fallbackStatuses={transferLocationStatuses}
+                                />
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-medium">{orderToView.supplier.company_name}</p>
+                            <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
+                            <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
+                            <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
+                            <p className="text-sm">Email: {orderToView.supplier.email}</p>
+                          </>
                         )}
-                        <p className="font-medium">{orderToView.supplier.company_name}</p>
-                        <p className="text-sm text-muted-foreground">{orderToView.supplier.address}</p>
-                        <p className="text-sm">Contact: {orderToView.supplier.contact_person}</p>
-                        <p className="text-sm">Phone: {orderToView.supplier.phone}</p>
-                        <p className="text-sm">Email: {orderToView.supplier.email}</p>
                       </div>
                     </div>
                   </div>
+
+                  {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                    <KeyAccountPoWarehouseProgress
+                      purchaseOrderId={orderToView.id}
+                      workflowStatus={orderToView.workflow_status}
+                      fulfillmentType={orderToView.fulfillment_type}
+                    />
+                  )}
+
+                  {purchaseOrderDeliveryDetailsEnabled(orderToView) && (
+                    <PurchaseOrderDeliveryDetailsPanel
+                      purchaseOrderId={orderToView.id}
+                      enabled
+                      purchaseOrder={orderToView}
+                      filterWarehouseLocationId={isWarehouse ? membership.locationId : null}
+                      warehouseNamesById={Object.fromEntries(
+                        transferLocationStatuses.map((s) => [s.location_id, s.location_name])
+                      )}
+                    />
+                  )}
 
                   {/* Items Desktop */}
                   <div className="space-y-2">
@@ -2111,6 +2699,8 @@ interface KeyAccountPOViewProps {
 
 function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
   const { user } = useAuth();
+  const isWarehouse = user?.role === 'warehouse';
+  const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
   const [warehouseLocationMeta, setWarehouseLocationMeta] = useState<
     Record<string, { name: string; is_main: boolean }>
   >({});
@@ -2126,6 +2716,10 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
   const [rebatePricing, setRebatePricing] = useState<{
     disputed_total: number;
     replacement_total: number;
+  } | null>(null);
+  const [rebateSource, setRebateSource] = useState<{
+    rebate_number: string;
+    source_po_number: string;
   } | null>(null);
 
   const [rebateReturnLines, setRebateReturnLines] = useState<
@@ -2145,20 +2739,32 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
   useEffect(() => {
     if (order.po_order_kind !== 'rebate_fulfillment' || !order.source_rebate_id) {
       setRebatePricing(null);
+      setRebateSource(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       const { data } = await supabase
         .from('key_account_po_rebates')
-        .select('disputed_total, replacement_total')
+        .select(
+          'rebate_number, disputed_total, replacement_total, source_po:purchase_orders!key_account_po_rebates_purchase_order_id_fkey(po_number)'
+        )
         .eq('id', order.source_rebate_id)
         .maybeSingle();
-      if (!cancelled && data) {
-        setRebatePricing({
-          disputed_total: Number(data.disputed_total) || 0,
-          replacement_total: Number(data.replacement_total) || 0,
+      if (cancelled || !data) return;
+      setRebatePricing({
+        disputed_total: Number(data.disputed_total) || 0,
+        replacement_total: Number(data.replacement_total) || 0,
+      });
+      const src = (data as { source_po?: { po_number: string } | { po_number: string }[] }).source_po;
+      const poNum = Array.isArray(src) ? src?.[0]?.po_number : src?.po_number;
+      if (poNum) {
+        setRebateSource({
+          rebate_number: String(data.rebate_number || ''),
+          source_po_number: poNum,
         });
+      } else {
+        setRebateSource(null);
       }
     })();
     return () => {
@@ -2256,6 +2862,29 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
     }
     return map;
   }, [warehouseLocationMeta]);
+
+  const warehouseLocationIsMainById = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const [id, m] of Object.entries(warehouseLocationMeta)) {
+      map[id] = m.is_main;
+    }
+    return map;
+  }, [warehouseLocationMeta]);
+
+  const receivableRebateReturnLines = useMemo(
+    () =>
+      filterRebateReturnLinesForWarehouseUser(
+        rebateReturnLines,
+        membership,
+        warehouseLocationIsMainById
+      ),
+    [rebateReturnLines, membership, warehouseLocationIsMainById]
+  );
+
+  const canReceiveRebateReturns =
+    isWarehouse &&
+    !returnsAlreadyReceived &&
+    receivableRebateReturnLines.length > 0;
 
   useEffect(() => {
     if (order.po_order_kind !== 'rebate_fulfillment' || !order.source_rebate_id) {
@@ -2358,6 +2987,17 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
               <Badge variant="secondary">Rebate replacement</Badge>
             )}
           </div>
+          {rebateSource ? (
+            <>
+              <div className="text-xs text-muted-foreground mt-2">Source PO</div>
+              <div className="text-lg font-bold font-mono break-all flex flex-wrap items-center gap-2">
+                <span>{rebateSource.source_po_number}</span>
+                {rebateSource.rebate_number ? (
+                  <Badge variant="outline">{rebateSource.rebate_number}</Badge>
+                ) : null}
+              </div>
+            </>
+          ) : null}
           <div className="text-xs text-muted-foreground">RFPF Number</div>
           <div className="text-lg font-bold font-mono">{order.rfpf_number?.toUpperCase() || '—'}</div>
           <div className="text-sm text-muted-foreground mt-1">
@@ -2464,7 +3104,9 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
 
       <PurchaseOrderDeliveryDetailsPanel
         purchaseOrderId={order.id}
-        enabled={keyAccountDeliveryDetailsEnabled(order)}
+        enabled={purchaseOrderDeliveryDetailsEnabled(order)}
+        purchaseOrder={order}
+        filterWarehouseLocationId={isWarehouse ? membership.locationId : null}
         warehouseNamesById={warehouseNamesById}
       />
 
@@ -2535,17 +3177,27 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
               </div>
             )}
 
-            {user?.role === 'warehouse' && !returnsAlreadyReceived && (
+            {canReceiveRebateReturns && (
               <div className="flex justify-end pt-1">
                 <Button
                   variant="secondary"
-                  disabled={loadingRebateReturnLines || rebateReturnLines.length === 0}
+                  disabled={loadingRebateReturnLines}
                   onClick={() => setReceiveReturnsOpen(true)}
                 >
                   Receive returns
                 </Button>
               </div>
             )}
+            {isWarehouse &&
+              !returnsAlreadyReceived &&
+              !loadingRebateReturnLines &&
+              rebateReturnLines.length > 0 &&
+              receivableRebateReturnLines.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Returns for this rebate must be received by the assigned sub-warehouse or main warehouse
+                  user for each line&apos;s ship-from location.
+                </p>
+              )}
             {returnsAlreadyReceived && (
               <p className="text-sm text-muted-foreground">Returns already received for this rebate.</p>
             )}
@@ -2560,6 +3212,8 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
           fulfillmentPoId={order.id}
           sourceRebateId={order.source_rebate_id}
           warehouseNamesById={warehouseNamesById}
+          warehouseLocationIsMainById={warehouseLocationIsMainById}
+          warehouseMembership={membership}
           hubCompanyId={order.warehouse_company_id || user?.company_id}
           onSuccess={() => setReturnsAlreadyReceived(true)}
         />

@@ -4,19 +4,22 @@
 -- This function handles order approval for finance team with different logic
 -- based on payment method:
 -- 1. BANK_TRANSFER/GCASH: Simply approve the order
--- 2. CASH/CHEQUE: Approve the order AND verify the linked cash_deposit
+-- 2. CASH/CHEQUE (FULL or SPLIT): Approve the order AND verify the linked cash_deposit
 -- 3. FOC (total_amount = 0): Skip deposit requirement entirely
 -- ============================================================================
 
 DROP FUNCTION IF EXISTS approve_order_and_verify_deposit(UUID);
+DROP FUNCTION IF EXISTS approve_order_and_verify_deposit(UUID, UUID);
 
 CREATE OR REPLACE FUNCTION approve_order_and_verify_deposit(
-  p_order_id UUID
+  p_order_id UUID,
+  p_approver_id UUID
 )
 RETURNS JSON
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
+SET row_security = off
 AS $$
 DECLARE
   v_order_payment_method TEXT;
@@ -26,8 +29,13 @@ DECLARE
   v_company_id UUID;
   v_order_total NUMERIC;
   v_has_cash_or_cheque BOOLEAN := FALSE;
+  v_deposit_rows INTEGER := 0;
   v_item RECORD;
 BEGIN
+  IF p_approver_id IS NULL THEN
+    RETURN json_build_object('success', false, 'message', 'Approver is required');
+  END IF;
+
   -- 1. Get order details
   SELECT payment_method, payment_mode, payment_splits, deposit_id, company_id, total_amount
   INTO v_order_payment_method, v_order_payment_mode, v_order_payment_splits, v_deposit_id, v_company_id, v_order_total
@@ -39,13 +47,18 @@ BEGIN
   END IF;
 
   -- 2. Determine whether this order has any CASH/CHEQUE component (FULL or SPLIT)
-  v_has_cash_or_cheque := (v_order_payment_method = 'CASH' OR v_order_payment_method = 'CHEQUE');
+  -- IMPORTANT: COALESCE so NULL payment_method (SPLIT) is FALSE, not NULL.
+  -- Otherwise `IF NOT NULL` skips payment_splits detection and deposit verify.
+  v_has_cash_or_cheque := (COALESCE(v_order_payment_method, '') IN ('CASH', 'CHEQUE'));
 
-  IF NOT v_has_cash_or_cheque AND v_order_payment_mode = 'SPLIT' AND v_order_payment_splits IS NOT NULL THEN
+  IF NOT v_has_cash_or_cheque
+     AND v_order_payment_splits IS NOT NULL
+     AND jsonb_typeof(v_order_payment_splits) = 'array'
+  THEN
     v_has_cash_or_cheque := EXISTS (
       SELECT 1
       FROM jsonb_array_elements(v_order_payment_splits) AS elem
-      WHERE (elem->>'method') = 'CASH' OR (elem->>'method') = 'CHEQUE'
+      WHERE upper(trim(COALESCE(elem->>'method', ''))) IN ('CASH', 'CHEQUE')
     );
   END IF;
 
@@ -63,9 +76,11 @@ BEGIN
 
   -- 4. Update order status to approved
   UPDATE client_orders
-  SET 
+  SET
     status = 'approved',
     stage = 'admin_approved',
+    approved_by = p_approver_id,
+    approved_at = NOW(),
     updated_at = NOW()
   WHERE id = p_order_id;
 
@@ -86,39 +101,45 @@ BEGIN
 
   -- 5. If order has CASH/CHEQUE component and deposit_id exists, verify the cash_deposit
   IF v_has_cash_or_cheque AND v_deposit_id IS NOT NULL THEN
-    -- Update cash/cheque deposit status to verified
     UPDATE cash_deposits
-    SET 
+    SET
       status = 'verified',
       updated_at = NOW()
     WHERE id = v_deposit_id
-    AND company_id = v_company_id;
+      AND company_id = v_company_id;
 
-    -- Update related financial transaction to completed
+    GET DIAGNOSTICS v_deposit_rows = ROW_COUNT;
+
+    IF v_deposit_rows = 0 THEN
+      RAISE EXCEPTION 'Failed to verify cash deposit % for order % (deposit not found or company mismatch)',
+        v_deposit_id, p_order_id;
+    END IF;
+
     UPDATE financial_transactions
-    SET 
+    SET
       status = 'completed',
       updated_at = NOW()
     WHERE reference_type = 'cash_deposit'
-    AND reference_id = v_deposit_id
-    AND company_id = v_company_id;
+      AND reference_id = v_deposit_id
+      AND company_id = v_company_id;
 
     RETURN json_build_object(
-      'success', true, 
+      'success', true,
       'message', 'Order approved and deposit verified',
       'payment_method', v_order_payment_method,
       'payment_mode', v_order_payment_mode,
-      'deposit_verified', true
-    );
-  ELSE
-    RETURN json_build_object(
-      'success', true, 
-      'message', 'Order approved',
-      'payment_method', v_order_payment_method,
-      'payment_mode', v_order_payment_mode,
-      'deposit_verified', false
+      'deposit_verified', true,
+      'deposit_id', v_deposit_id
     );
   END IF;
+
+  RETURN json_build_object(
+    'success', true,
+    'message', 'Order approved',
+    'payment_method', v_order_payment_method,
+    'payment_mode', v_order_payment_mode,
+    'deposit_verified', false
+  );
 
 EXCEPTION
   WHEN OTHERS THEN
@@ -126,27 +147,4 @@ EXCEPTION
 END;
 $$;
 
--- Grant permissions
-GRANT EXECUTE ON FUNCTION approve_order_and_verify_deposit(UUID) TO authenticated;
-
--- ============================================================================
--- USAGE NOTES
--- ============================================================================
---
--- Call this function when finance approves an order:
--- SELECT * FROM approve_order_and_verify_deposit('order-uuid-here');
---
--- For Bank Transfer/GCash orders:
--- - Order status changes to 'approved'
--- - No deposit verification needed
---
--- For Cash/Cheque orders:
--- - Order status changes to 'approved'
--- - Related cash_deposit status changes to 'verified' (if deposit_id exists)
--- - Related financial_transaction status changes to 'completed'
---
--- For FOC (Free of Charge) orders (total_amount = 0):
--- - Deposit requirement is bypassed even if payment_method is CASH/CHEQUE
--- - Order status changes to 'approved' directly
---
--- ============================================================================
+GRANT EXECUTE ON FUNCTION approve_order_and_verify_deposit(UUID, UUID) TO authenticated;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
@@ -14,7 +14,9 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { format } from 'date-fns';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -38,14 +40,14 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  FileText,
+  Pencil,
+  ChevronDown,
 } from 'lucide-react';
 import { PurchaseOrderDeliveryDetailsPanel, keyAccountDeliveryDetailsEnabled } from '@/features/orders/components/PurchaseOrderDeliveryDetailsPanel';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
 import type { KeyAccountPoPaymentStatus, PurchaseOrderKeyAccountPayment } from '@/types/database.types';
-import {
-  getKeyAccountPaymentProofSignedUrl,
-  uploadKeyAccountPaymentProof,
-} from '@/features/key-accounts/kaPaymentProofUpload';
+import { uploadKeyAccountPaymentProof } from '@/features/key-accounts/kaPaymentProofUpload';
 import {
   keyAccountWorkflowBadgeClass,
   keyAccountWorkflowLabel,
@@ -67,6 +69,11 @@ import {
   RebateReplacementPricingSummary,
   KeyAccountRebateDetailDialog,
 } from '@/features/key-accounts/rebates';
+import { generateAndOpenKeyAccountCofPdf } from '@/features/key-accounts/cof/generateKeyAccountCofPdf';
+import {
+  KeyAccountPaymentProofStoredPreview,
+  KeyAccountPaymentProofUploadField,
+} from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
 
 type KeyAccountWorkflowStatus =
   | 'kam_pending'
@@ -90,6 +97,7 @@ type Row = {
   status: string;
   order_date: string;
   expected_delivery_date?: string | null;
+  created_at?: string | null;
   total_amount: number;
   subtotal?: number | null;
   tax_rate?: number | null;
@@ -111,8 +119,19 @@ type Row = {
   key_account_payment_terms?: string | null;
   key_account_payment_mode?: 'full' | 'split' | null;
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
-  client?: { client_name: string } | null;
-  shop?: { shop_name: string; cor_pdf_path?: string | null } | null;
+  client?: {
+    client_name: string;
+    client_code?: string;
+    contact_phone?: string | null;
+    tin_number?: string | null;
+  } | null;
+  shop?: {
+    shop_name: string;
+    cor_pdf_path?: string | null;
+    city?: string | null;
+    province?: string | null;
+    region?: string | null;
+  } | null;
   address?: {
     address_label: string;
     full_address: string;
@@ -139,6 +158,16 @@ type Row = {
 type TabKey = 'pending' | 'rebates' | 'warehouse' | 'done' | 'my' | 'all';
 
 const PO_PER_PAGE = 10;
+const MAX_RFPF_EDITS = 2;
+
+interface RfpfRevision {
+  id: string;
+  previousRfpfNumber: string;
+  newRfpfNumber: string;
+  reason: string;
+  changedByName: string;
+  createdAt: string;
+}
 
 type PoItemRow = NonNullable<Row['items']>[number];
 
@@ -148,6 +177,25 @@ function resolveWarehouseLocationName(
   if (!loc) return null;
   const row = Array.isArray(loc) ? loc[0] : loc;
   return row?.name?.trim() || null;
+}
+
+function normalizePoRow(order: any): Row {
+  const rawLoc = Array.isArray(order.warehouse_location)
+    ? order.warehouse_location[0]
+    : order.warehouse_location;
+  const rawClient = Array.isArray(order.client) ? order.client[0] : order.client;
+  const rawShop = Array.isArray(order.shop) ? order.shop[0] : order.shop;
+  const rawAddress = Array.isArray(order.address) ? order.address[0] : order.address;
+  const rawKam = Array.isArray(order.kam) ? order.kam[0] : order.kam;
+
+  return {
+    ...order,
+    warehouse_location: rawLoc ?? null,
+    client: rawClient ?? null,
+    shop: rawShop ?? null,
+    address: rawAddress ?? null,
+    kam: rawKam ?? null,
+  };
 }
 
 function itemWarehouseName(
@@ -175,6 +223,49 @@ function paymentStatusBadgeClass(s: string | null | undefined) {
     default:
       return 'bg-slate-500 text-white';
   }
+}
+
+function RfpfRevisionEntry({ revision }: { revision: RfpfRevision }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger asChild>
+        <button type="button" className="w-full text-left hover:bg-muted/40 transition-colors p-3">
+          <div className="flex items-start gap-2 min-w-0">
+            {open ? (
+              <ChevronDown className="shrink-0 text-muted-foreground mt-0.5 h-4 w-4" />
+            ) : (
+              <ChevronRight className="shrink-0 text-muted-foreground mt-0.5 h-4 w-4" />
+            )}
+            <div className="min-w-0 space-y-0.5">
+              <div className="text-xs text-muted-foreground">
+                {format(new Date(revision.createdAt), 'MMMM dd, yyyy • h:mm a')}
+                {' · '}
+                <span className="font-medium text-foreground">{revision.changedByName}</span>
+              </div>
+              <p className="text-sm truncate">
+                <span className="text-muted-foreground">Reason: </span>
+                {revision.reason}
+              </p>
+            </div>
+          </div>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="border-t bg-muted/10 p-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold text-muted-foreground">Previous</p>
+            <p className="font-mono text-sm font-medium">{revision.previousRfpfNumber.toUpperCase()}</p>
+          </div>
+          <div className="space-y-1 sm:border-l sm:pl-3">
+            <p className="text-xs font-semibold text-muted-foreground">Updated to</p>
+            <p className="font-mono text-sm font-medium">{revision.newRfpfNumber.toUpperCase()}</p>
+          </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 /** Key Account POs with payment tracking that are not fully paid (unpaid or partial). */
@@ -210,7 +301,14 @@ export function KeyAccountPurchaseOrdersPage() {
   const [active, setActive] = useState<Row | null>(null);
 
   const [actingId, setActingId] = useState<string | null>(null);
+  const [cofLoadingId, setCofLoadingId] = useState<string | null>(null);
   const [rfpfDraft, setRfpfDraft] = useState('');
+  const [rfpfRevisions, setRfpfRevisions] = useState<RfpfRevision[]>([]);
+  const [rfpfRevisionsLoading, setRfpfRevisionsLoading] = useState(false);
+  const [editRfpfOpen, setEditRfpfOpen] = useState(false);
+  const [editRfpfDraft, setEditRfpfDraft] = useState('');
+  const [editRfpfReason, setEditRfpfReason] = useState('');
+  const [submittingRfpfEdit, setSubmittingRfpfEdit] = useState(false);
 
   const [payments, setPayments] = useState<
     (PurchaseOrderKeyAccountPayment & { recorder?: { full_name: string | null; email: string | null } | null })[]
@@ -254,6 +352,13 @@ export function KeyAccountPurchaseOrdersPage() {
   const [rebateDetailOpen, setRebateDetailOpen] = useState(false);
   const [rebateDetailId, setRebateDetailId] = useState<string | null>(null);
 
+  const manualRefreshUntilRef = useRef(0);
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const markLocalRefresh = () => {
+    manualRefreshUntilRef.current = Date.now() + 3000;
+  };
+
   const role = user?.role;
   const openRebateDetail = (rebateId: string) => {
     setRebateDetailId(rebateId);
@@ -289,7 +394,14 @@ export function KeyAccountPurchaseOrdersPage() {
   const canSalesAdminReview = (po: Row) => isSalesAdmin && po.workflow_status === 'admin_pending';
 
   /** RFPF is persisted only after the PO reaches `warehouse_reserved` (see sales admin actions below). */
-  const canSaveRfpf = (po: Row) => isSalesAdmin && po.workflow_status === 'warehouse_reserved';
+  const canManageRfpf = (po: Row) => isSalesAdmin && po.workflow_status === 'warehouse_reserved';
+  const canSaveRfpf = (po: Row) => canManageRfpf(po) && !po.rfpf_number?.trim();
+  const canEditRfpf = (po: Row) =>
+    canManageRfpf(po) &&
+    !!po.rfpf_number?.trim() &&
+    !rfpfRevisionsLoading &&
+    rfpfRevisions.length < MAX_RFPF_EDITS;
+  const rfpfEditCount = rfpfRevisions.length;
 
   const canSubmitToWarehouse = (po: Row) =>
     isSalesAdmin && po.workflow_status === 'admin_pending';
@@ -393,9 +505,9 @@ export function KeyAccountPurchaseOrdersPage() {
     }
   };
 
-  const fetchRows = async () => {
+  const fetchRows = async (showLoading = true) => {
     if (!user?.id) return;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     try {
       // RLS controls broad role access. KAMs are further scoped to only POs they created.
       let query = supabase
@@ -412,6 +524,7 @@ export function KeyAccountPurchaseOrdersPage() {
           status,
           order_date,
           expected_delivery_date,
+          created_at,
           total_amount,
           subtotal,
           tax_rate,
@@ -433,8 +546,8 @@ export function KeyAccountPurchaseOrdersPage() {
           key_account_client_id,
           key_account_shop_id,
           key_account_address_id,
-          client:key_account_clients(client_name),
-          shop:key_account_shops(shop_name, cor_pdf_path),
+          client:key_account_clients(client_name, client_code, contact_phone),
+          shop:key_account_shops(shop_name, cor_pdf_path, city, province, region),
           address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
           kam:profiles!purchase_orders_kam_id_fkey(full_name,email)
         `
@@ -449,20 +562,57 @@ export function KeyAccountPurchaseOrdersPage() {
       const { data, error } = await query;
 
       if (error) throw error;
-      setRows((data as any) || []);
-    } catch (e: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error loading Key Account POs',
-        description: e?.message || 'Failed to load purchase orders',
+      const nextRows = ((data || []) as any[]).map(normalizePoRow);
+      setRows(nextRows);
+      setActive((prev) => {
+        if (!prev?.id) return prev;
+        const updated = nextRows.find((r) => r.id === prev.id);
+        if (!updated) return prev;
+        return { ...updated, items: prev.items };
       });
+    } catch (e: any) {
+      if (showLoading) {
+        toast({
+          variant: 'destructive',
+          title: 'Error loading Key Account POs',
+          description: e?.message || 'Failed to load purchase orders',
+        });
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
+  const scheduleRowsRefresh = () => {
+    if (Date.now() < manualRefreshUntilRef.current) return;
+    if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+    refreshDebounceRef.current = setTimeout(() => {
+      refreshDebounceRef.current = null;
+      if (Date.now() < manualRefreshUntilRef.current) return;
+      void fetchRows(false);
+    }, 400);
+  };
+
   useEffect(() => {
+    if (!user?.id) return;
+
     void fetchRows();
+
+    const poChannel = supabase
+      .channel('key_account_po_list_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'purchase_orders' },
+        () => {
+          scheduleRowsRefresh();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+      void poChannel.unsubscribe();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.role, user?.company_id]);
 
@@ -547,6 +697,19 @@ export function KeyAccountPurchaseOrdersPage() {
     };
   }, [filtered, user?.id]);
 
+  const paymentOutstanding = useMemo(() => {
+    const withPaymentTracking = filtered.filter((r) => r.key_account_payment_mode);
+    const unpaid = withPaymentTracking.filter(
+      (r) => (r.key_account_payment_status || 'unpaid') === 'unpaid'
+    );
+    const partial = withPaymentTracking.filter((r) => r.key_account_payment_status === 'partial');
+    return {
+      unpaid: unpaid.length,
+      partial: partial.length,
+      total: unpaid.length + partial.length,
+    };
+  }, [filtered]);
+
   const visibleTabs = useMemo<Array<{ value: TabKey; label: string }>>(
     () => [
       { value: 'pending', label: 'Pending' },
@@ -559,9 +722,49 @@ export function KeyAccountPurchaseOrdersPage() {
     [isDirector]
   );
 
+  const fetchRfpfRevisions = async (poId: string) => {
+    setRfpfRevisionsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('purchase_order_rfpf_revisions')
+        .select(`
+          id,
+          previous_rfpf_number,
+          new_rfpf_number,
+          reason,
+          created_at,
+          changer:profiles!purchase_order_rfpf_revisions_changed_by_fkey(full_name)
+        `)
+        .eq('purchase_order_id', poId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      setRfpfRevisions(
+        (data || []).map((row: any) => ({
+          id: row.id,
+          previousRfpfNumber: row.previous_rfpf_number,
+          newRfpfNumber: row.new_rfpf_number,
+          reason: row.reason,
+          changedByName: row.changer?.full_name || 'Unknown',
+          createdAt: row.created_at,
+        }))
+      );
+    } catch (e: any) {
+      console.error('Error fetching RFPF revisions', e);
+      setRfpfRevisions([]);
+    } finally {
+      setRfpfRevisionsLoading(false);
+    }
+  };
+
   const openView = async (po: Row) => {
     setActive(po);
     setRfpfDraft(po.rfpf_number || '');
+    setRfpfRevisions([]);
+    setEditRfpfOpen(false);
+    setEditRfpfDraft('');
+    setEditRfpfReason('');
     setViewOpen(true);
     setRebateSource(null);
     setRecordPayOpen(false);
@@ -570,10 +773,14 @@ export function KeyAccountPurchaseOrdersPage() {
     setNewPayBank('BPI');
     setNewPayFile(null);
     setPayments([]);
-    setPaymentHistoryOpen(false);
+    setPaymentHistoryOpen(po.key_account_payment_mode === 'split');
     setPaymentSummaryPaid(null);
     setPaymentEntryCount(0);
-    if (po.key_account_payment_mode) void loadPaymentSummary(po.id);
+    if (po.key_account_payment_mode) {
+      void loadPaymentSummary(po.id);
+      void loadPayments(po.id);
+    }
+    if (po.rfpf_number?.trim()) void fetchRfpfRevisions(po.id);
 
     try {
       const { data: items, error } = await supabase
@@ -694,10 +901,11 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const updateWorkflow = async (poId: string, patch: Partial<Row>) => {
     setActingId(poId);
+    markLocalRefresh();
     try {
       const { error } = await supabase.from('purchase_orders').update(patch).eq('id', poId);
       if (error) throw error;
-      await fetchRows();
+      await fetchRows(false);
       setViewOpen(false);
       setActive(null);
     } catch (e: any) {
@@ -705,6 +913,52 @@ export function KeyAccountPurchaseOrdersPage() {
     } finally {
       setActingId(null);
     }
+  };
+
+  const openCofForPo = async (po: Row) => {
+    if (!user?.id) return;
+    setCofLoadingId(po.id);
+    try {
+      await generateAndOpenKeyAccountCofPdf({
+        id: po.id,
+        po_number: po.po_number,
+        company_account_type: po.company_account_type || 'Key Accounts',
+        po_order_kind: po.po_order_kind,
+        source_rebate_id: po.source_rebate_id,
+        order_date: po.order_date,
+        expected_delivery_date: po.expected_delivery_date,
+        created_at: po.created_at,
+        subtotal: Number(po.subtotal || 0),
+        tax_rate: Number(po.tax_rate || 0),
+        tax_amount: Number(po.tax_amount || 0),
+        discount: Number(po.discount || 0),
+        total_amount: Number(po.total_amount || 0),
+        status: po.status,
+        notes: '',
+        created_by: po.created_by || user.id,
+        key_account_payment_terms: po.key_account_payment_terms,
+        key_account_payment_mode: po.key_account_payment_mode,
+        key_account_payment_status: po.key_account_payment_status,
+        client: po.client,
+        shop: po.shop,
+        address: po.address,
+        kam: po.kam,
+        items: po.items,
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'COF Error',
+        description: e instanceof Error ? e.message : 'Failed to generate COF',
+      });
+    } finally {
+      setCofLoadingId(null);
+    }
+  };
+
+  const openCofForActive = async () => {
+    if (!active) return;
+    await openCofForPo(active);
   };
 
   const directorApprove = async () => {
@@ -728,11 +982,13 @@ export function KeyAccountPurchaseOrdersPage() {
 
   const salesAdminSaveRfpf = async () => {
     if (!active) return;
-    if (active.workflow_status !== 'warehouse_reserved') {
+    if (!canSaveRfpf(active)) {
       toast({
         variant: 'destructive',
-        title: 'Cannot save RFPF yet',
-        description: 'Submit this PO to the warehouse queue first. RFPF can only be saved once workflow status is Warehouse reserved.',
+        title: 'Cannot save RFPF',
+        description: active.rfpf_number?.trim()
+          ? 'RFPF is already saved. Use Edit to correct it.'
+          : 'Submit this PO to the warehouse queue first. RFPF can only be saved once workflow status is Warehouse reserved.',
       });
       return;
     }
@@ -742,20 +998,92 @@ export function KeyAccountPurchaseOrdersPage() {
       return;
     }
     setActingId(active.id);
+    markLocalRefresh();
     try {
-      const { error } = await supabase
-        .from('purchase_orders')
-        .update({ rfpf_number: rfpf } as any)
-        .eq('id', active.id)
-        .eq('workflow_status', 'warehouse_reserved');
+      const { data, error } = await supabase.rpc('set_key_account_rfpf', {
+        p_po_id: active.id,
+        p_rfpf_number: rfpf,
+        p_reason: null,
+      });
       if (error) throw error;
-      await fetchRows();
+      const result = data as { success?: boolean; message?: string };
+      if (!result?.success) {
+        throw new Error(result?.message || 'Failed to save RFPF');
+      }
+      await fetchRows(false);
       setActive((prev) => (prev ? { ...prev, rfpf_number: rfpf } : prev));
       toast({ title: 'RFPF saved' });
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'Save failed', description: e?.message || 'Failed to save RFPF' });
     } finally {
       setActingId(null);
+    }
+  };
+
+  const handleOpenEditRfpf = () => {
+    if (!active) return;
+    if (!canEditRfpf(active)) {
+      toast({
+        variant: 'destructive',
+        title: 'Edit limit reached',
+        description: `This RFPF can only be edited up to ${MAX_RFPF_EDITS} times.`,
+      });
+      return;
+    }
+    setEditRfpfDraft(active.rfpf_number || '');
+    setEditRfpfReason('');
+    setEditRfpfOpen(true);
+  };
+
+  const salesAdminSubmitRfpfEdit = async () => {
+    if (!active) return;
+    if (!canEditRfpf(active)) {
+      toast({
+        variant: 'destructive',
+        title: 'Edit limit reached',
+        description: `This RFPF can only be edited up to ${MAX_RFPF_EDITS} times.`,
+      });
+      return;
+    }
+    const rfpf = editRfpfDraft.trim();
+    const reason = editRfpfReason.trim();
+    if (!rfpf) {
+      toast({ variant: 'destructive', title: 'RFPF required', description: 'Enter the corrected RFPF number.' });
+      return;
+    }
+    if (!reason) {
+      toast({ variant: 'destructive', title: 'Reason required', description: 'Explain why this RFPF is being changed.' });
+      return;
+    }
+    if (rfpf === active.rfpf_number?.trim()) {
+      toast({ variant: 'destructive', title: 'No change', description: 'New RFPF must differ from the current value.' });
+      return;
+    }
+    setSubmittingRfpfEdit(true);
+    markLocalRefresh();
+    try {
+      const { data, error } = await supabase.rpc('set_key_account_rfpf', {
+        p_po_id: active.id,
+        p_rfpf_number: rfpf,
+        p_reason: reason,
+      });
+      if (error) throw error;
+      const result = data as { success?: boolean; message?: string };
+      if (!result?.success) {
+        throw new Error(result?.message || 'Failed to update RFPF');
+      }
+      await fetchRows(false);
+      await fetchRfpfRevisions(active.id);
+      setActive((prev) => (prev ? { ...prev, rfpf_number: rfpf } : prev));
+      setRfpfDraft(rfpf);
+      setEditRfpfOpen(false);
+      setEditRfpfDraft('');
+      setEditRfpfReason('');
+      toast({ title: 'RFPF updated' });
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Update failed', description: e?.message || 'Failed to update RFPF' });
+    } finally {
+      setSubmittingRfpfEdit(false);
     }
   };
 
@@ -797,6 +1125,7 @@ export function KeyAccountPurchaseOrdersPage() {
       return;
     }
     setSavingPayment(true);
+    markLocalRefresh();
     try {
       let proofPath: string | null = null;
       if (newPayFile) {
@@ -823,12 +1152,9 @@ export function KeyAccountPurchaseOrdersPage() {
       setRecordPayOpen(false);
       setNewPayAmount('');
       setNewPayFile(null);
+      setPaymentHistoryOpen(true);
       await loadPaymentSummary(active.id);
-      if (paymentHistoryOpen) {
-        await loadPayments(active.id);
-      } else {
-        setPayments([]);
-      }
+      await loadPayments(active.id);
       const { data: poRow } = await supabase
         .from('purchase_orders')
         .select('key_account_payment_status')
@@ -839,7 +1165,7 @@ export function KeyAccountPurchaseOrdersPage() {
           prev ? { ...prev, key_account_payment_status: (poRow as any).key_account_payment_status } : prev
         );
       }
-      await fetchRows();
+      await fetchRows(false);
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -848,20 +1174,6 @@ export function KeyAccountPurchaseOrdersPage() {
       });
     } finally {
       setSavingPayment(false);
-    }
-  };
-
-  const openPaymentProof = async (path: string | null | undefined) => {
-    if (!path) return;
-    try {
-      const url = await getKeyAccountPaymentProofSignedUrl(path);
-      if (url) window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (e: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Could not open proof',
-        description: e?.message || 'Signed URL failed',
-      });
     }
   };
 
@@ -910,7 +1222,7 @@ export function KeyAccountPurchaseOrdersPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">Total</CardTitle>
@@ -941,6 +1253,25 @@ export function KeyAccountPurchaseOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{byTab.done.length}</div>
+          </CardContent>
+        </Card>
+        <Card className="border-amber-200/80 dark:border-amber-900/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-1.5">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full bg-red-500 ring-2 ring-red-500/25"
+                aria-hidden
+              />
+              Unpaid / Partial
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-amber-700 dark:text-amber-400">
+              {paymentOutstanding.total}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {paymentOutstanding.unpaid} unpaid · {paymentOutstanding.partial} partial
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -1035,7 +1366,22 @@ export function KeyAccountPurchaseOrdersPage() {
                           <TableCell className="text-right font-semibold">₱{Number(po.total_amount || 0).toLocaleString()}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1 flex-wrap">
-
+                              {po.company_account_type === 'Key Accounts' && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void openCofForPo(po)}
+                                  disabled={cofLoadingId === po.id}
+                                  title="View / Print COF"
+                                >
+                                  {cofLoadingId === po.id ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  ) : (
+                                    <FileText className="h-4 w-4 mr-2" />
+                                  )}
+                                  COF
+                                </Button>
+                              )}
                               <Button variant="ghost" size="sm" onClick={() => void openView(po)}>
                                 <Eye className="h-4 w-4 mr-2" />
                                 View
@@ -1372,55 +1718,53 @@ export function KeyAccountPurchaseOrdersPage() {
                           ) : payments.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No payment rows yet.</p>
                           ) : (
-                            <div className="rounded-md border overflow-x-auto">
-                              <Table>
-                                <TableHeader>
-                                  <TableRow>
-                                    <TableHead>Date</TableHead>
-                                    <TableHead className="text-right">Amount</TableHead>
-                                    <TableHead>Method</TableHead>
-                                    <TableHead>Recorded by</TableHead>
-                                    <TableHead>Proof</TableHead>
-                                  </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                  {payments.map((p) => (
-                                    <TableRow key={p.id}>
-                                      <TableCell className="text-sm whitespace-nowrap">
+                            <div className="space-y-3">
+                              {payments.map((p) => (
+                                <div key={p.id} className="rounded-md border p-3 space-y-3">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                                    <div>
+                                      <span className="text-muted-foreground">Date</span>
+                                      <div className="font-medium">
                                         {new Date(p.created_at).toLocaleString()}
-                                      </TableCell>
-                                      <TableCell className="text-right font-medium tabular-nums">
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground">Amount</span>
+                                      <div className="font-semibold tabular-nums">
                                         ₱{Number(p.amount).toFixed(2)}
-                                      </TableCell>
-                                      <TableCell className="text-sm">
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground">Method</span>
+                                      <div className="font-medium">
                                         {p.payment_method}
                                         {p.bank_type ? ` · ${p.bank_type}` : ''}
-                                      </TableCell>
-                                      <TableCell className="text-sm">
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <span className="text-muted-foreground">Recorded by</span>
+                                      <div className="font-medium">
                                         {(p as any).recorder?.full_name || '—'}
-                                      </TableCell>
-                                      <TableCell>
-                                        {p.proof_storage_path ? (
-                                          <Button
-                                            type="button"
-                                            variant="link"
-                                            className="h-auto p-0"
-                                            onClick={() => void openPaymentProof(p.proof_storage_path)}
-                                          >
-                                            View
-                                          </Button>
-                                        ) : (
-                                          <span className="text-muted-foreground text-sm">—</span>
-                                        )}
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
-                                </TableBody>
-                              </Table>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {p.proof_storage_path ? (
+                                    <div className="space-y-2">
+                                      <Label className="text-xs text-muted-foreground">Payment proof</Label>
+                                      <KeyAccountPaymentProofStoredPreview
+                                        storagePath={p.proof_storage_path}
+                                        compact
+                                      />
+                                    </div>
+                                  ) : (
+                                    <p className="text-xs text-muted-foreground">No proof attached.</p>
+                                  )}
+                                </div>
+                              ))}
                             </div>
                           )}
                           <p className="text-[11px] text-muted-foreground">
-                            Proof files open in a new tab via a short-lived signed URL.
+                            Payment proofs are shown inline using a short-lived signed URL.
                           </p>
                         </CollapsibleContent>
                       </Collapsible>
@@ -1663,6 +2007,52 @@ export function KeyAccountPurchaseOrdersPage() {
                           </p>
                         </>
                       )}
+                      {canManageRfpf(active) && active.rfpf_number?.trim() && (
+                        <>
+                          <div className="rounded-md border overflow-hidden">
+                            <div className="bg-muted/30 px-3 py-1.5 flex items-center justify-between text-muted-foreground font-semibold text-xs">
+                              <span>
+                                RFPF Number
+                                {rfpfEditCount > 0 ? ' (corrected)' : ''}
+                              </span>
+                              {rfpfRevisionsLoading ? null : canEditRfpf(active) ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={handleOpenEditRfpf}
+                                >
+                                  <Pencil className="h-3 w-3 mr-1" />
+                                  Edit ({rfpfEditCount}/{MAX_RFPF_EDITS})
+                                </Button>
+                              ) : rfpfEditCount >= MAX_RFPF_EDITS ? (
+                                <span className="font-normal text-muted-foreground text-xs">
+                                  Max edits reached ({MAX_RFPF_EDITS}/{MAX_RFPF_EDITS})
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="px-3 py-2">
+                              <div className="text-lg font-bold font-mono">{active.rfpf_number.toUpperCase()}</div>
+                            </div>
+                          </div>
+                          {rfpfRevisionsLoading ? (
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Loading edit history…
+                            </div>
+                          ) : rfpfRevisions.length > 0 ? (
+                            <div className="space-y-2">
+                              <p className="text-xs font-semibold text-muted-foreground">Edit history</p>
+                              <div className="rounded-md border divide-y">
+                                {rfpfRevisions.map((revision) => (
+                                  <RfpfRevisionEntry key={revision.id} revision={revision} />
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </>
+                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -1671,6 +2061,21 @@ export function KeyAccountPurchaseOrdersPage() {
           </div>
 
           <div className="shrink-0 border-t px-4 py-4 sm:px-6 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {active && active.company_account_type === 'Key Accounts' && (
+              <Button
+                className="w-full sm:w-auto"
+                variant="outline"
+                onClick={() => void openCofForActive()}
+                disabled={cofLoadingId === active.id}
+              >
+                {cofLoadingId === active.id ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FileText className="h-4 w-4 mr-2" />
+                )}
+                COF
+              </Button>
+            )}
             {active &&
               isDeliveredKeyAccountOrder(active) &&
               !isRebateDerivedPurchaseOrder(active) &&
@@ -1710,8 +2115,14 @@ export function KeyAccountPurchaseOrdersPage() {
         </DialogContent>
       </Dialog>
 
-          <Dialog open={recordPayOpen} onOpenChange={setRecordPayOpen}>
-        <DialogContent className="max-w-md">
+          <Dialog
+            open={recordPayOpen}
+            onOpenChange={(open) => {
+              setRecordPayOpen(open);
+              if (!open) setNewPayFile(null);
+            }}
+          >
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
                 <DialogTitle>
                   {String(active?.key_account_payment_status || 'unpaid') === 'unpaid'
@@ -1782,14 +2193,13 @@ export function KeyAccountPurchaseOrdersPage() {
                   </Select>
                 </div>
               )}
-              <div className="space-y-2">
-                <Label>Payment proof (optional)</Label>
-                <Input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-                  onChange={(e) => setNewPayFile(e.target.files?.[0] ?? null)}
-                />
-              </div>
+              <KeyAccountPaymentProofUploadField
+                file={newPayFile}
+                onFileChange={setNewPayFile}
+                inputId="record-po-payment-proof"
+                maxImageHeightClass="max-h-[220px]"
+                iframeHeightClass="h-[220px]"
+              />
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setRecordPayOpen(false)}>
                   Cancel
@@ -1807,6 +2217,85 @@ export function KeyAccountPurchaseOrdersPage() {
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editRfpfOpen}
+        onOpenChange={(open) => {
+          setEditRfpfOpen(open);
+          if (!open) {
+            setEditRfpfDraft('');
+            setEditRfpfReason('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit RFPF Number</DialogTitle>
+            <DialogDescription>
+              Correct the RFPF number. The previous value will be kept in edit history.
+              {' '}Each PO can be edited up to {MAX_RFPF_EDITS} times.
+            </DialogDescription>
+          </DialogHeader>
+
+          {active && (
+            <div className="space-y-4 py-2">
+              <p className="text-xs text-muted-foreground">
+                Edits used: {rfpfEditCount} of {MAX_RFPF_EDITS}
+              </p>
+              <div className="rounded-lg border p-3 space-y-1">
+                <p className="text-xs text-muted-foreground">Current RFPF</p>
+                <p className="font-mono font-semibold">{active.rfpf_number?.toUpperCase() || '—'}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-rfpf-number">
+                  New RFPF number <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="edit-rfpf-number"
+                  value={editRfpfDraft}
+                  onChange={(e) => setEditRfpfDraft(e.target.value)}
+                  placeholder="Enter corrected RFPF…"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-rfpf-reason">
+                  Reason for change <span className="text-destructive">*</span>
+                </Label>
+                <Textarea
+                  id="edit-rfpf-reason"
+                  rows={3}
+                  placeholder="Explain why this RFPF is being changed…"
+                  value={editRfpfReason}
+                  onChange={(e) => setEditRfpfReason(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditRfpfOpen(false)}
+              disabled={submittingRfpfEdit}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void salesAdminSubmitRfpfEdit()}
+              disabled={submittingRfpfEdit || !editRfpfDraft.trim() || !editRfpfReason.trim()}
+            >
+              {submittingRfpfEdit ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                'Save changes'
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

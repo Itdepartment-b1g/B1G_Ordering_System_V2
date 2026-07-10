@@ -62,7 +62,7 @@ import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
-import { formatDateForInput, getDateRangeFromPreset, getDatePresetLabel } from '@/lib/dateRangePresets';
+import { formatDateForInput, getDateRangeFromPreset, getDatePresetLabel, parseDateFromInput } from '@/lib/dateRangePresets';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -70,6 +70,11 @@ import {
   type PageSize,
 } from '@/features/shared/components/ListPagination';
 import { exportProductAnalyticsExcel } from './exportProductAnalyticsExcel';
+import {
+  loadAgentKPIs,
+  KPI_SALES_ROLES,
+  type AgentKPI,
+} from './loadAgentKPIs';
 
 // Types
 interface CityPerformance {
@@ -97,7 +102,6 @@ interface ProductPerformance {
   trend: 'up' | 'down' | 'stable';
 }
 
-const KPI_SALES_ROLES = ['mobile_sales', 'team_leader'] as const;
 type AgentKpiRoleFilter = 'all' | (typeof KPI_SALES_ROLES)[number];
 
 /** Match Order List: approved via status or final admin stage */
@@ -136,35 +140,6 @@ const bucketKpiOrdersByStatus = (
     totalOrders: approvedOrders + pendingOrders,
   };
 };
-
-interface AgentKPI {
-  id: string;
-  name: string;
-  role: string;
-  orders: number;
-  revenue: number;
-  approvedRevenue: number;
-  pendingRevenue: number;
-  clients: number;
-  avgOrderValue: number;
-  conversionRate: number;
-  performance: 'excellent' | 'good' | 'average' | 'needs_improvement';
-  // Target values (set by leader/admin)
-  targetClients?: number | null;
-  targetRevenue?: number | null;
-  targetQty?: number | null;
-  // Actual values (calculated from current month data)
-  actualClients?: number; // Clients created this month
-  actualRevenue?: number; // Revenue from approved orders this month
-  actualQty?: number; // Total quantity from approved orders this month
-  // Achievement percentages
-  achievementClients?: number; // Percentage (actualClients / targetClients * 100)
-  achievementRevenue?: number; // Percentage (actualRevenue / targetRevenue * 100)
-  achievementQty?: number; // Percentage (actualQty / targetQty * 100)
-  // Legacy field (keeping for backward compatibility)
-  targetOrders?: number | null;
-  targetAchievement?: number;
-}
 
 interface AIInsight {
   type: 'opportunity' | 'warning' | 'suggestion' | 'success';
@@ -206,10 +181,16 @@ export default function AnalyticsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'system_administrator';
+  const isFinance = (user?.role as string) === 'finance';
+  const isAccounting = (user?.role as string) === 'accounting';
   const isLeader = (user?.role as string) === 'team_leader';
   const isManager = (user?.role as string) === 'manager';
+  const canViewAnalytics = isAdmin || isFinance || isAccounting || isLeader || isManager;
+  const hasCompanyWideView = isAdmin || isFinance || isAccounting;
   
-  const [loading, setLoading] = useState(true);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [cityLoading, setCityLoading] = useState(false);
+  const [agentsKpiLoading, setAgentsKpiLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   
   // Team filtering for Leaders and Managers
@@ -227,8 +208,6 @@ export default function AnalyticsPage() {
   const [selectedProductRevenue, setSelectedProductRevenue] = useState<ProductPerformance | null>(null);
   const [productExporting, setProductExporting] = useState(false);
   const [agentKPIs, setAgentKPIs] = useState<AgentKPI[]>([]);
-  const [clientPerformance, setClientPerformance] = useState<{ id: string; name: string; revenue: number; lastOrder: string | null }[]>([]);
-
 
   
   // Summary Stats
@@ -350,7 +329,13 @@ export default function AnalyticsPage() {
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
   
   // Active Tab State - to persist tab selection
-  const [activeTab, setActiveTab] = useState<string>('agents'); // Default to agents tab
+  const [activeTab, setActiveTab] = useState<string>('agents');
+  const [loadedTabs, setLoadedTabs] = useState<Set<string>>(() => new Set(['agents']));
+
+  const handleAnalyticsTabChange = (tab: string) => {
+    setActiveTab(tab);
+    setLoadedTabs((prev) => new Set(prev).add(tab));
+  };
   
   // Agent KPI Date Filter State
   const [agentKpiDateFrom, setAgentKpiDateFrom] = useState<Date | undefined>(undefined);
@@ -548,6 +533,11 @@ export default function AnalyticsPage() {
   const [removeTargetDialogOpen, setRemoveTargetDialogOpen] = useState(false);
   const [agentToRemove, setAgentToRemove] = useState<{ id: string; name: string } | null>(null);
   
+  const canFetchScoped = Boolean(
+    user &&
+      (hasCompanyWideView || ((isLeader || isManager) && teamAgentsResolved))
+  );
+
   useEffect(() => {
     if (user) {
       setTeamAgentsResolved(false);
@@ -559,31 +549,33 @@ export default function AnalyticsPage() {
   }, [user?.id, user?.role]);
 
   useEffect(() => {
-    // Only fetch analytics data when:
-    // 1. User exists
-    // 2. For Admins: immediately (no team filtering needed)
-    // 3. For Leaders/Managers: after teamAgentIds has been fetched (even if empty array)
-    const shouldFetch = user && (
-      isAdmin || 
-      ((isLeader || isManager) && teamAgentIds !== undefined && teamAgentIds.length >= 0)
-    );
-    
-    if (shouldFetch) {
-      fetchAnalyticsData();
-      fetchAgentKPIs();
+    if (!canFetchScoped) {
+      if (user && teamAgentsResolved) {
+        setSummaryLoading(false);
+      }
+      return;
     }
+    fetchSummaryStats();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.role, teamAgentIds, agentKpiDateFrom, agentKpiDateTo]);
+  }, [user?.id, user?.role, teamAgentIds, teamAgentsResolved]);
 
   useEffect(() => {
-    const shouldFetch =
-      user &&
-      (isAdmin || ((isLeader || isManager) && teamAgentIds !== undefined && teamAgentIds.length >= 0));
-    if (shouldFetch) {
-      fetchAgentRevenueKPIs();
-    }
+    if (!canFetchScoped || !loadedTabs.has('agents')) return;
+    fetchAgentKPIs();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.role, teamAgentIds, agentOverviewDateRange]);
+  }, [canFetchScoped, loadedTabs, teamAgentIds, agentKpiDateFrom, agentKpiDateTo]);
+
+  useEffect(() => {
+    if (!canFetchScoped || !loadedTabs.has('agents')) return;
+    fetchAgentRevenueKPIs();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canFetchScoped, loadedTabs, teamAgentIds, agentOverviewDateRange]);
+
+  useEffect(() => {
+    if (!canFetchScoped || !loadedTabs.has('cities')) return;
+    fetchCityPerformance();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canFetchScoped, loadedTabs, teamAgentIds]);
 
   const productOrderDateRange = useMemo(
     () =>
@@ -606,13 +598,10 @@ export default function AnalyticsPage() {
   );
 
   useEffect(() => {
-    const shouldFetch =
-      user && (isAdmin || ((isLeader || isManager) && teamAgentsResolved));
-    if (shouldFetch) {
-      fetchProductPerformance();
-    }
+    if (!canFetchScoped || !loadedTabs.has('products')) return;
+    fetchProductPerformance();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productDateRangeFilter, teamAgentIds, teamAgentsResolved, user?.id, user?.role]);
+  }, [canFetchScoped, loadedTabs, productDateRangeFilter, teamAgentIds]);
 
   // Fetch team agents for Leaders and Managers
   const fetchTeamAgents = async () => {
@@ -710,45 +699,19 @@ export default function AnalyticsPage() {
         setTeamAgentIds([]);
         setTeamAgentsResolved(true);
       }
-    } else if (isAdmin) {
-      // Admin sees all, no need to filter
-      console.log('Admin user - no team filtering');
+    } else if (hasCompanyWideView) {
+      // Admin/finance see all company data, no team filtering
       setTeamAgentIds([]);
       setTeamAgentsResolved(true);
     } else {
+      setTeamAgentIds([]);
       setTeamAgentsResolved(true);
-    }
-  };
-
-
-
-  const fetchAnalyticsData = async () => {
-    setLoading(true);
-    try {
-      if (isAdmin || isLeader || isManager) {
-        await Promise.all([
-          fetchCityPerformance(),
-          fetchAgentKPIs(),
-          fetchClientPerformance(),
-          fetchSummaryStats()
-        ]);
-      } else {
-        // Other roles currently have no analytics access
-        setAgentKPIs([]);
-      }
-    } catch (error: any) {
-      console.error('Error fetching analytics:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load analytics data. Please try again.',
-        variant: 'destructive'
-      });
-    } finally {
-      setLoading(false);
+      setSummaryLoading(false);
     }
   };
 
   const fetchSummaryStats = async () => {
+    setSummaryLoading(true);
     try {
       // Current month
       const currentMonthStart = startOfMonth(new Date());
@@ -809,10 +772,13 @@ export default function AnalyticsPage() {
       setRevenueGrowth(growth);
     } catch (error) {
       console.error('Error fetching summary stats:', error);
+    } finally {
+      setSummaryLoading(false);
     }
   };
 
   const fetchCityPerformance = async () => {
+    setCityLoading(true);
     try {
       // Build query for completed orders with client city and agent information
       let ordersQuery = supabase
@@ -1000,6 +966,8 @@ export default function AnalyticsPage() {
       setCityPerformance(cityPerformanceData);
     } catch (error) {
       console.error('Error fetching city performance:', error);
+    } finally {
+      setCityLoading(false);
     }
   };
 
@@ -1208,55 +1176,6 @@ export default function AnalyticsPage() {
     }
   };
 
-  const fetchClientPerformance = async () => {
-    try {
-      // Build query for approved orders to aggregate client revenue
-      let ordersQuery = supabase
-        .from('client_orders')
-        .select('client_id, total_amount, created_at, agent_id, clients(id, name)')
-        .eq('stage', 'admin_approved');
-
-      // Filter by team agents if Leader or Manager
-      if ((isLeader || isManager) && teamAgentIds.length > 0) {
-        ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
-      }
-
-      const { data: orders, error } = await ordersQuery;
-
-      if (error) throw error;
-
-      if (!orders) return;
-
-      const clientStats = new Map<string, { name: string; revenue: number; lastOrder: string | null }>();
-
-      orders.forEach(order => {
-        // @ts-ignore - Supabase join types can be tricky
-        const clientName = order.clients?.name || 'Unknown Client';
-        const clientId = order.client_id;
-        
-        const current = clientStats.get(clientId) || { name: clientName, revenue: 0, lastOrder: null };
-        
-        current.revenue += order.total_amount || 0;
-        if (!current.lastOrder || new Date(order.created_at) > new Date(current.lastOrder)) {
-          current.lastOrder = order.created_at;
-        }
-
-        clientStats.set(clientId, current);
-      });
-
-      const performanceData = Array.from(clientStats.entries()).map(([id, stats]) => ({
-        id,
-        ...stats
-      }));
-
-      setClientPerformance(performanceData);
-    } catch (error) {
-      console.error('Error fetching global client performance:', error);
-    }
-  };
-
-
-
   // Helper function to check if date range is current month
   const isCurrentMonth = (dateFrom?: Date, dateTo?: Date): boolean => {
     if (!dateFrom || !dateTo) return false;
@@ -1271,241 +1190,24 @@ export default function AnalyticsPage() {
            dateTo.getTime() === currentMonthEnd.getTime();
   };
 
-  type AgentKpiFetchOptions = {
-    dateFrom?: Date;
-    dateTo?: Date;
-    allTime?: boolean;
-    defaultToCurrentMonth?: boolean;
-  };
-
-  const loadAgentKPIs = async (options: AgentKpiFetchOptions): Promise<AgentKPI[]> => {
-    let agentsQuery = supabase
-      .from('profiles')
-      .select('id, full_name, role')
-      .eq('status', 'active')
-      .in('role', [...KPI_SALES_ROLES]);
-
-    if (isLeader || isManager) {
-      if (teamAgentIds.length === 0) {
-        return [];
-      }
-      agentsQuery = agentsQuery.in('id', teamAgentIds);
-    }
-
-    const { data: agents, error: agentsError } = await agentsQuery;
-
-    if (agentsError) {
-      console.error('Error fetching agents:', agentsError);
-      throw agentsError;
-    }
-
-    if (!agents || agents.length === 0) {
-      return [];
-    }
-
-    const currentMonthStart = startOfMonth(new Date());
-    const currentMonthEnd = endOfMonth(new Date());
-    const currentMonthFirstDay = currentMonthStart.toISOString().split('T')[0];
-    const allTime = options.allTime === true;
-
-    let filterStart: Date | null = null;
-    let filterEnd: Date | null = null;
-    let isFilterCurrentMonth = false;
-
-    if (allTime) {
-      // No created_at bounds
-    } else if (options.dateFrom) {
-      filterStart = startOfDay(options.dateFrom);
-      filterEnd = endOfDay(options.dateTo ?? options.dateFrom);
-      isFilterCurrentMonth = isCurrentMonth(options.dateFrom, options.dateTo ?? options.dateFrom);
-    } else if (options.defaultToCurrentMonth !== false) {
-      filterStart = currentMonthStart;
-      filterEnd = currentMonthEnd;
-      isFilterCurrentMonth = true;
-    }
-
-    let targetsMap = new Map<string, {
-      targetClients?: number | null;
-      targetRevenue?: number | null;
-      targetQty?: number | null;
-      targetOrders?: number | null;
-    }>();
-
-    if (isFilterCurrentMonth) {
-      const agentIds = agents.map((a) => a.id);
-
-      const { data: targets, error: targetsError } = await supabase
-        .from('agent_monthly_targets')
-        .select('agent_id, target_clients, target_revenue, target_qty, target_orders')
-        .eq('target_month', currentMonthFirstDay)
-        .in('agent_id', agentIds);
-
-      if (targetsError) {
-        console.error('Error fetching targets (continuing without targets):', targetsError);
-      } else {
-        (targets || []).forEach((t: any) => {
-          targetsMap.set(t.agent_id, {
-            targetClients: t.target_clients ?? null,
-            targetRevenue: t.target_revenue ? parseFloat(t.target_revenue) : null,
-            targetQty: t.target_qty ?? null,
-            targetOrders: t.target_orders ?? null,
-          });
-        });
-      }
-    }
-
-    const applyDateFilter = <T extends { gte: (col: string, val: string) => T; lte: (col: string, val: string) => T }>(
-      query: T,
-      column: string
-    ) => {
-      if (allTime || !filterStart || !filterEnd) return query;
-      return query.gte(column, filterStart.toISOString()).lte(column, filterEnd.toISOString());
-    };
-
-    const agentKPIsData: AgentKPI[] = await Promise.all(
-      agents.map(async (agent) => {
-        let statusOrdersQuery = supabase
-          .from('client_orders')
-          .select('id, total_amount, client_id, created_at, status')
-          .eq('agent_id', agent.id)
-          .in('status', ['approved', 'pending']);
-
-        statusOrdersQuery = applyDateFilter(statusOrdersQuery, 'created_at');
-
-        const { data: statusOrders } = await statusOrdersQuery;
-
-        const {
-          approvedRevenue,
-          pendingRevenue,
-          totalRevenue,
-          totalOrders,
-        } = bucketKpiOrdersByStatus(statusOrders);
-
-        let filteredClientsQuery = supabase
-          .from('clients')
-          .select('id')
-          .eq('agent_id', agent.id);
-
-        filteredClientsQuery = applyDateFilter(filteredClientsQuery, 'created_at');
-
-        const { data: filteredClients } = await filteredClientsQuery;
-
-        let filteredOrderItemsQuery = supabase
-          .from('client_order_items')
-          .select('quantity, client_orders!inner(agent_id, status, created_at)')
-          .eq('client_orders.agent_id', agent.id)
-          .eq('client_orders.status', 'approved');
-
-        if (!allTime && filterStart && filterEnd) {
-          filteredOrderItemsQuery = filteredOrderItemsQuery
-            .gte('client_orders.created_at', filterStart.toISOString())
-            .lte('client_orders.created_at', filterEnd.toISOString());
-        }
-
-        const { data: filteredOrderItems } = await filteredOrderItemsQuery;
-
-        const actualClients = filteredClients?.length || 0;
-        const actualRevenue = approvedRevenue;
-        const actualQty =
-          filteredOrderItems?.reduce((sum, item: any) => sum + (item.quantity || 0), 0) || 0;
-
-        const uniqueClients = new Set(statusOrders?.map((o) => o.client_id) || []);
-
-        const { data: totalClients } = await supabase
-          .from('clients')
-          .select('id')
-          .eq('agent_id', agent.id);
-
-        const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-        const conversionRate =
-          totalClients && totalClients.length > 0
-            ? (uniqueClients.size / totalClients.length) * 100
-            : 0;
-
-        const agentTargets = isFilterCurrentMonth
-          ? targetsMap.get(agent.id) || {
-              targetClients: null,
-              targetRevenue: null,
-              targetQty: null,
-              targetOrders: null,
-            }
-          : {
-              targetClients: null,
-              targetRevenue: null,
-              targetQty: null,
-              targetOrders: null,
-            };
-
-        const achievementClients =
-          isFilterCurrentMonth && agentTargets.targetClients && agentTargets.targetClients > 0
-            ? (actualClients / agentTargets.targetClients) * 100
-            : undefined;
-
-        const achievementRevenue =
-          isFilterCurrentMonth && agentTargets.targetRevenue && agentTargets.targetRevenue > 0
-            ? (actualRevenue / agentTargets.targetRevenue) * 100
-            : undefined;
-
-        const achievementQty =
-          isFilterCurrentMonth && agentTargets.targetQty && agentTargets.targetQty > 0
-            ? (actualQty / agentTargets.targetQty) * 100
-            : undefined;
-
-        const targetOrders = agentTargets.targetOrders;
-        const targetAchievement =
-          isFilterCurrentMonth && targetOrders && targetOrders > 0
-            ? (totalOrders / targetOrders) * 100
-            : undefined;
-
-        let performance: 'excellent' | 'good' | 'average' | 'needs_improvement' = 'average';
-        if (totalRevenue > 100000 && conversionRate > 50) performance = 'excellent';
-        else if (totalRevenue > 50000 && conversionRate > 30) performance = 'good';
-        else if (totalRevenue < 20000 || conversionRate < 15) performance = 'needs_improvement';
-
-        return {
-          id: agent.id,
-          name: agent.full_name || 'Unknown',
-          role: agent.role || 'mobile_sales',
-          orders: totalOrders,
-          revenue: totalRevenue,
-          approvedRevenue,
-          pendingRevenue,
-          clients: uniqueClients.size,
-          avgOrderValue,
-          conversionRate,
-          performance,
-          targetClients: isFilterCurrentMonth ? agentTargets.targetClients : null,
-          targetRevenue: isFilterCurrentMonth ? agentTargets.targetRevenue : null,
-          targetQty: isFilterCurrentMonth ? agentTargets.targetQty : null,
-          actualClients,
-          actualRevenue,
-          actualQty,
-          achievementClients:
-            achievementClients !== undefined ? Math.round(achievementClients) : undefined,
-          achievementRevenue:
-            achievementRevenue !== undefined ? Math.round(achievementRevenue) : undefined,
-          achievementQty: achievementQty !== undefined ? Math.round(achievementQty) : undefined,
-          targetOrders,
-          targetAchievement:
-            targetAchievement !== undefined ? Math.round(targetAchievement) : undefined,
-        };
-      })
-    );
-
-    agentKPIsData.sort((a, b) => b.revenue - a.revenue);
-    return agentKPIsData;
-  };
-
   const fetchAgentKPIs = async () => {
+    setAgentsKpiLoading(true);
     try {
       const agentKPIsData = await loadAgentKPIs({
-        dateFrom: agentKpiDateFrom,
-        dateTo: agentKpiDateTo,
-        defaultToCurrentMonth: true,
+        teamAgentIds,
+        isLeader,
+        isManager,
+        options: {
+          dateFrom: agentKpiDateFrom,
+          dateTo: agentKpiDateTo,
+          defaultToCurrentMonth: true,
+        },
       });
       setAgentKPIs(agentKPIsData);
     } catch (error) {
       console.error('❌ Error fetching agent KPIs:', error);
+    } finally {
+      setAgentsKpiLoading(false);
     }
   };
 
@@ -1513,10 +1215,15 @@ export default function AnalyticsPage() {
     setAgentRevenueLoading(true);
     try {
       const agentKPIsData = await loadAgentKPIs({
-        dateFrom: agentOverviewDateRange?.from,
-        dateTo: agentOverviewDateRange?.to,
-        allTime: !agentOverviewDateRange?.from,
-        defaultToCurrentMonth: false,
+        teamAgentIds,
+        isLeader,
+        isManager,
+        options: {
+          dateFrom: agentOverviewDateRange?.from,
+          dateTo: agentOverviewDateRange?.to,
+          allTime: !agentOverviewDateRange?.from,
+          defaultToCurrentMonth: false,
+        },
       });
       setAgentRevenueKPIs(agentKPIsData);
     } catch (error) {
@@ -1841,7 +1548,7 @@ export default function AnalyticsPage() {
 
     setSavingTargets(prev => new Set(prev).add(agentId));
     try {
-      const currentMonthFirstDay = startOfMonth(new Date()).toISOString().split('T')[0];
+      const currentMonthFirstDay = formatDateForInput(startOfMonth(new Date()));
       
       // Use upsert to insert or update
       const { error } = await supabase
@@ -1894,7 +1601,7 @@ export default function AnalyticsPage() {
 
     setRemovingTargets(prev => new Set(prev).add(agentToRemove.id));
     try {
-      const currentMonthFirstDay = startOfMonth(new Date()).toISOString().split('T')[0];
+      const currentMonthFirstDay = formatDateForInput(startOfMonth(new Date()));
       
       // Delete the target record
       const { error } = await supabase
@@ -1959,7 +1666,7 @@ export default function AnalyticsPage() {
 
     setSavingTargets(new Set(targetsToSave.map(([id]) => id)));
     try {
-      const currentMonthFirstDay = startOfMonth(new Date()).toISOString().split('T')[0];
+      const currentMonthFirstDay = formatDateForInput(startOfMonth(new Date()));
       
       // Prepare upsert data
       const targetsData = targetsToSave.map(([agentId, targets]) => ({
@@ -2044,18 +1751,6 @@ export default function AnalyticsPage() {
   };
 
 
-
-  if (loading) {
-    return (
-      <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-64">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    );
-  }
-
-
   return (
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
@@ -2070,44 +1765,60 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Summary Cards */}
-      {(isAdmin || isLeader || isManager) && (
+      {canViewAnalytics && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                {isAdmin ? 'Total Revenue (This Month)' : 'Team Revenue (This Month)'}
+                {hasCompanyWideView ? 'Total Revenue (This Month)' : 'Team Revenue (This Month)'}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">₱{totalRevenue.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Approved ₱{summaryApprovedRevenue.toLocaleString()} · Pending ₱
-                {summaryPendingRevenue.toLocaleString()}
-              </p>
-              <div className="flex items-center gap-1 mt-1">
-                {revenueGrowth >= 0 ? (
-                  <TrendingUp className="h-4 w-4 text-green-600" />
-                ) : (
-                  <TrendingDown className="h-4 w-4 text-red-600" />
-                )}
-                <span className={`text-sm ${revenueGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth.toFixed(1)}% vs last month
-                </span>
-              </div>
+              {summaryLoading ? (
+                <div className="flex h-9 items-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">₱{totalRevenue.toLocaleString()}</div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Approved ₱{summaryApprovedRevenue.toLocaleString()} · Pending ₱
+                    {summaryPendingRevenue.toLocaleString()}
+                  </p>
+                  <div className="flex items-center gap-1 mt-1">
+                    {revenueGrowth >= 0 ? (
+                      <TrendingUp className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <TrendingDown className="h-4 w-4 text-red-600" />
+                    )}
+                    <span className={`text-sm ${revenueGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth.toFixed(1)}% vs last month
+                    </span>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                {isAdmin ? 'Total Orders' : 'Team Orders'}
+                {hasCompanyWideView ? 'Total Orders' : 'Team Orders'}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{totalOrders.toLocaleString()}</div>
-              <div className="text-sm text-muted-foreground mt-1">
-                Approved + pending this month
-              </div>
+              {summaryLoading ? (
+                <div className="flex h-9 items-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">{totalOrders.toLocaleString()}</div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    Approved + pending this month
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -2116,10 +1827,18 @@ export default function AnalyticsPage() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Avg Order Value</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">₱{avgOrderValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-              <div className="text-sm text-muted-foreground mt-1">
-                Per transaction
-              </div>
+              {summaryLoading ? (
+                <div className="flex h-9 items-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">₱{avgOrderValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    Per transaction
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -2128,19 +1847,29 @@ export default function AnalyticsPage() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Active Markets</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{cityPerformance.length}</div>
-              <div className="text-sm text-muted-foreground mt-1">
-                Cities with orders
-              </div>
+              {cityLoading ? (
+                <div className="flex h-9 items-center">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">
+                    {loadedTabs.has('cities') ? cityPerformance.length : '—'}
+                  </div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    Cities with orders
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
       )}
 
-      {(isAdmin || isLeader || isManager) && (
+      {canViewAnalytics && (
         <>
           {/* Main Analytics Tabs */}
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <Tabs value={activeTab} onValueChange={handleAnalyticsTabChange} className="space-y-4">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="cities">
                 <MapPin className="h-4 w-4 mr-2" />
@@ -2152,12 +1881,18 @@ export default function AnalyticsPage() {
               </TabsTrigger>
               <TabsTrigger value="agents">
                 <Users className="h-4 w-4 mr-2" />
-                {isAdmin ? 'Agent Analytics' : 'Team Analytics'}
+                {hasCompanyWideView ? 'Agent Analytics' : 'Team Analytics'}
               </TabsTrigger>
             </TabsList>
 
             {/* City Performance Tab */}
+            {loadedTabs.has('cities') && (
             <TabsContent value="cities" className="space-y-4">
+              {cityLoading ? (
+                <div className="flex justify-center py-16">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
                 
@@ -2260,9 +1995,12 @@ export default function AnalyticsPage() {
               </CardContent>
             </Card>
           </div>
+              )}
         </TabsContent>
+            )}
 
         {/* Product Performance Tab */}
+        {loadedTabs.has('products') && (
         <TabsContent value="products" className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <p className="text-sm text-muted-foreground">
@@ -2513,13 +2251,15 @@ export default function AnalyticsPage() {
             </DialogContent>
           </Dialog>
         </TabsContent>
+        )}
 
             {/* Agent KPIs Tab */}
+            {loadedTabs.has('agents') && (
             <TabsContent value="agents" className="space-y-4">
               {/* Agent Performance Overview Chart */}
               <AgentAnalyticsTab 
                 userId={user!.id} 
-                isAdmin={isAdmin} 
+                isAdmin={hasCompanyWideView} 
                 isLeader={isLeader}
                 isManager={isManager}
                 onViewAgentDetails={handleViewAgentDetails}
@@ -2673,13 +2413,11 @@ export default function AnalyticsPage() {
                                       <label className="text-xs font-medium text-muted-foreground">From</label>
                                       <Input
                                         type="date"
-                                        value={agentKpiDateFrom ? agentKpiDateFrom.toISOString().split('T')[0] : ''}
+                                        value={formatDateForInput(agentKpiDateFrom)}
                                         onChange={(e) => {
-                                          const date = e.target.value ? new Date(e.target.value) : undefined;
+                                          const date = parseDateFromInput(e.target.value);
                                           if (date) {
-                                            date.setHours(0, 0, 0, 0);
-                                            setAgentKpiDateFrom(date);
-                                            // Turn off overall view when custom date is selected
+                                            setAgentKpiDateFrom(startOfDay(date));
                                             if (showOverallView) {
                                               setShowOverallView(false);
                                             }
@@ -2692,13 +2430,11 @@ export default function AnalyticsPage() {
                                       <label className="text-xs font-medium text-muted-foreground">To</label>
                                       <Input
                                         type="date"
-                                        value={agentKpiDateTo ? agentKpiDateTo.toISOString().split('T')[0] : ''}
+                                        value={formatDateForInput(agentKpiDateTo)}
                                         onChange={(e) => {
-                                          const date = e.target.value ? new Date(e.target.value) : undefined;
+                                          const date = parseDateFromInput(e.target.value);
                                           if (date) {
-                                            date.setHours(23, 59, 59, 999);
-                                            setAgentKpiDateTo(date);
-                                            // Turn off overall view when custom date is selected
+                                            setAgentKpiDateTo(endOfDay(date));
                                             if (showOverallView) {
                                               setShowOverallView(false);
                                             }
@@ -2986,6 +2722,10 @@ export default function AnalyticsPage() {
                     </CardContent>
                   </Card>
                 </div>
+              ) : agentsKpiLoading ? (
+                <div className="flex justify-center py-16">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
               ) : (
                 <Card className="bg-yellow-50 border-2 border-yellow-400">
                   <CardContent className="pt-6">
@@ -2996,6 +2736,7 @@ export default function AnalyticsPage() {
                 </Card>
               )}
             </TabsContent>
+            )}
           </Tabs>
         </>
       )}

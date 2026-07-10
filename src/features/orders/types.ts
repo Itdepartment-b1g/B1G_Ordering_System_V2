@@ -37,6 +37,8 @@ export interface PurchaseOrder {
     rfpf_number?: string | null;
     /** Set when Key Account dispatch completes (warehouse). */
     dr_number?: string | null;
+    /** Key Account PO: linked client (PO created from Key Accounts). */
+    key_account_client_id?: string | null;
     /** Key Account PO: assigned KAM profile id (may differ from warehouse company). */
     kam_id?: string | null;
     /** standard | rebate_fulfillment (replacement shipment after rebate approval). */

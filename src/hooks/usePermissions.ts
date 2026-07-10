@@ -1,6 +1,7 @@
 import { useAuth } from '@/features/auth';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
 
 /**
  * Hook to check user permissions
@@ -13,7 +14,7 @@ export function usePermissions() {
   // (brands & variant management) so only the warehouse controls catalog changes.
   const { data: hasWarehouseHubLink } = useQuery({
     queryKey: ['has-warehouse-hub-link', user?.company_id],
-    enabled: !!user?.company_id && (user?.role === 'super_admin' || user?.role === 'admin'),
+    enabled: !!user?.company_id && user?.role !== 'warehouse',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('warehouse_company_assignments')
@@ -27,6 +28,10 @@ export function usePermissions() {
   });
 
   const lockStandardCatalog = hasWarehouseHubLink === true;
+
+  const isWarehouseRole = user?.role === 'warehouse';
+  const { membership: warehouseMembership, isLoading: warehouseMembershipLoading } =
+    useWarehouseLocationMembership({ userId: user?.id, isWarehouse: isWarehouseRole });
 
   const checkPermission = (route: string): boolean => {
     // If impersonating, allow full navigation access to the tenant environment.
@@ -60,15 +65,28 @@ export function usePermissions() {
       const executiveRoutes = [
         '/executive-dashboard',
         '/war-room',
+        '/inventory/physical-count',
         '/profile',
       ];
       return executiveRoutes.includes(route);
     }
 
     if (user?.role === 'warehouse') {
+      const mainWarehouseOnlyRoutes = [
+        '/inventory/stock-requests',
+        '/inventory/stock-adjustments',
+      ];
+      if (
+        mainWarehouseOnlyRoutes.includes(route) &&
+        (warehouseMembershipLoading || !warehouseMembership.isMain)
+      ) {
+        return false;
+      }
+
       const warehouseRoutes = [
         '/purchase-order-management',
         '/purchase-orders',
+        '/finance/payment-settings',
         '/brands',
         '/variant-types',
         '/inventory',
@@ -76,12 +94,18 @@ export function usePermissions() {
         '/inventory/main',
         '/inventory/sub-warehouses',
         '/inventory/disposals',
+        '/inventory/allocation-history',
+        '/inventory/batches',
+        '/inventory/physical-count',
+        '/inventory/stock-requests',
+        '/inventory/stock-returns',
+        '/inventory/stock-adjustments',
         '/profile',
       ];
       return warehouseRoutes.includes(route);
     }
 
-    // For other roles, you can add specific route checks here
+    // Finance role only — warehouse is handled in the block above.
     if (route === '/finance/payment-settings') {
       return user?.role === 'finance';
     }
@@ -121,6 +145,8 @@ export function usePermissions() {
     isSystemAdmin: user?.role === 'system_administrator',
     isExecutive: user?.role === 'executive',
     isWarehouse: user?.role === 'warehouse',
+    hasWarehouseHubLink: hasWarehouseHubLink === true,
+    lockStandardCatalog,
   };
 }
 

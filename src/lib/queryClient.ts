@@ -35,10 +35,21 @@ export const persister = createSyncStoragePersister({
 });
 
 /** Persisted queries are restored without queryFn; refetching them throws in TanStack Query v5. */
+const NON_PERSISTED_QUERY_KEYS = new Set([
+    SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY,
+    'inventory',
+    'warehouse-stock-board',
+    'warehouse-stock-board-settings',
+    'variant-batch-lots',
+    'batch-lot-adjustments',
+    'warehouse-batch-aging',
+    'warehouse-stock-returns',
+]);
+
 export const queryPersistOptions = {
     persister,
     dehydrateOptions: {
         shouldDehydrateQuery: (query: { queryKey: readonly unknown[] }) =>
-            query.queryKey[0] !== SUPER_ADMIN_ALLOCATION_HISTORY_QUERY_KEY,
+            !NON_PERSISTED_QUERY_KEYS.has(String(query.queryKey[0])),
     },
 };

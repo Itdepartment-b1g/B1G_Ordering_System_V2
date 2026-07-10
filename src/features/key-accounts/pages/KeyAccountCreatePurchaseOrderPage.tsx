@@ -43,6 +43,7 @@ import {
   KeyAccountAddAddressDialog,
   KeyAccountAddShopDialog,
 } from '@/features/key-accounts/components/KeyAccountShopAddressDialogs';
+import { KeyAccountPaymentProofUploadField } from '@/features/key-accounts/components/KeyAccountPaymentProofPreview';
 
 interface POItem {
   id: string;
@@ -1160,17 +1161,11 @@ export function KeyAccountPurchaseOrderPage() {
                 </p>
               )}
 
-              <div className="space-y-2">
-                <Label>Payment proof (optional)</Label>
-                <Input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-                  onChange={(e) => setPaymentProofFile(e.target.files?.[0] ?? null)}
-                />
-                {paymentProofFile ? (
-                  <p className="text-xs text-muted-foreground">Selected: {paymentProofFile.name}</p>
-                ) : null}
-              </div>
+              <KeyAccountPaymentProofUploadField
+                file={paymentProofFile}
+                onFileChange={setPaymentProofFile}
+                inputId="create-po-payment-proof"
+              />
             </CardContent>
           </Card>
 

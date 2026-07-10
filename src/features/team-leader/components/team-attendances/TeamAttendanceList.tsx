@@ -6,7 +6,10 @@ import { toast } from 'sonner';
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
 import type { AgentAttendance } from '@/types/database.types';
-import { exportFilteredTeamAttendanceExcel } from '@/features/team-leader/utils/exportTeamAttendance';
+import {
+  exportFilteredTeamAttendanceComputedHoursExcel,
+  exportFilteredTeamAttendanceTimeInOutExcel,
+} from '@/features/team-leader/utils/exportTeamAttendance';
 import { fetchComputedHoursForFilteredAgent } from '@/lib/fetchComputedAttendanceHours';
 import {
   formatAttendanceTotalHours,
@@ -17,6 +20,12 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   AttendanceViewDialog,
   canViewAttendanceDetails,
@@ -44,8 +53,25 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  applyAgentAttendanceOverviewSort,
+  DEFAULT_AGENT_ATTENDANCE_OVERVIEW_SORT_DIRECTION,
+  DEFAULT_AGENT_ATTENDANCE_OVERVIEW_SORT_KEY,
+  isClientSideAgentAttendanceSortKey,
+  sortAttendanceOverviewRowsClient,
+  type AgentAttendanceOverviewSortKey,
+} from '@/features/sales-agents/components/agent-attendance-overview/agentAttendanceOverviewSorting';
 
 const PAGE_SIZES = [5, 10, 15, 25, 50, 100] as const;
+type AttendanceExportMode = 'computed-hours' | 'time-in-out';
 type PageSize = (typeof PAGE_SIZES)[number];
 const DEFAULT_PAGE_SIZE: PageSize = 25;
 
@@ -112,6 +138,23 @@ export default function TeamAttendanceList() {
   const [isExporting, setIsExporting] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewDialogRow, setViewDialogRow] = useState<AttendanceAgentRow | null>(null);
+  const [sortState, setSortState] = useState<TableSortCycleState<AgentAttendanceOverviewSortKey>>(
+    createInitialTableSortCycle
+  );
+
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_AGENT_ATTENDANCE_OVERVIEW_SORT_KEY,
+        DEFAULT_AGENT_ATTENDANCE_OVERVIEW_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const handleSort = (key: AgentAttendanceOverviewSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const teamIdsKey = teamAgentIds.join(',');
 
@@ -122,7 +165,17 @@ export default function TeamAttendanceList() {
 
   useEffect(() => {
     setPage(0);
-  }, [businessDateFrom, businessDateTo, statusFilter, pageSize, agentNameSearch, agentEmailSearch, teamIdsKey, dateRangeFilter]);
+  }, [
+    businessDateFrom,
+    businessDateTo,
+    statusFilter,
+    pageSize,
+    agentNameSearch,
+    agentEmailSearch,
+    teamIdsKey,
+    dateRangeFilter,
+    sortState,
+  ]);
 
   const queriesReady = isTeamLeader && !isLoadingTeam && teamAgentIds.length > 0;
 
@@ -157,6 +210,8 @@ export default function TeamAttendanceList() {
       statusFilter,
       page,
       pageSize,
+      resolvedSortKey,
+      resolvedSortDirection,
     ],
     enabled: queriesReady,
     queryFn: async (): Promise<{ rows: AttendanceAgentRow[]; total: number }> => {
@@ -168,18 +223,20 @@ export default function TeamAttendanceList() {
         .from('agent_attendances')
         .select('*', { count: 'exact', head: true })
         .in('user_id', teamAgentIds);
-      let dataQuery = supabase
-        .from('agent_attendances')
-        .select(
-          `
+      let dataQuery = applyAgentAttendanceOverviewSort(
+        supabase
+          .from('agent_attendances')
+          .select(
+            `
           *,
           agent:profiles!agent_attendances_user_id_fkey(id, full_name, email, role, company_id),
           hub:hubs!agent_attendances_hub_id_fkey(id, hub_name)
         `
-        )
-        .in('user_id', teamAgentIds)
-        .order('business_date', { ascending: false })
-        .order('created_at', { ascending: false });
+          )
+          .in('user_id', teamAgentIds),
+        resolvedSortKey,
+        resolvedSortDirection
+      );
 
       if (dateFrom) {
         countQuery = countQuery.gte('business_date', dateFrom);
@@ -216,16 +273,21 @@ export default function TeamAttendanceList() {
   const agentNameNorm = agentNameSearch.trim().toLowerCase();
   const agentEmailNorm = agentEmailSearch.trim().toLowerCase();
   const displayRows = useMemo(() => {
-    const rows = pageData?.rows ?? [];
-    if (!agentNameNorm && !agentEmailNorm) return rows;
-    return rows.filter(r => {
-      const name = r.agent?.full_name?.toLowerCase() ?? '';
-      const email = r.agent?.email?.toLowerCase() ?? '';
-      if (agentNameNorm && !name.includes(agentNameNorm)) return false;
-      if (agentEmailNorm && !email.includes(agentEmailNorm)) return false;
-      return true;
-    });
-  }, [pageData?.rows, agentNameNorm, agentEmailNorm]);
+    let rows = pageData?.rows ?? [];
+    if (agentNameNorm || agentEmailNorm) {
+      rows = rows.filter(r => {
+        const name = r.agent?.full_name?.toLowerCase() ?? '';
+        const email = r.agent?.email?.toLowerCase() ?? '';
+        if (agentNameNorm && !name.includes(agentNameNorm)) return false;
+        if (agentEmailNorm && !email.includes(agentEmailNorm)) return false;
+        return true;
+      });
+    }
+    if (isClientSideAgentAttendanceSortKey(resolvedSortKey)) {
+      rows = sortAttendanceOverviewRowsClient(rows, resolvedSortKey, resolvedSortDirection);
+    }
+    return rows;
+  }, [pageData?.rows, agentNameNorm, agentEmailNorm, resolvedSortKey, resolvedSortDirection]);
 
   const total = pageData?.total ?? 0;
   const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
@@ -278,36 +340,42 @@ export default function TeamAttendanceList() {
     if (page >= tp) setPage(Math.max(0, tp - 1));
   }, [isLoading, pageData, page, pageSize, total]);
 
-  const handleExportExcel = async () => {
+  const handleExport = async (mode: AttendanceExportMode) => {
     if (teamAgentIds.length === 0) {
       toast.error('No team agents to export.');
       return;
     }
 
     if (!hasAttendanceOverviewDateRangeComplete(dateRangeFilter)) {
-      toast.error('Choose a date range (preset or custom) before exporting the Business Hours Report.');
+      toast.error('Choose a date range (preset or custom) before exporting.');
       return;
     }
     const dateFrom = businessDateFrom;
     const dateTo = businessDateTo;
+    const filters = {
+      businessDateFrom: dateFrom,
+      businessDateTo: dateTo,
+      statusFilter,
+      teamAgentIds,
+      agentNameSearch,
+      agentEmailSearch,
+    };
 
     setIsExporting(true);
     try {
-      const count = await exportFilteredTeamAttendanceExcel({
-        businessDateFrom: dateFrom,
-        businessDateTo: dateTo,
-        statusFilter,
-        teamAgentIds,
-        agentNameSearch: agentNameSearch,
-        agentEmailSearch: agentEmailSearch,
-      });
+      const count =
+        mode === 'computed-hours'
+          ? await exportFilteredTeamAttendanceComputedHoursExcel(filters)
+          : await exportFilteredTeamAttendanceTimeInOutExcel(filters);
 
       if (count === 0) {
         toast.error('No records to export for the current filters.');
         return;
       }
 
-      toast.success(`Exported ${count} row${count === 1 ? '' : 's'} to Business Hours Report.`);
+      const reportLabel =
+        mode === 'computed-hours' ? 'computed hours report' : 'time in & time out report';
+      toast.success(`Exported ${count} row${count === 1 ? '' : 's'} to ${reportLabel}.`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Export failed';
       toast.error(msg);
@@ -432,20 +500,39 @@ export default function TeamAttendanceList() {
             </div>
           </CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void handleExportExcel()}
-              disabled={isExporting || listLoading}
-            >
-              {isExporting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileDown className="h-4 w-4" />
-              )}
-              <span className="ml-2 hidden sm:inline">Export to Excel</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isExporting || listLoading}
+                >
+                  {isExporting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4" />
+                  )}
+                  <span className="ml-2 hidden sm:inline">Export</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem
+                  disabled={isExporting || listLoading}
+                  onSelect={() => void handleExport('computed-hours')}
+                >
+                  <FileDown className="mr-2 h-4 w-4" />
+                  Export computed hours
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={isExporting || listLoading}
+                  onSelect={() => void handleExport('time-in-out')}
+                >
+                  <FileDown className="mr-2 h-4 w-4" />
+                  Export time in & time out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               type="button"
               variant="outline"
@@ -474,14 +561,51 @@ export default function TeamAttendanceList() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Business date</TableHead>
-                      <TableHead>Agent</TableHead>
-                      <TableHead>Role</TableHead>
+                      <SortableTableHead
+                        label="Business date"
+                        sortKey="businessDate"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'businessDate')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Agent"
+                        sortKey="agent"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'agent')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Role"
+                        sortKey="role"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'role')}
+                        onSort={handleSort}
+                      />
                       {/* <TableHead>Hub</TableHead> */}
-                      <TableHead>Time in</TableHead>
-                      <TableHead>Time out</TableHead>
-                      <TableHead className="text-right tabular-nums">Total hours</TableHead>
-                      <TableHead className="text-right">Status</TableHead>
+                      <SortableTableHead
+                        label="Time in"
+                        sortKey="timeIn"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'timeIn')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Time out"
+                        sortKey="timeOut"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'timeOut')}
+                        onSort={handleSort}
+                      />
+                      <SortableTableHead
+                        label="Total hours"
+                        sortKey="totalHours"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'totalHours')}
+                        onSort={handleSort}
+                        className="text-right tabular-nums"
+                      />
+                      <SortableTableHead
+                        label="Status"
+                        sortKey="status"
+                        sortDirection={getTableSortDisplayDirection(sortState, 'status')}
+                        onSort={handleSort}
+                        className="text-right"
+                      />
                       <TableHead className="w-[1%] whitespace-nowrap text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -566,7 +690,7 @@ export default function TeamAttendanceList() {
               {agentNameSearch.trim() || agentEmailSearch.trim() ? (
                 <p className="text-xs text-muted-foreground">
                   Name and email filters only hide rows on the current page. Clear them to see every row in the
-                  date range, or narrow the date range. Export to Excel uses the same filters for all matching rows.
+                  date range, or narrow the date range. Exports use the same filters for all matching rows.
                 </p>
               ) : null}
 

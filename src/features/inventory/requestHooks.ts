@@ -305,15 +305,18 @@ function isPendingFinanceOrder(order: { status: string; stage: string | null }) 
 }
 
 /** Mobile sales client orders awaiting finance approval (by variant line item). */
-export function usePendingMobileSalesAllocations(enabled: boolean) {
+export function usePendingMobileSalesAllocations(
+    enabled: boolean,
+    companyIdOverride?: string | null
+) {
     const { user } = useAuth();
     const queryClient = useQueryClient();
+    const companyId = companyIdOverride ?? user?.company_id ?? null;
 
     const query = useQuery({
-        queryKey: ['pending_mobile_sales_allocations', user?.company_id],
-        enabled: enabled && !!user?.company_id,
+        queryKey: ['pending_mobile_sales_allocations', companyId],
+        enabled: enabled && !!companyId,
         queryFn: async () => {
-            const companyId = user!.company_id!;
 
             const { data: agents, error: agentsError } = await supabase
                 .from('profiles')
@@ -382,19 +385,19 @@ export function usePendingMobileSalesAllocations(enabled: boolean) {
     });
 
     useEffect(() => {
-        if (!enabled || !user?.company_id) return;
+        if (!enabled || !companyId) return;
 
         const channels = [
             subscribeToTable('client_orders', () => {
-                queryClient.invalidateQueries({ queryKey: ['pending_mobile_sales_allocations', user.company_id] });
+                queryClient.invalidateQueries({ queryKey: ['pending_mobile_sales_allocations', companyId] });
             }),
             subscribeToTable('client_order_items', () => {
-                queryClient.invalidateQueries({ queryKey: ['pending_mobile_sales_allocations', user.company_id] });
+                queryClient.invalidateQueries({ queryKey: ['pending_mobile_sales_allocations', companyId] });
             }),
         ];
 
         return () => channels.forEach(unsubscribe);
-    }, [enabled, user?.company_id, queryClient]);
+    }, [enabled, companyId, queryClient]);
 
     return query;
 }

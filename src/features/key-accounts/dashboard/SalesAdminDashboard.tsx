@@ -6,40 +6,38 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend
-} from 'recharts';
-import {
   Users,
   Building2,
-  Link2,
-  Settings,
-  BarChart3,
   Shield,
-  DollarSign,
   TrendingUp,
   UserCheck,
-  ShoppingCart
+  ShoppingCart,
+  BarChart3,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import {
+  formatDateForInput,
+  getDatePresetLabel,
+  getDateRangeFromPreset,
+} from '@/lib/dateRangePresets';
 import { getKeyAccountRoleLabel } from '@/features/key-accounts/keyAccountRoles';
 import { KeyAccountTeamManagement } from '../components/KeyAccountTeamManagement';
 import { ClientHierarchyManager } from '../components/ClientHierarchyManager';
 import { ClientAssignmentManager } from '../components/ClientAssignmentManager';
+import { KeyAccountDashboardRevenueCard } from './KeyAccountDashboardRevenueCard';
+import { KeyAccountDashboardRevenueOverview } from './KeyAccountDashboardRevenueOverview';
+import {
+  EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE,
+  loadKeyAccountDashboardRevenue,
+  type KeyAccountDashboardOrder,
+  type KeyAccountDashboardRevenueResult,
+} from './keyAccountDashboardRevenue';
 
-interface AdminOrderRow {
-  id: string;
-  total_amount: number | null;
-  status: string | null;
-  workflow_status: string | null;
-  order_date: string;
-  key_account_client_id?: string | null;
+interface AdminOrderRow extends KeyAccountDashboardOrder {
   client?: { client_name: string | null } | { client_name: string | null }[] | null;
 }
 
@@ -182,13 +180,38 @@ export function SalesAdminDashboard() {
     totalKAMs: 0,
     totalClients: 0,
     totalOrders: 0,
-    totalRevenue: 0,
-    pendingOrders: 0
+    pendingOrders: 0,
   });
-  const [revenueData, setRevenueData] = useState<{ month: string; revenue: number }[]>([]);
+  const [revenueMetrics, setRevenueMetrics] = useState<KeyAccountDashboardRevenueResult>(
+    EMPTY_KEY_ACCOUNT_DASHBOARD_REVENUE
+  );
   const [brandBreakdown, setBrandBreakdown] = useState<BrandPurchaseBreakdown[]>([]);
   const [selectedBrandName, setSelectedBrandName] = useState<string | null>(null);
+  const [breakdownDateRangeFilter, setBreakdownDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'this_year',
+  });
   const [loading, setLoading] = useState(true);
+  const [breakdownLoading, setBreakdownLoading] = useState(true);
+
+  const breakdownDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        breakdownDateRangeFilter.preset,
+        breakdownDateRangeFilter.customStart,
+        breakdownDateRangeFilter.customEnd
+      ),
+    [breakdownDateRangeFilter]
+  );
+
+  const breakdownDateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
+        breakdownDateRangeFilter.preset,
+        breakdownDateRangeFilter.customStart,
+        breakdownDateRangeFilter.customEnd
+      ),
+    [breakdownDateRangeFilter]
+  );
 
   const selectedBrand = useMemo(
     () => brandBreakdown.find((brand) => brand.name === selectedBrandName) || brandBreakdown[0] || null,
@@ -202,6 +225,77 @@ export function SalesAdminDashboard() {
   useEffect(() => {
     fetchAdminData();
   }, [selectedYear]);
+
+  useEffect(() => {
+    fetchBreakdownData();
+  }, [breakdownDateRange.start, breakdownDateRange.end, user?.company_id]);
+
+  const fetchBreakdownData = async () => {
+    if (!user?.company_id) return;
+
+    setBreakdownLoading(true);
+    try {
+      let ordersQuery = supabase
+        .from('purchase_orders')
+        .select(`
+          id,
+          status,
+          workflow_status,
+          order_date,
+          key_account_client_id,
+          client:key_account_clients(client_name)
+        `)
+        .eq('company_id', user.company_id)
+        .eq('company_account_type', 'Key Accounts');
+
+      if (breakdownDateRange.start) {
+        ordersQuery = ordersQuery.gte('order_date', formatDateForInput(breakdownDateRange.start));
+      }
+      if (breakdownDateRange.end) {
+        ordersQuery = ordersQuery.lte('order_date', formatDateForInput(breakdownDateRange.end));
+      }
+
+      const { data: orders, error: ordersError } = await ordersQuery;
+      if (ordersError) throw ordersError;
+
+      const orderRows = (orders || []) as AdminOrderRow[];
+      const deliveredOrderIds = orderRows
+        .filter(isDeliveredRevenue)
+        .map((order) => order.id);
+
+      let deliveredItems: AdminItemRow[] = [];
+      if (deliveredOrderIds.length > 0) {
+        const { data: itemData, error: itemError } = await supabase
+          .from('purchase_order_items')
+          .select(`
+            purchase_order_id,
+            quantity,
+            unit_price,
+            total_price,
+            variants (
+              name,
+              brands (name)
+            )
+          `)
+          .in('purchase_order_id', deliveredOrderIds);
+
+        if (itemError) throw itemError;
+        deliveredItems = (itemData || []) as AdminItemRow[];
+      }
+
+      const nextBrandBreakdown = buildBrandBreakdown(orderRows, deliveredItems);
+      setBrandBreakdown(nextBrandBreakdown);
+      setSelectedBrandName((current) => (
+        current && nextBrandBreakdown.some((brand) => brand.name === current)
+          ? current
+          : nextBrandBreakdown[0]?.name ?? null
+      ));
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally {
+      setBreakdownLoading(false);
+    }
+  };
 
   const fetchAdminData = async () => {
     setLoading(true);
@@ -231,84 +325,33 @@ export function SalesAdminDashboard() {
         .select(`
           id,
           total_amount,
+          subtotal,
           status,
           workflow_status,
+          po_order_kind,
+          source_rebate_id,
+          warehouse_location_id,
           order_date,
           key_account_client_id,
           client:key_account_clients(client_name)
         `)
         .eq('company_id', user?.company_id)
+        .eq('company_account_type', 'Key Accounts')
         .gte('order_date', `${selectedYear}-01-01`)
         .lte('order_date', `${selectedYear}-12-31`);
 
       if (ordersError) throw ordersError;
 
       const orderRows = (orders || []) as AdminOrderRow[];
-      const deliveredOrderIds = orderRows.filter(isDeliveredRevenue).map((order) => order.id);
-      let deliveredItems: AdminItemRow[] = [];
-
-      if (deliveredOrderIds.length > 0) {
-        const { data: itemData, error: itemError } = await supabase
-          .from('purchase_order_items')
-          .select(`
-            purchase_order_id,
-            quantity,
-            unit_price,
-            total_price,
-            variants (
-              name,
-              brands (name)
-            )
-          `)
-          .in('purchase_order_id', deliveredOrderIds);
-
-        if (itemError) throw itemError;
-        deliveredItems = (itemData || []) as AdminItemRow[];
-      }
-
-      const nextBrandBreakdown = buildBrandBreakdown(orderRows, deliveredItems);
-      setBrandBreakdown(nextBrandBreakdown);
-      setSelectedBrandName((current) => (
-        current && nextBrandBreakdown.some((brand) => brand.name === current)
-          ? current
-          : nextBrandBreakdown[0]?.name ?? null
-      ));
-
-      const deliveredRevenue =
-        orderRows
-          .filter(isDeliveredRevenue)
-          .reduce((sum: number, o: AdminOrderRow) => sum + (o.total_amount || 0), 0) || 0;
-
-      const pendingCount = orderRows.filter((o: AdminOrderRow) => o.workflow_status === 'kam_pending' ||
-      o.workflow_status === 'director_pending' ||
-      o.workflow_status === 'admin_pending').length || 0;
-
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const revenueByMonth: Record<string, number> = {};
-      monthNames.forEach(m => {
-        revenueByMonth[m] = 0;
-      });
-
-      orderRows.forEach((o: AdminOrderRow) => {
-        if (!isDeliveredRevenue(o)) return;
-        const month = monthNames[new Date(o.order_date).getMonth()];
-        revenueByMonth[month] += o.total_amount || 0;
-      });
-
-      setRevenueData(
-        monthNames.map(month => ({
-          month,
-          revenue: revenueByMonth[month]
-        }))
-      );
+      const revenueResult = await loadKeyAccountDashboardRevenue(supabase, orderRows, selectedYear);
+      setRevenueMetrics(revenueResult);
 
       setStats({
         totalDirectors: directors,
         totalKAMs: kams,
         totalClients: clientCount || 0,
         totalOrders: orderRows.length,
-        totalRevenue: deliveredRevenue,
-        pendingOrders: pendingCount
+        pendingOrders: revenueResult.pendingOrderCount,
       });
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -397,88 +440,48 @@ export function SalesAdminDashboard() {
             <div className="text-2xl font-bold">{stats.totalOrders}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <DollarSign className="h-4 w-4" />
-              Delivered revenue
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">₱{stats.totalRevenue.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground mt-1">Fulfilled or delivered POs</p>
-          </CardContent>
-        </Card>
+        <KeyAccountDashboardRevenueCard summary={revenueMetrics.summary} />
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Pending
+              Pending POs
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{stats.pendingOrders}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              In workflow · Pending revenue {formatCurrency(revenueMetrics.summary.pendingRevenue)}
+            </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Revenue Chart */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5" />
-            Revenue Overview
-          </CardTitle>
-          <div className="flex items-center gap-3">
-            <span className="hidden text-xs font-normal text-muted-foreground text-right sm:block">
-              Fulfilled POs, delivered workflow
-            </span>
-            <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(parseInt(v))}>
-              <SelectTrigger className="h-9 w-[120px]">
-                <SelectValue placeholder="Select year" />
-              </SelectTrigger>
-              <SelectContent>
-                {[2024, 2025, 2026].map(y => (
-                  <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent className="px-2 md:px-6">
-          <div className="w-full h-[250px] md:h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={revenueData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip
-                  content={({ active, payload, label }) => {
-                    if (!active || !payload || payload.length === 0) return null;
-                    const revenue = payload.find(p => p.dataKey === 'revenue')?.value as number || 0;
-                    return (
-                      <div className="bg-white border rounded-lg p-3 shadow-lg">
-                        <p className="font-semibold mb-2">{label}</p>
-                        <div className="space-y-1 text-sm">
-                          <div className="flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-                            <span>Delivered revenue: ₱{revenue.toLocaleString()}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  }}
-                />
-                <Legend />
-                <Bar dataKey="revenue" fill="#3b82f6" name="Delivered revenue" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      <KeyAccountDashboardRevenueOverview
+        monthlyData={revenueMetrics.monthlyData}
+        selectedYear={selectedYear}
+        onYearChange={setSelectedYear}
+      />
 
       {/* Product Purchase Breakdown */}
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Product Purchase Breakdown</h2>
+            <p className="text-sm text-muted-foreground">
+              Delivered POs only (fulfilled + delivered). Ranked by total item quantity, then revenue.
+              PO order date: {breakdownDateRangeLabel}.
+            </p>
+          </div>
+          <DateRangeFilterPopover
+            value={breakdownDateRangeFilter}
+            onChange={setBreakdownDateRangeFilter}
+            triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
+            align="end"
+          />
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-3">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -486,11 +489,15 @@ export function SalesAdminDashboard() {
               Top 10 Buying Brands
             </CardTitle>
             <p className="text-sm text-muted-foreground">
-              Based on delivered PO item quantity for {selectedYear}.
+              Top 10 brands by units sold on delivered POs ({breakdownDateRangeLabel}).
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            {brandBreakdown.length === 0 ? (
+            {breakdownLoading ? (
+              <div className="flex justify-center py-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+              </div>
+            ) : brandBreakdown.length === 0 ? (
               <p className="text-sm text-muted-foreground">No delivered brand purchases yet.</p>
             ) : (
               brandBreakdown.map((brand, index) => {
@@ -537,11 +544,17 @@ export function SalesAdminDashboard() {
               Top Variants
             </CardTitle>
             <p className="text-sm text-muted-foreground">
-              {selectedBrand ? `Most bought variants for ${selectedBrand.name}.` : 'Select a brand to view variants.'}
+              {selectedBrand
+                ? `Top 10 variants for ${selectedBrand.name} by units sold (${breakdownDateRangeLabel}).`
+                : 'Select a brand to view variants.'}
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!selectedBrand || selectedBrand.variants.length === 0 ? (
+            {breakdownLoading ? (
+              <div className="flex justify-center py-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+              </div>
+            ) : !selectedBrand || selectedBrand.variants.length === 0 ? (
               <p className="text-sm text-muted-foreground">No variants to show.</p>
             ) : (
               selectedBrand.variants.slice(0, 10).map((variant, index) => {
@@ -578,11 +591,17 @@ export function SalesAdminDashboard() {
               Top Buying Clients
             </CardTitle>
             <p className="text-sm text-muted-foreground">
-              {selectedBrand ? `Clients buying ${selectedBrand.name} the most.` : 'Select a brand to view clients.'}
+              {selectedBrand
+                ? `Top 10 clients for ${selectedBrand.name} by units bought (${breakdownDateRangeLabel}).`
+                : 'Select a brand to view clients.'}
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!selectedBrand || selectedBrand.clients.length === 0 ? (
+            {breakdownLoading ? (
+              <div className="flex justify-center py-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+              </div>
+            ) : !selectedBrand || selectedBrand.clients.length === 0 ? (
               <p className="text-sm text-muted-foreground">No clients to show.</p>
             ) : (
               selectedBrand.clients.slice(0, 10).map((client, index) => {
@@ -611,6 +630,7 @@ export function SalesAdminDashboard() {
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
 
       {/* Main Tabs */}

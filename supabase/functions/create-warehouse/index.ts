@@ -63,6 +63,7 @@ serve(async (req) => {
         const {
             company_name,
             company_email,
+            location_name,
             full_name,
             email,
             password,
@@ -87,6 +88,14 @@ serve(async (req) => {
             )
         }
 
+        const mainLocationName = String(location_name || company_name || 'Main Warehouse').trim()
+        if (!mainLocationName) {
+            return new Response(
+                JSON.stringify({ error: 'Main location name is required' }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+            )
+        }
+
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
         if (!emailRegex.test(email) || !emailRegex.test(company_email)) {
             return new Response(
@@ -99,7 +108,7 @@ serve(async (req) => {
 
         const { data: clientRows, error: clientVerifyErr } = await supabaseClient
             .from('companies')
-            .select('id')
+            .select('id, company_account_type')
             .in('id', uniqueClientIds)
 
         if (clientVerifyErr) {
@@ -116,6 +125,13 @@ serve(async (req) => {
             )
         }
 
+        if (clientRows.some((row: { company_account_type: string }) => row.company_account_type === 'Warehouse')) {
+            return new Response(
+                JSON.stringify({ error: 'Warehouse hub companies cannot be assigned as clients' }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+            )
+        }
+
         // 1) New blank warehouse company (same core fields as create-company)
         const { data: company, error: companyError } = await supabaseClient
             .from('companies')
@@ -124,7 +140,8 @@ serve(async (req) => {
                 company_email: String(company_email).trim(),
                 super_admin_name: String(full_name).trim(),
                 super_admin_email: String(email).trim(),
-                role: 'Super Admin',
+                role: 'Warehouse',
+                company_account_type: 'Warehouse',
                 status: 'active',
             })
             .select()
@@ -234,7 +251,7 @@ serve(async (req) => {
         if (!mainLocationId) {
             const { data: createdLoc, error: createLocErr } = await supabaseClient
                 .from('warehouse_locations')
-                .insert({ company_id: inventoryCompanyId, name: 'Main Warehouse', is_main: true, created_by: user.id })
+                .insert({ company_id: inventoryCompanyId, name: mainLocationName, is_main: true, created_by: user.id })
                 .select('id')
                 .single()
 
@@ -274,6 +291,7 @@ serve(async (req) => {
                     user_id: userId,
                     company_id: inventoryCompanyId,
                     company_name: company.company_name,
+                    location_name: mainLocationName,
                     email,
                     full_name,
                     client_companies: uniqueClientIds.length,

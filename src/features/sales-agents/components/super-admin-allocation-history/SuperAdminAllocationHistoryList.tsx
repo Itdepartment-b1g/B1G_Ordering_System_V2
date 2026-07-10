@@ -26,6 +26,18 @@ import {
   ListPagination,
   type PageSize,
 } from '@/features/shared/components/ListPagination';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_SUPER_ADMIN_ALLOCATION_SORT_DIRECTION,
+  DEFAULT_SUPER_ADMIN_ALLOCATION_SORT_KEY,
+  sortSuperAdminAllocationGroups,
+  type SuperAdminAllocationSortKey,
+} from './utils/superAdminAllocationHistorySorting';
 import { SuperAdminAllocationHistoryTable } from './table/TableHeader';
 
 export default function SuperAdminAllocationHistoryList() {
@@ -41,6 +53,8 @@ export default function SuperAdminAllocationHistoryList() {
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [sortState, setSortState] =
+    useState<TableSortCycleState<SuperAdminAllocationSortKey>>(createInitialTableSortCycle);
   const [isExportingFiltered, setIsExportingFiltered] = useState(false);
   const [isExportingAll, setIsExportingAll] = useState(false);
 
@@ -74,12 +88,31 @@ export default function SuperAdminAllocationHistoryList() {
     [groups, selectedFilter, filterValue, fromDate, toDate]
   );
 
+  const { key: resolvedSortKey, direction: resolvedSortDirection } = useMemo(
+    () =>
+      resolveTableSortDirection(
+        sortState,
+        DEFAULT_SUPER_ADMIN_ALLOCATION_SORT_KEY,
+        DEFAULT_SUPER_ADMIN_ALLOCATION_SORT_DIRECTION
+      ),
+    [sortState]
+  );
+
+  const sortedGroups = useMemo(
+    () => sortSuperAdminAllocationGroups(filteredGroups, resolvedSortKey, resolvedSortDirection),
+    [filteredGroups, resolvedSortKey, resolvedSortDirection]
+  );
+
   useEffect(() => {
     setPage(0);
-  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter]);
+  }, [selectedFilter, filterValue, allocatedToRole, dateRangeFilter, sortState]);
+
+  const handleSort = (key: SuperAdminAllocationSortKey) => {
+    setSortState((current) => getNextTableSortCycleState(current, key));
+  };
 
   const { pageCount, safePage, pagedItems: pagedGroups } = getListPaginationSlice(
-    filteredGroups,
+    sortedGroups,
     page,
     pageSize,
   );
@@ -216,7 +249,12 @@ export default function SuperAdminAllocationHistoryList() {
             onClearFilters={clearFilters}
           />
 
-          <SuperAdminAllocationHistoryTable isLoading={isLoading} pagedGroups={pagedGroups} />
+          <SuperAdminAllocationHistoryTable
+            isLoading={isLoading}
+            pagedGroups={pagedGroups}
+            sortState={sortState}
+            onSort={handleSort}
+          />
 
           <ListPagination
             pageSize={pageSize}

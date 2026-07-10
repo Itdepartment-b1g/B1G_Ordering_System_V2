@@ -11,10 +11,27 @@ export type UserRole =
   | 'super_admin'
   | 'finance'
   | 'accounting'
+  | 'executive'
+  | 'warehouse'
   | 'system_administrator';
 
 /** Finance or accounting — shared view access to finance pages */
 export function isFinanceRole(role?: UserRole | string): boolean {
+  return role === 'finance' || role === 'accounting';
+}
+
+/** Submit physical counts (warehouse and executive). */
+export function canPerformPhysicalCount(role?: UserRole | string): boolean {
+  return role === 'warehouse' || role === 'executive';
+}
+
+/** View physical count history (submit roles + finance/accounting view-only). */
+export function canViewPhysicalCount(role?: UserRole | string): boolean {
+  return canPerformPhysicalCount(role) || role === 'finance' || role === 'accounting';
+}
+
+/** Finance and accounting see history only — no new count submission. */
+export function isPhysicalCountViewOnly(role?: UserRole | string): boolean {
   return role === 'finance' || role === 'accounting';
 }
 

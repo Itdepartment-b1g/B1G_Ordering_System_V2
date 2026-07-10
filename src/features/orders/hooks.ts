@@ -7,7 +7,7 @@ export interface PurchaseOrderContextType {
     /** Hub company id when the tenant has a warehouse assignment (internal PO target). */
     linkedWarehouseCompanyId: string | null;
     loading: boolean;
-    fetchPurchaseOrders: () => Promise<void>;
+    fetchPurchaseOrders: (showLoading?: boolean, dedupeRealtime?: boolean) => Promise<void>;
     fetchSuppliers: () => Promise<void>;
     createPurchaseOrder: (orderData: {
         supplier_id: string | null;

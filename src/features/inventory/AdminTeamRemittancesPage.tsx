@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from 'react';
+import { useState, useEffect, Fragment, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,24 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
+import {
+  createInitialTableSortCycle,
+  getNextTableSortCycleState,
+  getTableSortDisplayDirection,
+  resolveTableSortDirection,
+  type TableSortCycleState,
+} from '@/features/shared/utils/tableSortCycle';
+import {
+  DEFAULT_REMITTANCE_LOG_SORT_DIRECTION,
+  DEFAULT_REMITTANCE_LOG_SORT_KEY,
+  DEFAULT_TEAM_STATS_SORT_DIRECTION,
+  DEFAULT_TEAM_STATS_SORT_KEY,
+  sortRemittanceLogs,
+  sortTeamStats,
+  type RemittanceLogSortKey,
+  type TeamStatsSortKey,
+} from './utils/adminTeamRemittanceSorting';
 
 // Orders with order_date before this are v1 imports; exclude from team remittance detail.
 const V1_IMPORT_ORDER_DATE_CUTOFF = '2026-02-16';
@@ -55,6 +73,11 @@ export default function AdminTeamRemittancesPage() {
     const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
     const [selectedAgentId, setSelectedAgentId] = useState<string>('all');
     const [currentPage, setCurrentPage] = useState(1);
+    const [teamStatsSortState, setTeamStatsSortState] =
+      useState<TableSortCycleState<TeamStatsSortKey>>(createInitialTableSortCycle);
+    const [remittanceSortStates, setRemittanceSortStates] = useState<
+      Record<string, TableSortCycleState<RemittanceLogSortKey>>
+    >({});
     const PAGE_SIZE = 10;
 
     // View Details State
@@ -71,7 +94,7 @@ export default function AdminTeamRemittancesPage() {
 
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchQuery, dateFrom, dateTo, selectedAgentId]);
+    }, [searchQuery, dateFrom, dateTo, selectedAgentId, teamStatsSortState]);
 
     const fetchTeamRemittances = async () => {
         setLoading(true);
@@ -292,9 +315,51 @@ export default function AdminTeamRemittancesPage() {
         .filter(stat => stat.remittances.length > 0)
         .filter(stat => stat.leaderName.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    const totalLeaders = filteredStats.length;
+    const { key: resolvedTeamStatsSortKey, direction: resolvedTeamStatsSortDirection } = useMemo(
+        () =>
+            resolveTableSortDirection(
+                teamStatsSortState,
+                DEFAULT_TEAM_STATS_SORT_KEY,
+                DEFAULT_TEAM_STATS_SORT_DIRECTION
+            ),
+        [teamStatsSortState]
+    );
+
+    const sortedStats = useMemo(
+        () => sortTeamStats(filteredStats, resolvedTeamStatsSortKey, resolvedTeamStatsSortDirection),
+        [filteredStats, resolvedTeamStatsSortKey, resolvedTeamStatsSortDirection]
+    );
+
+    const handleTeamStatsSort = (key: TeamStatsSortKey) => {
+        setTeamStatsSortState((current) => getNextTableSortCycleState(current, key));
+    };
+
+    const getRemittanceSortState = (leaderId: string) =>
+        remittanceSortStates[leaderId] ?? createInitialTableSortCycle();
+
+    const sortRemittancesForLeader = (leaderId: string, remittances: RemittanceLog[]) => {
+        const sortState = getRemittanceSortState(leaderId);
+        const { key, direction } = resolveTableSortDirection(
+            sortState,
+            DEFAULT_REMITTANCE_LOG_SORT_KEY,
+            DEFAULT_REMITTANCE_LOG_SORT_DIRECTION
+        );
+        return sortRemittanceLogs(remittances, key, direction);
+    };
+
+    const handleRemittanceSort = (leaderId: string, key: RemittanceLogSortKey) => {
+        setRemittanceSortStates((current) => ({
+            ...current,
+            [leaderId]: getNextTableSortCycleState(
+                current[leaderId] ?? createInitialTableSortCycle(),
+                key
+            ),
+        }));
+    };
+
+    const totalLeaders = sortedStats.length;
     const totalPages = Math.max(1, Math.ceil(totalLeaders / PAGE_SIZE));
-    const paginatedStats = filteredStats.slice(
+    const paginatedStats = sortedStats.slice(
         (currentPage - 1) * PAGE_SIZE,
         currentPage * PAGE_SIZE
     );
@@ -409,11 +474,40 @@ export default function AdminTeamRemittancesPage() {
                                 <TableHeader>
                                     <TableRow>
                                         <TableHead className="w-[50px]"></TableHead>
-                                        <TableHead>Team Leader</TableHead>
-                                        <TableHead className="text-right">Total Remittances</TableHead>
-                                        <TableHead className="text-right">Total Items</TableHead>
-                                        <TableHead className="text-right">Total Revenue</TableHead>
-                                        <TableHead className="text-right">Last Remittance</TableHead>
+                                        <SortableTableHead
+                                            label="Team Leader"
+                                            sortKey="leaderName"
+                                            sortDirection={getTableSortDisplayDirection(teamStatsSortState, 'leaderName')}
+                                            onSort={handleTeamStatsSort}
+                                        />
+                                        <SortableTableHead
+                                            label="Total Remittances"
+                                            sortKey="remittanceCount"
+                                            sortDirection={getTableSortDisplayDirection(teamStatsSortState, 'remittanceCount')}
+                                            onSort={handleTeamStatsSort}
+                                            className="text-right"
+                                        />
+                                        <SortableTableHead
+                                            label="Total Items"
+                                            sortKey="totalItems"
+                                            sortDirection={getTableSortDisplayDirection(teamStatsSortState, 'totalItems')}
+                                            onSort={handleTeamStatsSort}
+                                            className="text-right"
+                                        />
+                                        <SortableTableHead
+                                            label="Total Revenue"
+                                            sortKey="totalRevenue"
+                                            sortDirection={getTableSortDisplayDirection(teamStatsSortState, 'totalRevenue')}
+                                            onSort={handleTeamStatsSort}
+                                            className="text-right"
+                                        />
+                                        <SortableTableHead
+                                            label="Last Remittance"
+                                            sortKey="lastRemittanceDate"
+                                            sortDirection={getTableSortDisplayDirection(teamStatsSortState, 'lastRemittanceDate')}
+                                            onSort={handleTeamStatsSort}
+                                            className="text-right"
+                                        />
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -436,15 +530,37 @@ export default function AdminTeamRemittancesPage() {
                                                             <Table>
                                                                 <TableHeader>
                                                                     <TableRow>
-                                                                        <TableHead>Agent</TableHead>
-                                                                        <TableHead>Date</TableHead>
-                                                                        <TableHead className="text-right">Items</TableHead>
-                                                                        <TableHead className="text-right">Revenue</TableHead>
+                                                                        <SortableTableHead
+                                                                            label="Agent"
+                                                                            sortKey="agentName"
+                                                                            sortDirection={getTableSortDisplayDirection(getRemittanceSortState(stat.leaderId), 'agentName')}
+                                                                            onSort={(key) => handleRemittanceSort(stat.leaderId, key)}
+                                                                        />
+                                                                        <SortableTableHead
+                                                                            label="Date"
+                                                                            sortKey="date"
+                                                                            sortDirection={getTableSortDisplayDirection(getRemittanceSortState(stat.leaderId), 'date')}
+                                                                            onSort={(key) => handleRemittanceSort(stat.leaderId, key)}
+                                                                        />
+                                                                        <SortableTableHead
+                                                                            label="Items"
+                                                                            sortKey="items"
+                                                                            sortDirection={getTableSortDisplayDirection(getRemittanceSortState(stat.leaderId), 'items')}
+                                                                            onSort={(key) => handleRemittanceSort(stat.leaderId, key)}
+                                                                            className="text-right"
+                                                                        />
+                                                                        <SortableTableHead
+                                                                            label="Revenue"
+                                                                            sortKey="revenue"
+                                                                            sortDirection={getTableSortDisplayDirection(getRemittanceSortState(stat.leaderId), 'revenue')}
+                                                                            onSort={(key) => handleRemittanceSort(stat.leaderId, key)}
+                                                                            className="text-right"
+                                                                        />
                                                                         <TableHead className="text-right">Actions</TableHead>
                                                                     </TableRow>
                                                                 </TableHeader>
                                                                 <TableBody>
-                                                                    {stat.remittances.map(rem => (
+                                                                    {sortRemittancesForLeader(stat.leaderId, stat.remittances).map(rem => (
                                                                         <TableRow key={rem.id}>
                                                                             <TableCell>{rem.agent_name}</TableCell>
                                                                             <TableCell>{format(new Date(rem.remitted_at), 'MMM dd, HH:mm')}</TableCell>
@@ -472,7 +588,7 @@ export default function AdminTeamRemittancesPage() {
                                     ))}
                                 </TableBody>
                             </Table>
-                            {filteredStats.length > 0 && (
+                            {sortedStats.length > 0 && (
                                 <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-3 border-t text-sm text-muted-foreground">
                                     <span>Showing {rangeStart}–{rangeEnd} of {totalLeaders}</span>
                                     <div className="flex items-center gap-1">

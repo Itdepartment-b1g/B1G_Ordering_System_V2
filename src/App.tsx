@@ -14,7 +14,7 @@ import { OrdersPage, PurchaseOrdersPage, MyOrdersPage, OrderProvider, PurchaseOr
 import BrandsPage from "@/features/orders/BrandsPage";
 import VariantTypesPage from "@/features/orders/VariantTypesPage";
 import SuppliersPage from "@/features/orders/SuppliersPage";
-import { MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, WarehouseDisposalsPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
+import { MainInventoryPage, WarehouseInventoryDashboardPage, SubWarehousesPage, WarehouseDisposalsPage, WarehouseStockRequestsPage, WarehouseStockReturnsPage, WarehouseStockAdjustmentsPage, WarehouseAllocationHistoryPage, BatchViewPage, PhysicalCountPage, StockAllocationsPage, LeaderInventoryPage, MyInventoryPage, RemittedStocksPage, AdminTeamRemittancesPage, LeaderRemittancePage, LeaderCashDepositsPage, PendingRequestsPage, AdminRequestsPage, LeaderStockRequestPage, MobileSalesStockRequestPage, InventoryProvider, AgentInventoryProvider } from "@/features/inventory";
 import TLStockRequestPage from "@/features/inventory/TLStockRequestPage";
 import AdminTLRequestsPage from "@/features/inventory/AdminTLRequestsPage";
 import { ClientsPage, MyClientsPage, MyTeamsPage, PendingClientsPage } from "@/features/clients";
@@ -116,6 +116,54 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
+                    <Route
+                      path="/inventory/stock-requests"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseStockRequestsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/stock-returns"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseStockReturnsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/stock-adjustments"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseStockAdjustmentsPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/allocation-history"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <WarehouseAllocationHistoryPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/batches"
+                      element={
+                        <ProtectedRoute allowedRoles={["warehouse"]}>
+                          <BatchViewPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/inventory/physical-count"
+                      element={
+                        <ProtectedRoute allowedRoles={['warehouse', 'accounting', 'executive', 'finance']}>
+                          <PhysicalCountPage />
+                        </ProtectedRoute>
+                      }
+                    />
                     <Route path="/inventory/allocations" element={<ProtectedRoute><StockAllocationsPage /></ProtectedRoute>} />
                     <Route path="/inventory/remitted-stocks" element={<ProtectedRoute><RemittedStocksPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-team-remittances" element={<ProtectedRoute><AdminTeamRemittancesPage /></ProtectedRoute>} />
@@ -162,7 +210,7 @@ const App = () => (
                     <Route path="/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
                     <Route path="/leader-orders" element={<ProtectedRoute allowedRoles={['team_leader']}><OrdersPage /></ProtectedRoute>} />
                     <Route path="/finance" element={<ProtectedRoute><FinancePage /></ProtectedRoute>} />
-                    <Route path="/finance/payment-settings" element={<ProtectedRoute allowedRoles={['super_admin', 'finance']}><PaymentSettingsPage /></ProtectedRoute>} />
+                    <Route path="/finance/payment-settings" element={<ProtectedRoute allowedRoles={['super_admin', 'finance', 'warehouse']}><PaymentSettingsPage /></ProtectedRoute>} />
                     <Route path="/my-inventory" element={<ProtectedRoute><MyInventoryPage /></ProtectedRoute>} />
                     <Route path="/my-clients" element={<ProtectedRoute><MyClientsPage /></ProtectedRoute>} />
                     <Route path="/my-teams" element={<ProtectedRoute allowedRoles={['team_leader']}><MyTeamsPage /></ProtectedRoute>} />

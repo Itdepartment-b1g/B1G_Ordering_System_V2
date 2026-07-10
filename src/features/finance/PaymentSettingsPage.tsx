@@ -42,6 +42,7 @@ export default function PaymentSettingsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { settings, loading: loadingSettings, refetch } = usePaymentSettings();
+  const isWarehouseMode = user?.role === 'warehouse';
 
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -267,6 +268,21 @@ export default function PaymentSettingsPage() {
   };
 
   const validateSettings = (): boolean => {
+    if (isWarehouseMode) {
+      const hasEnabledBank = bankAccounts.some(
+        (b) => b.enabled && b.name?.trim() && b.account_number?.trim()
+      );
+      if (!hasEnabledBank) {
+        toast({
+          title: 'Validation Error',
+          description: 'Add at least one enabled bank account for Delivery Receipt printouts.',
+          variant: 'destructive',
+        });
+        return false;
+      }
+      return true;
+    }
+
     // At least one payment method must be enabled
     if (!cashEnabled && !chequeEnabled && !gcashEnabled && !bankTransferEnabled) {
       toast({
@@ -307,18 +323,30 @@ export default function PaymentSettingsPage() {
     try {
       setSaving(true);
 
-      const paymentSettings: Partial<CompanyPaymentSettings> = {
-        company_id: user.company_id,
-        bank_accounts: bankAccounts,
-        // Always save GCash data even when disabled, so it can be re-enabled later
-        gcash_number: gcashNumber || null,
-        gcash_name: gcashName || null,
-        gcash_qr_url: gcashQrUrl || null,
-        cash_enabled: cashEnabled,
-        cheque_enabled: chequeEnabled,
-        gcash_enabled: gcashEnabled,
-        bank_transfer_enabled: bankTransferEnabled
-      };
+      const paymentSettings: Partial<CompanyPaymentSettings> = isWarehouseMode
+        ? {
+            company_id: user.company_id,
+            bank_accounts: bankAccounts,
+            // Preserve order-payment fields; DR only uses bank_accounts.
+            gcash_number: settings?.gcash_number ?? null,
+            gcash_name: settings?.gcash_name ?? null,
+            gcash_qr_url: settings?.gcash_qr_url ?? null,
+            cash_enabled: settings?.cash_enabled ?? true,
+            cheque_enabled: settings?.cheque_enabled ?? true,
+            gcash_enabled: settings?.gcash_enabled ?? false,
+            bank_transfer_enabled: true,
+          }
+        : {
+            company_id: user.company_id,
+            bank_accounts: bankAccounts,
+            gcash_number: gcashNumber || null,
+            gcash_name: gcashName || null,
+            gcash_qr_url: gcashQrUrl || null,
+            cash_enabled: cashEnabled,
+            cheque_enabled: chequeEnabled,
+            gcash_enabled: gcashEnabled,
+            bank_transfer_enabled: bankTransferEnabled,
+          };
 
       const { error } = await supabase
         .from('company_payment_settings')
@@ -361,7 +389,9 @@ export default function PaymentSettingsPage() {
         <div>
           <h1 className="text-3xl font-bold">Payment Settings</h1>
           <p className="text-muted-foreground mt-1">
-            Configure payment methods and bank accounts for your company
+            {isWarehouseMode
+              ? 'Add the bank accounts that appear on Delivery Receipt (DR) printouts. Each bank must be enabled.'
+              : 'Configure payment methods and bank accounts for your company'}
           </p>
         </div>
         <Button onClick={handleSave} disabled={saving} size="lg">
@@ -393,18 +423,20 @@ export default function PaymentSettingsPage() {
             </Button>
           </div>
           <CardDescription>
-            Manage bank accounts for bank transfer payments
+            {isWarehouseMode
+              ? 'These accounts are printed on DR documents for your warehouse company.'
+              : 'Manage bank accounts for bank transfer payments'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Bank Transfer Toggle */}
+          {!isWarehouseMode && (
           <div className="flex items-center justify-between p-4 bg-muted/40 rounded-lg border">
             <div className="flex items-center gap-3">
               <Building2 className="h-5 w-5 text-muted-foreground" />
               <div>
                 <Label>Bank Transfer Payment</Label>
                 <p className="text-sm text-muted-foreground">
-                  Enable bank transfer as a payment option
+                  Allow agents and team leaders to pay orders via bank transfer
                 </p>
               </div>
             </div>
@@ -413,12 +445,15 @@ export default function PaymentSettingsPage() {
               onCheckedChange={setBankTransferEnabled}
             />
           </div>
+          )}
 
           {bankAccounts.length === 0 ? (
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                No bank accounts configured. Add a bank account to enable bank transfer payments.
+                {isWarehouseMode
+                  ? 'No bank accounts yet. Add at least one enabled bank for DR printouts.'
+                  : 'No bank accounts configured. Add a bank account to enable bank transfer payments.'}
               </AlertDescription>
             </Alert>
           ) : (
@@ -464,6 +499,8 @@ export default function PaymentSettingsPage() {
                     </div>
                   </div>
 
+                  {!isWarehouseMode && (
+                  <>
                   {/* QR Code Section */}
                   <Separator />
                   <div className="space-y-2">
@@ -508,6 +545,8 @@ export default function PaymentSettingsPage() {
                       </div>
                     )}
                   </div>
+                  </>
+                  )}
                 </div>
               ))}
             </div>
@@ -515,6 +554,8 @@ export default function PaymentSettingsPage() {
         </CardContent>
       </Card>
 
+      {!isWarehouseMode && (
+      <>
       {/* GCash Section */}
       <Card>
         <CardHeader>
@@ -666,6 +707,8 @@ export default function PaymentSettingsPage() {
           </div>
         </CardContent>
       </Card>
+      </>
+      )}
 
       {/* Add Bank Dialog */}
       <Dialog open={showAddBankDialog} onOpenChange={setShowAddBankDialog}>
