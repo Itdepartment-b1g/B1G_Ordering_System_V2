@@ -4058,6 +4058,16 @@ export default function ClientsPage() {
                     onSort={handleClientSort}
                     className="text-center"
                   />
+                  <SortableTableHead
+                    label="Created At"
+                    sortKey="createdAt"
+                    sortDirection={
+                      getTableSortDisplayDirection(clientSortState, 'createdAt') ??
+                      (clientSortState.step === 0 ? DEFAULT_CLIENT_LIST_SORT_DIRECTION : null)
+                    }
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
                   <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -4147,6 +4157,9 @@ export default function ClientsPage() {
                       <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approval_status).className}`}>
                         {getApprovalStatusBadge(client.approval_status).label}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-center text-sm text-muted-foreground whitespace-nowrap">
+                      {client.created_at ? new Date(client.created_at).toLocaleString() : '—'}
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center gap-2">
