@@ -3,13 +3,14 @@ export type ClientOrderListSortKey =
   | 'clientName'
   | 'agentName'
   | 'date'
+  | 'createdAt'
   | 'items'
   | 'total'
   | 'status';
 
 export type ClientOrderListSortDirection = 'asc' | 'desc';
 
-export const DEFAULT_CLIENT_ORDER_LIST_SORT_KEY: ClientOrderListSortKey = 'date';
+export const DEFAULT_CLIENT_ORDER_LIST_SORT_KEY: ClientOrderListSortKey = 'createdAt';
 export const DEFAULT_CLIENT_ORDER_LIST_SORT_DIRECTION: ClientOrderListSortDirection = 'desc';
 
 export type ClientOrderListSortable = {
@@ -17,6 +18,7 @@ export type ClientOrderListSortable = {
   clientName: string;
   agentName: string;
   date: string;
+  createdAt?: string;
   items: { quantity?: number }[];
   total: number;
   status: 'pending' | 'approved' | 'rejected';
@@ -42,6 +44,16 @@ function getItemCount(order: ClientOrderListSortable): number {
   return order.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
 }
 
+function getCreatedAtTime(order: ClientOrderListSortable): number {
+  const value = order.createdAt || order.date;
+  return value ? new Date(value).getTime() : 0;
+}
+
+/** Newest-added first (stable secondary for other columns / same-day date ties). */
+function compareCreatedAtDesc(a: ClientOrderListSortable, b: ClientOrderListSortable): number {
+  return getCreatedAtTime(b) - getCreatedAtTime(a);
+}
+
 export function sortClientOrderList<T extends ClientOrderListSortable>(
   orders: T[],
   sortKey: ClientOrderListSortKey,
@@ -62,8 +74,13 @@ export function sortClientOrderList<T extends ClientOrderListSortable>(
       case 'agentName':
         result = a.agentName.localeCompare(b.agentName);
         break;
-      case 'date':
+      case 'date': {
         result = new Date(a.date).getTime() - new Date(b.date).getTime();
+        if (result !== 0) return result * direction;
+        return compareCreatedAtDesc(a, b);
+      }
+      case 'createdAt':
+        result = getCreatedAtTime(a) - getCreatedAtTime(b);
         break;
       case 'items':
         result = getItemCount(a) - getItemCount(b);
@@ -79,6 +96,6 @@ export function sortClientOrderList<T extends ClientOrderListSortable>(
     }
 
     if (result !== 0) return result * direction;
-    return a.orderNumber.localeCompare(b.orderNumber, undefined, { numeric: true });
+    return compareCreatedAtDesc(a, b);
   });
 }

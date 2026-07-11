@@ -39,6 +39,8 @@ export interface Order {
   clientName: string;
   clientAccountType?: 'Key Accounts' | 'Standard Accounts';
   date: string;
+  /** Full ISO timestamp from client_orders.created_at — used for added-latest sorting */
+  createdAt: string;
   items: OrderItem[];
   subtotal: number;
   tax: number;
@@ -323,6 +325,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           clientName: order.client?.name || clientIdToName[order.client_id] || 'Unknown Client',
           clientAccountType: order.client_account_type || 'Standard Accounts',
           date: order.order_date,
+          createdAt: order.created_at || order.order_date,
           items,
           subtotal: order.subtotal,
           tax: order.tax_amount,
@@ -509,7 +512,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
           remitted: (order as any).remitted ?? false, // FOC (total=0) orders are marked remitted on creation
           pricing_strategy: (order as any).pricingStrategy || 'rsp'
         } as any)
-        .select('id, order_number')
+        .select('id, order_number, created_at')
         .single();
 
       if (orderError) {
@@ -783,6 +786,7 @@ export function OrderProvider({ children }: { children: ReactNode }) {
         clientName: order.clientName,
         clientAccountType: clientAccountType,
         date: order.date,
+        createdAt: newOrder.created_at || new Date().toISOString(),
         items: order.items,
         subtotal: order.subtotal,
         tax: order.tax,

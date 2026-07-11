@@ -841,13 +841,23 @@ export default function MyTeamsPage() {
                     onSort={handleClientSort}
                     className="text-center"
                   />
+                  <SortableTableHead
+                    label="Created At"
+                    sortKey="createdAt"
+                    sortDirection={
+                      getTableSortDisplayDirection(clientSortState, 'createdAt') ??
+                      (clientSortState.step === 0 ? DEFAULT_CLIENT_LIST_SORT_DIRECTION : null)
+                    }
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
                   <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paginatedClients.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
                       No clients found
                     </TableCell>
                   </TableRow>
@@ -913,6 +923,9 @@ export default function MyTeamsPage() {
                         <Badge variant="outline" className={`border text-xs ${getApprovalStatusBadge(client.approval_status).className}`}>
                           {getApprovalStatusBadge(client.approval_status).label}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-center text-sm text-muted-foreground whitespace-nowrap">
+                        {client.created_at ? new Date(client.created_at).toLocaleString() : '—'}
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex justify-center gap-1 md:gap-2">

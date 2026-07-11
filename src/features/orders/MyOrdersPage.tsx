@@ -1836,6 +1836,7 @@ export default function MyOrdersPage() {
         clientId: selectedClientId,
         clientName: clientName,
         date: orderDate,
+        createdAt: new Date().toISOString(),
         items: orderItems,
         subtotal: calculateSubtotal(),
         tax: calculateTax(),
