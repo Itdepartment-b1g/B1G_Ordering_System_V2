@@ -61,9 +61,9 @@ export function PhysicalCountReviewDialog({
             <Badge variant={varianceLines.length > 0 ? 'destructive' : 'outline'}>
               {varianceLines.length} variance(s)
             </Badge>
-            {varianceLines.length > 0 && (
+            {/* {varianceLines.length > 0 && (
               <Badge variant="outline">Net variance: {totalVariance > 0 ? '+' : ''}{totalVariance}</Badge>
-            )}
+            )} */}
           </div>
 
           {varianceLines.length > 0 ? (
