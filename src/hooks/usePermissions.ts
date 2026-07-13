@@ -75,6 +75,9 @@ export function usePermissions() {
       const mainWarehouseOnlyRoutes = [
         '/inventory/stock-requests',
         '/inventory/stock-adjustments',
+        '/finance/payment-settings',
+        '/brands',
+        '/variant-types',
       ];
       if (
         mainWarehouseOnlyRoutes.includes(route) &&

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/features/auth';
 import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 
 import {
   mapAllocationHistoryRows,
@@ -94,38 +95,45 @@ async function fetchAllocationHistory(user: FetchUser): Promise<AllocationHistor
 
   const sessionIds = sessions.map((s) => s.id);
 
-  let transactionsQuery = supabase
-    .from('inventory_transactions')
-    .select(
-      `
-      id,
-      quantity,
-      reference_id,
-      variant:variants!inventory_transactions_variant_id_fkey (
-        id,
-        name,
-        variant_type,
-        brand:brands!variants_brand_id_fkey ( name )
-      )
-    `
-    )
-    .eq('reference_type', 'allocation_history')
-    .eq('transaction_type', 'allocated_to_agent')
-    .in('reference_id', sessionIds)
-    .order('created_at', { ascending: true });
+  // PostgREST caps at 1000 rows; page so newest sessions are not truncated.
+  let transactions;
+  try {
+    transactions = await fetchAllPaginated(async (from, to) => {
+      let transactionsQuery = supabase
+        .from('inventory_transactions')
+        .select(
+          `
+          id,
+          quantity,
+          reference_id,
+          variant:variants!inventory_transactions_variant_id_fkey (
+            id,
+            name,
+            variant_type,
+            brand:brands!variants_brand_id_fkey ( name )
+          )
+        `
+        )
+        .eq('reference_type', 'allocation_history')
+        .eq('transaction_type', 'allocated_to_agent')
+        .in('reference_id', sessionIds)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to);
 
-  if (user.company_id) {
-    transactionsQuery = transactionsQuery.eq('company_id', user.company_id);
-  }
+      if (user.company_id) {
+        transactionsQuery = transactionsQuery.eq('company_id', user.company_id);
+      }
 
-  const { data: transactions, error: txError } = await transactionsQuery;
-
-  if (txError) {
+      const { data, error } = await transactionsQuery;
+      return { data, error };
+    });
+  } catch (txError) {
     console.error('[allocation_history] transactions query failed:', txError);
     throw txError;
   }
 
-  return mapAllocationHistoryRows(sessionsWithNames, transactions ?? []);
+  return mapAllocationHistoryRows(sessionsWithNames, transactions);
 }
 
 export function useSuperAdminAllocationHistory() {

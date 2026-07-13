@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/features/auth';
-import { supabase } from '@/lib/supabase';
 import { useWarehouseLocationMembership } from '@/features/inventory/useWarehouseLocationMembership';
+import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 
 import type { WarehouseAllocationGroup } from '../types';
 import { mapWarehouseAllocationHistoryRows } from '../utils/warehouseAllocationMappers';
@@ -82,62 +83,72 @@ async function fetchWarehouseAllocationHistory({
   }));
 
   const sessionIds = sessions.map((s) => s.id);
+  const companyId = user.company_id;
 
-  const { data: transactions, error: txError } = await supabase
-    .from('inventory_transactions')
-    .select(
-      `
-      id,
-      quantity,
-      reference_id,
-      variant:variants!inventory_transactions_variant_id_fkey (
-        id,
-        name,
-        variant_type,
-        brand:brands!variants_brand_id_fkey ( id, name )
-      )
-    `
-    )
-    .eq('company_id', user.company_id)
-    .eq('reference_type', 'warehouse_allocation_history')
-    .eq('transaction_type', 'warehouse_allocate_to_sub')
-    .in('reference_id', sessionIds)
-    .order('created_at', { ascending: true });
-
-  if (txError) {
+  // PostgREST caps at 1000 rows; page so newest sessions are not truncated.
+  let transactions;
+  try {
+    transactions = await fetchAllPaginated(async (from, to) => {
+      const { data, error } = await supabase
+        .from('inventory_transactions')
+        .select(
+          `
+          id,
+          quantity,
+          reference_id,
+          variant:variants!inventory_transactions_variant_id_fkey (
+            id,
+            name,
+            variant_type,
+            brand:brands!variants_brand_id_fkey ( id, name )
+          )
+        `
+        )
+        .eq('company_id', companyId)
+        .eq('reference_type', 'warehouse_allocation_history')
+        .eq('transaction_type', 'warehouse_allocate_to_sub')
+        .in('reference_id', sessionIds)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to);
+      return { data, error };
+    });
+  } catch (txError) {
     console.error('[warehouse_allocation_history] transactions query failed:', txError);
     throw txError;
   }
 
-  const { data: batchMovements, error: batchError } = await supabase
-    .from('inventory_batch_movements')
-    .select(
-      `
-      id,
-      quantity,
-      reference_id,
-      variant_id,
-      batch_id,
-      batch:inventory_batches!inventory_batch_movements_batch_id_fkey ( batch_number ),
-      lot:inventory_batch_lots!inventory_batch_movements_lot_id_fkey ( expiration_date )
-    `
-    )
-    .eq('company_id', user.company_id)
-    .eq('reference_type', 'warehouse_allocation_history')
-    .eq('movement_type', 'allocate_in')
-    .in('reference_id', sessionIds)
-    .order('created_at', { ascending: true });
-
-  if (batchError) {
+  let batchMovements;
+  try {
+    batchMovements = await fetchAllPaginated(async (from, to) => {
+      const { data, error } = await supabase
+        .from('inventory_batch_movements')
+        .select(
+          `
+          id,
+          quantity,
+          reference_id,
+          variant_id,
+          batch_id,
+          batch:inventory_batches!inventory_batch_movements_batch_id_fkey ( batch_number ),
+          lot:inventory_batch_lots!inventory_batch_movements_lot_id_fkey ( expiration_date )
+        `
+        )
+        .eq('company_id', companyId)
+        .eq('reference_type', 'warehouse_allocation_history')
+        .eq('movement_type', 'allocate_in')
+        .in('reference_id', sessionIds)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to);
+      return { data, error };
+    });
+  } catch (batchError) {
     console.error('[warehouse_allocation_history] batch movements query failed:', batchError);
     throw batchError;
   }
 
-  return mapWarehouseAllocationHistoryRows(
-    sessionsWithBrands,
-    transactions ?? [],
-    batchMovements ?? []
-  );
+  return mapWarehouseAllocationHistoryRows(sessionsWithBrands, transactions, batchMovements);
 }
 
 export function useWarehouseAllocationHistory() {
