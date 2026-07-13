@@ -74,7 +74,7 @@ export function PhysicalCountReviewDialog({
                     <TableHead>Brand</TableHead>
                     <TableHead>Variant</TableHead>
                     <TableHead>Expiration</TableHead>
-                    <TableHead className="text-right">System</TableHead>
+                    {/* <TableHead className="text-right">System</TableHead> */}
                     <TableHead className="text-right">Physical</TableHead>
                     <TableHead className="text-right">Variance</TableHead>
                   </TableRow>
@@ -87,7 +87,7 @@ export function PhysicalCountReviewDialog({
                       <TableCell className="whitespace-nowrap text-muted-foreground">
                         {formatLotDate(line.expirationDate)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{line.systemQty}</TableCell>
+                      {/* <TableCell className="text-right tabular-nums">{line.systemQty}</TableCell> */}
                       <TableCell className="text-right tabular-nums">{line.physical}</TableCell>
                       <TableCell
                         className={`text-right tabular-nums font-medium ${
