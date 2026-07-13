@@ -76,7 +76,7 @@ export function PhysicalCountReviewDialog({
                     <TableHead>Expiration</TableHead>
                     {/* <TableHead className="text-right">System</TableHead> */}
                     <TableHead className="text-right">Physical</TableHead>
-                    <TableHead className="text-right">Variance</TableHead>
+                    {/* <TableHead className="text-right">Variance</TableHead> */}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -89,14 +89,14 @@ export function PhysicalCountReviewDialog({
                       </TableCell>
                       {/* <TableCell className="text-right tabular-nums">{line.systemQty}</TableCell> */}
                       <TableCell className="text-right tabular-nums">{line.physical}</TableCell>
-                      <TableCell
+                      {/* <TableCell
                         className={`text-right tabular-nums font-medium ${
                           line.variance > 0 ? 'text-green-600' : 'text-destructive'
                         }`}
                       >
                         {line.variance > 0 ? '+' : ''}
                         {line.variance}
-                      </TableCell>
+                      </TableCell> */}
                     </TableRow>
                   ))}
                 </TableBody>
