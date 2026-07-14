@@ -17,6 +17,7 @@ import { useInventory, type Brand, type Variant } from './InventoryContext';
 import { refetchWarehouseAllocationHistory } from './warehouse-allocation-history/hooks/useWarehouseAllocationHistory';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { SubWarehouseReturnStockDialog } from './components/SubWarehouseReturnStockDialog';
+import { deriveLocationCode } from './internalStockRequestsStore';
 
 type LocationRow = {
   id: string;
@@ -439,7 +440,24 @@ export default function SubWarehousesPage() {
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="sw-name">Location name</Label>
-              <Input id="sw-name" value={createForm.location_name} onChange={(e) => setCreateForm((f) => ({ ...f, location_name: e.target.value }))} placeholder="e.g. Sub Warehouse - North" />
+              <Input id="sw-name" value={createForm.location_name} onChange={(e) => setCreateForm((f) => ({ ...f, location_name: e.target.value }))} placeholder="e.g. Santa Rosa" />
+              {createForm.location_name.trim() ? (
+                <p className="text-xs text-muted-foreground">
+                  Request code:{' '}
+                  <span className="font-mono font-medium text-foreground">
+                    {deriveLocationCode(createForm.location_name)}
+                  </span>
+                  {' '}
+                  · request numbers look like{' '}
+                  <span className="font-mono">
+                    RN-{deriveLocationCode(createForm.location_name)}-0001
+                  </span>
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  A short location code is generated from the name for stock request numbers.
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

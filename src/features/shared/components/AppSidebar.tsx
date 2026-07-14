@@ -354,6 +354,8 @@ const warehouseMenuItems: MenuItem[] = [
     submenu: [
 
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', icon: Building2 },
+      { title: 'Request Stock', url: '/inventory/request-stock', icon: Send },
+      { title: 'Sub Stock Requests', url: '/inventory/sub-stock-requests', icon: ClipboardList },
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
       { title: 'Allocation History', url: '/inventory/allocation-history', icon: Package2Icon },
       { title: 'Stock Requests', url: '/inventory/stock-requests', icon: ClipboardList },

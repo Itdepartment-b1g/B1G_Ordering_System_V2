@@ -75,6 +75,7 @@ export function usePermissions() {
       const mainWarehouseOnlyRoutes = [
         '/inventory/stock-requests',
         '/inventory/stock-adjustments',
+        '/inventory/sub-stock-requests',
         '/finance/payment-settings',
         '/brands',
         '/variant-types',
@@ -82,6 +83,15 @@ export function usePermissions() {
       if (
         mainWarehouseOnlyRoutes.includes(route) &&
         (warehouseMembershipLoading || !warehouseMembership.isMain)
+      ) {
+        return false;
+      }
+
+      // Sub-warehouse request-from-main UI (main users use Sub Stock Requests instead)
+      const subWarehouseOnlyRoutes = ['/inventory/request-stock'];
+      if (
+        subWarehouseOnlyRoutes.includes(route) &&
+        (warehouseMembershipLoading || warehouseMembership.isMain)
       ) {
         return false;
       }
@@ -96,6 +106,8 @@ export function usePermissions() {
         '/inventory/board',
         '/inventory/main',
         '/inventory/sub-warehouses',
+        '/inventory/request-stock',
+        '/inventory/sub-stock-requests',
         '/inventory/disposals',
         '/inventory/allocation-history',
         '/inventory/batches',
