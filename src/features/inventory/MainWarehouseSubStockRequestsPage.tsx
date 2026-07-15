@@ -1366,13 +1366,19 @@ export default function MainWarehouseSubStockRequestsPage() {
                       <div className="min-w-0">
                         <p className="text-sm font-medium truncate">{item.variantName}</p>
                         <p className="text-xs text-muted-foreground">
-                          Max now {item.allocatable}
+                          Total short {item.short}
                           {item.allocatable < item.short
-                            ? ` (${item.short - item.allocatable} already unlocked)`
+                            ? ` · ${item.short - item.allocatable} already unlocked`
                             : ''}
+                          {` · Available now ${item.allocatable}`}
                         </p>
                       </div>
-                      <p className="text-sm tabular-nums text-right font-medium">{item.short}</p>
+                      <div className="flex sm:block items-center justify-between gap-2">
+                        <span className="text-xs text-muted-foreground sm:hidden">Short</span>
+                        <p className="text-sm tabular-nums text-right font-medium">
+                          {item.allocatable}
+                        </p>
+                      </div>
                       <Input
                         type="number"
                         inputMode="numeric"

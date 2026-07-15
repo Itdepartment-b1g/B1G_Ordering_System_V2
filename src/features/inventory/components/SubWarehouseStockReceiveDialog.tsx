@@ -287,12 +287,12 @@ export function SubWarehouseStockReceiveDialog({
                     <p className="text-xs text-muted-foreground">
                       Delivered {line.deliveredQuantity}
                       {line.alreadyReceived > 0 ? ` · Already received ${line.alreadyReceived}` : ''}
-                      {` · Unlocked to receive ${line.remaining}`}
+                      {` · Unlocked this wave ${line.remaining}`}
                     </p>
                   </div>
                   <div className="flex sm:block items-center justify-between gap-2">
-                    <span className="text-xs text-muted-foreground sm:hidden">Delivered from Main</span>
-                    <p className="text-sm tabular-nums text-right font-medium">{line.deliveredQuantity}</p>
+                    <span className="text-xs text-muted-foreground sm:hidden">Unlocked this wave</span>
+                    <p className="text-sm tabular-nums text-right font-medium">{line.remaining}</p>
                   </div>
                   <div className="flex sm:block items-center justify-between gap-2">
                     <Label
