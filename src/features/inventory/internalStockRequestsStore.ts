@@ -174,7 +174,11 @@ export function useInternalStockRequests() {
 
   const approveAndRelease = (
     requestId: string,
-    options?: { byName?: string; signatureDataUrl?: string }
+    options?: {
+      byName?: string;
+      signatureDataUrl?: string;
+      proofImageDataUrl?: string;
+    }
   ) => {
     updateRequest(requestId, (req) => {
       if (req.status !== 'pending_approval') return req;
@@ -200,6 +204,7 @@ export function useInternalStockRequests() {
           at,
           byName: options?.byName || 'Main Warehouse',
           lines,
+          proofImageDataUrl: options?.proofImageDataUrl,
           signatureDataUrl: options?.signatureDataUrl,
         }),
       };
@@ -207,14 +212,20 @@ export function useInternalStockRequests() {
   };
 
   /**
-   * Manual allocate of short qty on the same request number.
+   * Manual allocate of short qty on the same request number (next wave).
+   * After a partial receive, openReceive is cleared; this unlocks qty again.
    * Example: short 5, main allocates 3 → openReceive=3, status stays partially_received.
    * When short is fully received later → fully_received.
    */
   const allocateRemaining = (
     requestId: string,
     lines: AllocateRemainingLineInput[],
-    options?: { note?: string; byName?: string }
+    options?: {
+      note?: string;
+      byName?: string;
+      proofImageDataUrl?: string;
+      signatureDataUrl?: string;
+    }
   ) => {
     updateRequest(requestId, (req) => {
       if (req.status !== 'partially_received') return req;
@@ -267,6 +278,8 @@ export function useInternalStockRequests() {
             options?.note ||
             `Allocated ${historyLines.reduce((s, l) => s + l.quantity, 0)} unit(s) of remaining short`,
           lines: historyLines,
+          proofImageDataUrl: options?.proofImageDataUrl,
+          signatureDataUrl: options?.signatureDataUrl,
         }),
       };
     });

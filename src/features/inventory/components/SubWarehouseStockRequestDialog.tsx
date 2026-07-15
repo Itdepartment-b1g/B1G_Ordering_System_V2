@@ -77,6 +77,7 @@ export type SubWarehouseRequestHistoryEvent =
       note?: string;
       byName?: string;
       lines: SubWarehouseReleaseLine[];
+      proofImageDataUrl?: string;
       signatureDataUrl?: string;
     }
   | {
@@ -86,6 +87,8 @@ export type SubWarehouseRequestHistoryEvent =
       note?: string;
       byName?: string;
       lines: SubWarehouseReleaseLine[];
+      proofImageDataUrl?: string;
+      signatureDataUrl?: string;
     }
   | {
       id: string;

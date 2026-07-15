@@ -16,6 +16,7 @@ import {
   getItemDeliveredQty,
   getItemReceivedQty,
   getItemRemainingQty,
+  getItemShortQty,
   getRequestDeliveryTotals,
   type SubWarehouseStockRequest,
   type SubWarehouseStockRequestItem,
@@ -251,7 +252,8 @@ export function SubWarehouseStockReceiveDialog({
             <p className="text-sm text-muted-foreground font-normal pt-1">
               {request?.status === 'partially_received' ? (
                 <>
-                  Enter received quantities for the unlocked top-up, attach proof, and sign.
+                  Confirm only this unlocked wave from main. Leftover short stays locked until
+                  main allocates again.
                   {totals.remainingCap > 0 && request ? (
                     <>
                       {' '}
@@ -263,7 +265,7 @@ export function SubWarehouseStockReceiveDialog({
                   ) : null}
                 </>
               ) : (
-                'Enter received quantities, attach a proof photo, and sign to confirm.'
+                'Enter received quantities for this release wave, attach a proof photo, and sign. A shortage locks leftover qty until main allocates remaining.'
               )}
             </p>
           </DialogHeader>
@@ -323,8 +325,9 @@ export function SubWarehouseStockReceiveDialog({
                 <span className="tabular-nums">{totals.remainingCap}</span> remaining
               </p>
               <p className="text-xs text-muted-foreground">
-                Received cannot exceed remaining for each SKU. Shortage leaves the request as
-                partially received until main allocates the rest.
+                Received cannot exceed unlocked qty for each SKU. Confirming a shortage clears
+                leftover unlock; status stays partially received until main allocates the next
+                wave and you confirm again.
               </p>
             </div>
 
@@ -492,13 +495,13 @@ export function SubWarehouseStockReceiveDialog({
   );
 }
 
-/** Apply a receive confirm onto request items (local mock). */
+/** Apply a receive confirm onto request items (local mock). Matches wave-based SQL. */
 export function applyReceiveConfirmToItems(
   items: SubWarehouseStockRequestItem[],
   lines: ReceiveConfirmLine[]
 ): SubWarehouseStockRequestItem[] {
   const qtyByVariant = new Map(lines.map((line) => [line.variantId, line.quantityThisReceive]));
-  return items.map((item) => {
+  const nextItems = items.map((item) => {
     const add = qtyByVariant.get(item.variantId) ?? 0;
     if (add <= 0) return item;
     const nextReceived = Math.min(getItemDeliveredQty(item), getItemReceivedQty(item) + add);
@@ -509,4 +512,8 @@ export function applyReceiveConfirmToItems(
       openReceiveQuantity: nextOpen,
     };
   });
+  // Wave-based: any remaining short locks unlock until main allocates again.
+  const stillShort = nextItems.some((item) => getItemShortQty(item) > 0);
+  if (!stillShort) return nextItems;
+  return nextItems.map((item) => ({ ...item, openReceiveQuantity: 0 }));
 }

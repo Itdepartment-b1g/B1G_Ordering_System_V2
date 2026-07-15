@@ -78,10 +78,17 @@ function mapEvent(
         ...base,
         type: 'approved_released',
         lines,
+        proofImageDataUrl: event.proof_image_url || undefined,
         signatureDataUrl: event.signature_url || undefined,
       };
     case 'remaining_released':
-      return { ...base, type: 'remaining_released', lines };
+      return {
+        ...base,
+        type: 'remaining_released',
+        lines,
+        proofImageDataUrl: event.proof_image_url || undefined,
+        signatureDataUrl: event.signature_url || undefined,
+      };
     case 'receive_confirmed':
       return {
         ...base,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -6,6 +6,7 @@ import {
   Clock,
   Eye,
   FileDown,
+  ImagePlus,
   LayoutGrid,
   List,
   Loader2,
@@ -14,6 +15,7 @@ import {
   PenTool,
   Search,
   Send,
+  Trash2,
   Truck,
   X,
   XCircle,
@@ -55,6 +57,7 @@ import {
   getItemShortQty,
   getItemAllocatableQty,
   getRequestDeliveryTotals,
+  requestHasOpenReceive,
   type SubWarehouseStockRequest,
   type SubWarehouseStockRequestStatus,
 } from './components/SubWarehouseStockRequestDialog';
@@ -148,6 +151,31 @@ function formatRequestDate(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+const MAX_PROOF_IMAGE_BYTES = 5 * 1024 * 1024;
+const ACCEPTED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('Failed to read image'));
+    };
+    reader.onerror = () => reject(new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function proofFileValidationError(file: File): string | null {
+  if (!ACCEPTED_PROOF_TYPES.includes(file.type)) {
+    return 'Use JPG, PNG, WEBP, or GIF.';
+  }
+  if (file.size > MAX_PROOF_IMAGE_BYTES) {
+    return 'Image must be 5MB or smaller.';
+  }
+  return null;
 }
 
 function requestedTotal(request: SubWarehouseStockRequest): number {
@@ -261,6 +289,10 @@ function MainItemChips({
   );
 }
 
+function requestHasAllocatableQty(request: SubWarehouseStockRequest): boolean {
+  return request.items.some((item) => getItemAllocatableQty(item) > 0);
+}
+
 function MainRequestActionsMenu({
   request,
   onView,
@@ -277,7 +309,8 @@ function MainRequestActionsMenu({
   onExportPdf: (request: SubWarehouseStockRequest) => void;
 }) {
   const canApprove = request.status === 'pending_approval';
-  const canAllocate = request.status === 'partially_received';
+  const canAllocate =
+    request.status === 'partially_received' && requestHasAllocatableQty(request);
   const canExport = canExportMainRequestPdf(request);
 
   return (
@@ -429,9 +462,17 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [approveTarget, setApproveTarget] = useState<SubWarehouseStockRequest | null>(null);
   const [approveSignatureDataUrl, setApproveSignatureDataUrl] = useState('');
   const [approveSignatureOpen, setApproveSignatureOpen] = useState(false);
+  const [approveProofImageDataUrl, setApproveProofImageDataUrl] = useState('');
+  const [approveProofImageName, setApproveProofImageName] = useState('');
+  const approveProofFileRef = useRef<HTMLInputElement>(null);
   const [allocateTarget, setAllocateTarget] = useState<SubWarehouseStockRequest | null>(null);
   const [allocateNote, setAllocateNote] = useState('');
   const [allocateQtys, setAllocateQtys] = useState<Record<string, string>>({});
+  const [allocateSignatureDataUrl, setAllocateSignatureDataUrl] = useState('');
+  const [allocateSignatureOpen, setAllocateSignatureOpen] = useState(false);
+  const [allocateProofImageDataUrl, setAllocateProofImageDataUrl] = useState('');
+  const [allocateProofImageName, setAllocateProofImageName] = useState('');
+  const allocateProofFileRef = useRef<HTMLInputElement>(null);
 
   const detailRequest = useMemo(
     () => requests.find((r) => r.id === detailRequestId) ?? null,
@@ -464,6 +505,18 @@ export default function MainWarehouseSubStockRequestsPage() {
   };
 
   const openAllocateDialog = (request: SubWarehouseStockRequest) => {
+    if (!requestHasAllocatableQty(request)) {
+      const open = getRequestDeliveryTotals(request.items).openReceive;
+      toast({
+        title: open > 0 ? 'Waiting on sub warehouse' : 'Nothing to allocate',
+        description:
+          open > 0
+            ? 'This short is already unlocked. Wait until the sub confirms receive.'
+            : 'No remaining short to allocate on this request.',
+        variant: 'destructive',
+      });
+      return;
+    }
     const initial: Record<string, string> = {};
     for (const item of request.items) {
       const allocatable = getItemAllocatableQty(item);
@@ -472,6 +525,20 @@ export default function MainWarehouseSubStockRequestsPage() {
     setAllocateTarget(request);
     setAllocateNote('');
     setAllocateQtys(initial);
+    setAllocateSignatureDataUrl('');
+    setAllocateSignatureOpen(false);
+    setAllocateProofImageDataUrl('');
+    setAllocateProofImageName('');
+  };
+
+  const closeAllocateDialog = () => {
+    setAllocateTarget(null);
+    setAllocateNote('');
+    setAllocateQtys({});
+    setAllocateSignatureDataUrl('');
+    setAllocateSignatureOpen(false);
+    setAllocateProofImageDataUrl('');
+    setAllocateProofImageName('');
   };
 
   const warehouseOptions = useMemo(() => {
@@ -579,9 +646,13 @@ export default function MainWarehouseSubStockRequestsPage() {
       if (!approveTarget || !approveSignatureDataUrl) {
         throw new Error('Signature required');
       }
+      if (!approveProofImageDataUrl) {
+        throw new Error('Proof image required');
+      }
       return approveInternalStockRequest({
         requestId: approveTarget.id,
         signatureUrl: approveSignatureDataUrl,
+        proofImageUrl: approveProofImageDataUrl,
       });
     },
     onSuccess: async () => {
@@ -638,11 +709,15 @@ export default function MainWarehouseSubStockRequestsPage() {
       lines: Array<{ variant_id: string; quantity: number }>;
       note?: string;
       shortBefore: number;
+      proofImageUrl: string;
+      signatureUrl: string;
     }) => {
       const result = await allocateInternalStockRequestRemaining({
         requestId: payload.requestId,
         lines: payload.lines,
         note: payload.note,
+        proofImageUrl: payload.proofImageUrl,
+        signatureUrl: payload.signatureUrl,
       });
       return { ...result, meta: payload };
     },
@@ -656,9 +731,7 @@ export default function MainWarehouseSubStockRequestsPage() {
             ? `${meta.requestNumber}: allocated ${totalAllocated} of short ${meta.shortBefore}. Status stays partially received until fully received.`
             : `${meta.requestNumber}: allocated ${totalAllocated} (full short). Sub can confirm receive; status becomes fully received when confirmed.`,
       });
-      setAllocateTarget(null);
-      setAllocateNote('');
-      setAllocateQtys({});
+      closeAllocateDialog();
       setDetailRequestId(meta.requestId);
     },
     onError: (error: Error) => {
@@ -674,6 +747,8 @@ export default function MainWarehouseSubStockRequestsPage() {
     if (request.status !== 'pending_approval') return;
     setApproveSignatureDataUrl('');
     setApproveSignatureOpen(false);
+    setApproveProofImageDataUrl('');
+    setApproveProofImageName('');
     setApproveTarget(request);
   };
 
@@ -681,10 +756,20 @@ export default function MainWarehouseSubStockRequestsPage() {
     setApproveTarget(null);
     setApproveSignatureDataUrl('');
     setApproveSignatureOpen(false);
+    setApproveProofImageDataUrl('');
+    setApproveProofImageName('');
   };
 
   const handleConfirmApprove = () => {
     if (!approveTarget) return;
+    if (!approveProofImageDataUrl) {
+      toast({
+        title: 'Proof photo required',
+        description: 'Upload a proof photo before confirming this approval.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!approveSignatureDataUrl) {
       toast({
         title: 'Signature required',
@@ -694,6 +779,46 @@ export default function MainWarehouseSubStockRequestsPage() {
       return;
     }
     approveMutation.mutate();
+  };
+
+  const handleApproveProofFileChange = async (file: File | null) => {
+    if (!file) return;
+    const validationError = proofFileValidationError(file);
+    if (validationError) {
+      toast({ title: 'Invalid image', description: validationError, variant: 'destructive' });
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setApproveProofImageDataUrl(dataUrl);
+      setApproveProofImageName(file.name);
+    } catch {
+      toast({
+        title: 'Could not read image',
+        description: 'Try another photo.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleAllocateProofFileChange = async (file: File | null) => {
+    if (!file) return;
+    const validationError = proofFileValidationError(file);
+    if (validationError) {
+      toast({ title: 'Invalid image', description: validationError, variant: 'destructive' });
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setAllocateProofImageDataUrl(dataUrl);
+      setAllocateProofImageName(file.name);
+    } catch {
+      toast({
+        title: 'Could not read image',
+        description: 'Try another photo.',
+        variant: 'destructive',
+      });
+    }
   };
 
   const handleAllocateRemaining = () => {
@@ -748,6 +873,24 @@ export default function MainWarehouseSubStockRequestsPage() {
       return;
     }
 
+    if (!allocateProofImageDataUrl) {
+      toast({
+        title: 'Proof photo required',
+        description: 'Upload a proof photo before allocating remaining stock.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!allocateSignatureDataUrl) {
+      toast({
+        title: 'Signature required',
+        description: 'Sign to confirm this allocation.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const shortBefore = getRequestDeliveryTotals(allocateTarget.items).short;
 
     allocateMutation.mutate({
@@ -756,6 +899,8 @@ export default function MainWarehouseSubStockRequestsPage() {
       lines: payload,
       note: allocateNote.trim() || undefined,
       shortBefore,
+      proofImageUrl: allocateProofImageDataUrl,
+      signatureUrl: allocateSignatureDataUrl,
     });
   };
 
@@ -964,8 +1109,22 @@ export default function MainWarehouseSubStockRequestsPage() {
 
                     {req.status === 'partially_received' && totals.short > 0 ? (
                       <p className="text-xs text-amber-800">
-                        Short {totals.short} on {req.requestNumber} — allocate remaining on this
-                        request.
+                        {requestHasAllocatableQty(req) ? (
+                          <>
+                            Short {totals.short} on {req.requestNumber} — allocate remaining for
+                            the next receive wave.
+                          </>
+                        ) : requestHasOpenReceive(req.items) ? (
+                          <>
+                            Short {totals.short} unlocked for sub confirm on {req.requestNumber}.
+                            Wait until they receive this wave.
+                          </>
+                        ) : (
+                          <>
+                            Short {totals.short} on {req.requestNumber} — allocate remaining for
+                            the next receive wave.
+                          </>
+                        )}
                       </p>
                     ) : null}
 
@@ -1068,32 +1227,16 @@ export default function MainWarehouseSubStockRequestsPage() {
               </DialogHeader>
 
               <div className="space-y-4 py-2">
-                <div className="rounded-md border divide-y">
-                  <div className="grid grid-cols-[1fr_4.5rem_4.5rem_4.5rem] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/40">
-                    <span>SKU</span>
-                    <span className="text-right">Requested</span>
-                    <span className="text-right">Delivered</span>
-                    <span className="text-right">Received</span>
-                  </div>
-                  {detailRequest.items.map((item) => (
-                    <div
-                      key={item.variantId}
-                      className="grid grid-cols-[1fr_4.5rem_4.5rem_4.5rem] gap-2 px-3 py-2 text-sm items-center"
-                    >
-                      <span className="truncate font-medium">{item.variantName}</span>
-                      <span className="text-right tabular-nums">{item.requestedQuantity}</span>
-                      <span className="text-right tabular-nums">{getItemDeliveredQty(item)}</span>
-                      <span className="text-right tabular-nums">{getItemReceivedQty(item)}</span>
-                    </div>
-                  ))}
-                </div>
-
                 {detailRequest.status === 'partially_received' ? (
                   <p className="text-sm text-amber-800 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
                     Short {getRequestDeliveryTotals(detailRequest.items).short} units on{' '}
                     <span className="font-medium tabular-nums">{detailRequest.requestNumber}</span>.
-                    Allocate whatever qty is available now (manual input). Status stays partially
-                    received until the sub receives enough to clear the short.
+                    {requestHasAllocatableQty(detailRequest)
+                      ? ' Allocate a receive wave now; the sub can confirm only what you unlock.'
+                      : requestHasOpenReceive(detailRequest.items)
+                        ? ' Unlocked qty is waiting for the sub to confirm this wave.'
+                        : ' Allocate a receive wave when stock is available; the sub waits until then.'}{' '}
+                    Status stays partially received until the short is fully confirmed.
                   </p>
                 ) : null}
 
@@ -1112,7 +1255,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                 ) : null}
 
                 <div className="space-y-2">
-                  <p className="text-sm font-medium">Request history</p>
+                  {/* <p className="text-sm font-medium">Request history</p> */}
                   <SubWarehouseRequestHistoryTimeline
                     history={detailRequest.history}
                     items={detailRequest.items}
@@ -1148,7 +1291,8 @@ export default function MainWarehouseSubStockRequestsPage() {
                     </Button>
                   </>
                 ) : null}
-                {detailRequest.status === 'partially_received' ? (
+                {detailRequest.status === 'partially_received' &&
+                requestHasAllocatableQty(detailRequest) ? (
                   <Button
                     type="button"
                     onClick={() => openAllocateDialog(detailRequest)}
@@ -1165,14 +1309,10 @@ export default function MainWarehouseSubStockRequestsPage() {
       <Dialog
         open={!!allocateTarget}
         onOpenChange={(open) => {
-          if (!open) {
-            setAllocateTarget(null);
-            setAllocateNote('');
-            setAllocateQtys({});
-          }
+          if (!open) closeAllocateDialog();
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               Allocate remaining — {allocateTarget?.requestNumber}
@@ -1181,12 +1321,14 @@ export default function MainWarehouseSubStockRequestsPage() {
           {allocateTarget ? (
             <div className="space-y-3 py-2">
               <p className="text-sm text-muted-foreground">
-                Enter how many units to allocate now (based on available inventory). Short total:{' '}
+                Unlock a receive wave for the remaining short (based on available inventory).
+                Short total:{' '}
                 <span className="font-medium text-foreground tabular-nums">
                   {getRequestDeliveryTotals(allocateTarget.items).short}
                 </span>
-                . Status stays <span className="font-medium">partially received</span> until the
-                sub confirms enough to clear the short.
+                . Sub confirms only what you unlock now; status stays{' '}
+                <span className="font-medium">partially received</span> until the short is fully
+                received.
               </p>
               <div className="rounded-md border divide-y">
                 <div className="hidden sm:grid grid-cols-[1fr_4.5rem_5.5rem] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/40">
@@ -1245,23 +1387,119 @@ export default function MainWarehouseSubStockRequestsPage() {
                   rows={2}
                 />
               </div>
+
+              <div className="space-y-2">
+                <Label>Proof photo (required)</Label>
+                <input
+                  ref={allocateProofFileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) => void handleAllocateProofFileChange(e.target.files?.[0] ?? null)}
+                />
+                {!allocateProofImageDataUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => allocateProofFileRef.current?.click()}
+                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
+                  >
+                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm font-medium">Upload allocate proof</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      JPG, PNG, WEBP, or GIF · max 5MB
+                    </p>
+                  </button>
+                ) : (
+                  <div className="rounded-md border p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs text-muted-foreground truncate">
+                        {allocateProofImageName || 'Proof image'}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAllocateProofImageDataUrl('');
+                          setAllocateProofImageName('');
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                    <img
+                      src={allocateProofImageDataUrl}
+                      alt="Allocate proof"
+                      className="max-h-48 mx-auto rounded-md object-contain"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => allocateProofFileRef.current?.click()}
+                    >
+                      Replace photo
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Signature (required)</Label>
+                {!allocateSignatureDataUrl ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setAllocateSignatureOpen(true)}
+                  >
+                    <PenTool className="h-4 w-4 mr-2" />
+                    Add signature
+                  </Button>
+                ) : (
+                  <div className="rounded-md border p-3 space-y-3 bg-muted/20">
+                    <img
+                      src={allocateSignatureDataUrl}
+                      alt="Allocator signature"
+                      className="max-h-28 mx-auto bg-white rounded-md"
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAllocateSignatureDataUrl('')}
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Clear
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAllocateSignatureOpen(true)}
+                      >
+                        Re-sign
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           ) : null}
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setAllocateTarget(null);
-                setAllocateQtys({});
-              }}
-            >
+            <Button type="button" variant="outline" onClick={closeAllocateDialog}>
               Cancel
             </Button>
             <Button
               type="button"
               onClick={handleAllocateRemaining}
-              disabled={allocateMutation.isPending}
+              disabled={
+                !allocateProofImageDataUrl ||
+                !allocateSignatureDataUrl ||
+                allocateMutation.isPending
+              }
             >
               {allocateMutation.isPending ? (
                 <>
@@ -1273,6 +1511,23 @@ export default function MainWarehouseSubStockRequestsPage() {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={allocateSignatureOpen} onOpenChange={setAllocateSignatureOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sign to allocate remaining</DialogTitle>
+          </DialogHeader>
+          <SignatureCanvas
+            title="Allocator signature"
+            description="Draw your signature to confirm this allocation wave"
+            onSave={(dataUrl) => {
+              setAllocateSignatureDataUrl(dataUrl);
+              setAllocateSignatureOpen(false);
+            }}
+            onCancel={() => setAllocateSignatureOpen(false)}
+          />
         </DialogContent>
       </Dialog>
 
@@ -1334,6 +1589,63 @@ export default function MainWarehouseSubStockRequestsPage() {
               </div>
 
               <div className="space-y-2">
+                <Label>Proof photo (required)</Label>
+                <input
+                  ref={approveProofFileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) => void handleApproveProofFileChange(e.target.files?.[0] ?? null)}
+                />
+                {!approveProofImageDataUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => approveProofFileRef.current?.click()}
+                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
+                  >
+                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm font-medium">Upload approval proof</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      JPG, PNG, WEBP, or GIF · max 5MB
+                    </p>
+                  </button>
+                ) : (
+                  <div className="rounded-md border p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs text-muted-foreground truncate">
+                        {approveProofImageName || 'Proof image'}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setApproveProofImageDataUrl('');
+                          setApproveProofImageName('');
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                    <img
+                      src={approveProofImageDataUrl}
+                      alt="Approval proof"
+                      className="max-h-48 mx-auto rounded-md object-contain"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => approveProofFileRef.current?.click()}
+                    >
+                      Replace photo
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
                 <Label>Signature (required)</Label>
                 {!approveSignatureDataUrl ? (
                   <Button
@@ -1386,7 +1698,11 @@ export default function MainWarehouseSubStockRequestsPage() {
             <Button
               type="button"
               onClick={handleConfirmApprove}
-              disabled={!approveSignatureDataUrl || approveMutation.isPending}
+              disabled={
+                !approveProofImageDataUrl ||
+                !approveSignatureDataUrl ||
+                approveMutation.isPending
+              }
             >
               {approveMutation.isPending ? (
                 <>

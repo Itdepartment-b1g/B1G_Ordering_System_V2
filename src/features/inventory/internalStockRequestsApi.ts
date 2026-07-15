@@ -192,12 +192,16 @@ export async function createInternalStockRequest(input: {
 export async function approveInternalStockRequest(input: {
   requestId: string;
   signatureUrl: string;
+  proofImageUrl: string;
   signaturePath?: string;
+  proofImagePath?: string;
 }) {
   const { data, error } = await supabase.rpc('approve_internal_stock_request', {
     p_request_id: input.requestId,
     p_signature_url: input.signatureUrl,
     p_signature_path: input.signaturePath ?? null,
+    p_proof_image_url: input.proofImageUrl,
+    p_proof_image_path: input.proofImagePath ?? null,
   });
   if (error) throw error;
   return assertRpcOk(
@@ -228,12 +232,20 @@ export async function rejectInternalStockRequest(input: {
 export async function allocateInternalStockRequestRemaining(input: {
   requestId: string;
   lines: Array<{ variant_id: string; quantity: number }>;
+  proofImageUrl: string;
+  signatureUrl: string;
   note?: string;
+  proofImagePath?: string;
+  signaturePath?: string;
 }) {
   const { data, error } = await supabase.rpc('allocate_internal_stock_request_remaining', {
     p_request_id: input.requestId,
     p_lines: input.lines,
+    p_proof_image_url: input.proofImageUrl,
+    p_signature_url: input.signatureUrl,
     p_note: input.note ?? null,
+    p_proof_image_path: input.proofImagePath ?? null,
+    p_signature_path: input.signaturePath ?? null,
   });
   if (error) throw error;
   return assertRpcOk(
