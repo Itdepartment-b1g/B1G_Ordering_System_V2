@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Clock,
   ImageIcon,
+  MessageSquareText,
   PackageCheck,
   Send,
   XCircle,
@@ -619,9 +620,25 @@ export function SubWarehouseRequestHistoryTimeline({
                   ) : null}
 
                   {event.type === 'rejected' && event.note?.trim() ? (
-                    <p className="text-xs text-destructive">Reason: {event.note}</p>
+                    <div className="flex gap-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-950">
+                      <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-700" />
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="font-semibold uppercase tracking-wide text-red-800 text-[10px]">
+                          Reason
+                        </p>
+                        <p className="whitespace-pre-wrap leading-snug">{event.note}</p>
+                      </div>
+                    </div>
                   ) : showNote ? (
-                    <p className="text-xs text-muted-foreground">Note: {event.note}</p>
+                    <div className="flex gap-2 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-2 text-xs text-sky-950">
+                      <MessageSquareText className="h-3.5 w-3.5 shrink-0 mt-0.5 text-sky-700" />
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="font-semibold uppercase tracking-wide text-sky-800 text-[10px]">
+                          Note
+                        </p>
+                        <p className="whitespace-pre-wrap leading-snug">{event.note}</p>
+                      </div>
+                    </div>
                   ) : null}
 
                   {event.type === 'receive_confirmed' ? (

@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   List,
   Loader2,
+  MessageSquareText,
   MoreVertical,
   Package,
   PenTool,
@@ -1241,17 +1242,31 @@ export default function MainWarehouseSubStockRequestsPage() {
                 ) : null}
 
                 {detailRequest.notes ? (
-                  <p className="text-sm text-muted-foreground">Request notes: {detailRequest.notes}</p>
+                  <div className="flex gap-2.5 rounded-md border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-950">
+                    <MessageSquareText className="h-4 w-4 shrink-0 mt-0.5 text-sky-700" />
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">
+                        Request notes
+                      </p>
+                      <p className="whitespace-pre-wrap leading-snug">{detailRequest.notes}</p>
+                    </div>
+                  </div>
                 ) : null}
-                {detailRequest.receiveNotes ? (
+                {/* {detailRequest.receiveNotes ? (
                   <p className="text-sm text-muted-foreground">
                     Receive notes: {detailRequest.receiveNotes}
                   </p>
-                ) : null}
+                ) : null} */}
                 {detailRequest.rejectionReason ? (
-                  <p className="text-sm text-destructive">
-                    Rejection: {detailRequest.rejectionReason}
-                  </p>
+                  <div className="flex gap-2.5 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-950">
+                    <XCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-700" />
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-red-800">
+                        Rejection
+                      </p>
+                      <p className="whitespace-pre-wrap leading-snug">{detailRequest.rejectionReason}</p>
+                    </div>
+                  </div>
                 ) : null}
 
                 <div className="space-y-2">
@@ -1291,7 +1306,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                     </Button>
                   </>
                 ) : null}
-                {detailRequest.status === 'partially_received' &&
+                {/* {detailRequest.status === 'partially_received' &&
                 requestHasAllocatableQty(detailRequest) ? (
                   <Button
                     type="button"
@@ -1299,7 +1314,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                   >
                     Allocate remaining
                   </Button>
-                ) : null}
+                ) : null} */}
               </DialogFooter>
             </>
           ) : null}

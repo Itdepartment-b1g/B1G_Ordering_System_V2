@@ -3,6 +3,7 @@ import {
   getItemReceivedQty,
   getRequestDeliveryTotals,
   type SubWarehouseReceiveProof,
+  type SubWarehouseReleaseLine,
   type SubWarehouseRequestHistoryEvent,
   type SubWarehouseStockRequest,
 } from '../components/SubWarehouseStockRequestDialog';
@@ -61,14 +62,6 @@ function statusLabel(status: SubWarehouseStockRequest['status']): string {
   }
 }
 
-function latestHistoryEvent(
-  request: SubWarehouseStockRequest,
-  type: SubWarehouseRequestHistoryEvent['type']
-): SubWarehouseRequestHistoryEvent | undefined {
-  const events = (request.history ?? []).filter((e) => e.type === type);
-  return events[events.length - 1];
-}
-
 function resolveReceiveProof(request: SubWarehouseStockRequest): SubWarehouseReceiveProof | null {
   if (request.receiveProofs && request.receiveProofs.length > 0) {
     return request.receiveProofs[request.receiveProofs.length - 1];
@@ -124,9 +117,221 @@ function imgOrMuted(src: string | undefined | null, alt: string, className: stri
   return `<p class="muted">No attachment yet.</p>`;
 }
 
+function linesTotalQty(lines: SubWarehouseReleaseLine[] | undefined): number {
+  return (lines ?? []).reduce((sum, line) => sum + Math.max(0, line.quantity), 0);
+}
+
+function isBoilerplateAllocateNote(note: string | undefined): boolean {
+  if (!note?.trim()) return true;
+  return /^allocated\s+\d+\s+unit\(s\)\s+of\s+remaining\s+short\.?$/i.test(note.trim());
+}
+
+function eventTitle(event: SubWarehouseRequestHistoryEvent): string {
+  switch (event.type) {
+    case 'created':
+      return 'Request created';
+    case 'approved_released':
+      return 'Approved & released';
+    case 'remaining_released':
+      return 'Remaining short allocated';
+    case 'receive_confirmed':
+      return 'Receive confirmed';
+    case 'rejected':
+      return 'Rejected';
+    default:
+      return 'Event';
+  }
+}
+
+function eventSummary(
+  event: SubWarehouseRequestHistoryEvent,
+  request: SubWarehouseStockRequest
+): string {
+  if (event.type === 'created') {
+    const requested = request.items.reduce((s, i) => s + Math.max(0, i.requestedQuantity), 0);
+    return `Requested ${requested.toLocaleString()} unit(s) across ${request.items.length} item(s)`;
+  }
+  if (event.type === 'approved_released') {
+    const qty = linesTotalQty(event.lines);
+    return `Released ${qty.toLocaleString()} unit(s) · ${(event.lines?.length ?? 0).toLocaleString()} item(s)`;
+  }
+  if (event.type === 'remaining_released') {
+    const qty = linesTotalQty(event.lines);
+    return `Allocated ${qty.toLocaleString()} unit(s) toward remaining short`;
+  }
+  if (event.type === 'receive_confirmed') {
+    const qty = linesTotalQty(event.lines);
+    if (event.shortQuantity > 0) {
+      return `Received ${qty.toLocaleString()} unit(s) · ${event.shortQuantity.toLocaleString()} left on request`;
+    }
+    return `Received ${qty.toLocaleString()} unit(s) · complete`;
+  }
+  if (event.type === 'rejected') {
+    return 'Request was rejected';
+  }
+  return '';
+}
+
+function qtyHeaderForEvent(type: SubWarehouseRequestHistoryEvent['type']): string {
+  if (type === 'receive_confirmed') return 'Received';
+  if (type === 'remaining_released') return 'Allocated';
+  if (type === 'approved_released') return 'Released';
+  if (type === 'rejected') return 'Requested';
+  return 'Qty';
+}
+
+function resolveEventProof(event: SubWarehouseRequestHistoryEvent): string | undefined {
+  if ('proofImageDataUrl' in event) return event.proofImageDataUrl;
+  return undefined;
+}
+
+function resolveEventSignature(
+  event: SubWarehouseRequestHistoryEvent,
+  request: SubWarehouseStockRequest
+): string | undefined {
+  if (event.type === 'approved_released') {
+    return event.signatureDataUrl || request.approvalSignatureUrl;
+  }
+  if (event.type === 'rejected') {
+    return event.signatureDataUrl || request.rejectionSignatureUrl;
+  }
+  if ('signatureDataUrl' in event) return event.signatureDataUrl;
+  return undefined;
+}
+
+function signatureLabelForEvent(type: SubWarehouseRequestHistoryEvent['type']): string {
+  switch (type) {
+    case 'approved_released':
+      return 'Approver signature';
+    case 'remaining_released':
+      return 'Allocator signature';
+    case 'receive_confirmed':
+      return 'Receive signature';
+    case 'rejected':
+      return 'Rejection signature';
+    default:
+      return 'Signature';
+  }
+}
+
+function renderLinesTable(
+  lines: SubWarehouseReleaseLine[] | undefined,
+  qtyHeader: string
+): string {
+  if (!lines || lines.length === 0) return '';
+  const rows = lines
+    .map(
+      (line) => `
+      <tr>
+        <td>${escapeHtml(line.brandName?.trim() || '—')}</td>
+        <td>${escapeHtml(line.variantName)}</td>
+        <td class="num">${line.quantity.toLocaleString()}</td>
+      </tr>`
+    )
+    .join('');
+  return `
+    <table class="lines compact">
+      <thead>
+        <tr>
+          <th>Brand</th>
+          <th>Variant</th>
+          <th style="text-align:right;">${escapeHtml(qtyHeader)}</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderEventAttachments(
+  event: SubWarehouseRequestHistoryEvent,
+  request: SubWarehouseStockRequest
+): string {
+  const showProof =
+    event.type === 'approved_released' ||
+    event.type === 'remaining_released' ||
+    event.type === 'receive_confirmed';
+  const showSignature =
+    event.type === 'approved_released' ||
+    event.type === 'remaining_released' ||
+    event.type === 'receive_confirmed' ||
+    event.type === 'rejected';
+
+  if (!showProof && !showSignature) return '';
+
+  const proof = resolveEventProof(event);
+  const signature = resolveEventSignature(event, request);
+  const boxes: string[] = [];
+
+  if (showProof) {
+    boxes.push(`
+      <div class="attach-box">
+        <h4>Proof photo</h4>
+        ${imgOrMuted(proof, 'Proof photo', 'attach')}
+      </div>`);
+  }
+  if (showSignature) {
+    boxes.push(`
+      <div class="attach-box">
+        <h4>${escapeHtml(signatureLabelForEvent(event.type))}</h4>
+        ${imgOrMuted(signature, signatureLabelForEvent(event.type), 'signature')}
+      </div>`);
+  }
+
+  return `<div class="attachments">${boxes.join('')}</div>`;
+}
+
+function renderActivityEvent(
+  event: SubWarehouseRequestHistoryEvent,
+  request: SubWarehouseStockRequest
+): string {
+  const lines = 'lines' in event ? event.lines : undefined;
+  const summary = eventSummary(event, request);
+  const note =
+    event.type === 'rejected'
+      ? event.note || request.rejectionReason
+      : event.note && !isBoilerplateAllocateNote(event.note)
+        ? event.note
+        : undefined;
+
+  const leftOnRequestBadge =
+    event.type === 'receive_confirmed' && event.shortQuantity > 0
+      ? `<span class="pill amber">${event.shortQuantity.toLocaleString()} left on request</span>`
+      : '';
+
+  return `
+    <article class="activity-item">
+      <div class="activity-head">
+        <div>
+          <h4>${escapeHtml(eventTitle(event))}</h4>
+          ${summary ? `<p class="activity-summary">${escapeHtml(summary)}</p>` : ''}
+          <p class="activity-meta">${escapeHtml(formatDateTime(event.at))}${
+            event.byName ? ` · ${escapeHtml(event.byName)}` : ''
+          }</p>
+        </div>
+        ${leftOnRequestBadge}
+      </div>
+      ${
+        lines && lines.length > 0
+          ? renderLinesTable(lines, qtyHeaderForEvent(event.type))
+          : ''
+      }
+      ${
+        note
+          ? `<div class="notes" style="margin-bottom:12px;">${escapeHtml(
+              event.type === 'rejected' ? `Reason: ${note}` : note
+            )}</div>`
+          : ''
+      }
+      ${renderEventAttachments(event, request)}
+    </article>`;
+}
+
 function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
   const title = `Stock Request Report – ${request.requestNumber}`;
   const totals = getRequestDeliveryTotals(request.items);
+  const totalReceived = totals.received;
+  // Match dialog: short displays as 0 until something has been received.
+  const shortDisplay = totalReceived > 0 ? totals.short : 0;
   const showDeliveryCols =
     request.status === 'pending_receive' ||
     request.status === 'partially_received' ||
@@ -134,17 +339,9 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
     totals.delivered > 0 ||
     totals.received > 0;
 
-  const approved = latestHistoryEvent(request, 'approved_released');
-  const rejected = latestHistoryEvent(request, 'rejected');
-  const receiveProof = resolveReceiveProof(request);
-  const receiveEvent = latestHistoryEvent(request, 'receive_confirmed');
-
-  const approvalSignature =
-    (approved && approved.type === 'approved_released' ? approved.signatureDataUrl : undefined) ||
-    request.approvalSignatureUrl;
-  const rejectionSignature =
-    (rejected && rejected.type === 'rejected' ? rejected.signatureDataUrl : undefined) ||
-    request.rejectionSignatureUrl;
+  const historyOldestFirst = [...(request.history ?? [])].sort(
+    (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
+  );
 
   const lineRows = request.items
     .map((item) => {
@@ -152,6 +349,7 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
       const delivered = getItemDeliveredQty(item);
       const received = getItemReceivedQty(item);
       const short = Math.max(0, delivered - received);
+      const shortCell = totalReceived > 0 ? (short > 0 ? short.toLocaleString() : '0') : '0';
       return `
         <tr>
           <td>${escapeHtml(brand)}</td>
@@ -161,7 +359,7 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
             showDeliveryCols
               ? `<td class="num">${delivered.toLocaleString()}</td>
                  <td class="num">${received.toLocaleString()}</td>
-                 <td class="num">${short > 0 ? short.toLocaleString() : '—'}</td>`
+                 <td class="num">${shortCell}</td>`
               : ''
           }
         </tr>`;
@@ -170,96 +368,10 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
 
   const colCount = showDeliveryCols ? 6 : 3;
 
-  const mainDecisionSection =
-    request.status === 'rejected'
-      ? `
-    <div class="section">
-      <h3>Main warehouse — Rejection</h3>
-      <dl class="summary">
-        <div><dt>Rejected at</dt><dd>${escapeHtml(rejected?.at ? formatDateTime(rejected.at) : '—')}</dd></div>
-        <div><dt>Rejected by</dt><dd>${escapeHtml(rejected?.byName || '—')}</dd></div>
-      </dl>
-      <div class="notes" style="margin-bottom:12px;">
-        ${escapeHtml(
-          (rejected && 'note' in rejected ? rejected.note : undefined) ||
-            request.rejectionReason ||
-            'No rejection reason.'
-        )}
-      </div>
-      <div class="attach-box">
-        <h4>Rejection signature</h4>
-        ${imgOrMuted(rejectionSignature, 'Rejection signature', 'signature')}
-      </div>
-    </div>`
-      : `
-    <div class="section">
-      <h3>Main warehouse — Approval</h3>
-      <dl class="summary">
-        <div><dt>Approved at</dt><dd>${escapeHtml(approved?.at ? formatDateTime(approved.at) : '—')}</dd></div>
-        <div><dt>Approved by</dt><dd>${escapeHtml(approved?.byName || '—')}</dd></div>
-      </dl>
-      <div class="attach-box">
-        <h4>Approval signature</h4>
-        ${
-          request.status === 'pending_approval'
-            ? `<p class="muted">Not approved yet.</p>`
-            : imgOrMuted(approvalSignature, 'Approval signature', 'signature')
-        }
-      </div>
-    </div>`;
-
-  const receiveShort =
-    receiveEvent && receiveEvent.type === 'receive_confirmed'
-      ? receiveEvent.shortQuantity
-      : totals.short;
-
-  const subSection = `
-    <div class="section">
-      <h3>Sub-warehouse — Receive</h3>
-      ${
-        receiveProof
-          ? `<dl class="summary">
-        <div><dt>Received at</dt><dd>${escapeHtml(formatDateTime(receiveProof.at))}</dd></div>
-        <div><dt>Received by</dt><dd>${escapeHtml(
-          (receiveEvent && 'byName' in receiveEvent ? receiveEvent.byName : undefined) ||
-            request.requestedByName ||
-            '—'
-        )}</dd></div>
-        ${
-          receiveShort != null && receiveShort > 0
-            ? `<div><dt>Short after receive</dt><dd>${Number(receiveShort).toLocaleString()}</dd></div>`
-            : ''
-        }
-      </dl>
-      <div class="notes" style="margin-bottom:12px;">
-        ${
-          receiveProof.notes || request.receiveNotes
-            ? escapeHtml(receiveProof.notes || request.receiveNotes || '')
-            : '<span class="muted" style="font-style:italic;">No receive notes.</span>'
-        }
-      </div>
-      <div class="attachments">
-        <div class="attach-box">
-          <h4>Proof photo</h4>
-          ${imgOrMuted(receiveProof.proofImageDataUrl, 'Receive proof photo', 'attach')}
-          ${
-            receiveProof.proofImageName
-              ? `<p class="muted" style="margin-top:8px;font-style:normal;">${escapeHtml(receiveProof.proofImageName)}</p>`
-              : ''
-          }
-        </div>
-        <div class="attach-box">
-          <h4>Receive signature</h4>
-          ${imgOrMuted(receiveProof.signatureDataUrl, 'Receive signature', 'signature')}
-        </div>
-      </div>`
-          : `<p class="muted">No receive confirmation yet.</p>
-      <div class="attachments" style="margin-top:12px;">
-        <div class="attach-box"><h4>Proof photo</h4><p class="muted">No attachment yet.</p></div>
-        <div class="attach-box"><h4>Receive signature</h4><p class="muted">No attachment yet.</p></div>
-      </div>`
-      }
-    </div>`;
+  const activityHtml =
+    historyOldestFirst.length > 0
+      ? historyOldestFirst.map((event) => renderActivityEvent(event, request)).join('')
+      : `<p class="muted">No timeline events yet.</p>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -279,19 +391,27 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
   .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin-bottom: 16px; }
   .summary dt { font-size: 10px; text-transform: uppercase; color: #6b7280; margin-bottom: 2px; }
   .summary dd { margin: 0; font-weight: 600; }
-  table.lines { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 20px; }
+  table.lines { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 16px; }
+  table.lines.compact { margin-bottom: 12px; }
   table.lines th { background: #fef3c7; text-align: left; padding: 8px 10px; border: 1px solid #d1d5db; }
   table.lines td { padding: 8px 10px; border: 1px solid #e5e7eb; }
   table.lines td.num { text-align: right; }
-  .section { margin-bottom: 20px; page-break-inside: avoid; }
+  .section { margin-bottom: 20px; }
   .section h3 { margin: 0 0 10px; font-size: 13px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
   .notes { white-space: pre-wrap; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; background: #f9fafb; }
   .muted { color: #6b7280; font-style: italic; margin: 0; }
-  .attachments { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .attach-box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; min-height: 140px; }
+  .attachments { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+  .attach-box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; min-height: 120px; page-break-inside: avoid; }
   .attach-box h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; color: #6b7280; }
-  img.attach { max-width: 100%; max-height: 220px; object-fit: contain; display: block; margin: 0 auto; }
-  img.signature { max-width: 100%; max-height: 120px; object-fit: contain; display: block; margin: 0 auto; background: #fff; border: 1px solid #f3f4f6; }
+  img.attach { max-width: 100%; max-height: 200px; object-fit: contain; display: block; margin: 0 auto; }
+  img.signature { max-width: 100%; max-height: 110px; object-fit: contain; display: block; margin: 0 auto; background: #fff; border: 1px solid #f3f4f6; }
+  .activity-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 12px; page-break-inside: avoid; }
+  .activity-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
+  .activity-head h4 { margin: 0 0 4px; font-size: 13px; }
+  .activity-summary { margin: 0 0 4px; color: #374151; }
+  .activity-meta { margin: 0; font-size: 11px; color: #6b7280; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+  .pill.amber { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
   .footer { margin-top: 28px; font-size: 10px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 8px; }
   @media print {
     body { background: #fff; }
@@ -307,7 +427,7 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
   </div>
   <div class="page">
     <h2>Internal Stock Request Report</h2>
-    <p class="subtitle">Main + sub warehouse record with quantities and attachments</p>
+    <p class="subtitle">Activity timeline with quantities and attachments</p>
 
     <dl class="summary">
       <div><dt>Request number</dt><dd>${escapeHtml(request.requestNumber)}</dd></div>
@@ -320,7 +440,7 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
         .toLocaleString()}</dd></div>
       ${
         showDeliveryCols
-          ? `<div><dt>Delivered / Received / Short</dt><dd>${totals.delivered.toLocaleString()} / ${totals.received.toLocaleString()} / ${totals.short.toLocaleString()}</dd></div>`
+          ? `<div><dt>Delivered / Received / Short</dt><dd>${totals.delivered.toLocaleString()} / ${totals.received.toLocaleString()} / ${shortDisplay.toLocaleString()}</dd></div>`
           : ''
       }
     </dl>
@@ -360,8 +480,10 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
       }
     </div>
 
-    ${mainDecisionSection}
-    ${subSection}
+    <div class="section">
+      <h3>Activity timeline</h3>
+      ${activityHtml}
+    </div>
 
     <div class="footer">
       Generated from internal stock request · ${escapeHtml(formatDateTime(new Date().toISOString()))}

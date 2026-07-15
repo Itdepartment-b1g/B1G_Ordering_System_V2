@@ -352,10 +352,10 @@ export default function SubWarehousesPage() {
           </Button>
           {isMainWarehouseUser ? (
             <>
-              <Button variant="outline" onClick={() => setAllocOpen(true)}>
+              {/* <Button variant="outline" onClick={() => setAllocOpen(true)}>
                 <Send className="mr-2 h-4 w-4" />
                 Allocate stock
-              </Button>
+              </Button> */}
               <Button variant="outline" onClick={() => setReturnOpen(true)}>
                 <Undo2 className="mr-2 h-4 w-4" />
                 Submit return
@@ -502,7 +502,7 @@ export default function SubWarehousesPage() {
       </Dialog>
 
       {/* Allocate stock */}
-      <Dialog
+      {/* <Dialog
         open={allocOpen}
         onOpenChange={(open) => {
           setAllocOpen(open);
@@ -675,7 +675,7 @@ export default function SubWarehousesPage() {
             </div>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog> */}
 
       <SubWarehouseReturnStockDialog
         open={returnOpen}

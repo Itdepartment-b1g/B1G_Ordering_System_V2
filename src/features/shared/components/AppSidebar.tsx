@@ -357,7 +357,7 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Request Stock', url: '/inventory/request-stock', icon: Send },
       { title: 'Sub Stock Requests', url: '/inventory/sub-stock-requests', icon: ClipboardList },
       { title: 'Main Inventory', url: '/inventory/main', icon: Package },
-      { title: 'Allocation History', url: '/inventory/allocation-history', icon: Package2Icon },
+      // { title: 'Allocation History', url: '/inventory/allocation-history', icon: Package2Icon },
       { title: 'Stock Requests', url: '/inventory/stock-requests', icon: ClipboardList },
       { title: 'Stock Returns', url: '/inventory/stock-returns', icon: RotateCcw },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', icon: Scale },
