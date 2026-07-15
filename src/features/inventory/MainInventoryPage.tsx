@@ -721,6 +721,7 @@ export default function MainInventoryPage() {
     return Math.max(0, gross - getPendingAllocQuantity(variant.id));
   };
 
+  /** Free stock at main = Total − Allocated (reservation / qty at sub). */
   const getVariantAvailableStock = (variant: Variant) => {
     return Math.max(0, variant.stock - getVariantGrossAllocated(variant));
   };
