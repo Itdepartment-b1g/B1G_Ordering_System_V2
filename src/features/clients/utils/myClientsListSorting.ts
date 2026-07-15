@@ -9,12 +9,13 @@ export type MyClientListSortKey =
   | 'orders'
   | 'visits'
   | 'lastOrder'
-  | 'approval';
+  | 'approval'
+  | 'createdAt';
 
 export type MyClientListSortDirection = 'asc' | 'desc';
 
-export const DEFAULT_MY_CLIENT_LIST_SORT_KEY: MyClientListSortKey = 'tradeName';
-export const DEFAULT_MY_CLIENT_LIST_SORT_DIRECTION: MyClientListSortDirection = 'asc';
+export const DEFAULT_MY_CLIENT_LIST_SORT_KEY: MyClientListSortKey = 'createdAt';
+export const DEFAULT_MY_CLIENT_LIST_SORT_DIRECTION: MyClientListSortDirection = 'desc';
 
 export type MyClientListSortable = {
   name: string;
@@ -26,6 +27,7 @@ export type MyClientListSortable = {
   visitCount: number;
   lastOrder: string | null;
   approvalStatus: 'pending' | 'approved' | 'rejected';
+  createdAt?: string;
 };
 
 function compareStrings(a: string | undefined | null, b: string | undefined | null): number {
@@ -77,6 +79,9 @@ export function sortMyClientsList<T extends MyClientListSortable>(
         result = buildClientApprovalLabel(a.approvalStatus).localeCompare(
           buildClientApprovalLabel(b.approvalStatus)
         );
+        break;
+      case 'createdAt':
+        result = compareDates(a.createdAt, b.createdAt);
         break;
       default:
         result = 0;

@@ -2,6 +2,7 @@ export type MyOrderListSortKey =
   | 'orderNumber'
   | 'clientName'
   | 'date'
+  | 'createdAt'
   | 'qty'
   | 'amount'
   | 'payment'
@@ -9,7 +10,7 @@ export type MyOrderListSortKey =
 
 export type MyOrderListSortDirection = 'asc' | 'desc';
 
-export const DEFAULT_MY_ORDER_LIST_SORT_KEY: MyOrderListSortKey = 'date';
+export const DEFAULT_MY_ORDER_LIST_SORT_KEY: MyOrderListSortKey = 'createdAt';
 export const DEFAULT_MY_ORDER_LIST_SORT_DIRECTION: MyOrderListSortDirection = 'desc';
 
 type PaymentSplit = {
@@ -21,6 +22,7 @@ export type MyOrderListSortable = {
   orderNumber: string;
   clientName: string;
   date: string;
+  createdAt?: string;
   items: { quantity?: number }[];
   total: number;
   status: 'pending' | 'approved' | 'rejected';
@@ -40,6 +42,15 @@ export type MyOrderListSortable = {
 
 function getItemQty(order: MyOrderListSortable): number {
   return order.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+}
+
+function getCreatedAtTime(order: MyOrderListSortable): number {
+  const value = order.createdAt || order.date;
+  return value ? new Date(value).getTime() : 0;
+}
+
+function compareCreatedAtDesc(a: MyOrderListSortable, b: MyOrderListSortable): number {
+  return getCreatedAtTime(b) - getCreatedAtTime(a);
 }
 
 function getMyOrderDisplayStatusLabel(order: MyOrderListSortable): string {
@@ -109,8 +120,13 @@ export function sortMyOrderList<T extends MyOrderListSortable>(
       case 'clientName':
         result = a.clientName.localeCompare(b.clientName);
         break;
-      case 'date':
+      case 'date': {
         result = new Date(a.date).getTime() - new Date(b.date).getTime();
+        if (result !== 0) return result * direction;
+        return compareCreatedAtDesc(a, b);
+      }
+      case 'createdAt':
+        result = getCreatedAtTime(a) - getCreatedAtTime(b);
         break;
       case 'qty':
         result = getItemQty(a) - getItemQty(b);
@@ -129,6 +145,6 @@ export function sortMyOrderList<T extends MyOrderListSortable>(
     }
 
     if (result !== 0) return result * direction;
-    return a.orderNumber.localeCompare(b.orderNumber, undefined, { numeric: true });
+    return compareCreatedAtDesc(a, b);
   });
 }

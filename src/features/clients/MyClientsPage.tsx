@@ -2787,6 +2787,16 @@ export default function MyClientsPage() {
                     onSort={handleClientSort}
                     className="text-center"
                   />
+                  <SortableTableHead
+                    label="Created At"
+                    sortKey="createdAt"
+                    sortDirection={
+                      getTableSortDisplayDirection(clientSortState, 'createdAt') ??
+                      (clientSortState.step === 0 ? DEFAULT_MY_CLIENT_LIST_SORT_DIRECTION : null)
+                    }
+                    onSort={handleClientSort}
+                    className="text-center"
+                  />
                   <TableHead className="text-center">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -2856,6 +2866,9 @@ export default function MyClientsPage() {
                       <Badge variant="outline" className={`border ${getApprovalStatusBadge(client.approvalStatus).className}`}>
                         {getApprovalStatusBadge(client.approvalStatus).label}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-center text-sm text-muted-foreground whitespace-nowrap">
+                      {client.createdAt ? new Date(client.createdAt).toLocaleString() : '—'}
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex justify-center gap-1 md:gap-2">

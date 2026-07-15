@@ -12,12 +12,13 @@ export type ClientListSortKey =
   | 'orders'
   | 'totalSpent'
   | 'visits'
-  | 'approval';
+  | 'approval'
+  | 'createdAt';
 
 export type ClientListSortDirection = 'asc' | 'desc';
 
-export const DEFAULT_CLIENT_LIST_SORT_KEY: ClientListSortKey = 'tradeName';
-export const DEFAULT_CLIENT_LIST_SORT_DIRECTION: ClientListSortDirection = 'asc';
+export const DEFAULT_CLIENT_LIST_SORT_KEY: ClientListSortKey = 'createdAt';
+export const DEFAULT_CLIENT_LIST_SORT_DIRECTION: ClientListSortDirection = 'desc';
 
 export type ClientListSortable = {
   id: string;
@@ -34,6 +35,7 @@ export type ClientListSortable = {
   total_spent: number;
   visit_count: number;
   approval_status: 'pending' | 'approved' | 'rejected';
+  created_at?: string;
 };
 
 export type ClientListSortContext = {
@@ -42,6 +44,10 @@ export type ClientListSortContext = {
 
 function compareStrings(a: string | undefined, b: string | undefined): number {
   return (a ?? '').localeCompare(b ?? '');
+}
+
+function getCreatedAtTime(client: ClientListSortable): number {
+  return client.created_at ? new Date(client.created_at).getTime() : 0;
 }
 
 export function sortClientsList<T extends ClientListSortable>(
@@ -93,6 +99,9 @@ export function sortClientsList<T extends ClientListSortable>(
         result = buildClientApprovalLabel(a.approval_status).localeCompare(
           buildClientApprovalLabel(b.approval_status)
         );
+        break;
+      case 'createdAt':
+        result = getCreatedAtTime(a) - getCreatedAtTime(b);
         break;
       default:
         result = 0;
