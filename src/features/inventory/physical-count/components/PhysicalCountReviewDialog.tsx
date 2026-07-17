@@ -12,8 +12,9 @@ import {
 } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-import type { PhysicalCountLine } from '../types';
+import type { PhysicalCountHistoryDetail, PhysicalCountLine } from '../types';
 import { formatLotDate } from '../utils/formatLotDate';
+import { parseNonNegativeQty } from '../utils/physicalCountQty';
 
 type PhysicalCountReviewDialogProps = {
   open: boolean;
@@ -23,6 +24,11 @@ type PhysicalCountReviewDialogProps = {
   lines: PhysicalCountLine[];
   onConfirm: () => void;
 };
+
+function formatOptionalQty(value: number | null | undefined): string {
+  if (value == null) return '—';
+  return String(value);
+}
 
 export function PhysicalCountReviewDialog({
   open,
@@ -42,11 +48,10 @@ export function PhysicalCountReviewDialog({
     .filter(Boolean) as Array<PhysicalCountLine & { physical: number; variance: number }>;
 
   const varianceLines = parsedLines.filter((l) => l.variance !== 0);
-  const totalVariance = varianceLines.reduce((sum, l) => sum + l.variance, 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-5xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Review physical count</DialogTitle>
           <DialogDescription>
@@ -61,9 +66,6 @@ export function PhysicalCountReviewDialog({
             <Badge variant={varianceLines.length > 0 ? 'destructive' : 'outline'}>
               {varianceLines.length} variance(s)
             </Badge>
-            {/* {varianceLines.length > 0 && (
-              <Badge variant="outline">Net variance: {totalVariance > 0 ? '+' : ''}{totalVariance}</Badge>
-            )} */}
           </div>
 
           {varianceLines.length > 0 ? (
@@ -74,9 +76,8 @@ export function PhysicalCountReviewDialog({
                     <TableHead>Brand</TableHead>
                     <TableHead>Variant</TableHead>
                     <TableHead>Expiration</TableHead>
-                    {/* <TableHead className="text-right">System</TableHead> */}
+                    <TableHead className="text-right">Boxes × Qty/box</TableHead>
                     <TableHead className="text-right">Physical</TableHead>
-                    {/* <TableHead className="text-right">Variance</TableHead> */}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -87,16 +88,11 @@ export function PhysicalCountReviewDialog({
                       <TableCell className="whitespace-nowrap text-muted-foreground">
                         {formatLotDate(line.expirationDate)}
                       </TableCell>
-                      {/* <TableCell className="text-right tabular-nums">{line.systemQty}</TableCell> */}
+                      <TableCell className="text-right tabular-nums">
+                        {formatOptionalQty(parseNonNegativeQty(line.boxCount))} ×{' '}
+                        {formatOptionalQty(parseNonNegativeQty(line.unitsPerBox))}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">{line.physical}</TableCell>
-                      {/* <TableCell
-                        className={`text-right tabular-nums font-medium ${
-                          line.variance > 0 ? 'text-green-600' : 'text-destructive'
-                        }`}
-                      >
-                        {line.variance > 0 ? '+' : ''}
-                        {line.variance}
-                      </TableCell> */}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -136,28 +132,13 @@ export function PhysicalCountHistoryDetailDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  session: {
-    counted_at: string;
-    batch: { batch_number: string } | null;
-    warehouse_location: { name: string } | null;
-    performed_by_user: { full_name: string } | null;
-    signature_url: string;
-    notes: string | null;
-    lines: Array<{
-      brand_name: string;
-      variant_name: string;
-      expiration_date: string | null;
-      system_qty_snapshot: number;
-      physical_qty: number;
-      variance: number;
-    }>;
-  } | null;
+  session: PhysicalCountHistoryDetail | null;
 }) {
   if (!session) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-5xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Physical count detail</DialogTitle>
           <DialogDescription>
@@ -182,19 +163,23 @@ export function PhysicalCountHistoryDetailDialog({
                   <TableHead>Variant</TableHead>
                   <TableHead>Expiration</TableHead>
                   <TableHead className="text-right">System</TableHead>
+                  <TableHead className="text-right">Boxes × Qty/box</TableHead>
                   <TableHead className="text-right">Physical</TableHead>
                   <TableHead className="text-right">Variance</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {session.lines.map((line, idx) => (
-                  <TableRow key={`${line.variant_name}-${idx}`}>
+                {session.lines.map((line) => (
+                  <TableRow key={line.id}>
                     <TableCell>{line.brand_name}</TableCell>
                     <TableCell>{line.variant_name}</TableCell>
                     <TableCell className="whitespace-nowrap text-muted-foreground">
                       {formatLotDate(line.expiration_date)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{line.system_qty_snapshot}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatOptionalQty(line.box_count)} × {formatOptionalQty(line.units_per_box)}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{line.physical_qty}</TableCell>
                     <TableCell
                       className={`text-right tabular-nums ${

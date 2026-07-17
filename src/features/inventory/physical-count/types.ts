@@ -8,6 +8,8 @@ export type PhysicalCountLine = {
   expirationDate: string | null;
   systemQty: number;
   physicalQty: string;
+  boxCount: string;
+  unitsPerBox: string;
 };
 
 export type PhysicalCountLotOption = {
@@ -44,6 +46,8 @@ export type PhysicalCountSubmitLine = {
   variant_id: string;
   lot_id: string | null;
   physical_qty: number;
+  box_count: number;
+  units_per_box: number;
   system_qty_snapshot: number;
   brand_name: string;
   variant_name: string;
@@ -74,6 +78,8 @@ export type PhysicalCountHistoryDetail = PhysicalCountHistoryRow & {
     expiration_date: string | null;
     system_qty_snapshot: number;
     physical_qty: number;
+    box_count: number | null;
+    units_per_box: number | null;
     variance: number;
   }>;
 };

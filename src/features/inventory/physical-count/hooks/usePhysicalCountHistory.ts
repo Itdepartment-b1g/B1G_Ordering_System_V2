@@ -107,6 +107,8 @@ export function usePhysicalCountSessionDetail(sessionId: string | null, enabled:
             expiration_date,
             system_qty_snapshot,
             physical_qty,
+            box_count,
+            units_per_box,
             variance
           )
         `

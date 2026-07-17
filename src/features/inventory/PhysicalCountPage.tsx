@@ -72,6 +72,10 @@ import {
 } from './physical-count/utils/physicalCountHistoryFilters';
 import { getPhysicalCountPerformerName } from './physical-count/utils/physicalCountPerformer';
 import {
+  applyBoxInputsToLine,
+  parseNonNegativeQty,
+} from './physical-count/utils/physicalCountQty';
+import {
   DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_DIRECTION,
   DEFAULT_PHYSICAL_COUNT_HISTORY_SORT_KEY,
   sortPhysicalCountHistory,
@@ -390,6 +394,8 @@ export default function PhysicalCountPage() {
         expirationDate: lot.expirationDate,
         systemQty: lot.quantityRemaining,
         physicalQty: '',
+        boxCount: '',
+        unitsPerBox: '',
       })),
     ]);
     setVariantId('');
@@ -427,14 +433,18 @@ export default function PhysicalCountPage() {
   const parsedSubmitLines = useMemo((): PhysicalCountSubmitLine[] | null => {
     const result: PhysicalCountSubmitLine[] = [];
     for (const line of lines) {
-      const physical = Number(line.physicalQty);
-      if (line.physicalQty.trim() === '' || !Number.isFinite(physical) || physical < 0) {
+      const boxCount = parseNonNegativeQty(line.boxCount);
+      const unitsPerBox = parseNonNegativeQty(line.unitsPerBox);
+      if (boxCount === null || unitsPerBox === null) {
         return null;
       }
+      const physical = boxCount * unitsPerBox;
       result.push({
         variant_id: line.variantId,
         lot_id: line.lotId,
         physical_qty: physical,
+        box_count: boxCount,
+        units_per_box: unitsPerBox,
         system_qty_snapshot: line.systemQty,
         brand_name: line.brandName,
         variant_name: line.variantName,
@@ -455,8 +465,8 @@ export default function PhysicalCountPage() {
     }
     if (!parsedSubmitLines || parsedSubmitLines.length === 0) {
       toast({
-        title: 'Enter physical quantities',
-        description: 'Add at least one line with a valid physical quantity.',
+        title: 'Enter box counts',
+        description: 'Each line needs boxes and qty/box before submitting.',
         variant: 'destructive',
       });
       return;
@@ -805,9 +815,18 @@ export default function PhysicalCountPage() {
 
           <PhysicalCountLineTable
             lines={lines}
-            onPhysicalQtyChange={(lineId, value) =>
+            onBoxCountChange={(lineId, value) =>
               setLines((prev) =>
-                prev.map((l) => (l.id === lineId ? { ...l, physicalQty: value } : l))
+                prev.map((l) =>
+                  l.id === lineId ? applyBoxInputsToLine(l, { boxCount: value }) : l
+                )
+              )
+            }
+            onUnitsPerBoxChange={(lineId, value) =>
+              setLines((prev) =>
+                prev.map((l) =>
+                  l.id === lineId ? applyBoxInputsToLine(l, { unitsPerBox: value }) : l
+                )
               )
             }
             onRemoveLine={(lineId) => setLines((prev) => prev.filter((l) => l.id !== lineId))}

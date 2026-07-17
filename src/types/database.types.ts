@@ -744,6 +744,8 @@ export interface PhysicalCountLineRecord {
   variance: number;
   adjustment_id?: string | null;
   expiration_date?: string | null;
+  box_count?: number | null;
+  units_per_box?: number | null;
   created_at: string;
 }
 
