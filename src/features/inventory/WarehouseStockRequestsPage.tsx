@@ -61,6 +61,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import StockRequestManual from '@/features/inventory/warehouse-manual/components/StockRequestManual';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -727,10 +729,18 @@ export default function WarehouseStockRequestsPage() {
             variants into the same batch.
           </p>
         </div>
-        <Button onClick={openCreateDialog}>
-          <Plus className="h-4 w-4 mr-2" />
-          New request
-        </Button>
+        <div className="flex gap-2 shrink-0">
+          <PageManualDialog
+            title="Stock Request Manual"
+            fullManualHref="/warehouse-manual#stock-request"
+          >
+            <StockRequestManual embedded />
+          </PageManualDialog>
+          <Button onClick={openCreateDialog}>
+            <Plus className="h-4 w-4 mr-2" />
+            New request
+          </Button>
+        </div>
       </div>
 
       <Card>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart3, Clock, LayoutGrid, List, Package, RefreshCw, Search } from 'lucide-react';
 import { type Brand, type Variant } from './InventoryContext';
@@ -40,6 +40,8 @@ import {
   getDatePresetLabel,
   getDateRangeFromPreset,
 } from '@/lib/dateRangePresets';
+import GettingStartedDialog from '@/features/inventory/warehouse-manual/components/GettingStartedDialog';
+import { isGettingStartedDismissed } from '@/features/inventory/warehouse-manual/utils/warehouseGettingStartedDismiss';
 
 /** Order variant-type columns: known types first, then alphabetical. */
 const TYPE_SORT_ORDER: string[] = ['flavor', 'battery', 'POSM', 'posm'];
@@ -244,6 +246,14 @@ export default function WarehouseInventoryDashboardPage() {
   const [movementDateRangeFilter, setMovementDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'this_year',
   });
+  const [gettingStartedOpen, setGettingStartedOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id || !user?.company_id) return;
+    if (!isGettingStartedDismissed(user.id, user.company_id)) {
+      setGettingStartedOpen(true);
+    }
+  }, [user?.id, user?.company_id]);
 
   const isWarehouse = user?.role === 'warehouse';
   const canEditStockBoardSettings =
@@ -492,6 +502,7 @@ export default function WarehouseInventoryDashboardPage() {
 
   return (
     <div className="p-8 space-y-6 max-w-full">
+      <GettingStartedDialog open={gettingStartedOpen} onOpenChange={setGettingStartedOpen} />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>

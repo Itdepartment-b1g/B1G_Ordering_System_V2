@@ -1,9 +1,13 @@
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function MainInventoryManual() {
+type MainInventoryManualProps = {
+  embedded?: boolean;
+};
+
+export default function MainInventoryManual({ embedded = false }: MainInventoryManualProps) {
   return (
-    <BorderSection id="main-inventory">
-      <ContentSection>MAIN INVENTORY</ContentSection>
+    <BorderSection id="main-inventory" embedded={embedded}>
+      {!embedded && <ContentSection>MAIN INVENTORY</ContentSection>}
       <InstructionBorder>
         <TitleSection>How Main Inventory Works?</TitleSection>
         <p>Main Inventory is a document that is used to manage the stock of the main warehouse.</p>

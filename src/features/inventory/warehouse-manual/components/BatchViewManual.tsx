@@ -1,10 +1,14 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function BatchViewManual() {
+type BatchViewManualProps = {
+  embedded?: boolean;
+};
+
+export default function BatchViewManual({ embedded = false }: BatchViewManualProps) {
   return (
-    <BorderSection id="batch-view">
-      <ContentSection>BATCH VIEW</ContentSection>
+    <BorderSection id="batch-view" embedded={embedded}>
+      {!embedded && <ContentSection>BATCH VIEW</ContentSection>}
       <InstructionBorder>
         <TitleSection>How Batch View Works?</TitleSection>
         <p>Batch View is used to browse on-hand stock grouped by batch. Each batch shows the warehouse, total SKUs, total units, and received date.</p>
@@ -14,7 +18,11 @@ export default function BatchViewManual() {
 
       <InstructionBorder>
         <TitleSection>How to Filter Batch Inventory?</TitleSection>
-        <span>1. Go to <Link to="/inventory/batches" className="text-blue-500">Batch View</Link></span>
+        {embedded ? (
+          <span>1. Use this page to browse and filter batch inventory.</span>
+        ) : (
+          <span>1. Go to <Link to="/inventory/batches" className="text-blue-500">Batch View</Link></span>
+        )}
         <span>2. Use the search box to find a batch number, brand, or variant</span>
         <span>3. Main warehouse users can filter by warehouse location using <span className="text-blue-500">All warehouses</span> or a specific warehouse</span>
         <span>4. Use the brand and date range filters to narrow down the results</span>

@@ -18,6 +18,8 @@ import { refetchWarehouseAllocationHistory } from './warehouse-allocation-histor
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { SubWarehouseReturnStockDialog } from './components/SubWarehouseReturnStockDialog';
 import { deriveLocationCode } from './internalStockRequestsStore';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import SubwarehouseManual from '@/features/inventory/warehouse-manual/components/SubwarehouseManual';
 
 type LocationRow = {
   id: string;
@@ -346,6 +348,12 @@ export default function SubWarehousesPage() {
           <p className="text-muted-foreground">Create sub-warehouses and allocate stock from the main warehouse.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <PageManualDialog
+            title="Sub Warehouses Manual"
+            fullManualHref="/warehouse-manual#subwarehouse"
+          >
+            <SubwarehouseManual embedded />
+          </PageManualDialog>
           <Button variant="outline" onClick={() => void onRefresh()}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh

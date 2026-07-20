@@ -45,6 +45,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PhysicalCountManual from '@/features/inventory/warehouse-manual/components/PhysicalCountManual';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 import { PhysicalCountLineTable } from './physical-count/components/PhysicalCountLineTable';
@@ -611,23 +613,31 @@ export default function PhysicalCountPage() {
 
   return (
     <div className="container mx-auto p-4 md:p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <ClipboardCheck className="h-7 w-7" />
-          Physical Count
-        </h1>
-        {viewOnly ? (
-          <p className="text-muted-foreground mt-1 max-w-2xl">
-            View-only access to warehouse physical counts. Counts are submitted by warehouse staff;
-            variances are recorded for audit without changing system stock.
-          </p>
-        ) : (
-          <p className="text-muted-foreground mt-1 max-w-2xl">
-            Count on-hand stock by batch and lot. Select the batch that contains the lots you are
-            counting, enter physical quantities, and sign to confirm. Variances are recorded for
-            audit; system stock is not changed automatically.
-          </p>
-        )}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <ClipboardCheck className="h-7 w-7" />
+            Physical Count
+          </h1>
+          {viewOnly ? (
+            <p className="text-muted-foreground mt-1 max-w-2xl">
+              View-only access to warehouse physical counts. Counts are submitted by warehouse staff;
+              variances are recorded for audit without changing system stock.
+            </p>
+          ) : (
+            <p className="text-muted-foreground mt-1 max-w-2xl">
+              Count on-hand stock by batch and lot. Select the batch that contains the lots you are
+              counting, enter physical quantities, and sign to confirm. Variances are recorded for
+              audit; system stock is not changed automatically.
+            </p>
+          )}
+        </div>
+        <PageManualDialog
+          title="Physical Count Manual"
+          fullManualHref="/warehouse-manual#physical-count"
+        >
+          <PhysicalCountManual embedded />
+        </PageManualDialog>
       </div>
 
       {usesWarehousePicker && (

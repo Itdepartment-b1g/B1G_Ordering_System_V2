@@ -1,12 +1,27 @@
-export function BorderSection({ id, children }: { id?: string; children: React.ReactNode }){
+export function BorderSection({
+  id,
+  children,
+  embedded = false,
+}: {
+  id?: string;
+  children: React.ReactNode;
+  embedded?: boolean;
+}) {
+  if (embedded) {
+    return <div className="flex flex-col gap-4 w-full">{children}</div>;
+  }
+
   return (
     <>
-    <div id={id} className="border border-gray-300 rounded-md p-4 flex flex-col gap-1 w-full max-w-2xl scroll-mt-4">
-      {children}
-    </div>
-    <br />
+      <div
+        id={id}
+        className="border border-gray-300 rounded-md p-4 flex flex-col gap-1 w-full max-w-2xl scroll-mt-4"
+      >
+        {children}
+      </div>
+      <br />
     </>
-  )
+  );
 }
 
 export function InstructionBorder({ children }: { children: React.ReactNode }){

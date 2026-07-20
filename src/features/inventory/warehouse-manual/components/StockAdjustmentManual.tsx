@@ -1,13 +1,19 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function StockAdjustmentManual() {
+type StockAdjustmentManualProps = {
+  embedded?: boolean;
+};
+
+export default function StockAdjustmentManual({ embedded = false }: StockAdjustmentManualProps) {
   return (
-    <BorderSection id="stock-adjustment">
+    <BorderSection id="stock-adjustment" embedded={embedded}>
+      {!embedded && (
       <div className="flex flex-col items-center">
         <ContentSection>STOCK ADJUSTMENT</ContentSection>
         <p className="text-sm text-gray-500" >Main Warehouse</p>
       </div>
+      )}
       <InstructionBorder>
         <TitleSection>How Stock Adjustment Works?</TitleSection>
         <p>Stock Adjustment is used to apply audited corrections to warehouse stock. Each adjustment is recorded with a reason, batch, and the user who performed it.</p>
@@ -17,7 +23,11 @@ export default function StockAdjustmentManual() {
 
       <InstructionBorder>
         <TitleSection>How to Create a Stock Adjustment?</TitleSection>
-        <span>1. Go to <Link to="/inventory/stock-adjustments" className="text-blue-500">Stock Adjustments</Link></span>
+        {embedded ? (
+          <span>1. Use this page to create and view stock adjustments.</span>
+        ) : (
+          <span>1. Go to <Link to="/inventory/stock-adjustments" className="text-blue-500">Stock Adjustments</Link></span>
+        )}
         <span>2. Click on <span className="text-blue-500">New adjustment</span></span>
         <span>3. Select the <span className="text-blue-500">Location</span>, <span className="text-blue-500">Brand</span>, and <span className="text-blue-500">Variant</span></span>
         <span>4. Select the batch to adjust, or choose <span className="text-blue-500">Create new ADJ batch</span> when adding stock</span>

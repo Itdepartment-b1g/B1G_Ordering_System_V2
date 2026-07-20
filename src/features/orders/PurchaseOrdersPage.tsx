@@ -49,6 +49,8 @@ import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { PurchaseOrderDeliveryDetailsPanel, purchaseOrderDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
 import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PurchaseOrderManual from '@/features/inventory/warehouse-manual/components/PurchaseOrderManual';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
 import {
   getNextTableSortCycleState,
@@ -1064,12 +1066,20 @@ export default function PurchaseOrdersPage() {
               : 'Create and manage your purchase orders'}
           </p>
         </div>
-        {user?.role !== 'warehouse' && (
-          <Button className="w-full md:w-auto" onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create PO
-          </Button>
-        )}
+        <div className="flex gap-2">
+          <PageManualDialog
+            title="Purchase Order Manual"
+            fullManualHref="/warehouse-manual#purchase-order"
+          >
+            <PurchaseOrderManual embedded />
+          </PageManualDialog>
+          {user?.role !== 'warehouse' && (
+            <Button className="w-full md:w-auto" onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create PO
+            </Button>
+          )}
+        </div>
         {user?.role !== 'warehouse' && (
           <CreatePurchaseOrderDialog
             open={createDialogOpen}

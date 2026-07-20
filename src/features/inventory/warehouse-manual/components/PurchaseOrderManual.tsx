@@ -1,16 +1,24 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function PurchaseOrderManual() {
+type PurchaseOrderManualProps = {
+  embedded?: boolean;
+};
+
+export default function PurchaseOrderManual({ embedded = false }: PurchaseOrderManualProps) {
   return (
-    <BorderSection id="purchase-order">
-      <ContentSection>PURCHASE ORDER</ContentSection>
+    <BorderSection id="purchase-order" embedded={embedded}>
+      {!embedded && <ContentSection>PURCHASE ORDER</ContentSection>}
       <InstructionBorder>
         <TitleSection>How Purchase Order Works?</TitleSection>
         <p>Purchase Order is a document that is used to approve the order of products from Moto Sales and Key Accounts</p>
 
         <TitleSection>How to Approve a Purchase Order?</TitleSection>
-        <span>1. Go to <Link to="/purchase-orders" className="text-blue-500">Purchase Orders</Link></span>
+        {embedded ? (
+          <span>1. Use this page to review and approve purchase orders.</span>
+        ) : (
+          <span>1. Go to <Link to="/purchase-orders" className="text-blue-500">Purchase Orders</Link></span>
+        )}
 
         <div className="flex flex-col gap-1">
           <span>2. Click on <span className="text-blue-500">Approve</span></span>

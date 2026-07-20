@@ -75,6 +75,8 @@ import {
   canExportMainRequestPdf,
   exportMainSubStockRequestPdf,
 } from './utils/exportMainSubStockRequestPdf';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import SubStockRequestsManual from '@/features/inventory/warehouse-manual/components/SubStockRequestsManual';
 import { Input } from '@/components/ui/input';
 import {
   DateRangeFilterPopover,
@@ -956,6 +958,12 @@ export default function MainWarehouseSubStockRequestsPage() {
             </p>
           ) : null}
         </div>
+        <PageManualDialog
+          title="Sub Stock Requests Manual"
+          fullManualHref="/warehouse-manual#sub-stock-requests"
+        >
+          <SubStockRequestsManual embedded />
+        </PageManualDialog>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

@@ -1,10 +1,14 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function PhysicalCountManual() {
+type PhysicalCountManualProps = {
+  embedded?: boolean;
+};
+
+export default function PhysicalCountManual({ embedded = false }: PhysicalCountManualProps) {
   return (
-    <BorderSection id="physical-count">
-      <ContentSection>PHYSICAL COUNT</ContentSection>
+    <BorderSection id="physical-count" embedded={embedded}>
+      {!embedded && <ContentSection>PHYSICAL COUNT</ContentSection>}
       <InstructionBorder>
         <TitleSection>How Physical Count Works?</TitleSection>
         <p>Physical Count is used to count on-hand stock by batch and lot. You enter the physical quantities you counted in the warehouse and sign to confirm the count session.</p>
@@ -14,7 +18,11 @@ export default function PhysicalCountManual() {
 
       <InstructionBorder>
         <TitleSection>How to Perform a Physical Count?</TitleSection>
-        <span>1. Go to <Link to="/inventory/physical-count" className="text-blue-500">Physical Count</Link></span>
+        {embedded ? (
+          <span>1. Use this page to perform physical counts.</span>
+        ) : (
+          <span>1. Go to <Link to="/inventory/physical-count" className="text-blue-500">Physical Count</Link></span>
+        )}
         <span>2. Select the <span className="text-blue-500">Warehouse location</span> and <span className="text-blue-500">Batch</span> you are counting</span>
         <span>3. Add count lines by selecting brand and variant, then clicking <span className="text-blue-500">Add line</span>, or click <span className="text-blue-500">Add all lots in batch</span> to include every lot in that batch</span>
         <span>4. Enter the physical quantity using <span className="text-blue-500">Boxes</span> and <span className="text-blue-500">Qty/box</span> for each line</span>

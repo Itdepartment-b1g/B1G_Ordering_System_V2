@@ -1,13 +1,21 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function BrandsAndVariantsManual() {
+type BrandsAndVariantsManualProps = {
+  embedded?: boolean;
+};
+
+export default function BrandsAndVariantsManual({ embedded = false }: BrandsAndVariantsManualProps) {
   return (
-    <BorderSection id="brands-and-variants">
-      <ContentSection>BRANDS AND VARIANTS</ContentSection>
+    <BorderSection id="brands-and-variants" embedded={embedded}>
+      {!embedded && <ContentSection>BRANDS AND VARIANTS</ContentSection>}
       <InstructionBorder>
       <TitleSection>How to create a Brand and Variants?</TitleSection>
-      <span>1. Go to <Link to="/brands" className="text-blue-500">Brands & Variants</Link></span>
+      {embedded ? (
+        <span>1. Use this page to manage brands and variants.</span>
+      ) : (
+        <span>1. Go to <Link to="/brands" className="text-blue-500">Brands & Variants</Link></span>
+      )}
       <span>2. Click on <span className="text-blue-500">Create Brand</span></span>
       <span>3. Enter the details of brand and click on <span className="text-blue-500">Create Brand</span></span>
       <span>4. The brand will be created and you can see it in the list.</span>

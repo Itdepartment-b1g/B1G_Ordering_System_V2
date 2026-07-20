@@ -1,13 +1,19 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function StockRequestManual() {
+type StockRequestManualProps = {
+  embedded?: boolean;
+};
+
+export default function StockRequestManual({ embedded = false }: StockRequestManualProps) {
   return (
-    <BorderSection id="stock-request">
+    <BorderSection id="stock-request" embedded={embedded}>
+    {!embedded && (
     <div className="flex flex-col items-center">
       <ContentSection>STOCK REQUEST</ContentSection>
       <p className="text-sm text-gray-500" >Main Warehouse</p>
       </div>
+    )}
       <InstructionBorder>
         <TitleSection>How Stock Request Works?</TitleSection>
         <p>Stock Request is used to create inbound stock orders for the main warehouse. When you receive stock, it is added to Main Inventory and grouped into a batch.</p>
@@ -17,7 +23,11 @@ export default function StockRequestManual() {
 
       <InstructionBorder>
         <TitleSection>How to Create a Stock Request?</TitleSection>
-        <span>1. Go to <Link to="/inventory/stock-requests" className="text-blue-500">Stock Requests</Link></span>
+        {embedded ? (
+          <span>1. Use this page to create and manage stock requests.</span>
+        ) : (
+          <span>1. Go to <Link to="/inventory/stock-requests" className="text-blue-500">Stock Requests</Link></span>
+        )}
         <span>2. Click on <span className="text-blue-500">New request</span></span>
         <span>3. Click on <span className="text-blue-500">Add from brand</span>, select a brand, then click on <span className="text-blue-500">Add brand</span></span>
         <span>4. Enter the quantity for each variant you want to request <span className="text-gray-700">(only lines with quantity greater than 0 will be included)</span></span>

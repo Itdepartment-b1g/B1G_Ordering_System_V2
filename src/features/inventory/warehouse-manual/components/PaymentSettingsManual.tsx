@@ -1,13 +1,21 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function PaymentSettingsManual() {
+type PaymentSettingsManualProps = {
+  embedded?: boolean;
+};
+
+export default function PaymentSettingsManual({ embedded = false }: PaymentSettingsManualProps) {
   return (
-    <BorderSection id="payment-settings">
-      <ContentSection>PAYMENT SETTINGS</ContentSection>
+    <BorderSection id="payment-settings" embedded={embedded}>
+      {!embedded && <ContentSection>PAYMENT SETTINGS</ContentSection>}
       <InstructionBorder>
         <TitleSection>How to create a Bank Accounts?</TitleSection>
-        <span>1. Go to <Link to="/finance/payment-settings" className="text-blue-500">Payment Settings</Link></span>
+        {embedded ? (
+          <span>1. Use this page to manage payment settings and bank accounts.</span>
+        ) : (
+          <span>1. Go to <Link to="/finance/payment-settings" className="text-blue-500">Payment Settings</Link></span>
+        )}
         <span>2. Click on <span className="text-blue-500">Add Bank</span></span>
         <span>3. Enter the details of bank and click on <span className="text-blue-500">Add Bank</span></span>
         <span>4. The bank will be created and you can see it in the list.</span>

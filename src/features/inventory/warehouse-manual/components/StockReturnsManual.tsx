@@ -1,10 +1,14 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function StockReturnsManual() {
+type StockReturnsManualProps = {
+  embedded?: boolean;
+};
+
+export default function StockReturnsManual({ embedded = false }: StockReturnsManualProps) {
   return (
-    <BorderSection id="stock-returns">
-      <ContentSection>STOCK RETURNS</ContentSection>
+    <BorderSection id="stock-returns" embedded={embedded}>
+      {!embedded && <ContentSection>STOCK RETURNS</ContentSection>}
       <InstructionBorder>
         <TitleSection>How Stock Returns Works?</TitleSection>
         <p>Stock Returns is used when a sub-warehouse sends stock back to the main warehouse. The sub-warehouse submits the return with batch lots, and the main warehouse inspects the returned items.</p>
@@ -15,7 +19,11 @@ export default function StockReturnsManual() {
       <InstructionBorder>
         <TitleSection>How to Submit a Stock Return?</TitleSection>
         <p className="text-sm text-gray-500">Sub Warehouse</p>
-        <span>1. Go to <Link to="/inventory/stock-returns" className="text-blue-500">Stock Returns</Link></span>
+        {embedded ? (
+          <span>1. Use this page to submit stock returns to the main warehouse.</span>
+        ) : (
+          <span>1. Go to <Link to="/inventory/stock-returns" className="text-blue-500">Stock Returns</Link></span>
+        )}
         <span>2. Click on <span className="text-blue-500">Return stock</span></span>
         <span>3. Select the sub-warehouse batch lot and enter the return quantity for each item</span>
         <span>4. Click on <span className="text-blue-500">Submit return</span></span>
@@ -25,7 +33,11 @@ export default function StockReturnsManual() {
       <InstructionBorder>
         <TitleSection>How to Inspect a Stock Return?</TitleSection>
         <p className="text-sm text-gray-500">Main Warehouse</p>
-        <span>1. Go to <Link to="/inventory/stock-returns" className="text-blue-500">Stock Returns</Link></span>
+        {embedded ? (
+          <span>1. Use this page to inspect stock returns from sub-warehouses.</span>
+        ) : (
+          <span>1. Go to <Link to="/inventory/stock-returns" className="text-blue-500">Stock Returns</Link></span>
+        )}
         <span>2. Click on <span className="text-blue-500">Inspect</span> in the return row</span>
         <span>3. For each variant, select the <span className="text-blue-500">Main batch</span> where the stock should be restocked</span>
         <span>4. Enter the <span className="text-blue-500">Good</span> and <span className="text-blue-500">Damaged</span> quantities for each row</span>

@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import BrandsAndVariantsManual from '@/features/inventory/warehouse-manual/components/BrandsAndVariantsManual';
 
 interface Brand {
   id: string;
@@ -548,10 +550,18 @@ export default function BrandsPage() {
           <h1 className="text-3xl font-bold">Brand Management</h1>
           <p className="text-muted-foreground">Manage brands and their product variants</p>
         </div>
-        <Button onClick={() => setCreateBrandDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Brand
-        </Button>
+        <div className="flex gap-2">
+          <PageManualDialog
+            title="Brands & Variants Manual"
+            fullManualHref="/warehouse-manual#brands-and-variants"
+          >
+            <BrandsAndVariantsManual embedded />
+          </PageManualDialog>
+          <Button onClick={() => setCreateBrandDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Create Brand
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

@@ -28,6 +28,8 @@ import {
   getInspectValidationError,
   type InspectRequestItem,
 } from './warehouseStockReturnInspectShared';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import StockReturnsManual from '@/features/inventory/warehouse-manual/components/StockReturnsManual';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
@@ -687,16 +689,24 @@ export default function WarehouseStockReturnsPage() {
               : 'You chose sub batch lots when submitting. Main warehouse assigns main batch and inspects good vs damaged.'}
           </p>
         </div>
-        {isSubWarehouseUser && (
-          <Button
-            className="shrink-0"
-            onClick={() => setReturnOpen(true)}
-            disabled={membershipLoading || subWarehouseLocations.length === 0}
+        <div className="flex gap-2 shrink-0">
+          <PageManualDialog
+            title="Stock Returns Manual"
+            fullManualHref="/warehouse-manual#stock-returns"
           >
-            <Undo2 className="mr-2 h-4 w-4" />
-            Return stock
-          </Button>
-        )}
+            <StockReturnsManual embedded />
+          </PageManualDialog>
+          {isSubWarehouseUser && (
+            <Button
+              className="shrink-0"
+              onClick={() => setReturnOpen(true)}
+              disabled={membershipLoading || subWarehouseLocations.length === 0}
+            >
+              <Undo2 className="mr-2 h-4 w-4" />
+              Return stock
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card>

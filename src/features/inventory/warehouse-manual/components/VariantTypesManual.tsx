@@ -1,13 +1,21 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function VariantTypesManual() {
+type VariantTypesManualProps = {
+  embedded?: boolean;
+};
+
+export default function VariantTypesManual({ embedded = false }: VariantTypesManualProps) {
   return (
-    <BorderSection id="variant-types">
-      <ContentSection>VARIANT TYPES</ContentSection>
+    <BorderSection id="variant-types" embedded={embedded}>
+      {!embedded && <ContentSection>VARIANT TYPES</ContentSection>}
       <InstructionBorder>
       <TitleSection>How to create a Variant Types?</TitleSection>
-      <span>1. Go to <Link to="/variant-types" className="text-blue-500">Variant Types</Link></span>
+      {embedded ? (
+        <span>1. Use this page to manage variant types.</span>
+      ) : (
+        <span>1. Go to <Link to="/variant-types" className="text-blue-500">Variant Types</Link></span>
+      )}
       <span>2. Click on <span className="text-blue-500">Create Type</span></span>
       <span>3. Enter the details of variant type <span className="text-gray-700">(eg. Flavor, Battery, FOC etc.)</span> and click on <span className="text-blue-500">Create Type</span></span>
       <span>4. The variant type will be created and you can see it in the list.</span>

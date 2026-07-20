@@ -1,10 +1,14 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function DisposalLogManual() {
+type DisposalLogManualProps = {
+  embedded?: boolean;
+};
+
+export default function DisposalLogManual({ embedded = false }: DisposalLogManualProps) {
   return (
-    <BorderSection id="disposal-log">
-      <ContentSection>DISPOSAL LOG</ContentSection>
+    <BorderSection id="disposal-log" embedded={embedded}>
+      {!embedded && <ContentSection>DISPOSAL LOG</ContentSection>}
       <InstructionBorder>
         <TitleSection>How Disposal Log Works?</TitleSection>
         <p>Disposal Log is a record of damaged or unsellable stock that can no longer be sold. These units are removed from sellable inventory and logged here for audit.</p>
@@ -23,7 +27,11 @@ export default function DisposalLogManual() {
 
       <InstructionBorder>
         <TitleSection>How to View Disposal Records?</TitleSection>
-        <span>1. Go to <Link to="/inventory/disposals" className="text-blue-500">Disposal Log</Link></span>
+        {embedded ? (
+          <span>1. Use this page to view disposal records.</span>
+        ) : (
+          <span>1. Go to <Link to="/inventory/disposals" className="text-blue-500">Disposal Log</Link></span>
+        )}
         <span>2. Review the summary cards for total disposal entries and units disposed</span>
         <span>3. Main warehouse users can filter by location using <span className="text-blue-500">All locations</span> or a specific warehouse</span>
         <span>4. Use the search box to find a brand, variant, PO, rebate, or location</span>

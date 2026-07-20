@@ -37,6 +37,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth/hooks';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import type { BankAccount, CompanyPaymentSettings } from '@/types/database.types';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PaymentSettingsManual from '@/features/inventory/warehouse-manual/components/PaymentSettingsManual';
 
 export default function PaymentSettingsPage() {
   const { user } = useAuth();
@@ -394,7 +396,14 @@ export default function PaymentSettingsPage() {
               : 'Configure payment methods and bank accounts for your company'}
           </p>
         </div>
-        <Button onClick={handleSave} disabled={saving} size="lg">
+        <div className="flex gap-2">
+          <PageManualDialog
+            title="Payment Settings Manual"
+            fullManualHref="/warehouse-manual#payment-settings"
+          >
+            <PaymentSettingsManual embedded />
+          </PageManualDialog>
+          <Button onClick={handleSave} disabled={saving} size="lg">
           {saving ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -407,6 +416,7 @@ export default function PaymentSettingsPage() {
             </>
           )}
         </Button>
+        </div>
       </div>
 
       {/* Bank Accounts Section */}

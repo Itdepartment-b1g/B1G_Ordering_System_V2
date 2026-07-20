@@ -1,15 +1,21 @@
 import { Link } from "react-router-dom";
 import { BorderSection, ContentSection, InstructionBorder, TitleSection } from "./ManualLayout";
 
-export default function SubStockRequestsManual() {
+type SubStockRequestsManualProps = {
+  embedded?: boolean;
+};
+
+export default function SubStockRequestsManual({ embedded = false }: SubStockRequestsManualProps) {
   return (
-    <BorderSection id="sub-stock-requests">
-      <div className="flex flex-col items-center">
-        <ContentSection>
-          SUB STOCK REQUESTS
-        </ContentSection>
-        <p className="text-sm text-gray-500" >Main Warehouse</p>
-      </div>
+    <BorderSection id="sub-stock-requests" embedded={embedded}>
+      {!embedded && (
+        <div className="flex flex-col items-center">
+          <ContentSection>
+            SUB STOCK REQUESTS
+          </ContentSection>
+          <p className="text-sm text-gray-500" >Main Warehouse</p>
+        </div>
+      )}
 
 
       <InstructionBorder>
@@ -19,7 +25,11 @@ export default function SubStockRequestsManual() {
 
 
         <TitleSection>How to Approve a Sub Stock Request?</TitleSection>
-        <span>1. Go to <Link to="/inventory/sub-stock-requests" className="text-blue-500">Sub Stock Requests</Link></span>
+        {embedded ? (
+          <span>1. Use this page to review and approve sub stock requests.</span>
+        ) : (
+          <span>1. Go to <Link to="/inventory/sub-stock-requests" className="text-blue-500">Sub Stock Requests</Link></span>
+        )}
         <span>2. Click on the 3 vertical dots icon in the row and click on <span className="text-blue-500">Approve & Release</span></span>
         <span>3. Complete the attachments of sub stock request and e-signature as proof of delivery and click on <span className="text-blue-500">Confirm Request</span></span>
         <span>4. The sub stock request will be approved and you can see it in the list.</span>
