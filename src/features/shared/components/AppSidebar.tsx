@@ -40,6 +40,7 @@ import {
   Scale,
   Layers,
   ClipboardCheck,
+  Book,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -367,6 +368,7 @@ const warehouseMenuItems: MenuItem[] = [
     ],
   },
   { title: 'Profile', url: '/profile', icon: UserCircle },
+  { title: 'How to use?', url: '/warehouse-manual', icon: Book },
 ];
 
 const managerMenuItems: MenuItem[] = [

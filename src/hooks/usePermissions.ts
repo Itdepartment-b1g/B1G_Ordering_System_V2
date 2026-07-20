@@ -116,6 +116,7 @@ export function usePermissions() {
         '/inventory/stock-returns',
         '/inventory/stock-adjustments',
         '/profile',
+        '/warehouse-manual',
       ];
       return warehouseRoutes.includes(route);
     }

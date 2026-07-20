@@ -49,6 +49,7 @@ import AgentAttendanceOverviewPage from "@/features/sales-agents/AgentAttendance
 import TeamAttendancesPage from "./features/team-leader/pages/TeamAttendancesPage";
 import LeaderAllocationHistoryPage from "./features/team-leader/pages/LeaderAllocationHistoryPage";
 import SuperAdminAllocationHistoryPage from "@/features/sales-agents/SuperAdminAllocationHistoryPage";
+import WarehouseManualPage from "./features/inventory/WarehouseManualPage";
 const App = () => (
   <PersistQueryClientProvider
     client={queryClient}
@@ -180,6 +181,7 @@ const App = () => (
                         </ProtectedRoute>
                       }
                     />
+                    <Route path="/warehouse-manual" element={<ProtectedRoute allowedRoles={['warehouse']}><WarehouseManualPage /></ProtectedRoute>} />
                     <Route path="/inventory/allocations" element={<ProtectedRoute><StockAllocationsPage /></ProtectedRoute>} />
                     <Route path="/inventory/remitted-stocks" element={<ProtectedRoute><RemittedStocksPage /></ProtectedRoute>} />
                     <Route path="/inventory/admin-team-remittances" element={<ProtectedRoute><AdminTeamRemittancesPage /></ProtectedRoute>} />
