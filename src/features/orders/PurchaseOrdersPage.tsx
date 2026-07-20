@@ -60,6 +60,7 @@ import {
 import {
   DEFAULT_PO_SORT_DIRECTION,
   DEFAULT_PO_SORT_KEY,
+  getPoFromLabel,
   sortPurchaseOrders,
   type PurchaseOrderSortKey,
 } from './utils/purchaseOrderSorting';
@@ -1177,7 +1178,9 @@ export default function PurchaseOrdersPage() {
         <CardContent>
           {/* Mobile: card list */}
           <div className="md:hidden space-y-3">
-            {paginatedOrders.map((order) => (
+            {paginatedOrders.map((order) => {
+              const fromLabel = isWarehouse ? getPoFromLabel(order) : null;
+              return (
               <div key={order.id} className="rounded-lg border bg-background p-4 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1202,6 +1205,13 @@ export default function PurchaseOrdersPage() {
                       {order.fulfillment_type === 'warehouse_transfer' ? 'Internal' : 'Supplier'}
                     </Badge>
                   </div>
+                  {fromLabel && (
+                    <div>
+                      <div className="text-xs text-muted-foreground">From</div>
+                      <div className="font-medium">{fromLabel.primary}</div>
+                      <div className="text-xs text-muted-foreground">{fromLabel.secondary}</div>
+                    </div>
+                  )}
                   <div>
                     <div className="text-xs text-muted-foreground">Seller / source</div>
                     <div className="truncate">{order.supplier?.company_name ?? '—'}</div>
@@ -1261,7 +1271,8 @@ export default function PurchaseOrdersPage() {
                   </Button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Desktop: table */}
@@ -1281,6 +1292,14 @@ export default function PurchaseOrdersPage() {
                     sortDirection={getTableSortDisplayDirection(sortState, 'type')}
                     onSort={handleSort}
                   />
+                  {isWarehouse && (
+                    <SortableTableHead
+                      label="From"
+                      sortKey="from"
+                      sortDirection={getTableSortDisplayDirection(sortState, 'from')}
+                      onSort={handleSort}
+                    />
+                  )}
                   <SortableTableHead
                     label="Seller"
                     sortKey="seller"
@@ -1325,12 +1344,17 @@ export default function PurchaseOrdersPage() {
               <TableBody>
                 {paginatedOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-6">
+                    <TableCell
+                      colSpan={isWarehouse ? 10 : 9}
+                      className="text-center text-sm text-muted-foreground py-6"
+                    >
                       No purchase orders found.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedOrders.map((order) => (
+                  paginatedOrders.map((order) => {
+                    const fromLabel = isWarehouse ? getPoFromLabel(order) : null;
+                    return (
                     <TableRow key={order.id}>
                       <TableCell className="font-mono font-medium">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1347,6 +1371,14 @@ export default function PurchaseOrdersPage() {
                           {order.fulfillment_type === 'warehouse_transfer' ? 'Internal' : 'Supplier'}
                         </Badge>
                       </TableCell>
+                      {fromLabel && (
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{fromLabel.primary}</p>
+                            <p className="text-xs text-muted-foreground">{fromLabel.secondary}</p>
+                          </div>
+                        </TableCell>
+                      )}
                       <TableCell>
                         <div>
                           <p className="font-medium">{order.supplier?.company_name ?? '—'}</p>
@@ -1433,7 +1465,8 @@ export default function PurchaseOrdersPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

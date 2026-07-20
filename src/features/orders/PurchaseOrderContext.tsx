@@ -64,6 +64,9 @@ function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
   const rawShop = Array.isArray(order.shop) ? order.shop[0] : order.shop;
   const rawAddress = Array.isArray(order.address) ? order.address[0] : order.address;
   const rawKam = Array.isArray(order.kam) ? order.kam[0] : order.kam;
+  const rawCreatedByUser = Array.isArray(order.created_by_user)
+    ? order.created_by_user[0]
+    : order.created_by_user;
 
   return {
     ...order,
@@ -79,6 +82,7 @@ function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
     shop: rawShop ?? null,
     address: rawAddress ?? null,
     kam: rawKam ?? null,
+    created_by_user: rawCreatedByUser ?? null,
   };
 }
 
@@ -130,6 +134,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           shop:key_account_shops(shop_name, cor_pdf_path),
           address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
           kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
+          created_by_user:profiles!purchase_orders_created_by_fkey(full_name,email),
           purchase_order_items (${PO_ITEMS_SELECT})
         `);
 
@@ -157,7 +162,38 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         return formatPurchaseOrder(orderFields, items);
       });
 
-      setPurchaseOrders(ordersWithItems);
+      // Standard Accounts: warehouse cannot read creator profiles via RLS join.
+      // Reuse get_po_requestor_info (same source as View "Placed by").
+      let enrichedOrders = ordersWithItems;
+      if (user?.role === 'warehouse') {
+        const standardOrders = ordersWithItems.filter(
+          (o) => String(o.company_account_type || 'Standard Accounts') !== 'Key Accounts'
+        );
+        if (standardOrders.length > 0) {
+          const placedByEntries = await Promise.all(
+            standardOrders.map(async (o) => {
+              try {
+                const { data, error } = await supabase.rpc('get_po_requestor_info', {
+                  p_po_id: o.id,
+                });
+                if (error || !data) return [o.id, null] as const;
+                const profile = (data as { profile?: PurchaseOrder['requestor_profile'] }).profile ?? null;
+                return [o.id, profile] as const;
+              } catch {
+                return [o.id, null] as const;
+              }
+            })
+          );
+          const placedByMap = new Map(placedByEntries);
+          enrichedOrders = ordersWithItems.map((o) => {
+            const profile = placedByMap.get(o.id);
+            if (!profile) return o;
+            return { ...o, requestor_profile: profile };
+          });
+        }
+      }
+
+      setPurchaseOrders(enrichedOrders);
     } catch (error) {
       const msg = String((error as any)?.message || '');
       const isAbort =

@@ -41,6 +41,10 @@ export interface PurchaseOrder {
     key_account_client_id?: string | null;
     /** Key Account PO: assigned KAM profile id (may differ from warehouse company). */
     kam_id?: string | null;
+    /** Key Account PO: embedded KAM profile (from kam_id join). */
+    kam?: { full_name?: string | null; email?: string | null } | null;
+    /** Creator profile when joined (created_by → profiles). */
+    created_by_user?: { full_name?: string | null; email?: string | null } | null;
     /** standard | rebate_fulfillment (replacement shipment after rebate approval). */
     po_order_kind?: PurchaseOrderKind | string | null;
     /** Links rebate fulfillment PO to key_account_po_rebates.id */
