@@ -20,6 +20,7 @@ import { WarehouseStockBoardSettingsButton } from './components/WarehouseStockBo
 import {
   getDisplayedStock,
   getStockBoardBadgeStyle,
+  getStockBoardLowStockLegendLabel,
   DEFAULT_WAREHOUSE_STOCK_BOARD_SETTINGS,
   type StockBoardViewMode,
   type WarehouseStockBoardSettings,
@@ -714,9 +715,7 @@ export default function WarehouseInventoryDashboardPage() {
                     style={{ backgroundColor: stockBoardSettings.colors.lowStock }}
                     aria-hidden
                   />
-                  Low stock (≤
-                  {stockBoardSettings.usePerSkuReorderLevel ? ' SKU or ' : ' '}
-                  {stockBoardSettings.lowStockThreshold})
+                  {getStockBoardLowStockLegendLabel(stockBoardSettings)}
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span

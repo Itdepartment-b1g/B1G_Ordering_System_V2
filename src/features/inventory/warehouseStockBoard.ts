@@ -27,7 +27,7 @@ export type WarehouseStockBoardSettings = {
 
 export const DEFAULT_WAREHOUSE_STOCK_BOARD_SETTINGS: WarehouseStockBoardSettings = {
   lowStockThreshold: LOW_STOCK_THRESHOLD,
-  usePerSkuReorderLevel: true,
+  usePerSkuReorderLevel: false,
   colors: {
     outOfStock: '#dc2626',
     outOfStockText: '#ffffff',
@@ -88,10 +88,21 @@ export function resolveReorderLevel(
   variant: Variant,
   settings: WarehouseStockBoardSettings
 ): number {
-  if (settings.usePerSkuReorderLevel && variant.reorderLevel != null) {
-    return variant.reorderLevel;
+  const companyThreshold = settings.lowStockThreshold;
+  if (!settings.usePerSkuReorderLevel || variant.reorderLevel == null) {
+    return companyThreshold;
   }
-  return settings.lowStockThreshold;
+  // Per-SKU can be stricter (lower); company threshold still flags everything at/below it.
+  return Math.max(variant.reorderLevel, companyThreshold);
+}
+
+export function getStockBoardLowStockLegendLabel(
+  settings: WarehouseStockBoardSettings
+): string {
+  if (settings.usePerSkuReorderLevel) {
+    return `Low stock (≤ ${settings.lowStockThreshold}, or per-SKU reorder when higher)`;
+  }
+  return `Low stock (≤ ${settings.lowStockThreshold})`;
 }
 
 export function applyStockBoardSettings(
@@ -217,7 +228,7 @@ export async function fetchMainWarehouseStockBoard(companyId: string): Promise<B
     selling_price: 0,
     dsp_price: 0,
     rsp_price: 0,
-    reorder_level: row.reorder_level ?? LOW_STOCK_THRESHOLD,
+    reorder_level: row.reorder_level,
   }));
 }
 
@@ -248,7 +259,7 @@ export async function fetchLocationWarehouseStockBoard(
       selling_price: 0,
       dsp_price: 0,
       rsp_price: 0,
-      reorder_level: mainInventory?.reorder_level ?? LOW_STOCK_THRESHOLD,
+      reorder_level: mainInventory?.reorder_level,
     };
   });
 }

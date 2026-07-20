@@ -168,6 +168,9 @@ export function useUpdateWarehouseStockBoardSettings() {
     },
     onSuccess: (settings, { companyId }) => {
       qc.setQueryData([WAREHOUSE_STOCK_BOARD_SETTINGS_QUERY_KEY, companyId], settings);
+      void qc.invalidateQueries({
+        queryKey: [WAREHOUSE_STOCK_BOARD_SETTINGS_QUERY_KEY, companyId],
+      });
     },
   });
 }

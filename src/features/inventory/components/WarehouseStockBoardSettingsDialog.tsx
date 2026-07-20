@@ -160,8 +160,7 @@ export function WarehouseStockBoardSettingsDialog({
               }
             />
             <p className="text-xs text-muted-foreground">
-              Items with stock from 1 up to this number are shown as low stock (unless per-SKU
-              reorder level applies).
+              Items with stock from 1 up to this number are shown as low stock on the board.
             </p>
           </div>
 
@@ -181,8 +180,9 @@ export function WarehouseStockBoardSettingsDialog({
                 Use per-SKU reorder level from main inventory
               </Label>
               <p className="text-xs text-muted-foreground">
-                When enabled, each SKU uses its own reorder level when set; otherwise the company
-                threshold above applies to all items.
+                When enabled, SKUs with a higher reorder level in main inventory stay low stock
+                until stock is above that level. The company threshold above always applies as
+                well — items at or below it are always shown as low stock.
               </p>
             </div>
           </div>
@@ -222,7 +222,11 @@ export function WarehouseStockBoardSettingsDialog({
                 status === 'out-of-stock'
                   ? '0'
                   : status === 'low-stock'
-                    ? String(Math.min(draft.lowStockThreshold, 9) || 1)
+                    ? String(
+                        draft.lowStockThreshold > 0
+                          ? Math.min(draft.lowStockThreshold, 99)
+                          : 1
+                      )
                     : String(draft.lowStockThreshold + 5);
               return (
                 <span
