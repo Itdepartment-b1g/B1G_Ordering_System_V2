@@ -2497,6 +2497,15 @@ export default function OrdersPage() {
                 ) : null
               )}
 
+              {viewingOrder.notes && (
+                <div className="space-y-2">
+                  <Label className="font-semibold">Notes</Label>
+                  <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg whitespace-pre-wrap">
+                    {viewingOrder.notes}
+                  </p>
+                </div>
+              )}
+
               {(viewingOrder.stage === 'finance_pending' || viewingOrder.status === 'pending') && viewingOrder.stage !== 'needs_revision' && (
                 (() => {
                   // Zero-value orders have nothing to remit/deposit, so deposit checks are bypassed.
@@ -2954,6 +2963,15 @@ export default function OrdersPage() {
                   </Table>
                 </div>
               </div>
+
+              {viewingOrderInBulk.notes && (
+                <div className="space-y-2">
+                  <Label className="font-semibold">Notes</Label>
+                  <p className="text-sm text-muted-foreground bg-muted p-3 rounded-lg whitespace-pre-wrap">
+                    {viewingOrderInBulk.notes}
+                  </p>
+                </div>
+              )}
 
               {/* Payment Details */}
               {viewingOrderInBulk.paymentMethod && (
