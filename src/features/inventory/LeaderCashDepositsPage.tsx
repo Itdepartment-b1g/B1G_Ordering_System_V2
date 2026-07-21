@@ -409,7 +409,7 @@ export default function LeaderCashDepositsPage() {
   const hasActiveDateFilter = dateRangeFilter.preset !== 'all';
   const [expandedDays, setExpandedDays] = useState<string[]>([]);
   const [expandedAgents, setExpandedAgents] = useState<string[]>([]);
-  const [selectedAgents, setSelectedAgents] = useState<Record<string, string[]>>({}); // dateKey -> agentIds[]
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Record<string, string[]>>({}); // dateKey -> orderIds[]
 
   // Verified Deposit History filters
   const [historySearchQuery, setHistorySearchQuery] = useState('');
@@ -502,56 +502,86 @@ export default function LeaderCashDepositsPage() {
     );
   };
 
-  // Agent selection helpers
-  const toggleAgentSelection = (dateKey: string, agentId: string) => {
-    setSelectedAgents(prev => {
-      const currentSelected = prev[dateKey] || [];
-      const isSelected = currentSelected.includes(agentId);
-      
-      if (isSelected) {
-        return {
-          ...prev,
-          [dateKey]: currentSelected.filter(id => id !== agentId)
-        };
-      } else {
-        return {
-          ...prev,
-          [dateKey]: [...currentSelected, agentId]
-        };
-      }
+  // Orders sharing one deposit (for example, a remittance group) must be
+  // deposited together, so selecting one toggles all pending sibling orders.
+  const getSelectedOrdersForDay = (dateKey: string): string[] =>
+    selectedOrderIds[dateKey] || [];
+
+  const getDepositSiblingOrderIds = (
+    order: DailyOrderSummary,
+    allDayOrders: DailyOrderSummary[]
+  ): string[] =>
+    allDayOrders
+      .filter(o => o.depositId === order.depositId && !o.depositRecorded)
+      .map(o => o.orderId);
+
+  const toggleOrderSelection = (
+    dateKey: string,
+    order: DailyOrderSummary,
+    allDayOrders: DailyOrderSummary[]
+  ) => {
+    const siblingIds = getDepositSiblingOrderIds(order, allDayOrders);
+    setSelectedOrderIds(prev => {
+      const current = prev[dateKey] || [];
+      const isSelected = current.includes(order.orderId);
+      return {
+        ...prev,
+        [dateKey]: isSelected
+          ? current.filter(id => !siblingIds.includes(id))
+          : Array.from(new Set([...current, ...siblingIds]))
+      };
     });
   };
 
-  const toggleAllAgentsForDay = (dateKey: string, agentIds: string[]) => {
-    setSelectedAgents(prev => {
-      const currentSelected = prev[dateKey] || [];
-      const allSelected = agentIds.every(id => currentSelected.includes(id));
-      
-      if (allSelected) {
-        return {
-          ...prev,
-          [dateKey]: []
-        };
-      } else {
-        return {
-          ...prev,
-          [dateKey]: agentIds
-        };
-      }
+  const toggleAgentOrders = (
+    dateKey: string,
+    agent: DailyAgentGroup,
+    allDayOrders: DailyOrderSummary[]
+  ) => {
+    const pendingOrders = agent.orders.filter(o => !o.depositRecorded);
+    const expandedIds = Array.from(
+      new Set(pendingOrders.flatMap(o => getDepositSiblingOrderIds(o, allDayOrders)))
+    );
+
+    setSelectedOrderIds(prev => {
+      const current = prev[dateKey] || [];
+      const allSelected =
+        pendingOrders.length > 0 && pendingOrders.every(o => current.includes(o.orderId));
+      return {
+        ...prev,
+        [dateKey]: allSelected
+          ? current.filter(id => !expandedIds.includes(id))
+          : Array.from(new Set([...current, ...expandedIds]))
+      };
     });
   };
 
-  const getSelectedAgentsForDay = (dateKey: string): string[] => {
-    return selectedAgents[dateKey] || [];
+  const toggleAllOrdersForDay = (
+    dateKey: string,
+    allDayOrders: DailyOrderSummary[]
+  ) => {
+    const pendingIds = allDayOrders
+      .filter(o => !o.depositRecorded)
+      .map(o => o.orderId);
+
+    setSelectedOrderIds(prev => {
+      const current = prev[dateKey] || [];
+      const allSelected =
+        pendingIds.length > 0 && pendingIds.every(id => current.includes(id));
+      return {
+        ...prev,
+        [dateKey]: allSelected ? [] : pendingIds
+      };
+    });
   };
 
   const calculateSelectedTotals = (day: any, dateKey: string) => {
-    const selectedAgentIds = getSelectedAgentsForDay(dateKey);
-    
-    if (selectedAgentIds.length === 0) {
-      // No selection = show all awaiting orders
-      const allOrders = day.agents.flatMap((a: any) => a.orders);
-      const awaiting = allOrders.filter((o: any) => !o.depositRecorded);
+    const selectedIds = getSelectedOrdersForDay(dateKey);
+    const awaiting = day.agents
+      .flatMap((a: any) => a.orders)
+      .filter((o: any) => !o.depositRecorded);
+
+    if (selectedIds.length === 0) {
       return {
         orders: awaiting.length,
         quantity: awaiting.reduce((s: number, o: any) => s + o.totalQuantity, 0),
@@ -559,18 +589,16 @@ export default function LeaderCashDepositsPage() {
         selectedCount: 0
       };
     }
-    
-    // Calculate only for selected agents
-    const selectedOrders = day.agents
-      .filter((a: any) => selectedAgentIds.includes(a.agentId))
-      .flatMap((a: any) => a.orders)
-      .filter((o: any) => !o.depositRecorded);
-    
+
+    const selectedOrders = awaiting.filter((o: any) =>
+      selectedIds.includes(o.orderId)
+    );
+
     return {
       orders: selectedOrders.length,
       quantity: selectedOrders.reduce((s: number, o: any) => s + o.totalQuantity, 0),
       amount: selectedOrders.reduce((s: number, o: any) => s + o.remittedAmount, 0),
-      selectedCount: selectedAgentIds.length
+      selectedCount: selectedOrders.length
     };
   };
 
@@ -1478,8 +1506,7 @@ export default function LeaderCashDepositsPage() {
     const group = pendingDailyGroups.find(g => g.dateKey === dateKey);
     if (!group) return;
     
-    // Get selected agents for this day
-    const selectedAgentIds = getSelectedAgentsForDay(dateKey);
+    const selectedOrderIdsForDay = getSelectedOrdersForDay(dateKey);
     const dayDetails = dayDetailsByDate[dateKey];
     
     // Only include deposits that haven't had real bank details recorded yet (exclude already-recorded ones)
@@ -1487,11 +1514,12 @@ export default function LeaderCashDepositsPage() {
       d => group.depositIds.includes(d.id) && !checkDepositRecorded(d.id, pendingDeposits)
     );
     
-    // If agents are selected, filter deposits to only those belonging to selected agents
-    if (selectedAgentIds.length > 0 && dayDetails) {
+    // Limit the submission to deposits linked to the selected orders.
+    if (selectedOrderIdsForDay.length > 0 && dayDetails) {
       const selectedDepositIds = dayDetails.agents
-        .filter((a: any) => selectedAgentIds.includes(a.agentId))
-        .flatMap((a: any) => a.orders.map((o: any) => o.depositId));
+        .flatMap((a: any) => a.orders)
+        .filter((o: any) => selectedOrderIdsForDay.includes(o.orderId))
+        .map((o: any) => o.depositId);
       
       depositsForDay = depositsForDay.filter(d => selectedDepositIds.includes(d.id));
     }
@@ -1499,8 +1527,8 @@ export default function LeaderCashDepositsPage() {
     if (!depositsForDay.length) {
       toast({
         title: 'No Deposit Found',
-        description: selectedAgentIds.length > 0 
-          ? 'No pending deposits found for the selected agents.'
+        description: selectedOrderIdsForDay.length > 0 
+          ? 'No pending deposits found for the selected orders.'
           : 'There is no pending cash/cheque deposit for this day.',
         variant: 'destructive',
       });
@@ -2136,6 +2164,9 @@ export default function LeaderCashDepositsPage() {
           console.warn('Cash deposit notification failed (non-blocking):', e);
         }
       }
+      const depositDateKey = format(new Date(selectedPendingDeposit.depositDate), 'yyyy-MM-dd');
+      setSelectedOrderIds(prev => ({ ...prev, [depositDateKey]: [] }));
+
       setDepositDialogOpen(false);
       stopCamera(); // Clean up camera if it's still running
       fetchData();
@@ -2298,8 +2329,21 @@ export default function LeaderCashDepositsPage() {
                       {/* Agents List */}
                       {day.agents.map((agent) => {
                         const agentKey = `${day.date}-${agent.agentId}`;
-                        const isSelected = getSelectedAgentsForDay(day.date).includes(agent.agentId);
-                        const hasPendingOrders = agent.orders.some((o: any) => !o.depositRecorded);
+                        const selectedForDay = getSelectedOrdersForDay(day.date);
+                        const pendingAgentOrders = agent.orders.filter(
+                          (o: any) => !o.depositRecorded
+                        );
+                        const selectedPendingCount = pendingAgentOrders.filter(
+                          (o: any) => selectedForDay.includes(o.orderId)
+                        ).length;
+                        const allAgentSelected =
+                          pendingAgentOrders.length > 0 &&
+                          selectedPendingCount === pendingAgentOrders.length;
+                        const someAgentSelected = selectedPendingCount > 0;
+                        const isSelected = someAgentSelected;
+                        const hasPendingOrders = pendingAgentOrders.length > 0;
+                        const canSelect =
+                          day.depositStatus === 'pending_deposit' && !isFinanceViewOnly;
                         
                         return (
                           <Collapsible
@@ -2318,13 +2362,21 @@ export default function LeaderCashDepositsPage() {
                                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
                                     )}
                                     
-                                    {/* Checkbox - only show if agent has pending deposits and day is pending */}
-                                    {hasPendingOrders && day.depositStatus === 'pending_deposit' && !isFinanceViewOnly && (
+                                    {/* Select or clear all pending orders for this agent */}
+                                    {hasPendingOrders && canSelect && (
                                       <div onClick={(e) => e.stopPropagation()}>
                                         <input
                                           type="checkbox"
-                                          checked={isSelected}
-                                          onChange={() => toggleAgentSelection(day.date, agent.agentId)}
+                                          checked={allAgentSelected}
+                                          ref={(el) => {
+                                            if (el) {
+                                              el.indeterminate =
+                                                someAgentSelected && !allAgentSelected;
+                                            }
+                                          }}
+                                          onChange={() =>
+                                            toggleAgentOrders(day.date, agent, allDayOrders)
+                                          }
                                           className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
                                         />
                                       </div>
@@ -2337,8 +2389,10 @@ export default function LeaderCashDepositsPage() {
                                       <p className="font-medium">{agent.agentName}</p>
                                       <p className="text-xs text-muted-foreground">
                                         {agent.totalOrders} order(s)
-                                        {isSelected && (
-                                          <span className="ml-1 text-green-600 font-medium">• Selected</span>
+                                        {someAgentSelected && (
+                                          <span className="ml-1 text-green-600 font-medium">
+                                            • {selectedPendingCount} selected
+                                          </span>
                                         )}
                                       </p>
                                     </div>
@@ -2360,6 +2414,7 @@ export default function LeaderCashDepositsPage() {
                                   <Table>
                                     <TableHeader>
                                       <TableRow className="bg-muted/30">
+                                        {canSelect && <TableHead className="w-10" />}
                                         <TableHead>Order #</TableHead>
                                         <TableHead>Client</TableHead>
                                         <TableHead className="text-right">Qty</TableHead>
@@ -2371,8 +2426,32 @@ export default function LeaderCashDepositsPage() {
                                       {agent.orders.map((order) => (
                                         <TableRow
                                           key={order.orderId}
-                                          className={order.depositRecorded ? 'bg-blue-50 hover:bg-blue-100' : ''}
+                                          className={
+                                            order.depositRecorded
+                                              ? 'bg-blue-50 hover:bg-blue-100'
+                                              : selectedForDay.includes(order.orderId)
+                                                ? 'bg-green-50/60 hover:bg-green-50'
+                                                : ''
+                                          }
                                         >
+                                          {canSelect && (
+                                            <TableCell onClick={(e) => e.stopPropagation()}>
+                                              {!order.depositRecorded && (
+                                                <input
+                                                  type="checkbox"
+                                                  checked={selectedForDay.includes(order.orderId)}
+                                                  onChange={() =>
+                                                    toggleOrderSelection(
+                                                      day.date,
+                                                      order,
+                                                      allDayOrders
+                                                    )
+                                                  }
+                                                  className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                                                />
+                                              )}
+                                            </TableCell>
+                                          )}
                                           <TableCell className="font-mono text-sm">
                                             {order.orderNumber}
                                           </TableCell>
@@ -2429,8 +2508,8 @@ export default function LeaderCashDepositsPage() {
                           {/* Calculate selected totals */}
                           {(() => {
                             const totals = calculateSelectedTotals(day, day.date);
-                            const selectedAgentIds = getSelectedAgentsForDay(day.date);
-                            const hasSelection = selectedAgentIds.length > 0;
+                            const hasSelection =
+                              getSelectedOrdersForDay(day.date).length > 0;
                             
                             return (
                               <>
@@ -2439,8 +2518,8 @@ export default function LeaderCashDepositsPage() {
                                   <div className={`rounded-lg p-3 ${hasSelection ? 'bg-green-50 border border-green-200' : 'bg-muted/50'}`}>
                                     <p className="text-xs font-medium text-muted-foreground mb-2">
                                       {hasSelection 
-                                        ? `Awaiting Deposit (${totals.selectedCount} agent${totals.selectedCount > 1 ? 's' : ''} selected)`
-                                        : 'Awaiting Deposit (All Agents)'
+                                        ? `Awaiting Deposit (${totals.selectedCount} order${totals.selectedCount > 1 ? 's' : ''} selected)`
+                                        : 'Awaiting Deposit (All Orders)'
                                       }
                                     </p>
                                     <div className="grid grid-cols-3 gap-4 text-center">
@@ -2519,24 +2598,34 @@ export default function LeaderCashDepositsPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => toggleAllAgentsForDay(
-                                  day.date, 
-                                  day.agents.filter((a: any) => a.orders.some((o: any) => !o.depositRecorded)).map((a: any) => a.agentId)
-                                )}
+                                onClick={() =>
+                                  toggleAllOrdersForDay(day.date, allDayOrders)
+                                }
                               >
                                 {(() => {
-                                  const pendingAgentIds = day.agents
-                                    .filter((a: any) => a.orders.some((o: any) => !o.depositRecorded))
-                                    .map((a: any) => a.agentId);
-                                  const allSelected = pendingAgentIds.length > 0 && pendingAgentIds.every((id: string) => getSelectedAgentsForDay(day.date).includes(id));
-                                  return allSelected ? 'Deselect All' : `Select All (${pendingAgentIds.length})`;
+                                  const pendingOrderIds = awaitingOrders.map(
+                                    (o) => o.orderId
+                                  );
+                                  const allSelected =
+                                    pendingOrderIds.length > 0 &&
+                                    pendingOrderIds.every((id: string) =>
+                                      getSelectedOrdersForDay(day.date).includes(id)
+                                    );
+                                  return allSelected
+                                    ? 'Deselect All'
+                                    : `Select All (${pendingOrderIds.length})`;
                                 })()}
                               </Button>
-                              {getSelectedAgentsForDay(day.date).length > 0 && (
+                              {getSelectedOrdersForDay(day.date).length > 0 && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => setSelectedAgents(prev => ({ ...prev, [day.date]: [] }))}
+                                  onClick={() =>
+                                    setSelectedOrderIds(prev => ({
+                                      ...prev,
+                                      [day.date]: []
+                                    }))
+                                  }
                                 >
                                   Clear
                                 </Button>
@@ -2556,9 +2645,9 @@ export default function LeaderCashDepositsPage() {
                               >
                                 <Upload className="h-4 w-4" />
                                 Record Deposit
-                                {getSelectedAgentsForDay(day.date).length > 0 && (
+                                {getSelectedOrdersForDay(day.date).length > 0 && (
                                   <span className="ml-1 text-xs bg-white/20 px-1.5 py-0.5 rounded">
-                                    {getSelectedAgentsForDay(day.date).length}
+                                    {getSelectedOrdersForDay(day.date).length}
                                   </span>
                                 )}
                               </Button>
