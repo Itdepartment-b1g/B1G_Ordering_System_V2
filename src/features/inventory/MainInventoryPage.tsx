@@ -1061,7 +1061,7 @@ export default function MainInventoryPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      {isWarehouse && (
+                      {/* {isWarehouse && (
                         <div
                           className="flex items-center gap-2 shrink-0"
                           onClick={(e) => e.stopPropagation()}
@@ -1072,7 +1072,7 @@ export default function MainInventoryPage() {
                             Edit brand
                           </Button>
                         </div>
-                      )}
+                      )} */}
                       <Badge
                         variant={
                           getTotalStock(brand) === 0 ? 'destructive' :
