@@ -62,7 +62,7 @@ import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
-import { formatDateForInput, getDateRangeFromPreset, getDatePresetLabel, parseDateFromInput } from '@/lib/dateRangePresets';
+import { formatDateForInput, getDateRangeFromPreset, getDatePresetLabel, parseDateFromInput, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -70,11 +70,14 @@ import {
   type PageSize,
 } from '@/features/shared/components/ListPagination';
 import { exportProductAnalyticsExcel } from './exportProductAnalyticsExcel';
+import { exportCityAnalyticsExcel } from './exportCityAnalyticsExcel';
 import {
   fetchProductOrderItemsForDateRange,
+  getOrderListAmountBucket,
   getOrderListStatusBucket,
   parseOrderDate,
 } from '@/features/analytics/orderListAnalyticsHelpers';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import {
   loadAgentKPIs,
   KPI_SALES_ROLES,
@@ -85,7 +88,13 @@ import {
 interface CityPerformance {
   city: string;
   orders: number;
+  /** Approved + Pending (chart / performance) */
   revenue: number;
+  approvedRevenue: number;
+  pendingRevenue: number;
+  rejectedRevenue: number;
+  /** Approved + Pending + Rejected */
+  totalAmount: number;
   clients: number;
   growth: number;
   visits: number;
@@ -194,6 +203,10 @@ export default function AnalyticsPage() {
   
   // Analytics Data
   const [cityPerformance, setCityPerformance] = useState<CityPerformance[]>([]);
+  const [cityDateRangeFilter, setCityDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+  const [cityExporting, setCityExporting] = useState(false);
   const [productPerformance, setProductPerformance] = useState<ProductPerformance[]>([]);
   const [productDateRangeFilter, setProductDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
@@ -570,7 +583,27 @@ export default function AnalyticsPage() {
     if (!canFetchScoped || !loadedTabs.has('cities')) return;
     fetchCityPerformance();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canFetchScoped, loadedTabs, teamAgentIds]);
+  }, [canFetchScoped, loadedTabs, teamAgentIds, cityDateRangeFilter]);
+
+  const cityOrderDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        cityDateRangeFilter.preset,
+        cityDateRangeFilter.customStart,
+        cityDateRangeFilter.customEnd
+      ),
+    [cityDateRangeFilter]
+  );
+
+  const cityDateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
+        cityDateRangeFilter.preset,
+        cityDateRangeFilter.customStart,
+        cityDateRangeFilter.customEnd
+      ),
+    [cityDateRangeFilter]
+  );
 
   const productOrderDateRange = useMemo(
     () =>
@@ -775,87 +808,107 @@ export default function AnalyticsPage() {
   const fetchCityPerformance = async () => {
     setCityLoading(true);
     try {
-      // Build query for completed orders with client city and agent information
-      let ordersQuery = supabase
-        .from('client_orders')
-        .select(`
-          id,
-          total_amount,
-          stage,
-          created_at,
-          client_id,
-          agent_id,
-          clients!inner(
+      const { start, end } = cityOrderDateRange;
+      const startStr = start ? formatDateForInput(startOfDay(start)) : null;
+      const endStr = end ? formatDateForInput(startOfDay(end)) : null;
+
+      const orders = await fetchAllPaginated(async (from, to) => {
+        let ordersQuery = supabase
+          .from('client_orders')
+          .select(`
             id,
-            city,
+            total_amount,
+            status,
+            stage,
+            order_date,
+            client_id,
             agent_id,
-            profiles:agent_id(full_name)
-          )
-        `)
-        .eq('stage', 'admin_approved');
+            clients!inner(
+              id,
+              city,
+              agent_id,
+              profiles:agent_id(full_name)
+            )
+          `)
+          .order('order_date', { ascending: true })
+          .range(from, to);
 
-      // Filter by team agents if Leader or Manager
-      if ((isLeader || isManager) && teamAgentIds.length > 0) {
-        ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
-      }
+        if (startStr) {
+          ordersQuery = ordersQuery.gte('order_date', startStr);
+        }
+        if (endStr) {
+          ordersQuery = ordersQuery.lte('order_date', endStr);
+        }
 
-      const { data: orders, error: ordersError } = await ordersQuery;
+        if ((isLeader || isManager) && teamAgentIds.length > 0) {
+          ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
+        }
 
-      if (ordersError) throw ordersError;
+        const { data, error } = await ordersQuery;
+        return { data, error };
+      });
 
-      // Calculate this month and last month for growth
+      const qualifyingOrders = orders.filter((order: any) => {
+        if (!getOrderListAmountBucket(order.status, order.stage)) return false;
+        if (start || end) {
+          return isDateInRange(order.order_date, start, end);
+        }
+        return true;
+      });
+
       const currentMonthStart = startOfMonth(new Date());
       const prevMonthStart = startOfMonth(subMonths(new Date(), 1));
 
-      // Group by city
-      const cityMap = new Map<string, {
-        orders: number;
-        revenue: number;
-        clients: Set<string>;
-        visits: number;
-        currentMonthRevenue: number;
-        prevMonthRevenue: number;
-        agents: Set<string>; // Track unique agent names
-      }>();
+      const emptyCityData = () => ({
+        orders: 0,
+        approvedRevenue: 0,
+        pendingRevenue: 0,
+        rejectedRevenue: 0,
+        clients: new Set<string>(),
+        visits: 0,
+        currentMonthRevenue: 0,
+        prevMonthRevenue: 0,
+        agents: new Set<string>(),
+      });
 
-      orders?.forEach((order: any) => {
+      const cityMap = new Map<string, ReturnType<typeof emptyCityData>>();
+
+      qualifyingOrders.forEach((order: any) => {
         const city = order.clients?.city || 'Unknown';
         const agentName = order.clients?.profiles?.full_name || null;
-        
+        const amount = Number(order.total_amount) || 0;
+        const bucket = getOrderListAmountBucket(order.status, order.stage);
+
         if (!cityMap.has(city)) {
-          cityMap.set(city, {
-            orders: 0,
-            revenue: 0,
-            clients: new Set(),
-            visits: 0,
-            currentMonthRevenue: 0,
-            prevMonthRevenue: 0,
-            agents: new Set()
-          });
+          cityMap.set(city, emptyCityData());
         }
 
         const cityData = cityMap.get(city)!;
         cityData.clients.add(order.client_id);
         cityData.orders += 1;
-        cityData.revenue += order.total_amount || 0;
-        
-        // Add agent name if available
+
+        if (bucket === 'approved') cityData.approvedRevenue += amount;
+        else if (bucket === 'pending') cityData.pendingRevenue += amount;
+        else if (bucket === 'rejected') cityData.rejectedRevenue += amount;
+
         if (agentName) {
           cityData.agents.add(agentName);
         }
 
-        const orderDate = new Date(order.created_at);
-        if (orderDate >= currentMonthStart) {
-          cityData.currentMonthRevenue += order.total_amount || 0;
-        } else if (orderDate >= prevMonthStart && orderDate < currentMonthStart) {
-          cityData.prevMonthRevenue += order.total_amount || 0;
+        // Growth uses approved + pending only (performance), not rejected
+        if (bucket === 'approved' || bucket === 'pending') {
+          const orderDate = parseOrderDate(order.order_date);
+          if (orderDate) {
+            if (orderDate >= currentMonthStart) {
+              cityData.currentMonthRevenue += amount;
+            } else if (orderDate >= prevMonthStart && orderDate < currentMonthStart) {
+              cityData.prevMonthRevenue += amount;
+            }
+          }
         }
       });
 
-      // Fetch visit logs to aggregate visits by city
-      let visitsQuery = supabase
-        .from('visit_logs')
-        .select(`
+      let visitsQuery = supabase.from('visit_logs').select(`
           id,
           agent_id,
           clients!inner(
@@ -865,7 +918,6 @@ export default function AnalyticsPage() {
           )
         `);
 
-      // Filter by team agents if Leader or Manager
       if ((isLeader || isManager) && teamAgentIds.length > 0) {
         visitsQuery = visitsQuery.in('agent_id', teamAgentIds);
       }
@@ -876,30 +928,19 @@ export default function AnalyticsPage() {
         visits.forEach((visit: any) => {
           const city = visit.clients?.city || 'Unknown';
           const agentName = visit.clients?.profiles?.full_name || null;
-          
+
           if (!cityMap.has(city)) {
-             // If city has visits but no orders yet, initialize it
-             cityMap.set(city, {
-                orders: 0,
-                revenue: 0,
-                clients: new Set(),
-                visits: 0,
-                currentMonthRevenue: 0,
-                prevMonthRevenue: 0,
-                agents: new Set()
-             });
+            cityMap.set(city, emptyCityData());
           }
           const cityData = cityMap.get(city)!;
           cityData.visits += 1;
-          
-          // Add agent name if available
+
           if (agentName) {
             cityData.agents.add(agentName);
           }
         });
       }
 
-      // Also fetch clients directly to ensure we capture all agents assigned to cities
       let clientsQuery = supabase
         .from('clients')
         .select(`
@@ -909,7 +950,6 @@ export default function AnalyticsPage() {
         `)
         .not('city', 'is', null);
 
-      // Filter by team agents if Leader or Manager
       if ((isLeader || isManager) && teamAgentIds.length > 0) {
         clientsQuery = clientsQuery.in('agent_id', teamAgentIds);
       }
@@ -920,47 +960,52 @@ export default function AnalyticsPage() {
         allClients.forEach((client: any) => {
           const city = client.city || 'Unknown';
           const agentName = client.profiles?.full_name || null;
-          
-          if (city && agentName) {
-            if (!cityMap.has(city)) {
-              cityMap.set(city, {
-                orders: 0,
-                revenue: 0,
-                clients: new Set(),
-                visits: 0,
-                currentMonthRevenue: 0,
-                prevMonthRevenue: 0,
-                agents: new Set()
-              });
-            }
+
+          if (city && agentName && cityMap.has(city)) {
             cityMap.get(city)!.agents.add(agentName);
           }
         });
       }
 
-      // Convert to array with growth calculation
-      const cityPerformanceData: CityPerformance[] = Array.from(cityMap.entries()).map(([city, data]) => {
-        const growth = data.prevMonthRevenue > 0 
-          ? ((data.currentMonthRevenue - data.prevMonthRevenue) / data.prevMonthRevenue) * 100 
-          : data.currentMonthRevenue > 0 ? 100 : 0;
+      const cityPerformanceData: CityPerformance[] = Array.from(cityMap.entries()).map(
+        ([city, data]) => {
+          const growth =
+            data.prevMonthRevenue > 0
+              ? ((data.currentMonthRevenue - data.prevMonthRevenue) / data.prevMonthRevenue) * 100
+              : data.currentMonthRevenue > 0
+                ? 100
+                : 0;
 
-        return {
-          city,
-          orders: data.orders,
-          revenue: data.revenue,
-          clients: data.clients.size,
-          visits: data.visits,
-          growth,
-          agents: Array.from(data.agents).sort() // Sort alphabetically for consistency
-        };
-      });
+          const approvedRevenue = data.approvedRevenue;
+          const pendingRevenue = data.pendingRevenue;
+          const rejectedRevenue = data.rejectedRevenue;
+          const revenue = approvedRevenue + pendingRevenue;
 
-      // Sort by revenue
+          return {
+            city,
+            orders: data.orders,
+            approvedRevenue,
+            pendingRevenue,
+            rejectedRevenue,
+            revenue,
+            totalAmount: revenue + rejectedRevenue,
+            clients: data.clients.size,
+            visits: data.visits,
+            growth,
+            agents: Array.from(data.agents).sort(),
+          };
+        }
+      );
+
       cityPerformanceData.sort((a, b) => b.revenue - a.revenue);
-
       setCityPerformance(cityPerformanceData);
     } catch (error) {
       console.error('Error fetching city performance:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load city analytics',
+        variant: 'destructive',
+      });
     } finally {
       setCityLoading(false);
     }
@@ -1102,6 +1147,43 @@ export default function AnalyticsPage() {
       });
     } finally {
       setProductLoading(false);
+    }
+  };
+
+  const handleExportCityAnalytics = async () => {
+    if (!cityPerformance.length) {
+      toast({
+        title: 'No data to export',
+        description: 'No city data for the selected date range.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const { start, end } = cityOrderDateRange;
+    const periodStart = start ? formatDateForInput(start) : 'all';
+    const periodEnd = end ? formatDateForInput(end) : 'all';
+
+    setCityExporting(true);
+    try {
+      await exportCityAnalyticsExcel(cityPerformance, {
+        dateRangeLabel: cityDateRangeLabel,
+        periodStart,
+        periodEnd,
+      });
+      toast({
+        title: 'Export successful',
+        description: `Exported ${cityPerformance.length} city row(s) for ${cityDateRangeLabel}.`,
+      });
+    } catch (error) {
+      console.error('City analytics export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCityExporting(false);
     }
   };
 
@@ -1854,6 +1936,33 @@ export default function AnalyticsPage() {
             {/* City Performance Tab */}
             {loadedTabs.has('cities') && (
             <TabsContent value="cities" className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <p className="text-sm text-muted-foreground">
+                  Approved and pending client orders by city — {cityDateRangeLabel}
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto shrink-0">
+                  <DateRangeFilterPopover
+                    value={cityDateRangeFilter}
+                    onChange={setCityDateRangeFilter}
+                    triggerClassName="w-full sm:w-[220px] justify-between h-10"
+                    align="end"
+                  />
+                  <Button
+                    variant="outline"
+                    className="h-10 gap-2"
+                    onClick={handleExportCityAnalytics}
+                    disabled={cityExporting || cityLoading || cityPerformance.length === 0}
+                  >
+                    {cityExporting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileDown className="h-4 w-4" />
+                    )}
+                    Export Excel
+                  </Button>
+                </div>
+              </div>
+
               {cityLoading ? (
                 <div className="flex justify-center py-16">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1866,9 +1975,14 @@ export default function AnalyticsPage() {
             <Card className="col-span-1 lg:col-span-2">
               <CardHeader>
                 <CardTitle>Revenue by City</CardTitle>
-                <CardDescription>Top performing markets</CardDescription>
+                <CardDescription>Top performing markets — {cityDateRangeLabel}</CardDescription>
               </CardHeader>
               <CardContent>
+                {cityPerformance.length === 0 ? (
+                  <div className="flex justify-center items-center h-[300px] text-muted-foreground text-sm">
+                    No city data for the selected period
+                  </div>
+                ) : (
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={cityPerformance.slice(0, 10)}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -1884,6 +1998,7 @@ export default function AnalyticsPage() {
                     />
                   </BarChart>
                 </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
 
@@ -1891,7 +2006,7 @@ export default function AnalyticsPage() {
             <Card className="col-span-1 lg:col-span-2">
               <CardHeader>
                 <CardTitle>City-by-City Breakdown</CardTitle>
-                <CardDescription>Detailed performance metrics</CardDescription>
+                <CardDescription>Detailed performance metrics — {cityDateRangeLabel}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="border rounded-lg overflow-hidden">

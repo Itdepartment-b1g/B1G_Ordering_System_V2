@@ -5,6 +5,7 @@ import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type OrderListStatusBucket = 'approved' | 'pending';
+export type OrderListAmountBucket = 'approved' | 'pending' | 'rejected';
 
 export type ClientOrderAnalyticsRow = {
   total_amount: number | string | null;
@@ -109,6 +110,17 @@ export function getOrderListStatusBucket(
 ): OrderListStatusBucket | null {
   if (status === 'approved' || stage === 'admin_approved') return 'approved';
   if (stage === 'finance_pending' || status === 'pending') return 'pending';
+  return null;
+}
+
+/** Match Order List amount summary: approved, pending, or rejected. */
+export function getOrderListAmountBucket(
+  status?: string,
+  stage?: string | null
+): OrderListAmountBucket | null {
+  const statusBucket = getOrderListStatusBucket(status, stage);
+  if (statusBucket) return statusBucket;
+  if (status === 'rejected' || stage === 'admin_rejected') return 'rejected';
   return null;
 }
 
