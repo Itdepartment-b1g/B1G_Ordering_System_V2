@@ -71,6 +71,11 @@ import {
 } from '@/features/shared/components/ListPagination';
 import { exportProductAnalyticsExcel } from './exportProductAnalyticsExcel';
 import {
+  fetchProductOrderItemsForDateRange,
+  getOrderListStatusBucket,
+  parseOrderDate,
+} from '@/features/analytics/orderListAnalyticsHelpers';
+import {
   loadAgentKPIs,
   KPI_SALES_ROLES,
   type AgentKPI,
@@ -103,16 +108,6 @@ interface ProductPerformance {
 }
 
 type AgentKpiRoleFilter = 'all' | (typeof KPI_SALES_ROLES)[number];
-
-/** Match Order List: approved via status or final admin stage */
-const getProductOrderStatusBucket = (
-  status?: string,
-  stage?: string
-): 'approved' | 'pending' | null => {
-  if (status === 'approved' || stage === 'admin_approved') return 'approved';
-  if (status === 'pending') return 'pending';
-  return null;
-};
 
 const bucketKpiOrdersByStatus = (
   orders: { status?: string; total_amount?: number }[] | null
@@ -976,38 +971,10 @@ export default function AnalyticsPage() {
     try {
       const { start, end } = productOrderDateRange;
 
-      let orderItemsQuery = supabase
-        .from('client_order_items')
-        .select(`
-          quantity,
-          unit_price,
-          client_orders!inner(status, stage, created_at, agent_id, company_id),
-          variants!inner(
-            name,
-            variant_type,
-            brands!inner(name)
-          )
-        `);
+      const orderItems = await fetchProductOrderItemsForDateRange(supabase, start, end);
 
-      if (start) {
-        orderItemsQuery = orderItemsQuery.gte(
-          'client_orders.created_at',
-          startOfDay(start).toISOString()
-        );
-      }
-      if (end) {
-        orderItemsQuery = orderItemsQuery.lte(
-          'client_orders.created_at',
-          endOfDay(end).toISOString()
-        );
-      }
-
-      const { data: orderItems, error } = await orderItemsQuery;
-
-      if (error) throw error;
-
-      let filteredOrderItems = (orderItems || []).filter((item: any) => {
-        const bucket = getProductOrderStatusBucket(
+      let filteredOrderItems = orderItems.filter((item) => {
+        const bucket = getOrderListStatusBucket(
           item.client_orders?.status,
           item.client_orders?.stage
         );
@@ -1016,7 +983,7 @@ export default function AnalyticsPage() {
 
       if (user?.company_id) {
         filteredOrderItems = filteredOrderItems.filter(
-          (item: any) => item.client_orders?.company_id === user.company_id
+          (item) => item.client_orders?.company_id === user.company_id
         );
       }
 
@@ -1025,7 +992,7 @@ export default function AnalyticsPage() {
           setProductPerformance([]);
           return;
         }
-        filteredOrderItems = filteredOrderItems.filter((item: any) =>
+        filteredOrderItems = filteredOrderItems.filter((item) =>
           teamAgentIds.includes(item.client_orders?.agent_id)
         );
       }
@@ -1050,16 +1017,15 @@ export default function AnalyticsPage() {
         }
       >();
 
-      filteredOrderItems?.forEach((item: any) => {
+      filteredOrderItems.forEach((item) => {
         const brand = item.variants?.brands?.name || 'Unknown';
         const variant = item.variants?.name || 'Unknown';
         const key = `${brand}|${variant}`;
         const qty = item.quantity || 0;
         const lineRevenue = qty * (item.unit_price || 0);
-        const status = item.client_orders?.status as string | undefined;
-        const stage = item.client_orders?.stage as string | undefined;
-        const createdAt = item.client_orders?.created_at as string | undefined;
-        const bucket = getProductOrderStatusBucket(status, stage);
+        const status = item.client_orders?.status;
+        const stage = item.client_orders?.stage;
+        const bucket = getOrderListStatusBucket(status, stage);
 
         if (!productMap.has(key)) {
           productMap.set(key, {
@@ -1088,8 +1054,8 @@ export default function AnalyticsPage() {
           productData.pendingRevenue += lineRevenue;
         }
 
-        if (createdAt) {
-          const orderDate = new Date(createdAt);
+        const orderDate = parseOrderDate(item.client_orders?.order_date);
+        if (orderDate) {
           if (orderDate >= currentMonthStart) {
             productData.currentMonthOrders += 1;
           } else if (orderDate >= prevMonthStart && orderDate <= prevMonthEnd) {

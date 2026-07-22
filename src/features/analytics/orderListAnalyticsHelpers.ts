@@ -122,3 +122,60 @@ export function parseOrderDate(orderDate: string | null | undefined): Date | nul
   d.setHours(12, 0, 0, 0);
   return d;
 }
+
+export type ProductOrderItemRow = {
+  quantity: number | null;
+  unit_price: number | null;
+  client_orders: {
+    status?: string;
+    stage?: string | null;
+    order_date: string;
+    agent_id: string;
+    company_id?: string;
+  };
+  variants: {
+    name?: string | null;
+    brands?: { name?: string | null } | null;
+  };
+};
+
+/** Paginated line items for product analytics — filters by client_orders.order_date (Order List). */
+export async function fetchProductOrderItemsForDateRange(
+  supabase: SupabaseClient,
+  start?: Date,
+  end?: Date
+): Promise<ProductOrderItemRow[]> {
+  const startStr = start ? formatDateForInput(startOfDay(start)) : null;
+  const endStr = end ? formatDateForInput(startOfDay(end)) : null;
+
+  const all = await fetchAllPaginated(async (from, to) => {
+    let query = supabase
+      .from('client_order_items')
+      .select(`
+        quantity,
+        unit_price,
+        client_orders!inner(status, stage, order_date, agent_id, company_id),
+        variants!inner(name, variant_type, brands!inner(name))
+      `)
+      .order('id', { ascending: true })
+      .range(from, to);
+
+    if (startStr) {
+      query = query.gte('client_orders.order_date', startStr);
+    }
+    if (endStr) {
+      query = query.lte('client_orders.order_date', endStr);
+    }
+
+    const { data, error } = await query;
+    return { data: (data ?? []) as unknown as ProductOrderItemRow[], error };
+  });
+
+  if (!start && !end) return all;
+
+  return all.filter((item) => {
+    const orderDate = item.client_orders?.order_date;
+    if (!orderDate) return false;
+    return isDateInRange(orderDate, start, end);
+  });
+}
