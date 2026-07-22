@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -96,6 +98,7 @@ export function KeyAccountPurchaseOrderPage() {
   const [stockSearch, setStockSearch] = useState('');
   const [shopDialogOpen, setShopDialogOpen] = useState(false);
   const [addressDialogOpen, setAddressDialogOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Selection states
   const [selectedClientId, setSelectedClientId] = useState<string>('');
@@ -681,6 +684,24 @@ export function KeyAccountPurchaseOrderPage() {
       return;
     }
 
+    if (!paymentProofFile) {
+      toast({
+        variant: 'destructive',
+        title: 'Payment proof required',
+        description: 'Please upload an image of the payment proof.',
+      });
+      return;
+    }
+
+    if (!expectedDeliveryDate) {
+      toast({
+        variant: 'destructive',
+        title: 'Expected delivery date required',
+        description: 'Please set the expected delivery date.',
+      });
+      return;
+    }
+
     const computedSubtotal = items.reduce((sum, item) => sum + item.totalPrice, 0);
     const computedTaxAmount = computedSubtotal * (taxRate / 100);
     const computedTotal = computedSubtotal + computedTaxAmount - discount;
@@ -733,7 +754,7 @@ export function KeyAccountPurchaseOrderPage() {
         company_account_type: 'Key Accounts',
         workflow_status: isDirector || isSalesHead ? 'admin_pending' : 'kam_pending',
         order_date: orderDate,
-        expected_delivery_date: expectedDeliveryDate || orderDate,
+        expected_delivery_date: expectedDeliveryDate,
         notes: notes,
         subtotal: computedSubtotal,
         tax_rate: taxRate,
@@ -775,18 +796,10 @@ export function KeyAccountPurchaseOrderPage() {
 
       if (itemsError) throw itemsError;
 
-      let proofPath: string | null = null;
-      if (paymentProofFile && user?.company_id) {
-        try {
-          proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
-        } catch (upErr: any) {
-          toast({
-            variant: 'destructive',
-            title: 'Proof upload failed',
-            description: upErr?.message || 'Payment proof could not be uploaded; saving payment without proof.',
-          });
-        }
+      if (!user.company_id) {
+        throw new Error('Missing company context for payment proof upload.');
       }
+      const proofPath = await uploadKeyAccountPaymentProof(user.company_id, poData.id, paymentProofFile);
 
       const { error: payErr } = await supabase.from('purchase_order_key_account_payments').insert({
         purchase_order_id: poData.id,
@@ -803,6 +816,7 @@ export function KeyAccountPurchaseOrderPage() {
         description: `Purchase Order created for ${selectedClient?.client_name}`,
       });
 
+      setConfirmOpen(false);
       // Reset form
       resetForm();
     } catch (error: any) {
@@ -815,6 +829,20 @@ export function KeyAccountPurchaseOrderPage() {
       setSubmitting(false);
     }
   }
+
+  const paymentMethodLabel =
+    paymentMethod === 'BANK_TRANSFER'
+      ? `Bank transfer (${bankType})`
+      : paymentMethod === 'GCASH'
+        ? 'GCash'
+        : paymentMethod === 'CASH'
+          ? 'Cash'
+          : 'Cheque';
+
+  const firstPaymentPreview =
+    paymentMode === 'full'
+      ? total
+      : Math.round((parseFloat(String(splitFirstAmount).replace(/,/g, '')) || 0) * 100) / 100;
 
   function resetForm() {
     setSelectedClientId('');
@@ -1165,6 +1193,7 @@ export function KeyAccountPurchaseOrderPage() {
                 file={paymentProofFile}
                 onFileChange={setPaymentProofFile}
                 inputId="create-po-payment-proof"
+                label="Payment proof *"
               />
             </CardContent>
           </Card>
@@ -1519,7 +1548,7 @@ export function KeyAccountPurchaseOrderPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>Expected Delivery Date</Label>
+                <Label>Expected Delivery Date *</Label>
                 <Input
                   type="date"
                   value={expectedDeliveryDate}
@@ -1577,7 +1606,7 @@ export function KeyAccountPurchaseOrderPage() {
 
               {/* Submit Button */}
               <Button
-                onClick={handleSubmit}
+                onClick={() => setConfirmOpen(true)}
                 disabled={
                   submitting ||
                   !selectedClientId ||
@@ -1585,22 +1614,17 @@ export function KeyAccountPurchaseOrderPage() {
                   !selectedAddressId ||
                   (sourceMode === 'single' && !selectedWarehouseLocationId) ||
                   (sourceMode === 'multi' && items.some((i) => !i.warehouseLocationId)) ||
-                  items.length === 0
+                  items.length === 0 ||
+                  !paymentProofFile ||
+                  !expectedDeliveryDate
                 }
                 className="w-full"
                 size="lg"
               >
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating Order...
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4 mr-2" />
-                    Create Purchase Order
-                  </>
-                )}
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Create Purchase Order
+                </>
               </Button>
             </CardContent>
           </Card>
@@ -1644,6 +1668,154 @@ export function KeyAccountPurchaseOrderPage() {
           )}
         </div>
       </div>
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (submitting) return;
+          setConfirmOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Confirm purchase order</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to create this purchase order? Review the summary below before confirming.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 text-sm">
+            <div className="space-y-1 rounded-md border p-3">
+              <p className="font-medium">{selectedClient?.client_name || '—'}</p>
+              <p className="text-muted-foreground">{selectedClient?.client_code}</p>
+              <div className="pt-2 border-t space-y-1">
+                <p>
+                  <span className="text-muted-foreground">Shop:</span> {selectedShop?.shop_name || '—'}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Address:</span>{' '}
+                  {selectedAddress
+                    ? `${selectedAddress.address_label} — ${selectedAddress.full_address}`
+                    : '—'}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 rounded-md border p-3">
+              <div>
+                <p className="text-muted-foreground text-xs">Order date</p>
+                <p className="font-medium">{orderDate || '—'}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Expected delivery</p>
+                <p className="font-medium">{expectedDeliveryDate || '—'}</p>
+              </div>
+              <div className="col-span-2">
+                <p className="text-muted-foreground text-xs">Warehouse</p>
+                <p className="font-medium">
+                  {sourceMode === 'single'
+                    ? warehouseLabel(selectedWarehouseLocationId)
+                    : 'Multiple warehouses (per line item)'}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1 rounded-md border p-3">
+              <p>
+                <span className="text-muted-foreground">Payment terms:</span> {resolvedPaymentTerms || '—'}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Payment mode:</span>{' '}
+                {paymentMode === 'full' ? 'Full payment' : 'Split payment'}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Method:</span> {paymentMethodLabel}
+              </p>
+              <p>
+                <span className="text-muted-foreground">First payment:</span> ₱{firstPaymentPreview.toFixed(2)}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Payment proof:</span>{' '}
+                {paymentProofFile?.name || '—'}
+              </p>
+            </div>
+
+            <div className="rounded-md border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>
+                        <div className="font-medium">{item.variantName}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {item.brandName}
+                          {sourceMode === 'multi' ? ` · ${warehouseLabel(item.warehouseLocationId)}` : ''}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">{item.quantity}</TableCell>
+                      <TableCell className="text-right">₱{item.totalPrice.toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="space-y-1 rounded-md border p-3">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span>₱{subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Tax ({taxRate}%)</span>
+                <span>₱{taxAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Discount</span>
+                <span>₱{discount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between font-semibold text-base pt-2 border-t">
+                <span>Total</span>
+                <span>₱{total.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {notes.trim() ? (
+              <div className="rounded-md border p-3">
+                <p className="text-muted-foreground text-xs mb-1">Notes</p>
+                <p className="whitespace-pre-wrap">{notes.trim()}</p>
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={submitting}
+              onClick={() => setConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" disabled={submitting} onClick={() => void handleSubmit()}>
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating Order...
+                </>
+              ) : (
+                'Confirm & Create'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {selectedClientId ? (
         <KeyAccountAddShopDialog

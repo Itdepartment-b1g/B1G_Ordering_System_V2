@@ -8,6 +8,7 @@ import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
+import { firstRelation } from '@/features/key-accounts/key-accounts-analytics/keyAccountAnalyticsShared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -208,6 +209,22 @@ function itemWarehouseName(
   const locId = it.warehouse_location_id || poHeaderLocationId || null;
   if (locId && namesById[locId]) return namesById[locId];
   return '—';
+}
+
+function normalizePoItemRow(item: any): PoItemRow {
+  const variant = firstRelation(item.variants);
+  const brand = firstRelation(variant?.brands);
+  return {
+    ...item,
+    warehouse_locations: firstRelation(item.warehouse_locations) ?? item.warehouse_locations ?? null,
+    variants: variant
+      ? {
+          name: variant.name,
+          variant_type: variant.variant_type,
+          brands: brand ? { name: brand.name } : null,
+        }
+      : null,
+  };
 }
 
 function createInitialTabPages(): Record<TabKey, number> {
@@ -793,16 +810,18 @@ export function KeyAccountPurchaseOrdersPage() {
           quantity,
           unit_price,
           total_price,
-          variants (
+          warehouse_locations:warehouse_location_id ( name ),
+          variants:variant_id (
             name,
             variant_type,
-            brands ( name )
+            brands:brand_id ( name )
           )
         `
         )
         .eq('purchase_order_id', po.id);
       if (error) throw error;
-      setActive((prev) => (prev ? { ...prev, items: (items as any) || [] } : prev));
+      const normalized = ((items as any[]) || []).map(normalizePoItemRow);
+      setActive((prev) => (prev ? { ...prev, items: normalized } : prev));
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -1749,13 +1768,12 @@ export function KeyAccountPurchaseOrdersPage() {
                                     </div>
                                   </div>
                                   {p.proof_storage_path ? (
-                                    <div className="space-y-2">
-                                      <Label className="text-xs text-muted-foreground">Payment proof</Label>
-                                      <KeyAccountPaymentProofStoredPreview
-                                        storagePath={p.proof_storage_path}
-                                        compact
-                                      />
-                                    </div>
+                                    <KeyAccountPaymentProofStoredPreview
+                                      storagePath={p.proof_storage_path}
+                                      compact
+                                      label="Payment proof"
+                                      showViewFull
+                                    />
                                   ) : (
                                     <p className="text-xs text-muted-foreground">No proof attached.</p>
                                   )}
@@ -1869,6 +1887,7 @@ export function KeyAccountPurchaseOrdersPage() {
                   <PurchaseOrderDeliveryDetailsPanel
                     purchaseOrderId={active.id}
                     enabled
+                    purchaseOrder={active as any}
                     warehouseNamesById={linkedWarehouseNamesById}
                   />
                 )}

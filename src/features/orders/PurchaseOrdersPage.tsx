@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DateRangeFilterPopover,
@@ -29,7 +30,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, PackageCheck, XCircle } from 'lucide-react';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
@@ -47,7 +48,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
   import { Textarea } from '@/components/ui/textarea';
 import { PurchaseOrderDeliveryDetailsPanel, purchaseOrderDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
-import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
+import { PoBuyerReceiveDialog, type PoReceiveLine } from './components/PoBuyerReceiveDialog';
+import { PoBuyerCancelDialog } from './components/PoBuyerCancelDialog';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
 import {
@@ -70,6 +72,7 @@ import {
   type PurchaseOrderStatusFilter,
 } from './utils/purchaseOrderFilters';
 import { KeyAccountPoWarehouseProgress } from '@/features/key-accounts/components/KeyAccountPoWarehouseProgress';
+import { keyAccountWorkflowStatusAfterLocationDispatch } from '@/features/key-accounts/keyAccountDispatchWorkflow';
 import { RebateReplacementPricingSummary, RebateReceiveReturnsDialog } from '@/features/key-accounts/rebates';
 import {
   filterRebateReturnLinesForWarehouseUser,
@@ -230,7 +233,8 @@ export default function PurchaseOrdersPage() {
     rejectPurchaseOrder,
     fetchPurchaseOrders,
   } = usePurchaseOrders();
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchParams] = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('search') ?? '');
   const [statusFilter, setStatusFilter] = useState<PurchaseOrderStatusFilter>('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
@@ -255,8 +259,18 @@ export default function PurchaseOrdersPage() {
   // Warehouse view tabs (supplier POs will be removed later; keep tabs by account type)
   const [poTab, setPoTab] = useState<'all' | 'key_accounts' | 'standard_accounts'>('all');
 
+  useEffect(() => {
+    const q = searchParams.get('search');
+    if (!q) return;
+    setSearchQuery(q);
+    setStatusFilter('all');
+    setDateRangeFilter({ preset: 'all' });
+    setPoTab('all');
+  }, [searchParams]);
+
   // Dispatch capture for warehouse transfer fulfill (Key + Standard accounts)
   const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [dispatchStep, setDispatchStep] = useState<1 | 2>(1);
   const [dispatchPo, setDispatchPo] = useState<any>(null);
   const [riderName, setRiderName] = useState('');
   const [riderPlate, setRiderPlate] = useState('');
@@ -274,6 +288,16 @@ export default function PurchaseOrdersPage() {
   const [dispatchNotes, setDispatchNotes] = useState('');
   const [showWarehouseSignatureModal, setShowWarehouseSignatureModal] = useState(false);
   const [savingDispatch, setSavingDispatch] = useState(false);
+  const [dispatchLines, setDispatchLines] = useState<
+    Array<{
+      variant_id: string;
+      remaining: number;
+      ship_qty: number;
+      brand_name?: string | null;
+      variant_name?: string | null;
+    }>
+  >([]);
+  const [loadingDispatchLines, setLoadingDispatchLines] = useState(false);
 
   const [fulfillRebateReturnLines, setFulfillRebateReturnLines] = useState<
     Array<{
@@ -342,6 +366,43 @@ export default function PurchaseOrdersPage() {
   const locVarKey = (locId: string, variantId: string) => `${locId}::${variantId}`;
   const shortId = (id: string) => (id && id.length > 10 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id);
 
+  // Buyer: pending dispatched DRs awaiting receive (table Receive button)
+  const [pendingReceiveByPoId, setPendingReceiveByPoId] = useState<
+    Record<
+      string,
+      {
+        deliveryId: string;
+        drNumber: string | null;
+        companyId: string;
+        warehouseLocationId: string | null;
+        warehouseLocationName: string | null;
+        lines: PoReceiveLine[];
+      }
+    >
+  >({});
+  const [tableReceiveOpen, setTableReceiveOpen] = useState(false);
+  const [tableReceiveTarget, setTableReceiveTarget] = useState<{
+    deliveryId: string;
+    purchaseOrderId: string;
+    companyId: string;
+    drNumber: string | null;
+    warehouseLocationId: string | null;
+    warehouseLocationName: string | null;
+    order: any;
+    lines: PoReceiveLine[];
+  } | null>(null);
+  const [openingReceivePoId, setOpeningReceivePoId] = useState<string | null>(null);
+  const [tableCancelOpen, setTableCancelOpen] = useState(false);
+  const [tableCancelTarget, setTableCancelTarget] = useState<{
+    deliveryId: string;
+    purchaseOrderId: string;
+    companyId: string;
+    drNumber: string | null;
+    warehouseLocationName: string | null;
+    lines: PoReceiveLine[];
+  } | null>(null);
+  const [openingCancelPoId, setOpeningCancelPoId] = useState<string | null>(null);
+
   const openCofForOrder = async (order: any) => {
     try {
       if (order.company_account_type === 'Key Accounts') {
@@ -382,10 +443,55 @@ export default function PurchaseOrdersPage() {
     const drMeta = myLocationDrByPo[order.id];
     if (!drMeta?.dr_number) return;
     try {
+      // Prefer this DR's dispatched lines (partial multi-DR) over full PO qty
+      let dispatchLines:
+        | Array<{
+            variant_id: string;
+            brand_name?: string | null;
+            variant_name?: string | null;
+            quantity: number;
+          }>
+        | undefined;
+
+      const { data: deliveryRow } = await supabase
+        .from('purchase_order_deliveries')
+        .select('id, status')
+        .eq('purchase_order_id', order.id)
+        .eq('dr_number', drMeta.dr_number)
+        .eq('warehouse_location_id', drMeta.warehouse_location_id)
+        .maybeSingle();
+
+      if (deliveryRow?.id) {
+        const { data: itemData } = await supabase
+          .from('purchase_order_delivery_items')
+          .select(
+            'variant_id,quantity_dispatched,variants:variant_id(name,brands:brand_id(name))'
+          )
+          .eq('delivery_id', deliveryRow.id);
+        dispatchLines = ((itemData || []) as any[])
+          .filter((item) => Number(item.quantity_dispatched) > 0)
+          .map((item) => {
+            const variant = Array.isArray(item.variants) ? item.variants[0] : item.variants;
+            const brand = variant?.brands
+              ? Array.isArray(variant.brands)
+                ? variant.brands[0]
+                : variant.brands
+              : null;
+            return {
+              variant_id: String(item.variant_id),
+              brand_name: brand?.name ?? null,
+              variant_name: variant?.name ?? null,
+              quantity: Number(item.quantity_dispatched) || 0,
+            };
+          });
+      }
+
       await generateAndOpenDrPdf(order, {
         drNumber: drMeta.dr_number,
         warehouseLocationId: drMeta.warehouse_location_id,
         warehouseLocationName: drMeta.warehouse_name,
+        dispatchLines: dispatchLines && dispatchLines.length > 0 ? dispatchLines : undefined,
+        cancelled: deliveryRow?.status === 'cancelled',
       });
     } catch (e: any) {
       toast({
@@ -399,28 +505,86 @@ export default function PurchaseOrdersPage() {
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
       case 'fulfilled':
+      case 'delivered':
         return 'bg-green-600 text-white hover:bg-green-700';
       case 'approved':
       case 'approved_for_fulfillment':
         return 'bg-blue-600 text-white hover:bg-blue-700';
       case 'partially_fulfilled':
+      case 'awaiting_receive':
+      case 'partial_delivered':
         return 'bg-amber-500 text-white hover:bg-amber-600';
       case 'pending':
         return 'bg-gray-500 text-white hover:bg-gray-600';
       case 'rejected':
+      case 'cancelled':
         return 'bg-red-600 text-white hover:bg-red-700';
       default:
         return 'bg-gray-500 text-white hover:bg-gray-600';
     }
   };
 
-  const getStatusDisplayText = (status: string) => {
-    // Subwarehouse sees different text for pending POs
-    if (status === 'pending' && canFulfillAsSubWarehouse) {
-      return 'Waiting for Main';
+  /** List/detail badge label — buyers see receive state; warehouse keeps ship progress. */
+  const resolvePoStatusPresentation = (order: {
+    id: string;
+    status?: string | null;
+    workflow_status?: string | null;
+    fulfillment_type?: string | null;
+  }) => {
+    const status = String(order.status || '');
+    const workflow = String(order.workflow_status || '');
+    const isTransfer = order.fulfillment_type === 'warehouse_transfer';
+    const hasPendingReceive = !!pendingReceiveByPoId[order.id];
+
+    if (isTransfer) {
+      // Buyer: prioritize actionable receive state
+      if (!isWarehouse) {
+        if (hasPendingReceive) {
+          return { badgeKey: 'awaiting_receive', label: 'Awaiting receive' };
+        }
+        if (workflow === 'delivered') {
+          return { badgeKey: 'delivered', label: 'Delivered' };
+        }
+      } else {
+        // Warehouse: show when buyer still needs to confirm a dispatch
+        if (hasPendingReceive) {
+          return {
+            badgeKey: 'awaiting_receive',
+            label:
+              status === 'partially_fulfilled'
+                ? 'Partial ship · awaiting receive'
+                : 'Awaiting buyer receive',
+          };
+        }
+        if (workflow === 'delivered') {
+          return { badgeKey: 'delivered', label: 'Delivered' };
+        }
+      }
     }
-    return status.replace(/_/g, ' ');
+
+    if (status === 'pending' && canFulfillAsSubWarehouse) {
+      return { badgeKey: 'pending', label: 'Waiting for Main' };
+    }
+
+    return {
+      badgeKey: status || 'pending',
+      label: status.replace(/_/g, ' ') || '—',
+    };
   };
+
+  const getStatusBadgeClassForOrder = (order: {
+    id: string;
+    status?: string | null;
+    workflow_status?: string | null;
+    fulfillment_type?: string | null;
+  }) => getStatusBadgeClass(resolvePoStatusPresentation(order).badgeKey);
+
+  const getStatusDisplayTextForOrder = (order: {
+    id: string;
+    status?: string | null;
+    workflow_status?: string | null;
+    fulfillment_type?: string | null;
+  }) => resolvePoStatusPresentation(order).label;
 
   const itemLocLabel = (item: any) => {
     const raw = Array.isArray(item?.warehouse_location) ? item.warehouse_location[0] : item?.warehouse_location;
@@ -479,6 +643,129 @@ export default function PurchaseOrdersPage() {
       cancelled = true;
     };
   }, [purchaseOrders, membership.locationId, isWarehouse]);
+
+  // Buyer company: load oldest pending dispatched delivery per PO (for table Receive)
+  useEffect(() => {
+    if (isWarehouse || !user?.company_id) {
+      setPendingReceiveByPoId({});
+      return;
+    }
+
+    const transferPoIds = purchaseOrders
+      .filter(
+        (o) =>
+          o.fulfillment_type === 'warehouse_transfer' &&
+          String(o.company_id) === String(user.company_id) &&
+          (o.status === 'fulfilled' ||
+            o.status === 'partially_fulfilled' ||
+            o.workflow_status === 'partial_delivered' ||
+            o.workflow_status === 'delivered')
+      )
+      .map((o) => o.id);
+
+    if (transferPoIds.length === 0) {
+      setPendingReceiveByPoId({});
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { data: deliveries, error } = await supabase
+          .from('purchase_order_deliveries')
+          .select(
+            'id,purchase_order_id,company_id,dr_number,dispatched_at,status,warehouse_location_id,warehouse_locations:warehouse_location_id(name)'
+          )
+          .in('purchase_order_id', transferPoIds)
+          .eq('status', 'dispatched')
+          .eq('company_id', user.company_id)
+          .order('dispatched_at', { ascending: true });
+        if (error) throw error;
+        if (cancelled) return;
+
+        const oldestByPo: Record<
+          string,
+          {
+            deliveryId: string;
+            drNumber: string | null;
+            companyId: string;
+            warehouseLocationId: string | null;
+            warehouseLocationName: string | null;
+          }
+        > = {};
+        for (const row of deliveries || []) {
+          const poId = String((row as any).purchase_order_id);
+          if (oldestByPo[poId]) continue;
+          const loc = Array.isArray((row as any).warehouse_locations)
+            ? (row as any).warehouse_locations[0]
+            : (row as any).warehouse_locations;
+          oldestByPo[poId] = {
+            deliveryId: String((row as any).id),
+            drNumber: (row as any).dr_number ? String((row as any).dr_number) : null,
+            companyId: String((row as any).company_id),
+            warehouseLocationId: (row as any).warehouse_location_id
+              ? String((row as any).warehouse_location_id)
+              : null,
+            warehouseLocationName: loc?.name ? String(loc.name) : null,
+          };
+        }
+
+        const deliveryIds = Object.values(oldestByPo).map((d) => d.deliveryId);
+        if (deliveryIds.length === 0) {
+          setPendingReceiveByPoId({});
+          return;
+        }
+
+        const { data: itemData, error: itemErr } = await supabase
+          .from('purchase_order_delivery_items')
+          .select(
+            'delivery_id,variant_id,quantity_dispatched,quantity_received,variants:variant_id(name,brands:brand_id(name))'
+          )
+          .in('delivery_id', deliveryIds);
+        if (itemErr) throw itemErr;
+        if (cancelled) return;
+
+        const linesByDelivery: Record<string, PoReceiveLine[]> = {};
+        for (const item of (itemData || []) as any[]) {
+          if (Number(item.quantity_received || 0) > 0) continue;
+          const variant = Array.isArray(item.variants) ? item.variants[0] : item.variants;
+          const brand = variant?.brands
+            ? Array.isArray(variant.brands)
+              ? variant.brands[0]
+              : variant.brands
+            : null;
+          (linesByDelivery[item.delivery_id] ||= []).push({
+            variant_id: String(item.variant_id),
+            quantity_dispatched: Number(item.quantity_dispatched) || 0,
+            brand_name: brand?.name ?? null,
+            variant_name: variant?.name ?? null,
+          });
+        }
+
+        const next: typeof pendingReceiveByPoId = {};
+        for (const [poId, meta] of Object.entries(oldestByPo)) {
+          const lines = linesByDelivery[meta.deliveryId] || [];
+          if (lines.length === 0) continue;
+          next[poId] = {
+            deliveryId: meta.deliveryId,
+            drNumber: meta.drNumber,
+            companyId: meta.companyId,
+            warehouseLocationId: meta.warehouseLocationId,
+            warehouseLocationName: meta.warehouseLocationName,
+            lines,
+          };
+        }
+        setPendingReceiveByPoId(next);
+      } catch (e) {
+        console.warn('[PO List] pending receive load failed', e);
+        if (!cancelled) setPendingReceiveByPoId({});
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [purchaseOrders, isWarehouse, user?.company_id]);
 
   // DR numbers issued by this warehouse user's location (for Print DR button visibility).
   useEffect(() => {
@@ -751,6 +1038,61 @@ export default function PurchaseOrdersPage() {
     );
   };
 
+  const canReceiveOrder = (order: { id: string; company_id?: string; fulfillment_type?: string }) => {
+    if (isWarehouse) return false;
+    if (order.fulfillment_type !== 'warehouse_transfer') return false;
+    if (!user?.company_id || String(order.company_id) !== String(user.company_id)) return false;
+    return !!pendingReceiveByPoId[order.id];
+  };
+
+  const openReceiveForOrder = (order: { id: string }) => {
+    const pending = pendingReceiveByPoId[order.id];
+    if (!pending) {
+      toast({
+        title: 'Nothing to receive',
+        description: 'No dispatched delivery is waiting for receive on this PO.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setOpeningReceivePoId(order.id);
+    setTableReceiveTarget({
+      deliveryId: pending.deliveryId,
+      purchaseOrderId: order.id,
+      companyId: pending.companyId,
+      drNumber: pending.drNumber,
+      warehouseLocationId: pending.warehouseLocationId,
+      warehouseLocationName: pending.warehouseLocationName,
+      order,
+      lines: pending.lines,
+    });
+    setTableReceiveOpen(true);
+    setOpeningReceivePoId(null);
+  };
+
+  const openCancelForOrder = (order: { id: string }) => {
+    const pending = pendingReceiveByPoId[order.id];
+    if (!pending) {
+      toast({
+        title: 'Nothing to cancel',
+        description: 'No dispatched delivery is waiting on this PO.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setOpeningCancelPoId(order.id);
+    setTableCancelTarget({
+      deliveryId: pending.deliveryId,
+      purchaseOrderId: order.id,
+      companyId: pending.companyId,
+      drNumber: pending.drNumber,
+      warehouseLocationName: pending.warehouseLocationName,
+      lines: pending.lines,
+    });
+    setTableCancelOpen(true);
+    setOpeningCancelPoId(null);
+  };
+
   const handleApproveOrder = async () => {
     if (!orderToApprove) return;
 
@@ -789,12 +1131,37 @@ export default function PurchaseOrdersPage() {
 
   const openDispatchCaptureForFulfill = (order: any) => {
     setDispatchPo(order);
+    setDispatchStep(1);
     setRiderName('');
     setRiderPlate('');
     clearRiderPhoto();
     setWarehouseSignatureDataUrl(null);
     setDispatchNotes('');
+    setDispatchLines([]);
     setDispatchOpen(true);
+  };
+
+  const validateDispatchShipQtys = () => {
+    const shipItems = dispatchLines.filter((l) => l.ship_qty > 0);
+    if (shipItems.length === 0) {
+      toast({
+        title: 'Nothing to ship',
+        description: 'Enter at least one quantity greater than 0.',
+        variant: 'destructive',
+      });
+      return false;
+    }
+    for (const line of dispatchLines) {
+      if (line.ship_qty < 0 || line.ship_qty > line.remaining) {
+        toast({
+          title: 'Invalid quantity',
+          description: 'Ship qty must be between 0 and remaining qty.',
+          variant: 'destructive',
+        });
+        return false;
+      }
+    }
+    return true;
   };
 
   const handleOpenFulfillDialog = (order: any) => {
@@ -818,6 +1185,69 @@ export default function PurchaseOrdersPage() {
     }
     setFulfillDialogOpen(true);
   };
+
+  // Load remaining reservation qty for partial dispatch
+  useEffect(() => {
+    if (!dispatchOpen || !dispatchPo?.id) return;
+    const locId = fulfillLocationId ?? membership.locationId;
+    if (!locId) return;
+
+    let cancelled = false;
+    setLoadingDispatchLines(true);
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('warehouse_transfer_reservations')
+          .select(
+            'variant_id,quantity_reserved,quantity_fulfilled,status,variants:variant_id(name,brands:brand_id(name))'
+          )
+          .eq('purchase_order_id', dispatchPo.id)
+          .eq('warehouse_location_id', locId)
+          .neq('status', 'cancelled');
+        if (error) throw error;
+        if (cancelled) return;
+
+        const lines = ((data || []) as any[])
+          .map((row) => {
+            const remaining = Math.max(
+              0,
+              Number(row.quantity_reserved || 0) - Number(row.quantity_fulfilled || 0)
+            );
+            if (remaining <= 0) return null;
+            const variant = Array.isArray(row.variants) ? row.variants[0] : row.variants;
+            const brand = variant?.brands
+              ? Array.isArray(variant.brands)
+                ? variant.brands[0]
+                : variant.brands
+              : null;
+            return {
+              variant_id: String(row.variant_id),
+              remaining,
+              ship_qty: remaining,
+              brand_name: brand?.name ?? null,
+              variant_name: variant?.name ?? null,
+            };
+          })
+          .filter(Boolean) as Array<{
+          variant_id: string;
+          remaining: number;
+          ship_qty: number;
+          brand_name?: string | null;
+          variant_name?: string | null;
+        }>;
+        setDispatchLines(lines);
+      } catch (e) {
+        console.warn('[Dispatch] failed to load reservation lines', e);
+        if (!cancelled) setDispatchLines([]);
+      } finally {
+        if (!cancelled) setLoadingDispatchLines(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatchOpen, dispatchPo?.id, fulfillLocationId, membership.locationId]);
 
   useEffect(() => {
     if ((!fulfillDialogOpen && !dispatchOpen) || !orderToFulfill?.id) return;
@@ -1191,8 +1621,8 @@ export default function PurchaseOrdersPage() {
                       )}
                     </div>
                   </div>
-                  <Badge variant="default" className={getStatusBadgeClass(order.status)}>
-                    {getStatusDisplayText(order.status)}
+                  <Badge variant="default" className={getStatusBadgeClassForOrder(order)}>
+                    {getStatusDisplayTextForOrder(order)}
                   </Badge>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
@@ -1239,6 +1669,37 @@ export default function PurchaseOrdersPage() {
                     <Button variant="default" size="sm" onClick={() => handleOpenFulfillDialog(order)} disabled={fulfillingOrderId === order.id}>
                       <Package className="h-4 w-4 mr-1" />
                       Fulfill
+                    </Button>
+                  )}
+                  {canReceiveOrder(order) && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => openReceiveForOrder(order)}
+                      disabled={openingReceivePoId === order.id}
+                    >
+                      {openingReceivePoId === order.id ? (
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      ) : (
+                        <PackageCheck className="h-4 w-4 mr-1" />
+                      )}
+                      Receive
+                    </Button>
+                  )}
+                  {canReceiveOrder(order) && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => openCancelForOrder(order)}
+                      disabled={openingCancelPoId === order.id}
+                      title="Refuse this DR and return stock to warehouse"
+                    >
+                      {openingCancelPoId === order.id ? (
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      ) : (
+                        <XCircle className="h-4 w-4 mr-1" />
+                      )}
+                      Cancel DR
                     </Button>
                   )}
                   {canApproveOrder(order) && (
@@ -1365,8 +1826,8 @@ export default function PurchaseOrdersPage() {
                         ₱{order.total_amount.toLocaleString()}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="default" className={getStatusBadgeClass(order.status)}>
-                          {getStatusDisplayText(order.status)}
+                        <Badge variant="default" className={getStatusBadgeClassForOrder(order)}>
+                          {getStatusDisplayTextForOrder(order)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
@@ -1399,6 +1860,37 @@ export default function PurchaseOrdersPage() {
                                 <Package className="h-4 w-4 mr-1" />
                               )}
                               Fulfill
+                            </Button>
+                          )}
+                          {canReceiveOrder(order) && (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => openReceiveForOrder(order)}
+                              disabled={openingReceivePoId === order.id}
+                            >
+                              {openingReceivePoId === order.id ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <PackageCheck className="h-4 w-4 mr-1" />
+                              )}
+                              Receive
+                            </Button>
+                          )}
+                          {canReceiveOrder(order) && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => openCancelForOrder(order)}
+                              disabled={openingCancelPoId === order.id}
+                              title="Refuse this DR and return stock to warehouse"
+                            >
+                              {openingCancelPoId === order.id ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              ) : (
+                                <XCircle className="h-4 w-4 mr-1" />
+                              )}
+                              Cancel DR
                             </Button>
                           )}
                           {canApproveOrder(order) && (
@@ -1766,356 +2258,536 @@ export default function PurchaseOrdersPage() {
       </AlertDialog>
 
       {/* Dispatch / Delivery Dialog (warehouse transfer fulfill) */}
-      <Dialog open={dispatchOpen} onOpenChange={setDispatchOpen}>
+      <Dialog
+        open={dispatchOpen}
+        onOpenChange={(next) => {
+          setDispatchOpen(next);
+          if (!next) setDispatchStep(1);
+        }}
+      >
         <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
           <DialogHeader className="px-6 pt-6 pb-3 shrink-0 space-y-1">
             <DialogTitle>Dispatch / Delivery</DialogTitle>
             <DialogDescription>
-              {dispatchPo?.po_number ? `PO: ${dispatchPo.po_number}` : 'Complete delivery details below.'}
+              {dispatchStep === 1
+                ? `Step 1 of 2 — confirm quantities${dispatchPo?.po_number ? ` for ${dispatchPo.po_number}` : ''}.`
+                : `Step 2 of 2 — rider, signature, and notes${dispatchPo?.po_number ? ` for ${dispatchPo.po_number}` : ''}.`}
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4 space-y-4">
-            {dispatchPo?.po_order_kind === 'rebate_fulfillment' && (
-              <div className="space-y-2 rounded-md border bg-muted/20 p-3">
-                <div className="text-sm font-medium">Expected return items (disputed lines)</div>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Replacement stock is deducted on delivery. Disputed items are restocked only after physical receive.
-                </p>
-                {loadingFulfillRebateReturnLines ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading return items…
-                  </div>
-                ) : fulfillRebateReturnLines.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">—</div>
-                ) : (
-                  <div className="max-h-28 overflow-auto rounded-md border bg-background">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="h-8 text-xs">Brand</TableHead>
-                          <TableHead className="h-8 text-xs">Variant</TableHead>
-                          <TableHead className="h-8 text-xs text-right">Qty</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {fulfillRebateReturnLines.map((l, idx) => (
-                          <TableRow key={`${l.variant_name}-${idx}`}>
-                            <TableCell className="py-2 text-xs font-medium">{l.brand_name}</TableCell>
-                            <TableCell className="py-2 text-xs">{l.variant_name}</TableCell>
-                            <TableCell className="py-2 text-xs text-right font-semibold">{l.disputed_quantity}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+            {dispatchStep === 1 ? (
+              <>
+                {dispatchPo?.po_order_kind === 'rebate_fulfillment' && (
+                  <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                    <div className="text-sm font-medium">Expected return items (disputed lines)</div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Replacement stock is deducted on delivery. Disputed items are restocked only after physical receive.
+                    </p>
+                    {loadingFulfillRebateReturnLines ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" /> Loading return items…
+                      </div>
+                    ) : fulfillRebateReturnLines.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">—</div>
+                    ) : (
+                      <div className="max-h-28 overflow-auto rounded-md border bg-background">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="h-8 text-xs">Brand</TableHead>
+                              <TableHead className="h-8 text-xs">Variant</TableHead>
+                              <TableHead className="h-8 text-xs text-right">Qty</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {fulfillRebateReturnLines.map((l, idx) => (
+                              <TableRow key={`${l.variant_name}-${idx}`}>
+                                <TableCell className="py-2 text-xs font-medium">{l.brand_name}</TableCell>
+                                <TableCell className="py-2 text-xs">{l.variant_name}</TableCell>
+                                <TableCell className="py-2 text-xs text-right font-semibold">{l.disputed_quantity}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Rider name</Label>
-                <Input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="e.g. Juan Dela Cruz" />
-              </div>
-              <div className="space-y-2">
-                <Label>Plate number</Label>
-                <Input value={riderPlate} onChange={(e) => setRiderPlate(e.target.value)} placeholder="e.g. ABC-1234" />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Rider photo</Label>
-              <Input
-                ref={riderPhotoInputRef}
-                type="file"
-                accept={RIDER_PHOTO_ACCEPT}
-                onChange={(e) => handleRiderPhotoChange(e.target.files?.[0] ?? null)}
-              />
-              <p className="text-xs text-muted-foreground">JPG, PNG, WEBP, or GIF only. Max 5 MB.</p>
-              {riderPhotoFile && riderPhotoPreviewUrl ? (
-                <div className="rounded-lg border p-3 space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{riderPhotoFile.name}</p>
-                      <p className="text-xs text-muted-foreground">{(riderPhotoFile.size / 1024).toFixed(1)} KB</p>
+                <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                  <div className="text-sm font-medium">Quantities to dispatch</div>
+                  <p className="text-xs text-muted-foreground">
+                    You can ship partial quantities. Remaining units stay open for another DR on this PO.
+                  </p>
+                  {loadingDispatchLines ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading remaining qty…
                     </div>
-                    <Button type="button" variant="outline" size="sm" onClick={clearRiderPhoto}>
-                      <X className="h-3 w-3 mr-1" />
-                      Remove
-                    </Button>
-                  </div>
-                  <div className="border rounded-lg overflow-hidden bg-muted/30 p-2">
-                    <img
-                      src={riderPhotoPreviewUrl}
-                      alt="Rider photo preview"
-                      className="w-full h-auto max-h-48 object-contain mx-auto rounded-md"
-                    />
-                  </div>
+                  ) : dispatchLines.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">No remaining quantity to fulfill at this warehouse.</div>
+                  ) : (
+                    <div className="max-h-40 overflow-auto rounded-md border bg-background">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="h-8 text-xs">Item</TableHead>
+                            <TableHead className="h-8 text-xs text-right">Remaining</TableHead>
+                            <TableHead className="h-8 text-xs text-right w-28">Ship now</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {dispatchLines.map((line) => (
+                            <TableRow key={line.variant_id}>
+                              <TableCell className="py-2 text-xs">
+                                {[line.brand_name, line.variant_name].filter(Boolean).join(' · ') ||
+                                  line.variant_id.slice(0, 8)}
+                              </TableCell>
+                              <TableCell className="py-2 text-xs text-right font-semibold">
+                                {line.remaining}
+                              </TableCell>
+                              <TableCell className="py-2 text-right">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={line.remaining}
+                                  className="h-8 text-right"
+                                  value={line.ship_qty}
+                                  onChange={(e) => {
+                                    const n = Number(e.target.value);
+                                    setDispatchLines((prev) =>
+                                      prev.map((p) =>
+                                        p.variant_id === line.variant_id
+                                          ? {
+                                              ...p,
+                                              ship_qty: Number.isFinite(n)
+                                                ? Math.max(0, Math.min(line.remaining, n))
+                                                : 0,
+                                            }
+                                          : p
+                                      )
+                                    );
+                                  }}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </div>
-              ) : null}
-            </div>
+                <p className="text-xs text-muted-foreground">
+                  Total shipping:{' '}
+                  <span className="font-medium text-foreground">
+                    {dispatchLines.reduce((s, l) => s + l.ship_qty, 0)}
+                  </span>{' '}
+                  of {dispatchLines.reduce((s, l) => s + l.remaining, 0)}.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="rounded-md border bg-muted/20 p-3 text-sm">
+                  Confirming dispatch of{' '}
+                  <span className="font-semibold">
+                    {dispatchLines.reduce((s, l) => s + l.ship_qty, 0)}
+                  </span>{' '}
+                  / {dispatchLines.reduce((s, l) => s + l.remaining, 0)} unit(s)
+                  {dispatchPo?.po_number ? (
+                    <>
+                      {' '}
+                      for <span className="font-mono font-medium">{dispatchPo.po_number}</span>
+                    </>
+                  ) : null}
+                  .
+                </div>
 
-            <div className="space-y-2">
-              <Label>Warehouse e-signature</Label>
-              {warehouseSignatureDataUrl ? (
-                <div className="border rounded-md p-3 bg-muted/30 space-y-2">
-                  <img src={warehouseSignatureDataUrl} alt="Warehouse signature" className="max-h-20 mx-auto" />
-                  <div className="flex justify-end">
-                    <Button variant="ghost" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
-                      Change signature
-                    </Button>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Rider name</Label>
+                    <Input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="e.g. Juan Dela Cruz" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Plate number</Label>
+                    <Input value={riderPlate} onChange={(e) => setRiderPlate(e.target.value)} placeholder="e.g. ABC-1234" />
                   </div>
                 </div>
-              ) : (
-                <div className="border rounded-md p-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm text-muted-foreground">Draw warehouse signature before delivering.</p>
-                  <Button type="button" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
-                    Add signature
-                  </Button>
-                </div>
-              )}
-            </div>
 
-            <div className="space-y-2">
-              <Label>Notes <span className="text-muted-foreground font-normal">(optional)</span></Label>
-              <Textarea
-                value={dispatchNotes}
-                onChange={(e) => setDispatchNotes(e.target.value)}
-                placeholder="Delivery instructions, gate pass, etc."
-                rows={2}
-              />
-            </div>
+                <div className="space-y-2">
+                  <Label>Rider photo</Label>
+                  <Input
+                    ref={riderPhotoInputRef}
+                    type="file"
+                    accept={RIDER_PHOTO_ACCEPT}
+                    onChange={(e) => handleRiderPhotoChange(e.target.files?.[0] ?? null)}
+                  />
+                  <p className="text-xs text-muted-foreground">JPG, PNG, WEBP, or GIF only. Max 5 MB.</p>
+                  {riderPhotoFile && riderPhotoPreviewUrl ? (
+                    <div className="rounded-lg border p-3 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{riderPhotoFile.name}</p>
+                          <p className="text-xs text-muted-foreground">{(riderPhotoFile.size / 1024).toFixed(1)} KB</p>
+                        </div>
+                        <Button type="button" variant="outline" size="sm" onClick={clearRiderPhoto}>
+                          <X className="h-3 w-3 mr-1" />
+                          Remove
+                        </Button>
+                      </div>
+                      <div className="border rounded-lg overflow-hidden bg-muted/30 p-2">
+                        <img
+                          src={riderPhotoPreviewUrl}
+                          alt="Rider photo preview"
+                          className="w-full h-auto max-h-48 object-contain mx-auto rounded-md"
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Warehouse e-signature</Label>
+                  {warehouseSignatureDataUrl ? (
+                    <div className="border rounded-md p-3 bg-muted/30 space-y-2">
+                      <img src={warehouseSignatureDataUrl} alt="Warehouse signature" className="max-h-20 mx-auto" />
+                      <div className="flex justify-end">
+                        <Button variant="ghost" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
+                          Change signature
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border rounded-md p-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm text-muted-foreground">Draw warehouse signature before delivering.</p>
+                      <Button type="button" size="sm" onClick={() => setShowWarehouseSignatureModal(true)}>
+                        Add signature
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Notes <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Textarea
+                    value={dispatchNotes}
+                    onChange={(e) => setDispatchNotes(e.target.value)}
+                    placeholder="Delivery instructions, gate pass, etc."
+                    rows={2}
+                  />
+                </div>
+              </>
+            )}
           </div>
 
-          <DialogFooter className="px-6 py-4 border-t shrink-0 bg-background">
-              <Button
-                variant="outline"
-                onClick={() => setDispatchOpen(false)}
-                disabled={savingDispatch || fulfillingOrderId === orderToFulfill?.id}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={async () => {
-                  const locId = fulfillLocationId ?? membership.locationId;
-                  if (!dispatchPo?.id || !dispatchPo?.company_id || !locId) return;
-                  if (!riderName.trim() || !riderPlate.trim() || !riderPhotoFile || !warehouseSignatureDataUrl) {
-                    toast({ title: 'Missing info', description: 'Rider name, plate number, rider photo, and warehouse signature are required.', variant: 'destructive' });
-                    return;
-                  }
-
-                  const riderPhotoError = getRiderPhotoValidationError(riderPhotoFile);
-                  if (riderPhotoError) {
-                    toast({
-                      title: 'Invalid rider photo',
-                      description: riderPhotoError,
-                      variant: 'destructive',
-                    });
-                    return;
-                  }
-
-                  const warehouseCompanyId =
-                    (dispatchPo.warehouse_company_id as string | null | undefined) ?? user?.company_id ?? null;
-                  if (!warehouseCompanyId) {
-                    toast({
-                      title: 'Missing warehouse',
-                      description: 'Could not resolve warehouse company for uploads and DR number.',
-                      variant: 'destructive',
-                    });
-                    return;
-                  }
-
-                  const storageBasePath = `${warehouseCompanyId}/po/${dispatchPo.id}`;
-
-                  setSavingDispatch(true);
-                  try {
-                    // 1) Fulfill first (deduct stock / move to requesting company)
-                    setFulfillingOrderId(dispatchPo.id);
-                    const { data: fulfillData, error: fulfillErr } = await supabase.rpc('fulfill_po_location', {
-                      p_po_id: dispatchPo.id,
-                      p_location_id: locId,
-                    });
-                    if (fulfillErr) throw fulfillErr;
-                    if (!fulfillData?.success) throw new Error(fulfillData?.error || 'Fulfillment failed');
-
-                    const fileExt = riderPhotoFile.name.split('.').pop() || 'jpg';
-                    const uploadTs = Date.now();
-                    const filePath = `${storageBasePath}/${uploadTs}_rider.${fileExt}`;
-
-                    const base64Data = warehouseSignatureDataUrl.split(',')[1];
-                    if (!base64Data) throw new Error('Invalid warehouse signature data');
-                    const binaryString = atob(base64Data);
-                    const bytes = new Uint8Array(binaryString.length);
-                    for (let i = 0; i < binaryString.length; i++) {
-                      bytes[i] = binaryString.charCodeAt(i);
-                    }
-                    const signatureBlob = new Blob([bytes], { type: 'image/png' });
-                    const signaturePath = `${storageBasePath}/${uploadTs}_warehouse-signature.png`;
-
-                    const [{ error: uploadError }, { error: sigUploadError }] = await Promise.all([
-                      supabase.storage
-                        .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
-                        .upload(filePath, riderPhotoFile, {
-                          upsert: false,
-                          contentType: riderPhotoContentType(riderPhotoFile),
-                        }),
-                      supabase.storage
-                        .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
-                        .upload(signaturePath, signatureBlob, {
-                          contentType: 'image/png',
-                          upsert: false,
-                        }),
-                    ]);
-                    if (uploadError) throw uploadError;
-                    if (sigUploadError) throw sigUploadError;
-
-                    const [{ data: urlData, error: urlErr }, { data: sigUrlData, error: sigUrlErr }] =
-                      await Promise.all([
-                        supabase.storage
-                          .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
-                          .createSignedUrl(filePath, 60 * 60 * 24 * 365),
-                        supabase.storage
-                          .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
-                          .createSignedUrl(signaturePath, 60 * 60 * 24 * 365),
-                      ]);
-                    if (urlErr) throw urlErr;
-                    if (sigUrlErr) throw sigUrlErr;
-                    const riderPhotoUrl = urlData?.signedUrl;
-                    const warehouseSignatureUrl = sigUrlData?.signedUrl;
-                    if (!riderPhotoUrl) throw new Error('Failed to create signed URL');
-                    if (!warehouseSignatureUrl) throw new Error('Failed to create signature URL');
-
-                    // 2) Create DR number (WH + first letter of warehouse_locations.name, e.g. Bacoor → WHB)
-                    const { data: drNumber, error: drErr } = await supabase.rpc('generate_dr_number', {
-                      p_warehouse_location_id: locId,
-                    });
-                    if (drErr) throw drErr;
-                    if (!drNumber) throw new Error('Failed to generate DR number');
-
-                    if (!user?.id) {
-                      throw new Error('Not signed in; cannot record dispatch (created_by required).');
+          <DialogFooter className="px-6 py-4 border-t shrink-0 gap-2 sm:gap-2 bg-background">
+            {dispatchStep === 1 ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setDispatchOpen(false)}
+                  disabled={savingDispatch || fulfillingOrderId === orderToFulfill?.id}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (!validateDispatchShipQtys()) return;
+                    setDispatchStep(2);
+                  }}
+                  disabled={loadingDispatchLines || dispatchLines.length === 0}
+                >
+                  Next
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setDispatchStep(1)}
+                  disabled={savingDispatch || fulfillingOrderId === orderToFulfill?.id}
+                >
+                  Back
+                </Button>
+                <Button
+                  onClick={async () => {
+                    const locId = fulfillLocationId ?? membership.locationId;
+                    if (!dispatchPo?.id || !dispatchPo?.company_id || !locId) return;
+                    if (!validateDispatchShipQtys()) return;
+                    if (!riderName.trim() || !riderPlate.trim() || !riderPhotoFile || !warehouseSignatureDataUrl) {
+                      toast({ title: 'Missing info', description: 'Rider name, plate number, rider photo, and warehouse signature are required.', variant: 'destructive' });
+                      return;
                     }
 
-                    // 3) Save dispatch (RLS requires created_by = auth.uid())
-                    const { error: insErr } = await supabase.from('purchase_order_deliveries').insert({
-                      purchase_order_id: dispatchPo.id,
-                      company_id: dispatchPo.company_id,
-                      warehouse_location_id: locId,
-                      rider_name: riderName.trim(),
-                      rider_plate_number: riderPlate.trim(),
-                      rider_photo_url: riderPhotoUrl,
-                      warehouse_signature_url: warehouseSignatureUrl,
-                      warehouse_signature_path: signaturePath,
-                      dr_number: drNumber,
-                      status: 'dispatched',
-                      notes: dispatchNotes.trim() || null,
-                      created_by: user.id,
-                    } as any);
-                    if (insErr) throw insErr;
-
-                    // 4) Key Account workflow: partial vs full delivery (multi-warehouse)
-                    const { data: locStatusRows, error: locStatusErr } = await supabase
-                      .from('warehouse_transfer_location_status')
-                      .select('status')
-                      .eq('purchase_order_id', dispatchPo.id);
-                    if (locStatusErr) throw locStatusErr;
-
-                    const workflowStatus = keyAccountWorkflowStatusAfterLocationDispatch(
-                      locStatusRows || []
-                    );
-                    const poUpdate: { workflow_status: string; dr_number?: string } = {
-                      workflow_status: workflowStatus,
-                    };
-
-                    if (workflowStatus === 'delivered') {
-                      const { data: deliveryRows, error: drListErr } = await supabase
-                        .from('purchase_order_deliveries')
-                        .select('dr_number')
-                        .eq('purchase_order_id', dispatchPo.id)
-                        .not('dr_number', 'is', null);
-                      if (drListErr) throw drListErr;
-                      const drList = (deliveryRows || [])
-                        .map((r: { dr_number?: string | null }) => r.dr_number)
-                        .filter(Boolean) as string[];
-                      if (drList.length > 0) {
-                        poUpdate.dr_number = drList.join(', ');
-                      }
-                    }
-
-                    const { error: poUpdErr } = await supabase
-                      .from('purchase_orders')
-                      .update(poUpdate)
-                      .eq('id', dispatchPo.id);
-                    if (poUpdErr) throw poUpdErr;
-
-                    toast({
-                      title: workflowStatus === 'delivered' ? 'Delivered' : 'Partial delivery',
-                      description:
-                        workflowStatus === 'delivered'
-                          ? `All warehouses dispatched. DR: ${poUpdate.dr_number || drNumber}`
-                          : `Dispatch saved for this warehouse. DR: ${drNumber}. Other warehouse(s) still pending.`,
-                    });
-
-                    const whName =
-                      fulfillLocationName?.trim() ||
-                      approveLocationNames[locId] ||
-                      resolveWarehouseNameForLocation(dispatchPo, locId);
-
-                    const pdfPo = dispatchPo;
-                    const pdfDrNumber = drNumber;
-                    const pdfLocId = locId;
-                    const pdfWhName = whName;
-
-                    setMyLocationDrByPo((prev) => ({
-                      ...prev,
-                      [dispatchPo.id]: {
-                        dr_number: drNumber,
-                        warehouse_location_id: locId,
-                        warehouse_name: whName,
-                      },
-                    }));
-
-                    // Update local status so Fulfill button hides immediately
-                    setMyLocationStatuses((prev) => ({ ...prev, [dispatchPo.id]: 'fulfilled' }));
-                    setDispatchOpen(false);
-                    setDispatchPo(null);
-                    setWarehouseSignatureDataUrl(null);
-                    setDispatchNotes('');
-                    setOrderToFulfill(null);
-                    setFulfillLocationId(null);
-                    setFulfillLocationName(null);
-                    void fetchPurchaseOrders(false, true);
-
-                    void generateAndOpenDrPdf(pdfPo, {
-                      drNumber: pdfDrNumber,
-                      warehouseLocationId: pdfLocId,
-                      warehouseLocationName: pdfWhName,
-                    }).catch((drPdfErr: any) => {
-                      console.warn('[DR] auto-open after dispatch failed', drPdfErr);
+                    const riderPhotoError = getRiderPhotoValidationError(riderPhotoFile);
+                    if (riderPhotoError) {
                       toast({
-                        title: 'DR opened with issues',
-                        description: drPdfErr?.message || 'Delivery saved but DR preview could not open.',
+                        title: 'Invalid rider photo',
+                        description: riderPhotoError,
                         variant: 'destructive',
                       });
-                    });
-                  } catch (e: any) {
-                    toast({ title: 'Error', description: e.message || 'Failed to save dispatch info', variant: 'destructive' });
-                  } finally {
-                    setSavingDispatch(false);
-                    setFulfillingOrderId(null);
+                      return;
+                    }
+
+                    const warehouseCompanyId =
+                      (dispatchPo.warehouse_company_id as string | null | undefined) ?? user?.company_id ?? null;
+                    if (!warehouseCompanyId) {
+                      toast({
+                        title: 'Missing warehouse',
+                        description: 'Could not resolve warehouse company for uploads and DR number.',
+                        variant: 'destructive',
+                      });
+                      return;
+                    }
+
+                    const storageBasePath = `${warehouseCompanyId}/po/${dispatchPo.id}`;
+
+                    const shipItems = dispatchLines
+                      .filter((l) => l.ship_qty > 0)
+                      .map((l) => ({ variant_id: l.variant_id, quantity: l.ship_qty }));
+
+                    setSavingDispatch(true);
+                    try {
+                      // 1) Fulfill first (deduct warehouse stock; buyer stock credits on receive)
+                      setFulfillingOrderId(dispatchPo.id);
+                      const { data: fulfillData, error: fulfillErr } = await supabase.rpc('fulfill_po_location', {
+                        p_po_id: dispatchPo.id,
+                        p_location_id: locId,
+                        p_items: shipItems,
+                      });
+                      if (fulfillErr) throw fulfillErr;
+                      if (!fulfillData?.success) throw new Error(fulfillData?.error || 'Fulfillment failed');
+
+                      const fulfilledItems: Array<{ variant_id: string; quantity: number }> =
+                        Array.isArray(fulfillData?.items) && fulfillData.items.length > 0
+                          ? fulfillData.items
+                          : shipItems;
+                      const locationFullyFulfilled = !!fulfillData?.location_fully_fulfilled;
+
+                      const fileExt = riderPhotoFile.name.split('.').pop() || 'jpg';
+                      const uploadTs = Date.now();
+                      const filePath = `${storageBasePath}/${uploadTs}_rider.${fileExt}`;
+
+                      const base64Data = warehouseSignatureDataUrl.split(',')[1];
+                      if (!base64Data) throw new Error('Invalid warehouse signature data');
+                      const binaryString = atob(base64Data);
+                      const bytes = new Uint8Array(binaryString.length);
+                      for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                      }
+                      const signatureBlob = new Blob([bytes], { type: 'image/png' });
+                      const signaturePath = `${storageBasePath}/${uploadTs}_warehouse-signature.png`;
+
+                      const [{ error: uploadError }, { error: sigUploadError }] = await Promise.all([
+                        supabase.storage
+                          .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
+                          .upload(filePath, riderPhotoFile, {
+                            upsert: false,
+                            contentType: riderPhotoContentType(riderPhotoFile),
+                          }),
+                        supabase.storage
+                          .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
+                          .upload(signaturePath, signatureBlob, {
+                            contentType: 'image/png',
+                            upsert: false,
+                          }),
+                      ]);
+                      if (uploadError) throw uploadError;
+                      if (sigUploadError) throw sigUploadError;
+
+                      const [{ data: urlData, error: urlErr }, { data: sigUrlData, error: sigUrlErr }] =
+                        await Promise.all([
+                          supabase.storage
+                            .from(KA_DELIVERY_RIDER_PHOTOS_BUCKET)
+                            .createSignedUrl(filePath, 60 * 60 * 24 * 365),
+                          supabase.storage
+                            .from(KA_DELIVERY_WAREHOUSE_SIGNATURES_BUCKET)
+                            .createSignedUrl(signaturePath, 60 * 60 * 24 * 365),
+                        ]);
+                      if (urlErr) throw urlErr;
+                      if (sigUrlErr) throw sigUrlErr;
+                      const riderPhotoUrl = urlData?.signedUrl;
+                      const warehouseSignatureUrl = sigUrlData?.signedUrl;
+                      if (!riderPhotoUrl) throw new Error('Failed to create signed URL');
+                      if (!warehouseSignatureUrl) throw new Error('Failed to create signature URL');
+
+                      // 2) Create DR number (WH + first letter of warehouse_locations.name, e.g. Bacoor → WHB)
+                      const { data: drNumber, error: drErr } = await supabase.rpc('generate_dr_number', {
+                        p_warehouse_location_id: locId,
+                      });
+                      if (drErr) throw drErr;
+                      if (!drNumber) throw new Error('Failed to generate DR number');
+
+                      if (!user?.id) {
+                        throw new Error('Not signed in; cannot record dispatch (created_by required).');
+                      }
+
+                      // 3) Save dispatch (RLS requires created_by = auth.uid())
+                      const { data: deliveryRow, error: insErr } = await supabase
+                        .from('purchase_order_deliveries')
+                        .insert({
+                          purchase_order_id: dispatchPo.id,
+                          company_id: dispatchPo.company_id,
+                          warehouse_location_id: locId,
+                          rider_name: riderName.trim(),
+                          rider_plate_number: riderPlate.trim(),
+                          rider_photo_url: riderPhotoUrl,
+                          warehouse_signature_url: warehouseSignatureUrl,
+                          warehouse_signature_path: signaturePath,
+                          dr_number: drNumber,
+                          status: 'dispatched',
+                          notes: dispatchNotes.trim() || null,
+                          created_by: user.id,
+                        } as any)
+                        .select('id')
+                        .single();
+                      if (insErr) throw insErr;
+                      if (!deliveryRow?.id) throw new Error('Failed to create delivery record');
+
+                      const { error: itemsErr } = await supabase.from('purchase_order_delivery_items').insert(
+                        fulfilledItems.map((it) => ({
+                          delivery_id: deliveryRow.id,
+                          variant_id: it.variant_id,
+                          quantity_dispatched: it.quantity,
+                          quantity_received: 0,
+                        })) as any
+                      );
+                      if (itemsErr) throw itemsErr;
+
+                      // 4) Workflow status
+                      // Key Accounts: dispatch completes delivery (no buyer receive).
+                      // Standard Accounts: stay partial_delivered until receive_po_delivery.
+                      const isKeyAccount = String(dispatchPo.company_account_type || '') === 'Key Accounts';
+                      const poUpdate: { workflow_status: string; dr_number?: string } = {
+                        workflow_status: 'partial_delivered',
+                      };
+
+                      if (isKeyAccount) {
+                        const { data: locStatusRows, error: locStatusErr } = await supabase
+                          .from('warehouse_transfer_location_status')
+                          .select('status')
+                          .eq('purchase_order_id', dispatchPo.id);
+                        if (locStatusErr) throw locStatusErr;
+
+                        const workflowStatus = keyAccountWorkflowStatusAfterLocationDispatch(
+                          locStatusRows || []
+                        );
+                        poUpdate.workflow_status = workflowStatus;
+
+                        if (workflowStatus === 'delivered') {
+                          const { data: deliveryRows, error: drListErr } = await supabase
+                            .from('purchase_order_deliveries')
+                            .select('dr_number')
+                            .eq('purchase_order_id', dispatchPo.id)
+                            .not('dr_number', 'is', null);
+                          if (drListErr) throw drListErr;
+                          const drList = (deliveryRows || [])
+                            .map((r: { dr_number?: string | null }) => r.dr_number)
+                            .filter(Boolean) as string[];
+                          if (drList.length > 0) {
+                            poUpdate.dr_number = [...new Set(drList)].join(', ');
+                          }
+                        }
+                      }
+
+                      const { error: poUpdErr } = await supabase
+                        .from('purchase_orders')
+                        .update(poUpdate)
+                        .eq('id', dispatchPo.id);
+                      if (poUpdErr) throw poUpdErr;
+
+                      toast({
+                        title: isKeyAccount
+                          ? poUpdate.workflow_status === 'delivered'
+                            ? 'Delivered'
+                            : 'Partial delivery'
+                          : locationFullyFulfilled
+                            ? 'Dispatched'
+                            : 'Partial dispatch',
+                        description: isKeyAccount
+                          ? poUpdate.workflow_status === 'delivered'
+                            ? `All warehouses dispatched. DR: ${poUpdate.dr_number || drNumber}`
+                            : `Dispatch saved for this warehouse. DR: ${drNumber}. Other warehouse(s) or remaining qty still pending.`
+                          : locationFullyFulfilled
+                            ? `Dispatch saved. DR: ${drNumber}. Waiting for buyer receive.`
+                            : `Partial dispatch saved. DR: ${drNumber}. Remaining qty can be fulfilled later.`,
+                      });
+
+                      const whName =
+                        fulfillLocationName?.trim() ||
+                        approveLocationNames[locId] ||
+                        resolveWarehouseNameForLocation(dispatchPo, locId);
+
+                      const pdfPo = dispatchPo;
+                      const pdfDrNumber = drNumber;
+                      const pdfLocId = locId;
+                      const pdfWhName = whName;
+                      const pdfDispatchLines = fulfilledItems.map((it) => {
+                        const fromUi = dispatchLines.find((l) => l.variant_id === it.variant_id);
+                        return {
+                          variant_id: it.variant_id,
+                          brand_name: fromUi?.brand_name ?? null,
+                          variant_name: fromUi?.variant_name ?? null,
+                          quantity: it.quantity,
+                        };
+                      });
+
+                      setMyLocationDrByPo((prev) => ({
+                        ...prev,
+                        [dispatchPo.id]: {
+                          dr_number: drNumber,
+                          warehouse_location_id: locId,
+                          warehouse_name: whName,
+                        },
+                      }));
+
+                      setMyLocationStatuses((prev) => ({
+                        ...prev,
+                        [dispatchPo.id]: locationFullyFulfilled ? 'fulfilled' : 'partial',
+                      }));
+                      setDispatchOpen(false);
+                      setDispatchStep(1);
+                      setDispatchPo(null);
+                      setWarehouseSignatureDataUrl(null);
+                      setDispatchNotes('');
+                      setDispatchLines([]);
+                      setOrderToFulfill(null);
+                      setFulfillLocationId(null);
+                      setFulfillLocationName(null);
+                      void fetchPurchaseOrders(false, true);
+
+                      void generateAndOpenDrPdf(pdfPo, {
+                        drNumber: pdfDrNumber,
+                        warehouseLocationId: pdfLocId,
+                        warehouseLocationName: pdfWhName,
+                        dispatchLines: pdfDispatchLines,
+                      }).catch((drPdfErr: any) => {
+                        console.warn('[DR] auto-open after dispatch failed', drPdfErr);
+                        toast({
+                          title: 'DR opened with issues',
+                          description: drPdfErr?.message || 'Delivery saved but DR preview could not open.',
+                          variant: 'destructive',
+                        });
+                      });
+                    } catch (e: any) {
+                      toast({ title: 'Error', description: e.message || 'Failed to save dispatch info', variant: 'destructive' });
+                    } finally {
+                      setSavingDispatch(false);
+                      setFulfillingOrderId(null);
+                    }
+                  }}
+                  disabled={
+                    savingDispatch ||
+                    fulfillingOrderId === dispatchPo?.id ||
+                    dispatchLines.length === 0 ||
+                    !warehouseSignatureDataUrl ||
+                    !warehouseSignatureDataUrl.trim()
                   }
-                }}
-                disabled={
-                  savingDispatch ||
-                  fulfillingOrderId === dispatchPo?.id ||
-                  !warehouseSignatureDataUrl ||
-                  !warehouseSignatureDataUrl.trim()
-                }
-              >
-                {savingDispatch || fulfillingOrderId === dispatchPo?.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                Deliver
-              </Button>
+                >
+                  {savingDispatch || fulfillingOrderId === dispatchPo?.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                  Deliver
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2138,6 +2810,48 @@ export default function PurchaseOrdersPage() {
         </DialogContent>
       </Dialog>
 
+      {tableReceiveTarget ? (
+        <PoBuyerReceiveDialog
+          open={tableReceiveOpen}
+          onOpenChange={(next) => {
+            setTableReceiveOpen(next);
+            if (!next) setTableReceiveTarget(null);
+          }}
+          deliveryId={tableReceiveTarget.deliveryId}
+          purchaseOrderId={tableReceiveTarget.purchaseOrderId}
+          companyId={tableReceiveTarget.companyId}
+          drNumber={tableReceiveTarget.drNumber}
+          lines={tableReceiveTarget.lines}
+          purchaseOrder={tableReceiveTarget.order}
+          warehouseLocationId={tableReceiveTarget.warehouseLocationId}
+          warehouseLocationName={tableReceiveTarget.warehouseLocationName}
+          onSuccess={() => {
+            setTableReceiveTarget(null);
+            void fetchPurchaseOrders(false, true);
+          }}
+        />
+      ) : null}
+
+      {tableCancelTarget ? (
+        <PoBuyerCancelDialog
+          open={tableCancelOpen}
+          onOpenChange={(next) => {
+            setTableCancelOpen(next);
+            if (!next) setTableCancelTarget(null);
+          }}
+          deliveryId={tableCancelTarget.deliveryId}
+          purchaseOrderId={tableCancelTarget.purchaseOrderId}
+          companyId={tableCancelTarget.companyId}
+          drNumber={tableCancelTarget.drNumber}
+          lines={tableCancelTarget.lines}
+          warehouseLocationName={tableCancelTarget.warehouseLocationName}
+          onSuccess={() => {
+            setTableCancelTarget(null);
+            void fetchPurchaseOrders(false, true);
+          }}
+        />
+      ) : null}
+
       {/* View Purchase Order - Mobile: Sheet, Desktop: Dialog */}
       {isMobile ? (
         <Sheet open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
@@ -2146,8 +2860,8 @@ export default function PurchaseOrdersPage() {
               <div className="flex items-center justify-between">
                 <SheetTitle>PO Details</SheetTitle>
                 {orderToView && (
-                  <Badge variant="default" className={getStatusBadgeClass(orderToView.status)}>
-                    {getStatusDisplayText(orderToView.status)}
+                  <Badge variant="default" className={getStatusBadgeClassForOrder(orderToView)}>
+                    {getStatusDisplayTextForOrder(orderToView)}
                   </Badge>
                 )}
               </div>
@@ -2281,6 +2995,8 @@ export default function PurchaseOrdersPage() {
                         warehouseNamesById={Object.fromEntries(
                           transferLocationStatuses.map((s) => [s.location_id, s.location_name])
                         )}
+                        allowBuyerReceive
+                        onReceiveSuccess={() => void fetchPurchaseOrders(false, true)}
                       />
                     )}
 
@@ -2401,9 +3117,9 @@ export default function PurchaseOrdersPage() {
                     </div>
                     <Badge
                       variant="default"
-                      className={`text-base px-4 py-2 ${getStatusBadgeClass(orderToView.status)}`}
+                      className={`text-base px-4 py-2 ${getStatusBadgeClassForOrder(orderToView)}`}
                     >
-                      {getStatusDisplayText(orderToView.status)}
+                      {getStatusDisplayTextForOrder(orderToView)}
                     </Badge>
                   </div>
 
@@ -2501,6 +3217,8 @@ export default function PurchaseOrdersPage() {
                       warehouseNamesById={Object.fromEntries(
                         transferLocationStatuses.map((s) => [s.location_id, s.location_name])
                       )}
+                      allowBuyerReceive
+                      onReceiveSuccess={() => void fetchPurchaseOrders(false, true)}
                     />
                   )}
 
@@ -3108,6 +3826,7 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
         purchaseOrder={order}
         filterWarehouseLocationId={isWarehouse ? membership.locationId : null}
         warehouseNamesById={warehouseNamesById}
+        allowBuyerReceive
       />
 
       {/* Items — grouped by source warehouse (same as Standard tab PO modal) */}

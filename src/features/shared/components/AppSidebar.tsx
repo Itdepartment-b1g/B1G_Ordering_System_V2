@@ -38,6 +38,7 @@ import {
   RotateCcw,
   PackageX,
   Scale,
+  PackageSearch,
   Layers,
   ClipboardCheck,
 } from 'lucide-react';
@@ -359,6 +360,7 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Stock Requests', url: '/inventory/stock-requests', icon: ClipboardList },
       { title: 'Stock Returns', url: '/inventory/stock-returns', icon: RotateCcw },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', icon: Scale },
+      { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', icon: PackageSearch },
       { title: 'Batch View', url: '/inventory/batches', icon: Layers },
       { title: 'Physical Count', url: '/inventory/physical-count', icon: ClipboardCheck },
       { title: 'Disposal Log', url: '/inventory/disposals', icon: PackageX },
