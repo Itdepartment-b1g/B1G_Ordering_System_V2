@@ -156,7 +156,16 @@ export function WarehouseStockReceiveDialog({
                 <div key={variant.variantId} className="rounded-lg border p-3 space-y-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{variant.variantLabel}</p>
+                      <p className="text-sm font-medium truncate flex items-center gap-2">
+                        {unallocated > 0 && (
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full bg-red-500"
+                            title="Quantity left to assign"
+                            aria-label="Quantity left to assign"
+                          />
+                        )}
+                        <span className="truncate">{variant.variantLabel}</span>
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         Remaining: {variant.remaining} of {variant.orderedQuantity}
                         <span className="ml-2">
