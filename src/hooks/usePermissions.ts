@@ -34,6 +34,16 @@ export function usePermissions() {
     useWarehouseLocationMembership({ userId: user?.id, isWarehouse: isWarehouseRole });
 
   const checkPermission = (route: string): boolean => {
+    // Return-to-warehouse only for hub-linked Standard Account tenants (never warehouse role).
+    // Checked before impersonation bypass so the sidebar stays accurate.
+    if (route === '/inventory/return-to-warehouse') {
+      if (user?.role === 'warehouse') return false;
+      if (!(user?.role === 'admin' || user?.role === 'super_admin' || !!impersonatedCompany)) {
+        return false;
+      }
+      return hasWarehouseHubLink === true;
+    }
+
     // If impersonating, allow full navigation access to the tenant environment.
     // Read-only restrictions are enforced globally via CSS and checkFeature.
     if (impersonatedCompany) {
@@ -114,6 +124,7 @@ export function usePermissions() {
         '/inventory/physical-count',
         '/inventory/stock-requests',
         '/inventory/stock-returns',
+        '/inventory/client-stock-returns',
         '/inventory/stock-adjustments',
         '/inventory/delivery-shortages',
         '/profile',

@@ -10,6 +10,8 @@ export { default as RemittedStocksPage } from './RemittedStocksPage';
 export { default as WarehouseDisposalsPage } from './WarehouseDisposalsPage';
 export { default as WarehouseStockRequestsPage } from './WarehouseStockRequestsPage';
 export { default as WarehouseStockReturnsPage } from './WarehouseStockReturnsPage';
+export { default as WarehouseClientStockReturnsPage } from './WarehouseClientStockReturnsPage';
+export { default as StandardAccountReturnToWarehousePage } from './StandardAccountReturnToWarehousePage';
 export { default as WarehouseStockAdjustmentsPage } from './WarehouseStockAdjustmentsPage';
 export { default as WarehouseDeliveryShortagesPage } from './WarehouseDeliveryShortagesPage';
 export { default as WarehouseAllocationHistoryPage } from './WarehouseAllocationHistoryPage';

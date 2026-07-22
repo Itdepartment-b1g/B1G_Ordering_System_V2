@@ -1071,7 +1071,11 @@ export default function MainInventoryPage() {
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-950">
           This company is linked to a warehouse. <strong>Stock counts are read-only</strong> here
           and update when you receive inventory through <strong>purchase orders to the warehouse</strong>.
-          You can still edit pricing on each variant.
+          You can still edit pricing on each variant. To send stock back, use{' '}
+          <Link to="/inventory/return-to-warehouse" className="underline font-medium">
+            Return to Warehouse
+          </Link>
+          .
         </div>
       )}
 
