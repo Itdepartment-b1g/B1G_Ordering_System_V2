@@ -38,6 +38,15 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import {
+  fetchClientOrdersForDateRange,
+  fetchProfilesByIds,
+  getOrderListStatusBucket,
+  matchesSalesRoleFilter,
+  parseOrderDate,
+  resolvePeopleFromOrderAgents,
+  type SalesPersonProfile,
+} from '@/features/analytics/orderListAnalyticsHelpers';
+import {
   exportAgentAnalyticsExcel,
   type AgentAnalyticsExportRow,
 } from '@/features/analytics/exportAgentAnalyticsExcel';
@@ -199,13 +208,37 @@ interface DailyVisitData {
 
 type MetricType = 'revenue' | 'clients' | 'orders';
 type RoleType = 'all' | 'mobile_sales' | 'team_leader';
+type PersonScopeFilter = 'all' | 'active' | 'inactive';
 
-const SALES_ROLES = ['mobile_sales', 'team_leader'] as const;
+const isPersonScopeFilter = (value: string): value is PersonScopeFilter =>
+  value === 'all' || value === 'active' || value === 'inactive';
 
-const getAllPeopleLabel = (role: RoleType): string => {
-  if (role === 'all') return 'All (Active)';
-  if (role === 'mobile_sales') return 'All Mobile Sales';
-  return 'All Team Leaders';
+const getPersonScopeLabel = (role: RoleType, scope: PersonScopeFilter): string => {
+  if (scope === 'all') {
+    if (role === 'all') return 'All (Active and Inactive)';
+    if (role === 'mobile_sales') return 'All Mobile Sales (Active and Inactive)';
+    return 'All Team Leaders (Active and Inactive)';
+  }
+  if (scope === 'active') {
+    if (role === 'all') return 'All Active';
+    if (role === 'mobile_sales') return 'All Active Mobile Sales';
+    return 'All Active Team Leaders';
+  }
+  if (role === 'all') return 'All Inactive';
+  if (role === 'mobile_sales') return 'All Inactive Mobile Sales';
+  return 'All Inactive Team Leaders';
+};
+
+const filterPeopleByPersonSelection = (
+  people: SalesPersonProfile[],
+  selectedPerson: string
+): SalesPersonProfile[] => {
+  if (selectedPerson === 'all') return people;
+  if (selectedPerson === 'active') return people.filter((person) => person.status === 'active');
+  if (selectedPerson === 'inactive') {
+    return people.filter((person) => person.status === 'inactive');
+  }
+  return people.filter((person) => person.id === selectedPerson);
 };
 
 const orderApprovedKey = (agentId: string) => `${agentId}_approved`;
@@ -239,17 +272,37 @@ const ClickableChartDot = ({ cx, cy, payload, fill, r = 5, onPeriodClick }: Clic
   );
 };
 
+interface TimePeriod {
+  key: string;
+  label: string;
+  start: Date;
+  end: Date;
+}
+
 const findPeriodForDate = (
   date: Date,
-  timePeriods: { label: string; start: Date; end: Date }[]
+  timePeriods: TimePeriod[]
 ): string | null => {
+  const normalized = new Date(date);
+  normalized.setHours(12, 0, 0, 0);
   for (const period of timePeriods) {
-    if (date >= period.start && date <= period.end) {
-      return period.label;
+    const start = new Date(period.start);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(period.end);
+    end.setHours(23, 59, 59, 999);
+    if (normalized >= start && normalized <= end) {
+      return period.key;
     }
   }
   return null;
 };
+
+const makeMonthlyPeriod = (actualStart: Date, actualEnd: Date): TimePeriod => ({
+  key: format(startOfMonth(actualStart), 'yyyy-MM'),
+  label: format(startOfMonth(actualStart), 'MMM yyyy'),
+  start: new Date(actualStart),
+  end: new Date(actualEnd),
+});
 
 interface AgentAnalyticsTabProps {
   userId: string;
@@ -344,9 +397,10 @@ export default function AgentAnalyticsTab({
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [loadingPerformance, setLoadingPerformance] = useState(false);
   const [selectedMetric, setSelectedMetric] = useState<MetricType>('revenue');
-  const [selectedRole, setSelectedRole] = useState<RoleType>('mobile_sales');
-  const [selectedPerson, setSelectedPerson] = useState<string>('all'); // 'all' or specific person ID
+  const [selectedRole, setSelectedRole] = useState<RoleType>('all');
+  const [selectedPerson, setSelectedPerson] = useState<string>('all'); // all | active | inactive | person id
   const [availablePeople, setAvailablePeople] = useState<AgentInfo[]>([]);
+  const [peopleProfiles, setPeopleProfiles] = useState<SalesPersonProfile[]>([]);
   const [chartDateRange, setChartDateRange] = useState<DateRange | undefined>(undefined);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
@@ -399,7 +453,7 @@ export default function AgentAnalyticsTab({
 
   // Fetch visit log data when a specific person is selected or visit log filters change
   useEffect(() => {
-    if (selectedPerson !== 'all') {
+    if (!isPersonScopeFilter(selectedPerson)) {
       fetchVisitLogData(selectedPerson);
     } else {
       setVisitLogData([]);
@@ -430,18 +484,18 @@ export default function AgentAnalyticsTab({
     setIsDatePickerOpen(false);
   };
 
-  const fetchActivePeopleProfiles = async () => {
+  const fetchPeopleProfiles = async (): Promise<SalesPersonProfile[]> => {
     let peopleQuery = supabase
       .from('profiles')
-      .select('id, full_name')
-      .eq('status', 'active')
+      .select('id, full_name, status, role')
       .order('full_name', { ascending: true });
 
-    if (selectedRole === 'all') {
-      peopleQuery = peopleQuery.in('role', SALES_ROLES);
-    } else {
-      peopleQuery = peopleQuery.eq('role', selectedRole);
+    if (selectedRole === 'mobile_sales') {
+      peopleQuery = peopleQuery.in('role', ['mobile_sales', 'sales_agent']);
+    } else if (selectedRole === 'team_leader') {
+      peopleQuery = peopleQuery.eq('role', 'team_leader');
     }
+    // selectedRole === 'all' → no role filter (align with Order List)
 
     if (isLeader && userId) {
       let leaderTeamsQuery = supabase
@@ -461,13 +515,13 @@ export default function AgentAnalyticsTab({
 
     const { data, error } = await peopleQuery;
     if (error) throw error;
-    return data || [];
+    return (data || []) as SalesPersonProfile[];
   };
 
   const fetchAvailablePeople = async () => {
     try {
-      const data = await fetchActivePeopleProfiles();
-
+      const data = await fetchPeopleProfiles();
+      setPeopleProfiles(data);
       setAvailablePeople(buildAgentInfoList(data));
     } catch (error) {
       console.error('Error fetching people:', error);
@@ -477,106 +531,80 @@ export default function AgentAnalyticsTab({
   const fetchPerformanceData = async () => {
     setLoadingPerformance(true);
     try {
-      const peopleData = await fetchActivePeopleProfiles();
-
-      if (!peopleData || peopleData.length === 0) {
-        setTimeSeriesData([]);
-        setAgents([]);
-        setLoadingPerformance(false);
-        return;
-      }
-
-      // Assign distinct stable colors; filter if a specific person is selected
-      let personInfoList: AgentInfo[];
-      if (selectedPerson !== 'all') {
-        const selectedPersonData = peopleData.find((p) => p.id === selectedPerson);
-        if (!selectedPersonData) {
-          setTimeSeriesData([]);
-          setAgents([]);
-          setLoadingPerformance(false);
-          return;
-        }
-        personInfoList = buildAgentInfoList(peopleData).filter((p) => p.id === selectedPerson);
-      } else {
-        personInfoList = buildAgentInfoList(peopleData);
-      }
-      setAgents(personInfoList);
+      const leaderAllowedIds: Set<string> | null =
+        isLeader && userId
+          ? new Set([
+              userId,
+              ...(
+                await supabase
+                  .from('leader_teams')
+                  .select('agent_id')
+                  .eq('leader_id', userId)
+              ).data?.map((m: { agent_id: string }) => m.agent_id).filter(Boolean) ?? [],
+            ])
+          : null;
 
       // Calculate date range and time periods
-      let timePeriods: { label: string; start: Date; end: Date }[] = [];
+      let timePeriods: TimePeriod[] = [];
 
-      // Determine date range and granularity
       if (!chartDateRange?.from) {
         // All Time - show monthly breakdown from start to now
-        // Get the earliest and latest dates from the database
-        const { data: earliestOrder } = await supabase
+        let earliestQuery = supabase
           .from('client_orders')
-          .select('created_at')
-          .order('created_at', { ascending: true })
+          .select('order_date')
+          .order('order_date', { ascending: true })
           .limit(1);
-        
-        const { data: latestOrder } = await supabase
+
+        let latestQuery = supabase
           .from('client_orders')
-          .select('created_at')
-          .order('created_at', { ascending: false })
+          .select('order_date')
+          .order('order_date', { ascending: false })
           .limit(1);
+
+        const [{ data: earliestOrder }, { data: latestOrder }] = await Promise.all([
+          earliestQuery,
+          latestQuery,
+        ]);
 
         const today = new Date();
-        
-        let startComp = earliestOrder?.[0]?.created_at 
-          ? new Date(earliestOrder[0].created_at) 
-          : new Date(new Date().getFullYear() - 1, 0, 1);
-        
-        const endComp = latestOrder?.[0]?.created_at 
-          ? new Date(latestOrder[0].created_at) 
-          : today;
 
-        // Ensure we show at least 6 months of history for context, even if data is new
+        let startComp = parseOrderDate(earliestOrder?.[0]?.order_date)
+          ?? new Date(new Date().getFullYear() - 1, 0, 1);
+
+        const endComp = parseOrderDate(latestOrder?.[0]?.order_date) ?? today;
+
         const sixMonthsAgo = new Date(endComp);
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
-        
+
         if (startComp > sixMonthsAgo) {
           startComp = sixMonthsAgo;
         }
 
-        // Generate monthly periods from earliest to latest
         const start = startOfMonth(startComp);
         const end = endOfMonth(endComp);
-        
         const current = new Date(start);
-        
+
         while (current <= end) {
-          const periodStart = startOfMonth(current);
-          const periodEnd = endOfMonth(current);
-          
-          timePeriods.push({
-            label: format(periodStart, 'MMM yyyy'),
-            start: periodStart,
-            end: periodEnd
-          });
-          
-          // Move to next month
+          timePeriods.push(makeMonthlyPeriod(startOfMonth(current), endOfMonth(current)));
           current.setMonth(current.getMonth() + 1);
         }
       } else {
-        // Custom Range
         const fromDate = startOfDay(chartDateRange.from);
         const toDate = chartDateRange.to ? endOfDay(chartDateRange.to) : endOfDay(fromDate);
         const daysDiff = differenceInDays(toDate, fromDate);
 
         if (daysDiff <= 35) {
-          // Daily breakdown (approx 1 month or less)
           let current = new Date(fromDate);
           while (current <= toDate) {
             timePeriods.push({
+              key: format(startOfDay(current), 'yyyy-MM-dd'),
               label: format(current, 'MMM d'),
               start: startOfDay(current),
-              end: endOfDay(current)
+              end: endOfDay(current),
             });
             current.setDate(current.getDate() + 1);
           }
         } else if (daysDiff <= 180) {
-          // Weekly breakdown (approx 6 months or less)
           let current = startOfWeek(fromDate);
           while (current <= toDate) {
             const weekEnd = endOfWeek(current);
@@ -585,15 +613,15 @@ export default function AgentAnalyticsTab({
 
             if (actualStart <= actualEnd) {
               timePeriods.push({
+                key: `${format(actualStart, 'yyyy-MM-dd')}_week`,
                 label: `Week of ${format(actualStart, 'MMM d')}`,
-                start: actualStart,
-                end: actualEnd
+                start: new Date(actualStart),
+                end: new Date(actualEnd),
               });
             }
             current.setDate(current.getDate() + 7);
           }
         } else {
-          // Monthly breakdown (> 6 months)
           let current = startOfMonth(fromDate);
           while (current <= toDate) {
             const monthEnd = endOfMonth(current);
@@ -601,32 +629,48 @@ export default function AgentAnalyticsTab({
             const actualStart = current < fromDate ? fromDate : current;
 
             if (actualStart <= actualEnd) {
-              timePeriods.push({
-                label: format(actualStart, 'MMM yyyy'),
-                start: actualStart,
-                end: actualEnd
-              });
+              timePeriods.push(makeMonthlyPeriod(actualStart, actualEnd));
             }
             current.setMonth(current.getMonth() + 1);
           }
         }
       }
 
-      // Bulk-fetch data for all periods and agents, then aggregate in memory
-      const personIds = personInfoList.map((p) => p.id);
+      const orderQueryStart = chartDateRange?.from
+        ? startOfDay(chartDateRange.from)
+        : timePeriods[0]?.start;
+      const orderQueryEnd = chartDateRange?.to
+        ? endOfDay(chartDateRange.to)
+        : chartDateRange?.from
+          ? endOfDay(chartDateRange.from)
+          : timePeriods[timePeriods.length - 1]?.end;
+
       const overallStart = timePeriods[0]?.start;
       const overallEnd = timePeriods[timePeriods.length - 1]?.end;
 
       const resultsMap = new Map<string, TimeSeriesDataPoint>();
       timePeriods.forEach((period) => {
-        resultsMap.set(period.label, { period: period.label });
+        resultsMap.set(period.key, { period: period.label });
       });
 
       if (selectedMetric === 'clients') {
+        const peopleData = await fetchPeopleProfiles();
+        setPeopleProfiles(peopleData);
+
+        const scopedPeople = filterPeopleByPersonSelection(peopleData, selectedPerson);
+        const scopedPersonIds = scopedPeople.map((p) => p.id);
+
+        if (!scopedPeople.length) {
+          setTimeSeriesData([]);
+          setAgents([]);
+          setLoadingPerformance(false);
+          return;
+        }
+
         let clientsQuery = supabase
           .from('clients')
           .select('id, agent_id, created_at')
-          .in('agent_id', personIds);
+          .in('agent_id', scopedPersonIds);
 
         if (overallStart && overallEnd) {
           clientsQuery = clientsQuery
@@ -638,39 +682,77 @@ export default function AgentAnalyticsTab({
         if (clientsError) throw clientsError;
 
         (clients || []).forEach((client) => {
-          const periodLabel = findPeriodForDate(new Date(client.created_at), timePeriods);
-          if (!periodLabel) return;
-          const point = resultsMap.get(periodLabel)!;
+          const periodKey = findPeriodForDate(new Date(client.created_at), timePeriods);
+          if (!periodKey) return;
+          const point = resultsMap.get(periodKey)!;
           point[client.agent_id] = (Number(point[client.agent_id]) || 0) + 1;
         });
+
+        const personInfoList = buildAgentInfoList(scopedPeople);
+        setAgents(personInfoList);
       } else {
         const metric = selectedMetric as 'revenue' | 'orders';
-        let ordersQuery = supabase
-          .from('client_orders')
-          .select('total_amount, status, agent_id, created_at')
-          .in('agent_id', personIds)
-          .in('status', ['approved', 'pending']);
 
-        if (overallStart && overallEnd) {
-          ordersQuery = ordersQuery
-            .gte('created_at', overallStart.toISOString())
-            .lte('created_at', overallEnd.toISOString());
+        const orders =
+          orderQueryStart && orderQueryEnd
+            ? await fetchClientOrdersForDateRange(supabase, orderQueryStart, orderQueryEnd)
+            : [];
+
+        const qualifyingOrders = orders.filter(
+          (order) => order.agent_id && getOrderListStatusBucket(order.status, order.stage)
+        );
+
+        let orderAgentIds = Array.from(
+          new Set(qualifyingOrders.map((order) => order.agent_id).filter(Boolean))
+        );
+
+        if (leaderAllowedIds) {
+          orderAgentIds = orderAgentIds.filter((id) => leaderAllowedIds.has(id));
         }
 
-        const { data: orders, error: ordersError } = await ordersQuery;
-        if (ordersError) throw ordersError;
+        const profilesById = await fetchProfilesByIds(supabase, orderAgentIds);
+        const orderPeople = resolvePeopleFromOrderAgents(orderAgentIds, profilesById);
+        const roleFilteredPeople = orderPeople.filter((person) =>
+          matchesSalesRoleFilter(person.role, selectedRole)
+        );
+        const scopedPeople = filterPeopleByPersonSelection(roleFilteredPeople, selectedPerson);
 
-        (orders || []).forEach((order) => {
-          const periodLabel = findPeriodForDate(new Date(order.created_at), timePeriods);
-          if (!periodLabel || !order.agent_id) return;
-          const point = resultsMap.get(periodLabel)!;
+        setPeopleProfiles(roleFilteredPeople);
+
+        if (!scopedPeople.length) {
+          setTimeSeriesData([]);
+          setAgents([]);
+          setLoadingPerformance(false);
+          return;
+        }
+
+        const personInfoList = buildAgentInfoList(scopedPeople);
+        setAgents(personInfoList);
+
+        const allowedAgentIds = new Set(personInfoList.map((p) => p.id));
+
+        qualifyingOrders.forEach((order) => {
+          if (!order.agent_id || !allowedAgentIds.has(order.agent_id)) return;
+
+          const bucket = getOrderListStatusBucket(order.status, order.stage);
+          if (!bucket) return;
+
+          const orderDate = parseOrderDate(order.order_date);
+          if (!orderDate) return;
+
+          const periodKey = findPeriodForDate(orderDate, timePeriods);
+          if (!periodKey) return;
+
+          const point = resultsMap.get(periodKey);
+          if (!point) return;
+
           const agentId = order.agent_id;
           const value = metric === 'revenue' ? Number(order.total_amount) || 0 : 1;
 
-          if (order.status === 'approved') {
+          if (bucket === 'approved') {
             point[orderApprovedKey(agentId)] =
               (Number(point[orderApprovedKey(agentId)]) || 0) + value;
-          } else if (order.status === 'pending') {
+          } else {
             point[orderPendingKey(agentId)] =
               (Number(point[orderPendingKey(agentId)]) || 0) + value;
           }
@@ -678,7 +760,7 @@ export default function AgentAnalyticsTab({
 
         personInfoList.forEach((person) => {
           timePeriods.forEach((period) => {
-            const point = resultsMap.get(period.label)!;
+            const point = resultsMap.get(period.key)!;
             const approved = Number(point[orderApprovedKey(person.id)] ?? 0);
             const pending = Number(point[orderPendingKey(person.id)] ?? 0);
             point[person.id] = approved + pending;
@@ -686,7 +768,10 @@ export default function AgentAnalyticsTab({
         });
       }
 
-      const timeSeriesResults = timePeriods.map((p) => resultsMap.get(p.label)!);
+      const timeSeriesResults = timePeriods.map((period) => {
+        const point = resultsMap.get(period.key)!;
+        return { ...point, period: period.label };
+      });
       setTimeSeriesData(timeSeriesResults);
     } catch (error) {
       console.error('Error fetching performance data:', error);
@@ -1180,12 +1265,19 @@ export default function AgentAnalyticsTab({
   };
 
   const getPersonFilterLabel = () => {
-    if (selectedPerson === 'all') return getAllPeopleLabel(selectedRole);
-    return (
+    if (isPersonScopeFilter(selectedPerson)) {
+      return getPersonScopeLabel(selectedRole, selectedPerson);
+    }
+    const profile = peopleProfiles.find((person) => person.id === selectedPerson);
+    const name =
+      profile?.full_name ||
       availablePeople.find((person) => person.id === selectedPerson)?.name ||
       agents.find((agent) => agent.id === selectedPerson)?.name ||
-      'Selected person'
-    );
+      'Selected person';
+    if (profile && profile.status !== 'active') {
+      return `${name} (Inactive)`;
+    }
+    return name;
   };
 
   const getChartDateRangeLabel = () => {
@@ -1479,9 +1571,14 @@ export default function AgentAnalyticsTab({
                       <SelectValue placeholder="Select person" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">{getAllPeopleLabel(selectedRole)}</SelectItem>
-                      {availablePeople.map(person => (
-                        <SelectItem key={person.id} value={person.id}>{person.name}</SelectItem>
+                      <SelectItem value="all">{getPersonScopeLabel(selectedRole, 'all')}</SelectItem>
+                      <SelectItem value="active">{getPersonScopeLabel(selectedRole, 'active')}</SelectItem>
+                      <SelectItem value="inactive">{getPersonScopeLabel(selectedRole, 'inactive')}</SelectItem>
+                      {peopleProfiles.map((person) => (
+                        <SelectItem key={person.id} value={person.id}>
+                          {person.full_name || 'Unknown'}
+                          {person.status !== 'active' ? ' (Inactive)' : ''}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1767,8 +1864,8 @@ export default function AgentAnalyticsTab({
             </div>
           </div>
 
-          {/* Visit Log Section - Only show when specific person is selected */}
-          {selectedPerson !== 'all' && (
+          {/* Visit Log Section - Only show when a specific person is selected */}
+          {!isPersonScopeFilter(selectedPerson) && (
             <div className="mt-6">
               <Card>
                 <CardHeader>

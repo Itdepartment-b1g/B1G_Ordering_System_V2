@@ -1,6 +1,8 @@
 import { supabase } from '@/lib/supabase';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import { startOfMonth, endOfMonth, startOfDay, endOfDay, isSameMonth } from 'date-fns';
 import { formatDateForInput } from '@/lib/dateRangePresets';
+import { getOrderListStatusBucket } from '@/features/analytics/orderListAnalyticsHelpers';
 
 export const KPI_SALES_ROLES = ['mobile_sales', 'team_leader'] as const;
 
@@ -44,18 +46,21 @@ export interface LoadAgentKPIsParams {
 }
 
 const bucketKpiOrdersByStatus = (
-  orders: { status?: string; total_amount?: number }[] | null
+  orders: { status?: string; stage?: string | null; total_amount?: number }[] | null
 ) => {
   let approvedRevenue = 0;
   let pendingRevenue = 0;
   let approvedOrders = 0;
   let pendingOrders = 0;
   (orders || []).forEach((order) => {
+    const bucket = getOrderListStatusBucket(order.status, order.stage);
+    if (!bucket) return;
+
     const amount = Number(order.total_amount) || 0;
-    if (order.status === 'approved') {
+    if (bucket === 'approved') {
       approvedRevenue += amount;
       approvedOrders += 1;
-    } else if (order.status === 'pending') {
+    } else {
       pendingRevenue += amount;
       pendingOrders += 1;
     }
@@ -92,7 +97,6 @@ export async function loadAgentKPIs({
   let agentsQuery = supabase
     .from('profiles')
     .select('id, full_name, role')
-    .eq('status', 'active')
     .in('role', [...KPI_SALES_ROLES]);
 
   if (isLeader || isManager) {
@@ -145,17 +149,26 @@ export async function loadAgentKPIs({
     }
   >();
 
-  let ordersQuery = supabase
-    .from('client_orders')
-    .select('id, total_amount, client_id, created_at, status, agent_id')
-    .in('agent_id', agentIds)
-    .in('status', ['approved', 'pending']);
+  const orders =
+    agentIds.length === 0
+      ? []
+      : await fetchAllPaginated(async (from, to) => {
+          let ordersQuery = supabase
+            .from('client_orders')
+            .select('id, total_amount, client_id, order_date, status, stage, agent_id')
+            .in('agent_id', agentIds)
+            .order('order_date', { ascending: true })
+            .range(from, to);
 
-  if (!allTime && filterStart && filterEnd) {
-    ordersQuery = ordersQuery
-      .gte('created_at', filterStart.toISOString())
-      .lte('created_at', filterEnd.toISOString());
-  }
+          if (!allTime && filterStart && filterEnd) {
+            ordersQuery = ordersQuery
+              .gte('order_date', formatDateForInput(filterStart))
+              .lte('order_date', formatDateForInput(filterEnd));
+          }
+
+          const { data, error } = await ordersQuery;
+          return { data, error };
+        });
 
   let clientsQuery = supabase
     .from('clients')
@@ -182,14 +195,12 @@ export async function loadAgentKPIs({
         .in('agent_id', agentIds)
     : null;
 
-  const [ordersResult, clientsResult, orderItemsResult, targetsResult] = await Promise.all([
-    ordersQuery,
+  const [clientsResult, orderItemsResult, targetsResult] = await Promise.all([
     clientsQuery,
     orderItemsQuery,
     targetsQuery ?? Promise.resolve({ data: null, error: null }),
   ]);
 
-  if (ordersResult.error) throw ordersResult.error;
   if (clientsResult.error) throw clientsResult.error;
   if (orderItemsResult.error) throw orderItemsResult.error;
 
@@ -206,8 +217,9 @@ export async function loadAgentKPIs({
     });
   }
 
-  const ordersByAgent = new Map<string, typeof ordersResult.data>();
-  (ordersResult.data || []).forEach((order: any) => {
+  const ordersByAgent = new Map<string, typeof orders>();
+  orders.forEach((order) => {
+    if (!getOrderListStatusBucket(order.status, order.stage)) return;
     const list = ordersByAgent.get(order.agent_id) || [];
     list.push(order);
     ordersByAgent.set(order.agent_id, list);

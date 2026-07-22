@@ -1,0 +1,124 @@
+import { startOfDay } from 'date-fns';
+
+import { formatDateForInput, isDateInRange, parseDateFromInput } from '@/lib/dateRangePresets';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+export type OrderListStatusBucket = 'approved' | 'pending';
+
+export type ClientOrderAnalyticsRow = {
+  total_amount: number | string | null;
+  status?: string;
+  stage?: string | null;
+  agent_id: string;
+  order_date: string;
+};
+
+/** Field-sales roles shown in role-specific filters (sales_agent = legacy mobile_sales). */
+export const SALES_ANALYTICS_ROLES = ['mobile_sales', 'team_leader', 'sales_agent'] as const;
+
+const MOBILE_SALES_ROLES = new Set(['mobile_sales', 'sales_agent']);
+
+export interface SalesPersonProfile {
+  id: string;
+  full_name: string | null;
+  status: string | null;
+  role?: string | null;
+}
+
+export function matchesSalesRoleFilter(
+  role: string | null | undefined,
+  selectedRole: 'all' | 'mobile_sales' | 'team_leader'
+): boolean {
+  if (selectedRole === 'all') return true;
+  if (selectedRole === 'mobile_sales') {
+    return MOBILE_SALES_ROLES.has(role ?? '');
+  }
+  return role === selectedRole;
+}
+
+export async function fetchProfilesByIds(
+  supabase: SupabaseClient,
+  ids: string[]
+): Promise<Map<string, SalesPersonProfile>> {
+  const map = new Map<string, SalesPersonProfile>();
+  if (!ids.length) return map;
+
+  const chunkSize = 100;
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, status, role')
+      .in('id', chunk);
+    if (error) throw error;
+    (data || []).forEach((row) => map.set(row.id, row as SalesPersonProfile));
+  }
+  return map;
+}
+
+/** Resolve chart/export agents from orders in range (matches Order List attribution). */
+export function resolvePeopleFromOrderAgents(
+  agentIds: string[],
+  profilesById: Map<string, SalesPersonProfile>
+): SalesPersonProfile[] {
+  return agentIds.map(
+    (id) =>
+      profilesById.get(id) ?? {
+        id,
+        full_name: 'Unknown Agent',
+        status: null,
+        role: null,
+      }
+  );
+}
+
+/** Paginated client_orders fetch aligned with loadAgentKPIs + Order List date filtering. */
+export async function fetchClientOrdersForDateRange(
+  supabase: SupabaseClient,
+  start: Date,
+  end: Date,
+  agentIds?: string[]
+): Promise<ClientOrderAnalyticsRow[]> {
+  const startStr = formatDateForInput(startOfDay(start));
+  const endStr = formatDateForInput(startOfDay(end));
+  const agentIdSet = agentIds?.length ? new Set(agentIds) : null;
+
+  const all = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from('client_orders')
+      .select('total_amount, status, stage, agent_id, order_date')
+      .gte('order_date', startStr)
+      .lte('order_date', endStr)
+      .order('order_date', { ascending: true })
+      .range(from, to);
+
+    return { data: data as ClientOrderAnalyticsRow[] | null, error };
+  });
+
+  return all.filter((order) => {
+    if (agentIdSet && (!order.agent_id || !agentIdSet.has(order.agent_id))) return false;
+    return isDateInRange(order.order_date, start, end);
+  });
+}
+
+/** Match Order List export / filterOrders: approved via status or final admin stage. */
+export function getOrderListStatusBucket(
+  status?: string,
+  stage?: string | null
+): OrderListStatusBucket | null {
+  if (status === 'approved' || stage === 'admin_approved') return 'approved';
+  if (stage === 'finance_pending' || status === 'pending') return 'pending';
+  return null;
+}
+
+/** Parse client_orders.order_date the same way Order List date filters do. */
+export function parseOrderDate(orderDate: string | null | undefined): Date | null {
+  if (!orderDate) return null;
+  const d = orderDate.includes('T')
+    ? new Date(orderDate)
+    : (parseDateFromInput(orderDate) ?? new Date(orderDate));
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(12, 0, 0, 0);
+  return d;
+}
