@@ -68,7 +68,14 @@ type DisposalRow = {
   quantity: number;
 };
 
+type ShortageWriteOffRow = {
+  variant_id: string;
+  quantity: number;
+  resolved_at: string | null;
+};
+
 const EXCLUDED_PO_STATUSES = ['rejected', 'cancelled', 'draft'];
+const SHORTAGE_WRITE_OFF_STATUSES = ['resolved_write_off', 'resolved_write_off_replace'] as const;
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
@@ -125,7 +132,28 @@ export function useWarehouseProductMovement({
         disposalsQuery = disposalsQuery.lte('created_at', endOfDay(rangeEnd).toISOString());
       }
 
-      const [lineItemsResult, returnLinesResult, disposalsResult] = await Promise.all([
+      let shortageWriteOffQuery = supabase
+        .from('purchase_order_delivery_discrepancies')
+        .select('variant_id, quantity, resolved_at')
+        .eq('company_id', companyId!)
+        .eq('warehouse_location_id', locationId!)
+        .in('status', [...SHORTAGE_WRITE_OFF_STATUSES]);
+
+      if (rangeStart) {
+        shortageWriteOffQuery = shortageWriteOffQuery.gte(
+          'resolved_at',
+          startOfDay(rangeStart).toISOString()
+        );
+      }
+      if (rangeEnd) {
+        shortageWriteOffQuery = shortageWriteOffQuery.lte(
+          'resolved_at',
+          endOfDay(rangeEnd).toISOString()
+        );
+      }
+
+      const [lineItemsResult, returnLinesResult, disposalsResult, shortageWriteOffResult] =
+        await Promise.all([
         supabase
           .from('purchase_order_items')
           .select(
@@ -162,11 +190,13 @@ export function useWarehouseProductMovement({
           )
           .eq('warehouse_location_id', locationId!),
         disposalsQuery,
+        shortageWriteOffQuery,
       ]);
 
       if (lineItemsResult.error) throw lineItemsResult.error;
       if (returnLinesResult.error) throw returnLinesResult.error;
       if (disposalsResult.error) throw disposalsResult.error;
+      if (shortageWriteOffResult.error) throw shortageWriteOffResult.error;
 
       const scopedLines = ((lineItemsResult.data ?? []) as PoLineRow[]).filter((row) => {
         const order = firstRelation(row.purchase_orders);
@@ -345,6 +375,14 @@ export function useWarehouseProductMovement({
         const qty = Math.max(0, Number(row.quantity) || 0);
         if (!variantId || qty <= 0) continue;
         accumulateMovement(movementByVariant, variantId, { disposed: qty });
+      }
+
+      for (const row of (shortageWriteOffResult.data ?? []) as ShortageWriteOffRow[]) {
+        const variantId = row.variant_id;
+        const qty = Math.max(0, Number(row.quantity) || 0);
+        if (!variantId || qty <= 0) continue;
+        if (!isTimestampInRange(row.resolved_at, rangeStart, rangeEnd)) continue;
+        accumulateMovement(movementByVariant, variantId, { shortageWriteOff: qty });
       }
 
       return buildWarehouseProductMovementRows(brands, movementByVariant);

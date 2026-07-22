@@ -625,10 +625,10 @@ export default function KeyAccountClientAnalyticsTab({
           quantity,
           unit_price,
           total_price,
-          variants (
+          variants:variant_id (
             name,
             variant_type,
-            brands (name)
+            brands:brand_id (name)
           )
         `)
         .eq('purchase_order_id', order.id)

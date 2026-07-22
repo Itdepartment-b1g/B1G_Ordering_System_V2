@@ -1,28 +1,24 @@
 import { supabase } from '@/lib/supabase';
 import { getDrBankAccounts } from '@/features/finance/paymentSettingsUtils';
 import type { BankAccount } from '@/types/database.types';
-import type { PurchaseOrder, PurchaseOrderItem } from '../types';
+import type { PurchaseOrder } from '../types';
 
-export type DrPdfDispatchLine = {
-  variant_id?: string | null;
+export type ReceiveReceiptLine = {
   brand_name?: string | null;
   variant_name?: string | null;
-  variant_type?: string | null;
-  quantity: number;
-  unit_price?: number;
+  quantity_dispatched: number;
+  quantity_received: number;
+  shortfall_reason?: string | null;
 };
 
-export type DrPdfOptions = {
+export type ReceiveReceiptPdfOptions = {
   drNumber: string;
   warehouseLocationId: string;
   warehouseLocationName: string;
-  /**
-   * When set (this DR's dispatched lines), quantities come from here instead of
-   * full PO item qty — required for partial / multi-DR print accuracy.
-   */
-  dispatchLines?: DrPdfDispatchLine[];
-  /** When true, overlays a CANCELLED watermark (buyer refused this DR). */
-  cancelled?: boolean;
+  lines: ReceiveReceiptLine[];
+  receivedAt?: string | null;
+  buyerNotes?: string | null;
+  buyerSignatureUrl?: string | null;
 };
 
 type DrReceiptInfo = {
@@ -59,28 +55,6 @@ type DeliveryDetails = {
   contactPhone: string;
 };
 
-async function fetchDrReceiptInfo(po: PurchaseOrder): Promise<DrReceiptInfo> {
-  try {
-    const { data, error } = await supabase.rpc('get_po_dr_receipt_info', { p_po_id: po.id });
-    if (error) {
-      console.warn('[DR] get_po_dr_receipt_info error:', error);
-      return await fetchDrReceiptInfoFallback(po);
-    }
-    const info = (data || {}) as DrReceiptInfo;
-    if (!info.payment?.bank_accounts?.length) {
-      const fallbackPayment = await fetchWarehousePaymentFallback(po);
-      if (fallbackPayment) {
-        info.payment = { ...info.payment, ...fallbackPayment };
-      }
-    }
-    return info;
-  } catch (e) {
-    console.warn('[DR] get_po_dr_receipt_info exception:', e);
-    return fetchDrReceiptInfoFallback(po);
-  }
-}
-
-/** When RPC is not migrated yet, load warehouse payment settings directly (same company RLS). */
 async function fetchWarehousePaymentFallback(
   po: PurchaseOrder
 ): Promise<DrReceiptInfo['payment'] | null> {
@@ -110,14 +84,37 @@ async function fetchDrReceiptInfoFallback(po: PurchaseOrder): Promise<DrReceiptI
   return payment ? { payment } : {};
 }
 
+async function fetchDrReceiptInfo(po: PurchaseOrder): Promise<DrReceiptInfo> {
+  try {
+    const { data, error } = await supabase.rpc('get_po_dr_receipt_info', { p_po_id: po.id });
+    if (error) {
+      console.warn('[RR] get_po_dr_receipt_info error:', error);
+      return await fetchDrReceiptInfoFallback(po);
+    }
+    const info = (data || {}) as DrReceiptInfo;
+    if (!info.payment?.bank_accounts?.length) {
+      const fallbackPayment = await fetchWarehousePaymentFallback(po);
+      if (fallbackPayment) {
+        info.payment = { ...info.payment, ...fallbackPayment };
+      }
+    }
+    return info;
+  } catch (e) {
+    console.warn('[RR] get_po_dr_receipt_info exception:', e);
+    return fetchDrReceiptInfoFallback(po);
+  }
+}
+
 /**
- * Opens a new browser tab with an HTML/CSS Delivery Receipt (DR), populated
- * from the given PO and dispatch metadata. Uses the browser print dialog to
- * save as PDF or send to a printer (same pattern as COF).
+ * Opens a Received Receipt HTML print view (same layout as Delivery Receipt).
+ * Quantities reflect buyer-confirmed received amounts for this DR.
  */
-export async function generateAndOpenDrPdf(po: PurchaseOrder, options: DrPdfOptions) {
+export async function generateAndOpenReceiveReceiptPdf(
+  po: PurchaseOrder,
+  options: ReceiveReceiptPdfOptions
+) {
   const receiptInfo = await fetchDrReceiptInfo(po);
-  const html = buildDrHtml(po, options, receiptInfo);
+  const html = buildReceiveReceiptHtml(po, options, receiptInfo);
 
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -149,7 +146,6 @@ function fmtQty(n: number | null | undefined): string {
   return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Footer line, e.g. "B1G Sta Rosa Warehouse". */
 function formatWarehouseFooterLabel(locationName: string): string {
   const base = locationName.replace(/\s*\(Main\)\s*$/i, '').trim();
   if (!base) return 'B1G Warehouse';
@@ -157,42 +153,10 @@ function formatWarehouseFooterLabel(locationName: string): string {
   return `B1G ${base} Warehouse`;
 }
 
-function aggregateItems(items: PurchaseOrderItem[]): PurchaseOrderItem[] {
-  const map = new Map<string, PurchaseOrderItem>();
-  for (const it of items) {
-    const key =
-      it.variant_id ||
-      `${it.brand_name || ''}__${it.variant_name || ''}__${it.variant_type}__${it.unit_price}`;
-    const existing = map.get(key);
-    if (existing) {
-      existing.quantity = Number(existing.quantity || 0) + Number(it.quantity || 0);
-    } else {
-      map.set(key, { ...it, quantity: Number(it.quantity || 0) });
-    }
-  }
-  return Array.from(map.values());
-}
-
-function itemsForWarehouse(
-  items: PurchaseOrderItem[],
-  warehouseLocationId: string,
-  headerLocationId?: string | null
-): PurchaseOrderItem[] {
-  const withLoc = items.filter((it) => it.warehouse_location_id);
-  if (withLoc.length === 0) {
-    if (headerLocationId && String(headerLocationId) === String(warehouseLocationId)) {
-      return items;
-    }
-    return [];
-  }
-  return items.filter((it) => String(it.warehouse_location_id) === String(warehouseLocationId));
-}
-
 function resolveCompanyAccountType(po: PurchaseOrder, info: DrReceiptInfo): string {
   return String(info.company_account_type || po.company_account_type || 'Standard Accounts');
 }
 
-/** Key Account POs omit warehouse name on the printed DR. */
 function shouldHideWarehouseOnDr(po: PurchaseOrder, info: DrReceiptInfo): boolean {
   if (resolveCompanyAccountType(po, info) === 'Key Accounts') return true;
   if (po.key_account_client_id) return true;
@@ -233,14 +197,21 @@ function resolveDeliveryDetails(po: PurchaseOrder, info: DrReceiptInfo): Deliver
   };
 }
 
-function itemRowsHtml(items: PurchaseOrderItem[]): string {
-  const aggregated = aggregateItems(items);
-  const rows = aggregated.map((r) => {
-    const name = `${r.brand_name ? r.brand_name + ' — ' : ''}${r.variant_name}`;
+function itemRowsHtml(lines: ReceiveReceiptLine[]): string {
+  const rows = lines.map((r) => {
+    const name = `${r.brand_name ? r.brand_name + ' — ' : ''}${r.variant_name || 'Item'}`;
+    const short = Math.max(0, Number(r.quantity_dispatched || 0) - Number(r.quantity_received || 0));
+    const reasonBit =
+      short > 0 && r.shortfall_reason
+        ? `<div class="line-variance">${escapeHtml(String(r.shortfall_reason))} · short ${fmtQty(short)}</div>`
+        : short > 0
+          ? `<div class="line-variance">Short ${fmtQty(short)} · under investigation</div>`
+          : '';
     return `
       <tr>
-        <td class="col-desc">${escapeHtml(name)}</td>
-        <td class="col-qty">${fmtQty(r.quantity)}</td>
+        <td class="col-desc">${escapeHtml(name)}${reasonBit}</td>
+        <td class="col-qty">${fmtQty(r.quantity_dispatched)}</td>
+        <td class="col-qty">${fmtQty(r.quantity_received)}</td>
       </tr>`;
   });
 
@@ -249,36 +220,11 @@ function itemRowsHtml(items: PurchaseOrderItem[]): string {
       <tr>
         <td class="col-desc">&nbsp;</td>
         <td class="col-qty">&nbsp;</td>
+        <td class="col-qty">&nbsp;</td>
       </tr>`);
   }
 
   return rows.join('');
-}
-
-function dispatchLinesToPoItems(lines: DrPdfDispatchLine[]): PurchaseOrderItem[] {
-  return lines
-    .filter((l) => Number(l.quantity) > 0)
-    .map((l, idx) => ({
-      id: String(l.variant_id || `dispatch-${idx}`),
-      variant_id: String(l.variant_id || ''),
-      brand_name: l.brand_name || '',
-      variant_name: l.variant_name || 'Item',
-      variant_type: l.variant_type || 'flavor',
-      quantity: Number(l.quantity) || 0,
-      unit_price: Number(l.unit_price) || 0,
-      total_price: 0,
-    }));
-}
-
-function resolveDrLineItems(po: PurchaseOrder, options: DrPdfOptions): PurchaseOrderItem[] {
-  if (options.dispatchLines && options.dispatchLines.length > 0) {
-    return dispatchLinesToPoItems(options.dispatchLines);
-  }
-  return itemsForWarehouse(
-    po.items || [],
-    options.warehouseLocationId,
-    po.warehouse_location_id
-  );
 }
 
 function bankSectionHtml(receiptInfo: DrReceiptInfo): string {
@@ -308,8 +254,11 @@ function bankSectionHtml(receiptInfo: DrReceiptInfo): string {
     </div>`;
 }
 
-function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrReceiptInfo): string {
-  const warehouseItems = resolveDrLineItems(po, options);
+function buildReceiveReceiptHtml(
+  po: PurchaseOrder,
+  options: ReceiveReceiptPdfOptions,
+  receiptInfo: DrReceiptInfo
+): string {
   const delivery = resolveDeliveryDetails(po, receiptInfo);
   const hideWarehouse = shouldHideWarehouseOnDr(po, receiptInfo);
   const whLabel = escapeHtml(options.warehouseLocationName);
@@ -319,19 +268,54 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   const recipientLabel = acct === 'Key Accounts' ? 'CLIENT' : 'COMPANY';
   const warehouseBadgeHtml = hideWarehouse
     ? ''
-    : `<div class="warehouse-badge">DR from: <span>${whLabel}</span></div>`;
+    : `<div class="warehouse-badge">Received from: <span>${whLabel}</span></div>`;
   const footerNoteHtml = hideWarehouse ? '' : `<div class="footer-note">${whFooter}</div>`;
   const bankSection = bankSectionHtml(receiptInfo);
-  const cancelled = !!options.cancelled;
-  const cancelledWatermarkHtml = cancelled
-    ? `<div class="cancelled-watermark" aria-hidden="true">CANCELLED</div>`
+
+  const totalDispatched = options.lines.reduce((s, l) => s + Number(l.quantity_dispatched || 0), 0);
+  const totalReceived = options.lines.reduce((s, l) => s + Number(l.quantity_received || 0), 0);
+  const shortfall = Math.max(0, totalDispatched - totalReceived);
+  const reasonSummary = options.lines
+    .filter((l) => (Number(l.quantity_dispatched) || 0) > (Number(l.quantity_received) || 0) && l.shortfall_reason)
+    .map((l) => l.shortfall_reason)
+    .filter(Boolean);
+  const uniqueReasons = [...new Set(reasonSummary)];
+  const varianceHtml =
+    shortfall > 0
+      ? `<div class="variance-note">Dispatched ${fmtQty(totalDispatched)} · Received ${fmtQty(totalReceived)} · Shortfall ${fmtQty(shortfall)} under warehouse investigation${
+          uniqueReasons.length ? ` (${escapeHtml(uniqueReasons.join('; '))})` : ''
+        }</div>`
+      : `<div class="variance-note">Fully received: ${fmtQty(totalReceived)} unit(s)</div>`;
+
+  const receivedAtHtml = options.receivedAt
+    ? `<div class="delivery-field">
+        <span class="flabel">RECEIVED AT:</span>
+        <span class="fvalue">${escapeHtml(new Date(options.receivedAt).toLocaleString())}</span>
+      </div>`
     : '';
+
+  const notesHtml = `<div class="delivery-field">
+        <span class="flabel">RECEIVE NOTES:</span>
+        <span class="fvalue">${
+          options.buyerNotes?.trim()
+            ? escapeHtml(options.buyerNotes.trim())
+            : '<span class="muted">—</span>'
+        }</span>
+      </div>`;
+
+  const signatureImgHtml = options.buyerSignatureUrl
+    ? `<img class="sig-img" src="${escapeHtml(options.buyerSignatureUrl)}" alt="Receiver signature" />`
+    : `<span class="sline"></span>`;
+
+
+
+  const poNo = escapeHtml(po.po_number || '');
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Delivery Receipt${cancelled ? ' (Cancelled)' : ''}</title>
+<title>Received Receipt</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -359,16 +343,16 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   }
   .warehouse-badge {
     display: inline-block;
-    background: #1e3a5f;
-    border: 1px solid #3b82f6;
-    color: #dbeafe;
+    background: #14532d;
+    border: 1px solid #22c55e;
+    color: #dcfce7;
     font-size: 12px;
     font-weight: 700;
     padding: 6px 14px;
     border-radius: 6px;
     letter-spacing: 0.02em;
   }
-  .warehouse-badge span { color: #93c5fd; font-weight: 600; }
+  .warehouse-badge span { color: #86efac; font-weight: 600; }
   .toolbar-right { justify-self: end; }
   .toolbar button {
     background: #22c55e; color: #000; border: 0;
@@ -418,7 +402,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     justify-content: flex-end;
     align-items: baseline;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 6px;
     font-size: 12px;
   }
   .dr-number-row .label { font-weight: 700; }
@@ -429,11 +413,25 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     font-family: ui-monospace, monospace;
     padding-bottom: 2px;
   }
+  .po-number-row {
+    display: flex;
+    justify-content: flex-end;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 11px;
+  }
+  .po-number-row .label { font-weight: 600; color: #444; }
+  .po-number-row .value {
+    min-width: 180px;
+    font-family: ui-monospace, monospace;
+    font-weight: 600;
+  }
 
   .items-table {
     width: 100%;
     border-collapse: collapse;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
   }
   .items-table thead th {
     text-align: left;
@@ -452,6 +450,19 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     text-align: right;
     font-variant-numeric: tabular-nums;
     width: 90px;
+  }
+
+  .variance-note {
+    font-size: 10px;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: #333;
+  }
+  .line-variance {
+    font-size: 9px;
+    font-weight: 600;
+    color: #8a5a00;
+    margin-top: 2px;
   }
 
   .delivery-section {
@@ -475,6 +486,24 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     flex-shrink: 0;
   }
   .delivery-field .fvalue { flex: 1; }
+  .delivery-field .muted { color: #777; font-style: italic; }
+  .signature-field { align-items: flex-start; }
+  .sig-img-large {
+    display: block;
+    max-height: 72px;
+    max-width: 280px;
+    object-fit: contain;
+    border: 1px solid #ccc;
+    background: #fff;
+    padding: 4px;
+  }
+  .sig-img {
+    display: block;
+    max-height: 48px;
+    max-width: 160px;
+    object-fit: contain;
+    margin-top: 2px;
+  }
 
   .bank-section {
     margin: 28px 0 20px;
@@ -517,6 +546,10 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     grid-template-columns: 1fr 1fr;
     gap: 4px;
     margin-bottom: 6px;
+    align-items: center;
+  }
+  .signoff-table .sub-row.sig-row {
+    grid-template-columns: auto 1fr;
   }
   .signoff-table .sub-row .slabel { font-weight: 600; }
   .signoff-table .sub-row .sline {
@@ -529,23 +562,6 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     font-size: 8px;
     color: #555;
     margin-top: 14px;
-  }
-
-  .cancelled-watermark {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-    z-index: 20;
-    font-size: 72px;
-    font-weight: 900;
-    letter-spacing: 0.12em;
-    color: rgba(185, 28, 28, 0.28);
-    transform: rotate(-28deg);
-    text-transform: uppercase;
-    user-select: none;
   }
 
   @media print {
@@ -570,7 +586,7 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
 <body>
   <div class="toolbar">
     <div class="toolbar-left">
-      <h1>Delivery Receipt
+      <h1>Received Receipt
         <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
       </h1>
     </div>
@@ -583,33 +599,38 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
   </div>
 
   <div class="page">
-    ${cancelledWatermarkHtml}
     <div class="logo-block">
       <div class="logo-b1g">B1G</div>
       <div class="logo-corp">CORPORATION</div>
     </div>
 
-    <div class="doc-title">DELIVERY RECEIPT</div>
+    <div class="doc-title">RECEIVED RECEIPT</div>
 
     <div class="dr-number-row">
       <span class="label">DR NUMBER:</span>
       <span class="value">${drNo}</span>
+    </div>
+    <div class="po-number-row">
+      <span class="label">PO NUMBER:</span>
+      <span class="value">${poNo}</span>
     </div>
 
     <table class="items-table">
       <thead>
         <tr>
           <th class="col-desc">Description</th>
-          <th class="col-qty">Quantity</th>
+          <th class="col-qty">Dispatched</th>
+          <th class="col-qty">Received</th>
         </tr>
       </thead>
       <tbody>
-        ${itemRowsHtml(warehouseItems)}
+        ${itemRowsHtml(options.lines)}
       </tbody>
     </table>
+    ${varianceHtml}
 
     <div class="delivery-section">
-      <div class="section-label">Delivery Details:</div>
+      <div class="section-label">Receive Details:</div>
       ${
         delivery.clientOrCompany
           ? `<div class="delivery-field">
@@ -630,6 +651,8 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
         <span class="flabel">CONTACT #:</span>
         <span class="fvalue">${escapeHtml(delivery.contactPhone)}</span>
       </div>
+      ${receivedAtHtml}
+      ${notesHtml}
     </div>
 
     ${bankSection}
@@ -638,8 +661,8 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
       <thead>
         <tr>
           <th class="boxes-col">Number of Boxes</th>
-          <th class="confirm-col">Client confirmation</th>
-          <th class="legal-col">I hereby acknowledged that the order details above are accurate and received in good condition. No further claims will be accepted.</th>
+          <th class="confirm-col">Receiver confirmation</th>
+          <th class="legal-col">I hereby acknowledged that the received quantities above are accurate and in good condition. No further claims will be accepted for the confirmed units on this receipt.</th>
         </tr>
       </thead>
       <tbody>
@@ -650,13 +673,17 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
               <span class="slabel">Name of Client/representative</span>
               <span class="sline"></span>
             </div>
-            <div class="sub-row">
+            <div class="sub-row sig-row">
               <span class="slabel">Signature:</span>
-              <span class="sline"></span>
+              ${signatureImgHtml}
             </div>
             <div class="sub-row">
               <span class="slabel">Date:</span>
-              <span class="sline"></span>
+              <span class="sline">${
+                options.receivedAt
+                  ? escapeHtml(new Date(options.receivedAt).toLocaleDateString())
+                  : ''
+              }</span>
             </div>
           </td>
           <td class="legal-col"></td>

@@ -11,6 +11,7 @@ export { default as WarehouseDisposalsPage } from './WarehouseDisposalsPage';
 export { default as WarehouseStockRequestsPage } from './WarehouseStockRequestsPage';
 export { default as WarehouseStockReturnsPage } from './WarehouseStockReturnsPage';
 export { default as WarehouseStockAdjustmentsPage } from './WarehouseStockAdjustmentsPage';
+export { default as WarehouseDeliveryShortagesPage } from './WarehouseDeliveryShortagesPage';
 export { default as WarehouseAllocationHistoryPage } from './WarehouseAllocationHistoryPage';
 export { default as BatchViewPage } from './BatchViewPage';
 export { default as PhysicalCountPage } from './PhysicalCountPage';

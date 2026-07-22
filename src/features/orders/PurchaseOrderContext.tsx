@@ -27,25 +27,32 @@ const PO_ITEMS_SELECT = `
     name,
     is_main
   ),
-  variants (
+  variants:variant_id (
     id,
     name,
     variant_type,
-    brands (
+    brands:brand_id (
       name
     )
   )
 `;
 
 function formatPoItem(item: any): PurchaseOrderItem {
+  const variantRaw = item.variants;
+  const variant = Array.isArray(variantRaw) ? variantRaw[0] : variantRaw;
+  const brandRaw = variant?.brands;
+  const brand = Array.isArray(brandRaw) ? brandRaw[0] : brandRaw;
+  const locRaw = item.warehouse_locations;
+  const warehouseLocation = Array.isArray(locRaw) ? locRaw[0] : locRaw;
+
   return {
     id: item.id,
     variant_id: item.variant_id,
     warehouse_location_id: item.warehouse_location_id ?? null,
-    warehouse_location: item.warehouse_locations ?? null,
-    brand_name: item.variants?.brands?.name || 'Unknown',
-    variant_name: item.variants?.name || 'Unknown',
-    variant_type: item.variants?.variant_type || 'flavor',
+    warehouse_location: warehouseLocation ?? null,
+    brand_name: brand?.name || 'Unknown',
+    variant_name: variant?.name || 'Unknown',
+    variant_type: variant?.variant_type || 'flavor',
     quantity: item.quantity,
     unit_price: parseFloat(item.unit_price),
     total_price: parseFloat(item.total_price),

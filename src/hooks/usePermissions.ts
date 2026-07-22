@@ -115,6 +115,7 @@ export function usePermissions() {
         '/inventory/stock-requests',
         '/inventory/stock-returns',
         '/inventory/stock-adjustments',
+        '/inventory/delivery-shortages',
         '/profile',
         '/warehouse-manual',
       ];

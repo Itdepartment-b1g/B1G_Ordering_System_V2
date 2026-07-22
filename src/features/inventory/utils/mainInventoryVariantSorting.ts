@@ -4,6 +4,7 @@ export type MainInventoryVariantSortKey =
   | 'name'
   | 'stock'
   | 'allocated'
+  | 'poReserved'
   | 'allocatedRemaining'
   | 'available'
   | 'sellingPrice'
@@ -18,6 +19,7 @@ export const DEFAULT_MAIN_INVENTORY_VARIANT_SORT_DIRECTION: MainInventoryVariant
 
 export type MainInventoryVariantSortContext = {
   getGrossAllocated: (variant: Variant) => number;
+  getPoReserved: (variant: Variant) => number;
   getRemainingAllocated: (variant: Variant) => number;
   getAvailable: (variant: Variant) => number;
   hasNoPrice: (variant: Variant) => boolean;
@@ -54,6 +56,9 @@ export function sortMainInventoryVariants<T extends Variant>(
         break;
       case 'allocated':
         result = ctx.getGrossAllocated(a) - ctx.getGrossAllocated(b);
+        break;
+      case 'poReserved':
+        result = ctx.getPoReserved(a) - ctx.getPoReserved(b);
         break;
       case 'allocatedRemaining':
         result = ctx.getRemainingAllocated(a) - ctx.getRemainingAllocated(b);

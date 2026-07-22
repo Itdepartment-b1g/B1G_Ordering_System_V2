@@ -8,6 +8,8 @@ export type WarehouseMovementAggregate = {
   /** Good-condition rebate returns (change-item disputed goods back). */
   returnedIn: number;
   disposed: number;
+  /** Buyer delivery shortages confirmed lost (write off / write off & replace). */
+  shortageWriteOff: number;
 };
 
 export type WarehouseProductMovementRow = {
@@ -23,6 +25,7 @@ export type WarehouseProductMovementRow = {
   pendingRelease: number;
   returnedIn: number;
   disposed: number;
+  shortageWriteOff: number;
   netMovement: number;
 };
 
@@ -32,6 +35,7 @@ export type WarehouseMovementSummary = {
   pendingRelease: number;
   returnedIn: number;
   disposed: number;
+  shortageWriteOff: number;
   netMovement: number;
   totalSkus: number;
   skusWithActivity: number;
@@ -44,6 +48,7 @@ export function createEmptyMovementAggregate(): WarehouseMovementAggregate {
     pendingRelease: 0,
     returnedIn: 0,
     disposed: 0,
+    shortageWriteOff: 0,
   };
 }
 
@@ -58,6 +63,7 @@ export function accumulateMovement(
   if (patch.pendingRelease) existing.pendingRelease += patch.pendingRelease;
   if (patch.returnedIn) existing.returnedIn += patch.returnedIn;
   if (patch.disposed) existing.disposed += patch.disposed;
+  if (patch.shortageWriteOff) existing.shortageWriteOff += patch.shortageWriteOff;
   map.set(variantId, existing);
 }
 
@@ -75,7 +81,7 @@ export function buildWarehouseProductMovementRows(
   for (const brand of brands) {
     for (const variant of brand.allVariants) {
       const agg = movementByVariant.get(variant.id) ?? createEmptyMovementAggregate();
-      const netMovement = agg.released - agg.returnedIn;
+      const netMovement = agg.released - agg.returnedIn - agg.shortageWriteOff;
       rows.push({
         variantId: variant.id,
         variantName: variant.name,
@@ -88,14 +94,17 @@ export function buildWarehouseProductMovementRows(
         pendingRelease: agg.pendingRelease,
         returnedIn: agg.returnedIn,
         disposed: agg.disposed,
+        shortageWriteOff: agg.shortageWriteOff,
         netMovement,
       });
     }
   }
 
   return rows.sort((a, b) => {
-    const activityA = a.released + a.pendingRelease + a.returnedIn + a.disposed;
-    const activityB = b.released + b.pendingRelease + b.returnedIn + b.disposed;
+    const activityA =
+      a.released + a.pendingRelease + a.returnedIn + a.disposed + a.shortageWriteOff;
+    const activityB =
+      b.released + b.pendingRelease + b.returnedIn + b.disposed + b.shortageWriteOff;
     if (activityB !== activityA) return activityB - activityA;
     if (b.netMovement !== a.netMovement) return b.netMovement - a.netMovement;
     const brandCmp = a.brandName.localeCompare(b.brandName);
@@ -110,6 +119,7 @@ export function summarizeWarehouseMovement(rows: WarehouseProductMovementRow[]):
   let pendingRelease = 0;
   let returnedIn = 0;
   let disposed = 0;
+  let shortageWriteOff = 0;
   let skusWithActivity = 0;
 
   for (const row of rows) {
@@ -118,7 +128,10 @@ export function summarizeWarehouseMovement(rows: WarehouseProductMovementRow[]):
     pendingRelease += row.pendingRelease;
     returnedIn += row.returnedIn;
     disposed += row.disposed;
-    if (row.released + row.pendingRelease + row.returnedIn + row.disposed > 0) {
+    shortageWriteOff += row.shortageWriteOff;
+    if (
+      row.released + row.pendingRelease + row.returnedIn + row.disposed + row.shortageWriteOff > 0
+    ) {
       skusWithActivity += 1;
     }
   }
@@ -129,7 +142,8 @@ export function summarizeWarehouseMovement(rows: WarehouseProductMovementRow[]):
     pendingRelease,
     returnedIn,
     disposed,
-    netMovement: released - returnedIn,
+    shortageWriteOff,
+    netMovement: released - returnedIn - shortageWriteOff,
     totalSkus: rows.length,
     skusWithActivity,
   };

@@ -190,6 +190,7 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Request Stock', url: '/inventory/request-stock', description: 'Sub-warehouse requests stock from main; receive confirms receipt.' },
       { title: 'Stock Returns', url: '/inventory/stock-returns', description: 'Inspect sub-warehouse returns; good restocks main batch lots, damaged goes to disposal.' },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', description: 'Audited stock corrections with batch tracking and history.' },
+      { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', description: 'Investigate buyer shortfalls: redeliver (restore stock) or write off losses.' },
       { title: 'Batch View', url: '/inventory/batches', description: 'Browse on-hand stock grouped by batch with brand and variant breakdown.' },
       { title: 'Physical Count', url: '/inventory/physical-count', description: 'Count warehouse stock by batch and lot; sign to confirm; records physical vs system qty without changing stock.' },
       { title: 'Sub Warehouses', url: '/inventory/sub-warehouses', description: 'Create sub-warehouses and allocate stock from main.' },

@@ -151,9 +151,9 @@ export default function KeyAccountClientAnalyticsPage() {
             quantity,
             unit_price,
             total_price,
-            variants (
+            variants:variant_id (
               name,
-              brands (name)
+              brands:brand_id (name)
             )
           `)
           .in('purchase_order_id', deliveredIds);

@@ -24,6 +24,10 @@ export async function uploadKeyAccountPaymentProof(
   purchaseOrderId: string,
   file: File
 ): Promise<string> {
+  if (!isPaymentProofImage(file)) {
+    throw new Error('Payment proof must be an image (JPEG, PNG, WebP, or GIF).');
+  }
+
   const ext = file.name.split('.').pop()?.toLowerCase() || 'bin';
   const safeExt = ext.replace(/[^a-z0-9]/g, '') || 'bin';
   const path = `${companyId}/${purchaseOrderId}/${crypto.randomUUID()}.${safeExt}`;

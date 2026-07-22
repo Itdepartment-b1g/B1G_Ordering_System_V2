@@ -74,9 +74,9 @@ export async function fetchKeyAccountDashboardRevenueContext(
         quantity,
         unit_price,
         total_price,
-        variants (
+        variants:variant_id (
           name,
-          brands (name)
+          brands:brand_id (name)
         )
       `)
       .in('purchase_order_id', productAnalyticsOrderIds);
@@ -111,9 +111,9 @@ export async function fetchKeyAccountDashboardRevenueContext(
           warehouse_location_id,
           quantity,
           total_price,
-          variants (
+          variants:variant_id (
             name,
-            brands (name)
+            brands:brand_id (name)
           )
         )
       `)

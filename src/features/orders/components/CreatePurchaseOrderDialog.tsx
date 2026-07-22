@@ -164,7 +164,7 @@ export function CreatePurchaseOrderDialog({
         let cancelled = false;
         (async () => {
             // Fetch stock from both main_inventory and warehouse_location_inventory
-            const [{ data: mainInvData, error: mainInvError }, { data: locInvData, error: locInvError }] = await Promise.all([
+            const [{ data: mainInvData, error: mainInvError }, { data: locInvData, error: locInvError }, { data: reservedData }] = await Promise.all([
                 supabase
                     .from('main_inventory')
                     .select('variant_id, stock, allocated_stock')
@@ -175,6 +175,12 @@ export function CreatePurchaseOrderDialog({
                     .select('variant_id, location_id, stock')
                     .eq('company_id', linkedWarehouseCompanyId)
                     .in('variant_id', variantIds),
+                supabase
+                    .from('warehouse_transfer_reservations')
+                    .select('variant_id, warehouse_location_id, quantity_reserved, quantity_fulfilled, status')
+                    .eq('warehouse_company_id', linkedWarehouseCompanyId)
+                    .in('variant_id', variantIds)
+                    .in('status', ['reserved', 'partial']),
             ]);
 
             console.log('[CreatePO] Stock fetch debug:', {
@@ -192,30 +198,42 @@ export function CreatePurchaseOrderDialog({
             if (cancelled) return;
 
             const stockMap: Record<string, number> = {};
+            const reservedByLocVar: Record<string, number> = {};
+            for (const row of reservedData || []) {
+                const remaining =
+                    Math.max(0, Number(row.quantity_reserved || 0) - Number(row.quantity_fulfilled || 0));
+                if (remaining <= 0) continue;
+                const key = `${row.variant_id}::${row.warehouse_location_id}`;
+                reservedByLocVar[key] = (reservedByLocVar[key] || 0) + remaining;
+            }
 
             // Map main inventory stock (location_id = main warehouse id)
-            // Calculate available = stock - allocated_stock
+            // Calculate available = stock - allocated_stock - open PO reservations
             if (mainWarehouseLocationId && mainInvData) {
                 for (const row of mainInvData) {
                     const key = `${row.variant_id}::${mainWarehouseLocationId}`;
                     const stock = row.stock || 0;
                     const allocated = row.allocated_stock || 0;
-                    stockMap[key] = Math.max(0, stock - allocated);
+                    const reserved = reservedByLocVar[key] || 0;
+                    stockMap[key] = Math.max(0, stock - allocated - reserved);
                 }
                 console.log('[CreatePO] Main inventory mapped:', mainInvData.map(r => {
                     const stock = r.stock || 0;
                     const allocated = r.allocated_stock || 0;
-                    return { var: r.variant_id, stock, allocated, available: stock - allocated, key: `${r.variant_id}::${mainWarehouseLocationId}` };
+                    const key = `${r.variant_id}::${mainWarehouseLocationId}`;
+                    const reserved = reservedByLocVar[key] || 0;
+                    return { var: r.variant_id, stock, allocated, reserved, available: stock - allocated - reserved, key };
                 }));
             } else {
                 console.log('[CreatePO] Main inventory NOT mapped:', { mainWarehouseLocationId: !!mainWarehouseLocationId, hasData: !!mainInvData });
             }
 
-            // Map sub-warehouse inventory stock
+            // Map sub-warehouse inventory stock (minus open reservations at that location)
             if (locInvData) {
                 for (const row of locInvData) {
                     const key = `${row.variant_id}::${row.location_id}`;
-                    stockMap[key] = row.stock || 0;
+                    const reserved = reservedByLocVar[key] || 0;
+                    stockMap[key] = Math.max(0, (row.stock || 0) - reserved);
                 }
             }
 
