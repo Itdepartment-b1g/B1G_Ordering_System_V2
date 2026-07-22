@@ -1497,12 +1497,14 @@ export default function PurchaseOrdersPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <PageManualDialog
-            title="Purchase Order Manual"
-            fullManualHref="/warehouse-manual#purchase-order"
-          >
-            <PurchaseOrderManual embedded />
-          </PageManualDialog>
+          {isWarehouse && (
+            <PageManualDialog
+              title="Purchase Order Manual"
+              fullManualHref="/warehouse-manual#purchase-order"
+            >
+              <PurchaseOrderManual embedded />
+            </PageManualDialog>
+          )}
           {user?.role !== 'warehouse' && (
             <Button className="w-full md:w-auto" onClick={() => setCreateDialogOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
