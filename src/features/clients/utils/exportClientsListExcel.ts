@@ -19,6 +19,8 @@ export type ClientListExportInput = {
   total_spent: number;
   visit_count: number;
   approvalLabel: string;
+  location_latitude?: number;
+  location_longitude?: number;
 };
 
 export type ClientListExportRow = {
@@ -35,6 +37,8 @@ export type ClientListExportRow = {
   totalSpent: number;
   visits: number;
   approval: string;
+  latitude: number | '';
+  longitude: number | '';
 };
 
 export type ClientListExportSummary = {
@@ -76,6 +80,8 @@ const HEADERS = [
   'Total Spent',
   'Visits',
   'Approval',
+  'Latitude',
+  'Longitude',
 ] as const;
 
 const PHP_CURRENCY_FMT = '"₱"#,##0.00';
@@ -107,6 +113,8 @@ export function mapClientToListExportRow(client: ClientListExportInput): ClientL
     totalSpent: client.total_spent || 0,
     visits: client.visit_count ?? 0,
     approval: client.approvalLabel,
+    latitude: client.location_latitude != null ? Number(client.location_latitude) : '',
+    longitude: client.location_longitude != null ? Number(client.location_longitude) : '',
   };
 }
 
@@ -284,6 +292,8 @@ export async function exportClientsListExcel(
     { width: 14 },
     { width: 10 },
     { width: 18 },
+    { width: 16 },
+    { width: 16 },
   ];
 
   const dataStartRow = writeMetaRows(worksheet, meta);
@@ -314,6 +324,10 @@ export async function exportClientsListExcel(
     excelRow.getCell(12).value = row.visits;
     excelRow.getCell(12).alignment = { horizontal: 'right' };
     excelRow.getCell(13).value = row.approval;
+    excelRow.getCell(14).value = row.latitude;
+    excelRow.getCell(14).numFmt = '0.000000';
+    excelRow.getCell(15).value = row.longitude;
+    excelRow.getCell(15).numFmt = '0.000000';
   });
 
   const fileBuffer = await workbook.xlsx.writeBuffer();

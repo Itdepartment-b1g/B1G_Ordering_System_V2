@@ -2871,6 +2871,8 @@ export default function ClientsPage() {
         total_spent: client.total_spent || 0,
         visit_count: client.visit_count ?? 0,
         approvalLabel: buildClientApprovalLabel(client.approval_status || 'approved'),
+        location_latitude: client.location_latitude,
+        location_longitude: client.location_longitude,
       });
     });
 
@@ -3906,6 +3908,18 @@ export default function ClientsPage() {
                       <span className="font-medium min-w-[60px]">Agent:</span>
                       <span className="truncate">{isClientUnassigned(client) ? 'No Agent' : (client.agent_name || 'Unassigned')}</span>
                     </div>
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <span className="font-medium min-w-[60px]">Latitude:</span>
+                      <span className="truncate">
+                        {client.location_latitude != null ? Number(client.location_latitude).toFixed(6) : 'Not captured'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <span className="font-medium min-w-[60px]">Longitude:</span>
+                      <span className="truncate">
+                        {client.location_longitude != null ? Number(client.location_longitude).toFixed(6) : 'Not captured'}
+                      </span>
+                    </div>
                     <div className="flex items-center justify-between pt-1">
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] text-muted-foreground">Forge:</span>
@@ -4016,6 +4030,8 @@ export default function ClientsPage() {
                     onSort={handleClientSort}
                     className="text-center"
                   />
+                  <TableHead className="text-center">Latitude</TableHead>
+                  <TableHead className="text-center">Longitude</TableHead>
                   <SortableTableHead
                     label="Account Type"
                     sortKey="accountType"
@@ -4124,6 +4140,20 @@ export default function ClientsPage() {
                         </Badge>
                       ) : (
                         <span className="text-muted-foreground text-xs">No city</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {client.location_latitude != null ? (
+                        <span className="text-xs whitespace-nowrap">{Number(client.location_latitude).toFixed(6)}</span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {client.location_longitude != null ? (
+                        <span className="text-xs whitespace-nowrap">{Number(client.location_longitude).toFixed(6)}</span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
                       )}
                     </TableCell>
                     <TableCell className="text-center">
@@ -4289,6 +4319,27 @@ export default function ClientsPage() {
                   <p className="text-sm sm:text-base font-medium">
                     {isClientUnassigned(viewingClient) ? 'No Agent' : (viewingClient.agent_name || 'Unassigned')}
                   </p>
+                </div>
+                <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border sm:col-span-2">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <MapPin className="h-3 w-3" />
+                    Location Coordinates
+                  </p>
+                  {viewingClient.location_latitude != null && viewingClient.location_longitude != null ? (
+                    <div className="space-y-1">
+                      <p className="text-sm sm:text-base font-medium">
+                        Lat: {Number(viewingClient.location_latitude).toFixed(6)}, Long: {Number(viewingClient.location_longitude).toFixed(6)}
+                      </p>
+                      {viewingClient.location_captured_at && (
+                        <p className="text-xs text-muted-foreground">
+                          Captured on {new Date(viewingClient.location_captured_at).toLocaleString()}
+                          {viewingClient.location_accuracy != null && ` (±${Math.round(viewingClient.location_accuracy)}m accuracy)`}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm sm:text-base font-medium text-muted-foreground">Location not captured</p>
+                  )}
                 </div>
                 <div className="p-3 sm:p-4 bg-muted/40 rounded-lg border sm:col-span-2">
                   <p className="text-xs text-muted-foreground">Status</p>
