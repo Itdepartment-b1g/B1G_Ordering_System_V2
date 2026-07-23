@@ -10,6 +10,8 @@ export type PhysicalCountLine = {
   physicalQty: string;
   boxCount: string;
   unitsPerBox: string;
+  looseBoxCount: string;
+  looseQty: string;
 };
 
 export type PhysicalCountLotOption = {
@@ -48,6 +50,8 @@ export type PhysicalCountSubmitLine = {
   physical_qty: number;
   box_count: number;
   units_per_box: number;
+  loose_box_count: number;
+  loose_qty: number;
   system_qty_snapshot: number;
   brand_name: string;
   variant_name: string;
@@ -80,6 +84,8 @@ export type PhysicalCountHistoryDetail = PhysicalCountHistoryRow & {
     physical_qty: number;
     box_count: number | null;
     units_per_box: number | null;
+    loose_box_count: number | null;
+    loose_qty: number | null;
     variance: number;
   }>;
 };

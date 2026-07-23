@@ -398,6 +398,8 @@ export default function PhysicalCountPage() {
         physicalQty: '',
         boxCount: '',
         unitsPerBox: '',
+        looseBoxCount: '',
+        looseQty: '',
       })),
     ]);
     setVariantId('');
@@ -440,13 +442,23 @@ export default function PhysicalCountPage() {
       if (boxCount === null || unitsPerBox === null) {
         return null;
       }
-      const physical = boxCount * unitsPerBox;
+
+      const looseEmpty = line.looseBoxCount.trim() === '' && line.looseQty.trim() === '';
+      const looseBoxCount = looseEmpty ? 0 : parseNonNegativeQty(line.looseBoxCount);
+      const looseQty = looseEmpty ? 0 : parseNonNegativeQty(line.looseQty);
+      if (looseBoxCount === null || looseQty === null) {
+        return null;
+      }
+
+      const physical = boxCount * unitsPerBox + looseBoxCount * looseQty;
       result.push({
         variant_id: line.variantId,
         lot_id: line.lotId,
         physical_qty: physical,
         box_count: boxCount,
         units_per_box: unitsPerBox,
+        loose_box_count: looseBoxCount,
+        loose_qty: looseQty,
         system_qty_snapshot: line.systemQty,
         brand_name: line.brandName,
         variant_name: line.variantName,
@@ -468,7 +480,8 @@ export default function PhysicalCountPage() {
     if (!parsedSubmitLines || parsedSubmitLines.length === 0) {
       toast({
         title: 'Enter box counts',
-        description: 'Each line needs boxes and qty/box before submitting.',
+        description:
+          'Each line needs boxes and qty/box. Loose boxes/qty are optional (leave both blank or fill both).',
         variant: 'destructive',
       });
       return;
@@ -836,6 +849,20 @@ export default function PhysicalCountPage() {
               setLines((prev) =>
                 prev.map((l) =>
                   l.id === lineId ? applyBoxInputsToLine(l, { unitsPerBox: value }) : l
+                )
+              )
+            }
+            onLooseBoxCountChange={(lineId, value) =>
+              setLines((prev) =>
+                prev.map((l) =>
+                  l.id === lineId ? applyBoxInputsToLine(l, { looseBoxCount: value }) : l
+                )
+              )
+            }
+            onLooseQtyChange={(lineId, value) =>
+              setLines((prev) =>
+                prev.map((l) =>
+                  l.id === lineId ? applyBoxInputsToLine(l, { looseQty: value }) : l
                 )
               )
             }

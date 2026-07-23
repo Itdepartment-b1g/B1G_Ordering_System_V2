@@ -12,6 +12,8 @@ type PhysicalCountLineTableProps = {
   lines: PhysicalCountLine[];
   onBoxCountChange: (lineId: string, value: string) => void;
   onUnitsPerBoxChange: (lineId: string, value: string) => void;
+  onLooseBoxCountChange: (lineId: string, value: string) => void;
+  onLooseQtyChange: (lineId: string, value: string) => void;
   onRemoveLine: (lineId: string) => void;
 };
 
@@ -21,6 +23,8 @@ export function PhysicalCountLineTable({
   lines,
   onBoxCountChange,
   onUnitsPerBoxChange,
+  onLooseBoxCountChange,
+  onLooseQtyChange,
   onRemoveLine,
 }: PhysicalCountLineTableProps) {
   if (lines.length === 0) {
@@ -42,6 +46,10 @@ export function PhysicalCountLineTable({
             <TableHead className="w-24 text-center">Boxes</TableHead>
             <TableHead className="w-8 px-0" />
             <TableHead className="w-28 text-center">Qty/box</TableHead>
+            <TableHead className="w-8 px-0" />
+            <TableHead className="w-28 text-center">Loose Boxes</TableHead>
+            <TableHead className="w-8 px-0" />
+            <TableHead className="w-28 text-center">Loose Qty</TableHead>
             <TableHead className="w-36">Physical Qty</TableHead>
             <TableHead className="w-12" />
           </TableRow>
@@ -82,6 +90,34 @@ export function PhysicalCountLineTable({
                     onChange={(e) => onUnitsPerBoxChange(line.id, e.target.value)}
                     className={qtyInputClassName}
                     aria-label={`Quantity per box for ${line.variantName}`}
+                  />
+                </TableCell>
+                <TableCell className="px-0 text-center text-muted-foreground text-sm">+</TableCell>
+                <TableCell>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1}
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={line.looseBoxCount}
+                    onChange={(e) => onLooseBoxCountChange(line.id, e.target.value)}
+                    className={qtyInputClassName}
+                    aria-label={`Loose boxes for ${line.variantName}`}
+                  />
+                </TableCell>
+                <TableCell className="px-0 text-center text-muted-foreground text-sm">×</TableCell>
+                <TableCell>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1}
+                    inputMode="numeric"
+                    placeholder="0"
+                    value={line.looseQty}
+                    onChange={(e) => onLooseQtyChange(line.id, e.target.value)}
+                    className={qtyInputClassName}
+                    aria-label={`Loose quantity per box for ${line.variantName}`}
                   />
                 </TableCell>
                 <TableCell>

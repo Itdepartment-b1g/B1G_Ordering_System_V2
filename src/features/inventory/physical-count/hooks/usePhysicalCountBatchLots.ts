@@ -72,6 +72,8 @@ export function usePhysicalCountBatchLots({
             physicalQty: '',
             boxCount: '',
             unitsPerBox: '',
+            looseBoxCount: '',
+            looseQty: '',
           } satisfies PhysicalCountLine;
         })
         .filter(Boolean) as PhysicalCountLine[];
