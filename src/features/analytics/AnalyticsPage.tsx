@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -62,7 +63,7 @@ import {
   DateRangeFilterPopover,
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
-import { formatDateForInput, getDateRangeFromPreset, getDatePresetLabel, parseDateFromInput } from '@/lib/dateRangePresets';
+import { formatDateForInput, getDateRangeFromPreset, getDatePresetLabel, parseDateFromInput, isDateInRange } from '@/lib/dateRangePresets';
 import {
   DEFAULT_PAGE_SIZE,
   getListPaginationSlice,
@@ -70,6 +71,15 @@ import {
   type PageSize,
 } from '@/features/shared/components/ListPagination';
 import { exportProductAnalyticsExcel } from './exportProductAnalyticsExcel';
+import { exportCityAnalyticsExcel } from './exportCityAnalyticsExcel';
+import {
+  fetchCityOrderItemsForDateRange,
+  fetchProductOrderItemsForDateRange,
+  getOrderListAmountBucket,
+  getOrderListStatusBucket,
+  parseOrderDate,
+} from '@/features/analytics/orderListAnalyticsHelpers';
+import { fetchAllPaginated } from '@/lib/supabasePaginate';
 import {
   loadAgentKPIs,
   KPI_SALES_ROLES,
@@ -77,15 +87,75 @@ import {
 } from './loadAgentKPIs';
 
 // Types
+interface CityBrandOrderLine {
+  orderId: string;
+  clientName: string;
+  orderDate: string;
+  quantity: number;
+  lineAmount: number;
+  status: 'approved' | 'pending';
+}
+
+interface CityBrandVariantBreakdown {
+  variant: string;
+  variantType: string;
+  quantity: number;
+  revenue: number;
+  approvedQuantity: number;
+  pendingQuantity: number;
+  approvedRevenue: number;
+  pendingRevenue: number;
+  lines: CityBrandOrderLine[];
+}
+
+interface CityBrandTypeGroup {
+  type: string;
+  quantity: number;
+  revenue: number;
+  approvedQuantity: number;
+  pendingQuantity: number;
+  approvedRevenue: number;
+  pendingRevenue: number;
+  variants: CityBrandVariantBreakdown[];
+}
+
+interface CityBrandBreakdown {
+  brand: string;
+  quantity: number;
+  revenue: number;
+  approvedQuantity: number;
+  pendingQuantity: number;
+  approvedRevenue: number;
+  pendingRevenue: number;
+  typeGroups: CityBrandTypeGroup[];
+}
+
 interface CityPerformance {
   city: string;
   orders: number;
+  /** Sum of line-item quantities (approved + pending), all brands */
+  brandQty: number;
+  /** Sum of line-item revenue qty * unit_price (approved + pending), all brands */
+  brandRevenue: number;
+  /** Per-brand quantity breakdown (approved + pending), sorted by qty desc */
+  brandBreakdown: CityBrandBreakdown[];
+  /** Approved + Pending (chart / performance) */
   revenue: number;
+  approvedRevenue: number;
+  pendingRevenue: number;
+  rejectedRevenue: number;
+  /** Approved + Pending + Rejected */
+  totalAmount: number;
   clients: number;
   growth: number;
   visits: number;
   agents: string[]; // Array of agent names assigned to this city
 }
+
+const formatVariantTypeLabel = (type: string) => {
+  if (!type || type === 'Unknown') return 'Other';
+  return type.charAt(0).toUpperCase() + type.slice(1);
+};
 
 interface ProductPerformance {
   brand: string;
@@ -103,16 +173,6 @@ interface ProductPerformance {
 }
 
 type AgentKpiRoleFilter = 'all' | (typeof KPI_SALES_ROLES)[number];
-
-/** Match Order List: approved via status or final admin stage */
-const getProductOrderStatusBucket = (
-  status?: string,
-  stage?: string
-): 'approved' | 'pending' | null => {
-  if (status === 'approved' || stage === 'admin_approved') return 'approved';
-  if (status === 'pending') return 'pending';
-  return null;
-};
 
 const bucketKpiOrdersByStatus = (
   orders: { status?: string; total_amount?: number }[] | null
@@ -199,6 +259,10 @@ export default function AnalyticsPage() {
   
   // Analytics Data
   const [cityPerformance, setCityPerformance] = useState<CityPerformance[]>([]);
+  const [cityDateRangeFilter, setCityDateRangeFilter] = useState<DateRangeFilterValue>({
+    preset: 'all',
+  });
+  const [cityExporting, setCityExporting] = useState(false);
   const [productPerformance, setProductPerformance] = useState<ProductPerformance[]>([]);
   const [productDateRangeFilter, setProductDateRangeFilter] = useState<DateRangeFilterValue>({
     preset: 'all',
@@ -235,6 +299,15 @@ export default function AnalyticsPage() {
   const [selectedCity, setSelectedCity] = useState<CityPerformance | null>(null);
   const [cityClients, setCityClients] = useState<ClientMetrics[]>([]);
   const [loadingCityDetails, setLoadingCityDetails] = useState(false);
+
+  // City Brand Qty Breakdown Dialog
+  const [cityBrandQtyDialogOpen, setCityBrandQtyDialogOpen] = useState(false);
+  const [brandQtyCity, setBrandQtyCity] = useState<CityPerformance | null>(null);
+  const [variantDrillOpen, setVariantDrillOpen] = useState(false);
+  const [selectedVariantDrill, setSelectedVariantDrill] = useState<{
+    brand: string;
+    variant: CityBrandVariantBreakdown;
+  } | null>(null);
 
   const fetchCityClients = async (cityName: string) => {
     try {
@@ -575,7 +648,27 @@ export default function AnalyticsPage() {
     if (!canFetchScoped || !loadedTabs.has('cities')) return;
     fetchCityPerformance();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canFetchScoped, loadedTabs, teamAgentIds]);
+  }, [canFetchScoped, loadedTabs, teamAgentIds, cityDateRangeFilter]);
+
+  const cityOrderDateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        cityDateRangeFilter.preset,
+        cityDateRangeFilter.customStart,
+        cityDateRangeFilter.customEnd
+      ),
+    [cityDateRangeFilter]
+  );
+
+  const cityDateRangeLabel = useMemo(
+    () =>
+      getDatePresetLabel(
+        cityDateRangeFilter.preset,
+        cityDateRangeFilter.customStart,
+        cityDateRangeFilter.customEnd
+      ),
+    [cityDateRangeFilter]
+  );
 
   const productOrderDateRange = useMemo(
     () =>
@@ -780,87 +873,246 @@ export default function AnalyticsPage() {
   const fetchCityPerformance = async () => {
     setCityLoading(true);
     try {
-      // Build query for completed orders with client city and agent information
-      let ordersQuery = supabase
-        .from('client_orders')
-        .select(`
-          id,
-          total_amount,
-          stage,
-          created_at,
-          client_id,
-          agent_id,
-          clients!inner(
+      const { start, end } = cityOrderDateRange;
+      const startStr = start ? formatDateForInput(startOfDay(start)) : null;
+      const endStr = end ? formatDateForInput(startOfDay(end)) : null;
+
+      const orders = await fetchAllPaginated(async (from, to) => {
+        let ordersQuery = supabase
+          .from('client_orders')
+          .select(`
             id,
-            city,
+            total_amount,
+            status,
+            stage,
+            order_date,
+            client_id,
             agent_id,
-            profiles:agent_id(full_name)
-          )
-        `)
-        .eq('stage', 'admin_approved');
+            clients!inner(
+              id,
+              city,
+              agent_id,
+              profiles:agent_id(full_name)
+            )
+          `)
+          .order('order_date', { ascending: true })
+          .range(from, to);
 
-      // Filter by team agents if Leader or Manager
-      if ((isLeader || isManager) && teamAgentIds.length > 0) {
-        ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
-      }
+        if (startStr) {
+          ordersQuery = ordersQuery.gte('order_date', startStr);
+        }
+        if (endStr) {
+          ordersQuery = ordersQuery.lte('order_date', endStr);
+        }
 
-      const { data: orders, error: ordersError } = await ordersQuery;
+        if ((isLeader || isManager) && teamAgentIds.length > 0) {
+          ordersQuery = ordersQuery.in('agent_id', teamAgentIds);
+        }
 
-      if (ordersError) throw ordersError;
+        const { data, error } = await ordersQuery;
+        return { data, error };
+      });
 
-      // Calculate this month and last month for growth
+      const qualifyingOrders = orders.filter((order: any) => {
+        if (!getOrderListAmountBucket(order.status, order.stage)) return false;
+        if (start || end) {
+          return isDateInRange(order.order_date, start, end);
+        }
+        return true;
+      });
+
       const currentMonthStart = startOfMonth(new Date());
       const prevMonthStart = startOfMonth(subMonths(new Date(), 1));
 
-      // Group by city
-      const cityMap = new Map<string, {
-        orders: number;
-        revenue: number;
-        clients: Set<string>;
-        visits: number;
-        currentMonthRevenue: number;
-        prevMonthRevenue: number;
-        agents: Set<string>; // Track unique agent names
-      }>();
+      const emptyCityData = () => ({
+        orders: 0,
+        brandQty: 0,
+        brandRevenue: 0,
+        brandQtyByName: new Map<
+          string,
+          {
+            quantity: number;
+            revenue: number;
+            approvedQuantity: number;
+            pendingQuantity: number;
+            approvedRevenue: number;
+            pendingRevenue: number;
+            types: Map<
+              string,
+              {
+                quantity: number;
+                revenue: number;
+                approvedQuantity: number;
+                pendingQuantity: number;
+                approvedRevenue: number;
+                pendingRevenue: number;
+                variants: Map<
+                  string,
+                  {
+                    quantity: number;
+                    revenue: number;
+                    approvedQuantity: number;
+                    pendingQuantity: number;
+                    approvedRevenue: number;
+                    pendingRevenue: number;
+                    lines: CityBrandOrderLine[];
+                  }
+                >;
+              }
+            >;
+          }
+        >(),
+        approvedRevenue: 0,
+        pendingRevenue: 0,
+        rejectedRevenue: 0,
+        clients: new Set<string>(),
+        visits: 0,
+        currentMonthRevenue: 0,
+        prevMonthRevenue: 0,
+        agents: new Set<string>(),
+      });
 
-      orders?.forEach((order: any) => {
+      const cityMap = new Map<string, ReturnType<typeof emptyCityData>>();
+
+      qualifyingOrders.forEach((order: any) => {
         const city = order.clients?.city || 'Unknown';
         const agentName = order.clients?.profiles?.full_name || null;
-        
+        const amount = Number(order.total_amount) || 0;
+        const bucket = getOrderListAmountBucket(order.status, order.stage);
+
         if (!cityMap.has(city)) {
-          cityMap.set(city, {
-            orders: 0,
-            revenue: 0,
-            clients: new Set(),
-            visits: 0,
-            currentMonthRevenue: 0,
-            prevMonthRevenue: 0,
-            agents: new Set()
-          });
+          cityMap.set(city, emptyCityData());
         }
 
         const cityData = cityMap.get(city)!;
         cityData.clients.add(order.client_id);
         cityData.orders += 1;
-        cityData.revenue += order.total_amount || 0;
-        
-        // Add agent name if available
+
+        if (bucket === 'approved') cityData.approvedRevenue += amount;
+        else if (bucket === 'pending') cityData.pendingRevenue += amount;
+        else if (bucket === 'rejected') cityData.rejectedRevenue += amount;
+
         if (agentName) {
           cityData.agents.add(agentName);
         }
 
-        const orderDate = new Date(order.created_at);
-        if (orderDate >= currentMonthStart) {
-          cityData.currentMonthRevenue += order.total_amount || 0;
-        } else if (orderDate >= prevMonthStart && orderDate < currentMonthStart) {
-          cityData.prevMonthRevenue += order.total_amount || 0;
+        // Growth uses approved + pending only (performance), not rejected
+        if (bucket === 'approved' || bucket === 'pending') {
+          const orderDate = parseOrderDate(order.order_date);
+          if (orderDate) {
+            if (orderDate >= currentMonthStart) {
+              cityData.currentMonthRevenue += amount;
+            } else if (orderDate >= prevMonthStart && orderDate < currentMonthStart) {
+              cityData.prevMonthRevenue += amount;
+            }
+          }
         }
       });
 
-      // Fetch visit logs to aggregate visits by city
-      let visitsQuery = supabase
-        .from('visit_logs')
-        .select(`
+      const orderItems = await fetchCityOrderItemsForDateRange(supabase, start, end);
+      let filteredOrderItems = orderItems.filter((item) =>
+        getOrderListStatusBucket(item.client_orders?.status, item.client_orders?.stage) !== null
+      );
+
+      if ((isLeader || isManager) && teamAgentIds.length > 0) {
+        const teamSet = new Set(teamAgentIds);
+        filteredOrderItems = filteredOrderItems.filter((item) =>
+          teamSet.has(item.client_orders?.agent_id)
+        );
+      }
+
+      filteredOrderItems.forEach((item) => {
+        const statusBucket = getOrderListStatusBucket(
+          item.client_orders?.status,
+          item.client_orders?.stage
+        );
+        if (!statusBucket) return;
+
+        const city = item.client_orders?.clients?.city || 'Unknown';
+        const brand = item.variants?.brands?.name || 'Unknown';
+        const variant = item.variants?.name || 'Unknown';
+        const variantType = item.variants?.variant_type || 'Unknown';
+        const qty = item.quantity || 0;
+        const lineRevenue = qty * (item.unit_price || 0);
+
+        if (!cityMap.has(city)) {
+          cityMap.set(city, emptyCityData());
+        }
+        const cityData = cityMap.get(city)!;
+        cityData.brandQty += qty;
+        cityData.brandRevenue += lineRevenue;
+
+        const brandEntry = cityData.brandQtyByName.get(brand) || {
+          quantity: 0,
+          revenue: 0,
+          approvedQuantity: 0,
+          pendingQuantity: 0,
+          approvedRevenue: 0,
+          pendingRevenue: 0,
+          types: new Map(),
+        };
+        brandEntry.quantity += qty;
+        brandEntry.revenue += lineRevenue;
+        if (statusBucket === 'approved') {
+          brandEntry.approvedQuantity += qty;
+          brandEntry.approvedRevenue += lineRevenue;
+        } else {
+          brandEntry.pendingQuantity += qty;
+          brandEntry.pendingRevenue += lineRevenue;
+        }
+
+        const typeEntry = brandEntry.types.get(variantType) || {
+          quantity: 0,
+          revenue: 0,
+          approvedQuantity: 0,
+          pendingQuantity: 0,
+          approvedRevenue: 0,
+          pendingRevenue: 0,
+          variants: new Map(),
+        };
+        typeEntry.quantity += qty;
+        typeEntry.revenue += lineRevenue;
+        if (statusBucket === 'approved') {
+          typeEntry.approvedQuantity += qty;
+          typeEntry.approvedRevenue += lineRevenue;
+        } else {
+          typeEntry.pendingQuantity += qty;
+          typeEntry.pendingRevenue += lineRevenue;
+        }
+
+        const variantEntry = typeEntry.variants.get(variant) || {
+          quantity: 0,
+          revenue: 0,
+          approvedQuantity: 0,
+          pendingQuantity: 0,
+          approvedRevenue: 0,
+          pendingRevenue: 0,
+          lines: [] as CityBrandOrderLine[],
+        };
+        variantEntry.quantity += qty;
+        variantEntry.revenue += lineRevenue;
+        if (statusBucket === 'approved') {
+          variantEntry.approvedQuantity += qty;
+          variantEntry.approvedRevenue += lineRevenue;
+        } else {
+          variantEntry.pendingQuantity += qty;
+          variantEntry.pendingRevenue += lineRevenue;
+        }
+        variantEntry.lines.push({
+          orderId: item.client_orders?.id || `${item.client_orders?.order_date}-${variant}`,
+          clientName: item.client_orders?.clients?.name || 'Unknown',
+          orderDate: item.client_orders?.order_date || '',
+          quantity: qty,
+          lineAmount: lineRevenue,
+          status: statusBucket,
+        });
+
+        typeEntry.variants.set(variant, variantEntry);
+        brandEntry.types.set(variantType, typeEntry);
+        cityData.brandQtyByName.set(brand, brandEntry);
+      });
+
+      let visitsQuery = supabase.from('visit_logs').select(`
           id,
           agent_id,
           clients!inner(
@@ -870,7 +1122,6 @@ export default function AnalyticsPage() {
           )
         `);
 
-      // Filter by team agents if Leader or Manager
       if ((isLeader || isManager) && teamAgentIds.length > 0) {
         visitsQuery = visitsQuery.in('agent_id', teamAgentIds);
       }
@@ -881,30 +1132,19 @@ export default function AnalyticsPage() {
         visits.forEach((visit: any) => {
           const city = visit.clients?.city || 'Unknown';
           const agentName = visit.clients?.profiles?.full_name || null;
-          
+
           if (!cityMap.has(city)) {
-             // If city has visits but no orders yet, initialize it
-             cityMap.set(city, {
-                orders: 0,
-                revenue: 0,
-                clients: new Set(),
-                visits: 0,
-                currentMonthRevenue: 0,
-                prevMonthRevenue: 0,
-                agents: new Set()
-             });
+            cityMap.set(city, emptyCityData());
           }
           const cityData = cityMap.get(city)!;
           cityData.visits += 1;
-          
-          // Add agent name if available
+
           if (agentName) {
             cityData.agents.add(agentName);
           }
         });
       }
 
-      // Also fetch clients directly to ensure we capture all agents assigned to cities
       let clientsQuery = supabase
         .from('clients')
         .select(`
@@ -914,7 +1154,6 @@ export default function AnalyticsPage() {
         `)
         .not('city', 'is', null);
 
-      // Filter by team agents if Leader or Manager
       if ((isLeader || isManager) && teamAgentIds.length > 0) {
         clientsQuery = clientsQuery.in('agent_id', teamAgentIds);
       }
@@ -925,47 +1164,91 @@ export default function AnalyticsPage() {
         allClients.forEach((client: any) => {
           const city = client.city || 'Unknown';
           const agentName = client.profiles?.full_name || null;
-          
-          if (city && agentName) {
-            if (!cityMap.has(city)) {
-              cityMap.set(city, {
-                orders: 0,
-                revenue: 0,
-                clients: new Set(),
-                visits: 0,
-                currentMonthRevenue: 0,
-                prevMonthRevenue: 0,
-                agents: new Set()
-              });
-            }
+
+          if (city && agentName && cityMap.has(city)) {
             cityMap.get(city)!.agents.add(agentName);
           }
         });
       }
 
-      // Convert to array with growth calculation
-      const cityPerformanceData: CityPerformance[] = Array.from(cityMap.entries()).map(([city, data]) => {
-        const growth = data.prevMonthRevenue > 0 
-          ? ((data.currentMonthRevenue - data.prevMonthRevenue) / data.prevMonthRevenue) * 100 
-          : data.currentMonthRevenue > 0 ? 100 : 0;
+      const cityPerformanceData: CityPerformance[] = Array.from(cityMap.entries()).map(
+        ([city, data]) => {
+          const growth =
+            data.prevMonthRevenue > 0
+              ? ((data.currentMonthRevenue - data.prevMonthRevenue) / data.prevMonthRevenue) * 100
+              : data.currentMonthRevenue > 0
+                ? 100
+                : 0;
 
-        return {
-          city,
-          orders: data.orders,
-          revenue: data.revenue,
-          clients: data.clients.size,
-          visits: data.visits,
-          growth,
-          agents: Array.from(data.agents).sort() // Sort alphabetically for consistency
-        };
-      });
+          const approvedRevenue = data.approvedRevenue;
+          const pendingRevenue = data.pendingRevenue;
+          const rejectedRevenue = data.rejectedRevenue;
+          const revenue = approvedRevenue + pendingRevenue;
 
-      // Sort by revenue
+          return {
+            city,
+            orders: data.orders,
+            brandQty: data.brandQty,
+            brandRevenue: data.brandRevenue,
+            brandBreakdown: Array.from(data.brandQtyByName.entries())
+              .map(([brand, entry]) => ({
+                brand,
+                quantity: entry.quantity,
+                revenue: entry.revenue,
+                approvedQuantity: entry.approvedQuantity,
+                pendingQuantity: entry.pendingQuantity,
+                approvedRevenue: entry.approvedRevenue,
+                pendingRevenue: entry.pendingRevenue,
+                typeGroups: Array.from(entry.types.entries())
+                  .map(([type, typeEntry]) => ({
+                    type,
+                    quantity: typeEntry.quantity,
+                    revenue: typeEntry.revenue,
+                    approvedQuantity: typeEntry.approvedQuantity,
+                    pendingQuantity: typeEntry.pendingQuantity,
+                    approvedRevenue: typeEntry.approvedRevenue,
+                    pendingRevenue: typeEntry.pendingRevenue,
+                    variants: Array.from(typeEntry.variants.entries())
+                      .map(([variant, v]) => ({
+                        variant,
+                        variantType: type,
+                        quantity: v.quantity,
+                        revenue: v.revenue,
+                        approvedQuantity: v.approvedQuantity,
+                        pendingQuantity: v.pendingQuantity,
+                        approvedRevenue: v.approvedRevenue,
+                        pendingRevenue: v.pendingRevenue,
+                        lines: [...v.lines].sort((a, b) =>
+                          (b.orderDate || '').localeCompare(a.orderDate || '')
+                        ),
+                      }))
+                      .sort((a, b) => b.quantity - a.quantity),
+                  }))
+                  .sort((a, b) => b.quantity - a.quantity),
+              }))
+              .sort((a, b) => b.quantity - a.quantity),
+            approvedRevenue,
+            pendingRevenue,
+            rejectedRevenue,
+            revenue,
+            totalAmount: revenue + rejectedRevenue,
+            clients: data.clients.size,
+            visits: data.visits,
+            growth,
+            agents: Array.from(data.agents).sort(),
+          };
+        }
+      );
+
       cityPerformanceData.sort((a, b) => b.revenue - a.revenue);
-
       setCityPerformance(cityPerformanceData);
     } catch (error) {
       console.error('Error fetching city performance:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load city analytics',
+        variant: 'destructive',
+      });
     } finally {
       setCityLoading(false);
     }
@@ -976,38 +1259,10 @@ export default function AnalyticsPage() {
     try {
       const { start, end } = productOrderDateRange;
 
-      let orderItemsQuery = supabase
-        .from('client_order_items')
-        .select(`
-          quantity,
-          unit_price,
-          client_orders!inner(status, stage, created_at, agent_id, company_id),
-          variants!inner(
-            name,
-            variant_type,
-            brands!inner(name)
-          )
-        `);
+      const orderItems = await fetchProductOrderItemsForDateRange(supabase, start, end);
 
-      if (start) {
-        orderItemsQuery = orderItemsQuery.gte(
-          'client_orders.created_at',
-          startOfDay(start).toISOString()
-        );
-      }
-      if (end) {
-        orderItemsQuery = orderItemsQuery.lte(
-          'client_orders.created_at',
-          endOfDay(end).toISOString()
-        );
-      }
-
-      const { data: orderItems, error } = await orderItemsQuery;
-
-      if (error) throw error;
-
-      let filteredOrderItems = (orderItems || []).filter((item: any) => {
-        const bucket = getProductOrderStatusBucket(
+      let filteredOrderItems = orderItems.filter((item) => {
+        const bucket = getOrderListStatusBucket(
           item.client_orders?.status,
           item.client_orders?.stage
         );
@@ -1016,7 +1271,7 @@ export default function AnalyticsPage() {
 
       if (user?.company_id) {
         filteredOrderItems = filteredOrderItems.filter(
-          (item: any) => item.client_orders?.company_id === user.company_id
+          (item) => item.client_orders?.company_id === user.company_id
         );
       }
 
@@ -1025,7 +1280,7 @@ export default function AnalyticsPage() {
           setProductPerformance([]);
           return;
         }
-        filteredOrderItems = filteredOrderItems.filter((item: any) =>
+        filteredOrderItems = filteredOrderItems.filter((item) =>
           teamAgentIds.includes(item.client_orders?.agent_id)
         );
       }
@@ -1050,16 +1305,15 @@ export default function AnalyticsPage() {
         }
       >();
 
-      filteredOrderItems?.forEach((item: any) => {
+      filteredOrderItems.forEach((item) => {
         const brand = item.variants?.brands?.name || 'Unknown';
         const variant = item.variants?.name || 'Unknown';
         const key = `${brand}|${variant}`;
         const qty = item.quantity || 0;
         const lineRevenue = qty * (item.unit_price || 0);
-        const status = item.client_orders?.status as string | undefined;
-        const stage = item.client_orders?.stage as string | undefined;
-        const createdAt = item.client_orders?.created_at as string | undefined;
-        const bucket = getProductOrderStatusBucket(status, stage);
+        const status = item.client_orders?.status;
+        const stage = item.client_orders?.stage;
+        const bucket = getOrderListStatusBucket(status, stage);
 
         if (!productMap.has(key)) {
           productMap.set(key, {
@@ -1088,8 +1342,8 @@ export default function AnalyticsPage() {
           productData.pendingRevenue += lineRevenue;
         }
 
-        if (createdAt) {
-          const orderDate = new Date(createdAt);
+        const orderDate = parseOrderDate(item.client_orders?.order_date);
+        if (orderDate) {
           if (orderDate >= currentMonthStart) {
             productData.currentMonthOrders += 1;
           } else if (orderDate >= prevMonthStart && orderDate <= prevMonthEnd) {
@@ -1136,6 +1390,43 @@ export default function AnalyticsPage() {
       });
     } finally {
       setProductLoading(false);
+    }
+  };
+
+  const handleExportCityAnalytics = async () => {
+    if (!cityPerformance.length) {
+      toast({
+        title: 'No data to export',
+        description: 'No city data for the selected date range.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const { start, end } = cityOrderDateRange;
+    const periodStart = start ? formatDateForInput(start) : 'all';
+    const periodEnd = end ? formatDateForInput(end) : 'all';
+
+    setCityExporting(true);
+    try {
+      await exportCityAnalyticsExcel(cityPerformance, {
+        dateRangeLabel: cityDateRangeLabel,
+        periodStart,
+        periodEnd,
+      });
+      toast({
+        title: 'Export successful',
+        description: `Exported ${cityPerformance.length} city row(s) for ${cityDateRangeLabel}.`,
+      });
+    } catch (error) {
+      console.error('City analytics export failed:', error);
+      toast({
+        title: 'Export failed',
+        description: 'Could not generate the Excel file.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCityExporting(false);
     }
   };
 
@@ -1888,6 +2179,33 @@ export default function AnalyticsPage() {
             {/* City Performance Tab */}
             {loadedTabs.has('cities') && (
             <TabsContent value="cities" className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <p className="text-sm text-muted-foreground">
+                  Approved and pending client orders by city — {cityDateRangeLabel}
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto shrink-0">
+                  <DateRangeFilterPopover
+                    value={cityDateRangeFilter}
+                    onChange={setCityDateRangeFilter}
+                    triggerClassName="w-full sm:w-[220px] justify-between h-10"
+                    align="end"
+                  />
+                  <Button
+                    variant="outline"
+                    className="h-10 gap-2"
+                    onClick={handleExportCityAnalytics}
+                    disabled={cityExporting || cityLoading || cityPerformance.length === 0}
+                  >
+                    {cityExporting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileDown className="h-4 w-4" />
+                    )}
+                    Export Excel
+                  </Button>
+                </div>
+              </div>
+
               {cityLoading ? (
                 <div className="flex justify-center py-16">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1900,9 +2218,14 @@ export default function AnalyticsPage() {
             <Card className="col-span-1 lg:col-span-2">
               <CardHeader>
                 <CardTitle>Revenue by City</CardTitle>
-                <CardDescription>Top performing markets</CardDescription>
+                <CardDescription>Top performing markets — {cityDateRangeLabel}</CardDescription>
               </CardHeader>
               <CardContent>
+                {cityPerformance.length === 0 ? (
+                  <div className="flex justify-center items-center h-[300px] text-muted-foreground text-sm">
+                    No city data for the selected period
+                  </div>
+                ) : (
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={cityPerformance.slice(0, 10)}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -1918,6 +2241,7 @@ export default function AnalyticsPage() {
                     />
                   </BarChart>
                 </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
 
@@ -1925,7 +2249,7 @@ export default function AnalyticsPage() {
             <Card className="col-span-1 lg:col-span-2">
               <CardHeader>
                 <CardTitle>City-by-City Breakdown</CardTitle>
-                <CardDescription>Detailed performance metrics</CardDescription>
+                <CardDescription>Detailed performance metrics — {cityDateRangeLabel}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="border rounded-lg overflow-hidden">
@@ -1935,9 +2259,11 @@ export default function AnalyticsPage() {
                         <TableHead>City</TableHead>
                         <TableHead>Agent(s)</TableHead>
                         <TableHead className="text-right">Orders</TableHead>
+                        <TableHead className="text-right">Total Brand Qty</TableHead>
                         <TableHead className="text-right">Revenue</TableHead>
                         <TableHead className="text-right">Clients</TableHead>
                         <TableHead className="text-right">Growth</TableHead>
+                        <TableHead className="text-center w-[72px]">View</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1964,6 +2290,9 @@ export default function AnalyticsPage() {
                             )}
                           </TableCell>
                           <TableCell className="text-right">{city.orders}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {city.brandQty.toLocaleString()}
+                          </TableCell>
                           <TableCell className="text-right font-semibold">
                             ₱{city.revenue.toLocaleString()}
                           </TableCell>
@@ -1980,11 +2309,27 @@ export default function AnalyticsPage() {
                               </span>
                             </div>
                           </TableCell>
+                          <TableCell className="text-center">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              title={`View brand qty for ${city.city}`}
+                              onClick={() => {
+                                setBrandQtyCity(city);
+                                setCityBrandQtyDialogOpen(true);
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                              <span className="sr-only">View</span>
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                       {cityPerformance.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                             No city data available
                           </TableCell>
                         </TableRow>
@@ -3248,6 +3593,363 @@ export default function AnalyticsPage() {
                 </CardContent>
              </Card>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* City Brand Qty Breakdown Dialog */}
+      <Dialog open={cityBrandQtyDialogOpen} onOpenChange={setCityBrandQtyDialogOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-primary" />
+              Brand Qty — {brandQtyCity?.city}
+            </DialogTitle>
+            <DialogDescription>
+              Per-brand quantity breakdown — {cityDateRangeLabel}
+            </DialogDescription>
+          </DialogHeader>
+
+          {(brandQtyCity?.brandBreakdown?.length ?? 0) === 0 ? (
+            <p className="text-center py-8 text-muted-foreground text-sm">
+              No brand quantity data
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {(() => {
+                const brands = brandQtyCity?.brandBreakdown ?? [];
+                const totalApprovedQty = brands.reduce((s, b) => s + b.approvedQuantity, 0);
+                const totalApprovedRev = brands.reduce((s, b) => s + b.approvedRevenue, 0);
+                const totalPendingQty = brands.reduce((s, b) => s + b.pendingQuantity, 0);
+                const totalPendingRev = brands.reduce((s, b) => s + b.pendingRevenue, 0);
+                const brandCols =
+                  'grid-cols-[minmax(9rem,1.4fr)_minmax(4.5rem,0.7fr)_minmax(6.5rem,0.9fr)_minmax(5.5rem,0.8fr)_minmax(6.5rem,0.9fr)_minmax(5.5rem,0.8fr)_minmax(6.5rem,0.9fr)]';
+
+                return (
+                  <>
+              <div className="border rounded-lg overflow-hidden">
+                <div className="overflow-x-auto">
+                  <div className="min-w-[52rem]">
+                    <div
+                      className={cn(
+                        'hidden sm:grid gap-x-4 px-4 py-3 border-b bg-muted/40 text-xs font-medium text-muted-foreground items-end',
+                        brandCols
+                      )}
+                    >
+                      <span>Brand</span>
+                      <span className="text-right">Qty</span>
+                      <span className="text-right">Revenue</span>
+                      <span className="text-right text-green-700 leading-tight">
+                        Approved
+                        <br />
+                        Qty
+                      </span>
+                      <span className="text-right text-green-700 leading-tight">
+                        Approved
+                        <br />
+                        Rev
+                      </span>
+                      <span className="text-right text-amber-700 leading-tight">
+                        Pending
+                        <br />
+                        Qty
+                      </span>
+                      <span className="text-right text-amber-700 leading-tight">
+                        Pending
+                        <br />
+                        Rev
+                      </span>
+                    </div>
+                    <Accordion type="multiple" className="w-full">
+                      {brands.map((row) => (
+                        <AccordionItem key={row.brand} value={row.brand} className="px-2 sm:px-4">
+                          <AccordionTrigger className="hover:no-underline py-4 gap-3">
+                            <span
+                              className={cn(
+                                'grid grid-cols-1 sm:grid-cols-[minmax(9rem,1.4fr)_minmax(4.5rem,0.7fr)_minmax(6.5rem,0.9fr)_minmax(5.5rem,0.8fr)_minmax(6.5rem,0.9fr)_minmax(5.5rem,0.8fr)_minmax(6.5rem,0.9fr)] gap-y-1 sm:gap-x-4 flex-1 min-w-0 text-left items-center',
+                              )}
+                            >
+                              <span className="font-medium truncate pr-2">{row.brand}</span>
+                              <span className="tabular-nums text-sm sm:text-right">
+                                <span className="sm:hidden text-muted-foreground mr-1">Qty:</span>
+                                {row.quantity.toLocaleString()}
+                              </span>
+                              <span className="tabular-nums text-sm sm:text-right">
+                                <span className="sm:hidden text-muted-foreground mr-1">Revenue:</span>
+                                ₱{row.revenue.toLocaleString()}
+                              </span>
+                              <span className="tabular-nums text-sm sm:text-right text-green-700">
+                                <span className="sm:hidden mr-1">Approved Qty:</span>
+                                {row.approvedQuantity.toLocaleString()}
+                              </span>
+                              <span className="tabular-nums text-sm sm:text-right text-green-700">
+                                <span className="sm:hidden mr-1">Approved Rev:</span>
+                                ₱{row.approvedRevenue.toLocaleString()}
+                              </span>
+                              <span className="tabular-nums text-sm sm:text-right text-amber-700">
+                                <span className="sm:hidden mr-1">Pending Qty:</span>
+                                {row.pendingQuantity.toLocaleString()}
+                              </span>
+                              <span className="tabular-nums text-sm sm:text-right text-amber-700">
+                                <span className="sm:hidden mr-1">Pending Rev:</span>
+                                ₱{row.pendingRevenue.toLocaleString()}
+                              </span>
+                            </span>
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <div className="space-y-4 mb-2">
+                              {row.typeGroups.map((group) => (
+                                <div key={group.type} className="space-y-2">
+                                  <div className="flex items-center justify-between gap-2 px-1">
+                                    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                      {formatVariantTypeLabel(group.type)}
+                                    </h4>
+                                    <span className="text-xs tabular-nums text-muted-foreground">
+                                      Qty {group.quantity.toLocaleString()} · ₱{group.revenue.toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div className="border rounded-md overflow-x-auto">
+                                    <Table>
+                                      <TableHeader>
+                                        <TableRow>
+                                          <TableHead className="min-w-[8rem]">Variant</TableHead>
+                                          <TableHead className="text-right min-w-[4.5rem]">Qty</TableHead>
+                                          <TableHead className="text-right min-w-[6.5rem]">Revenue</TableHead>
+                                          <TableHead className="text-right min-w-[5.5rem] text-green-700">
+                                            Approved Qty
+                                          </TableHead>
+                                          <TableHead className="text-right min-w-[6.5rem] text-green-700">
+                                            Approved Rev
+                                          </TableHead>
+                                          <TableHead className="text-right min-w-[5.5rem] text-amber-700">
+                                            Pending Qty
+                                          </TableHead>
+                                          <TableHead className="text-right min-w-[6.5rem] text-amber-700">
+                                            Pending Rev
+                                          </TableHead>
+                                          <TableHead className="text-center w-[72px]">View</TableHead>
+                                        </TableRow>
+                                      </TableHeader>
+                                      <TableBody>
+                                        {group.variants.map((v) => (
+                                          <TableRow key={`${group.type}-${v.variant}`}>
+                                            <TableCell className="text-sm font-medium">
+                                              {v.variant}
+                                            </TableCell>
+                                            <TableCell className="text-right tabular-nums">
+                                              {v.quantity.toLocaleString()}
+                                            </TableCell>
+                                            <TableCell className="text-right tabular-nums">
+                                              ₱{v.revenue.toLocaleString()}
+                                            </TableCell>
+                                            <TableCell className="text-right tabular-nums text-green-700">
+                                              {v.approvedQuantity.toLocaleString()}
+                                            </TableCell>
+                                            <TableCell className="text-right tabular-nums text-green-700">
+                                              ₱{v.approvedRevenue.toLocaleString()}
+                                            </TableCell>
+                                            <TableCell className="text-right tabular-nums text-amber-700">
+                                              {v.pendingQuantity.toLocaleString()}
+                                            </TableCell>
+                                            <TableCell className="text-right tabular-nums text-amber-700">
+                                              ₱{v.pendingRevenue.toLocaleString()}
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                              <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8"
+                                                title={`View orders for ${v.variant}`}
+                                                onClick={() => {
+                                                  setSelectedVariantDrill({ brand: row.brand, variant: v });
+                                                  setVariantDrillOpen(true);
+                                                }}
+                                              >
+                                                <Eye className="h-4 w-4" />
+                                                <span className="sr-only">View</span>
+                                              </Button>
+                                            </TableCell>
+                                          </TableRow>
+                                        ))}
+                                        {group.variants.length === 0 && (
+                                          <TableRow>
+                                            <TableCell
+                                              colSpan={8}
+                                              className="text-center text-muted-foreground text-sm py-4"
+                                            >
+                                              No variants
+                                            </TableCell>
+                                          </TableRow>
+                                        )}
+                                      </TableBody>
+                                    </Table>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </AccordionContent>
+                        </AccordionItem>
+                      ))}
+                    </Accordion>
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <div
+                  className={cn(
+                    'min-w-[52rem] grid gap-x-4 gap-y-2 px-2 pt-2 border-t text-sm items-end',
+                    brandCols
+                  )}
+                >
+                  <span className="font-semibold">Total</span>
+                  <div className="sm:text-right">
+                    <div className="text-xs text-muted-foreground font-medium">Qty</div>
+                    <div className="font-semibold tabular-nums">
+                      {(brandQtyCity?.brandQty ?? 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-xs text-muted-foreground font-medium">Revenue</div>
+                    <div className="font-semibold tabular-nums">
+                      ₱{(brandQtyCity?.brandRevenue ?? 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-xs font-medium text-green-700">Approved Qty</div>
+                    <div className="font-semibold tabular-nums text-green-700">
+                      {totalApprovedQty.toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-xs font-medium text-green-700">Approved Rev</div>
+                    <div className="font-semibold tabular-nums text-green-700">
+                      ₱{totalApprovedRev.toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-xs font-medium text-amber-700">Pending Qty</div>
+                    <div className="font-semibold tabular-nums text-amber-700">
+                      {totalPendingQty.toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="sm:text-right">
+                    <div className="text-xs font-medium text-amber-700">Pending Rev</div>
+                    <div className="font-semibold tabular-nums text-amber-700">
+                      ₱{totalPendingRev.toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Variant order/client drill-down */}
+      <Dialog open={variantDrillOpen} onOpenChange={setVariantDrillOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedVariantDrill?.variant.variant}
+              {selectedVariantDrill?.brand ? ` · ${selectedVariantDrill.brand}` : ''}
+            </DialogTitle>
+            <DialogDescription>
+              Order and client contributions — {cityDateRangeLabel}
+              {selectedVariantDrill?.variant.variantType
+                ? ` · ${formatVariantTypeLabel(selectedVariantDrill.variant.variantType)}`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedVariantDrill && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                <div className="rounded-md border p-2">
+                  <div className="text-xs text-muted-foreground">Total Qty</div>
+                  <div className="font-semibold tabular-nums">
+                    {selectedVariantDrill.variant.quantity.toLocaleString()}
+                  </div>
+                </div>
+                <div className="rounded-md border p-2">
+                  <div className="text-xs text-muted-foreground">Total Revenue</div>
+                  <div className="font-semibold tabular-nums">
+                    ₱{selectedVariantDrill.variant.revenue.toLocaleString()}
+                  </div>
+                </div>
+                <div className="rounded-md border p-2">
+                  <div className="text-xs text-muted-foreground">Approved</div>
+                  <div className="font-semibold tabular-nums text-green-700">
+                    {selectedVariantDrill.variant.approvedQuantity.toLocaleString()} · ₱
+                    {selectedVariantDrill.variant.approvedRevenue.toLocaleString()}
+                  </div>
+                </div>
+                <div className="rounded-md border p-2">
+                  <div className="text-xs text-muted-foreground">Pending</div>
+                  <div className="font-semibold tabular-nums text-amber-700">
+                    {selectedVariantDrill.variant.pendingQuantity.toLocaleString()} · ₱
+                    {selectedVariantDrill.variant.pendingRevenue.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Client</TableHead>
+                      <TableHead>Order date</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead className="text-right">Line amount</TableHead>
+                      <TableHead className="text-right">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedVariantDrill.variant.lines.map((line, idx) => (
+                      <TableRow key={`${line.orderId}-${idx}`}>
+                        <TableCell className="font-medium">{line.clientName}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {line.orderDate
+                            ? (() => {
+                                const d = parseOrderDate(line.orderDate);
+                                return d ? format(d, 'MMM d, yyyy') : line.orderDate;
+                              })()
+                            : '—'}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {line.quantity.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          ₱{line.lineAmount.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge
+                            variant="outline"
+                            className={
+                              line.status === 'approved'
+                                ? 'text-green-700 border-green-200'
+                                : 'text-amber-700 border-amber-200'
+                            }
+                          >
+                            {line.status === 'approved' ? 'Approved' : 'Pending'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {selectedVariantDrill.variant.lines.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                          No order lines for this variant
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
