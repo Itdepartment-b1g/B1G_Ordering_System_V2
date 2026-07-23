@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Eye, FileText, Loader2, MoreHorizontal, RotateCcw, Search, XCircle } from 'lucide-react';
@@ -9,6 +9,17 @@ import { useToast } from '@/hooks/use-toast';
 import { StandardAccountReturnToWarehouseDialog } from './components/StandardAccountReturnToWarehouseDialog';
 import { getStandardAccountReturnEvidenceSignedUrl } from './utils/uploadStandardAccountReturnEvidence';
 import { exportStandardAccountReturnPdfFromSource } from './utils/exportStandardAccountReturnPdf';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -144,6 +155,9 @@ export default function StandardAccountReturnToWarehousePage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailReturn, setDetailReturn] = useState<SaReturnRow | null>(null);
@@ -195,10 +209,21 @@ export default function StandardAccountReturnToWarehousePage() {
     },
   });
 
+  const dateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return returns.filter((row) => {
       if (statusFilter !== 'all' && row.status !== statusFilter) return false;
+      if (!isDateInRange(row.created_at, dateRange.start, dateRange.end)) return false;
       if (!q) return true;
       return (
         row.request_number.toLowerCase().includes(q) ||
@@ -210,7 +235,13 @@ export default function StandardAccountReturnToWarehousePage() {
         )
       );
     });
-  }, [returns, searchQuery, statusFilter]);
+  }, [returns, searchQuery, statusFilter, dateRange.end, dateRange.start]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
+
+  const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 
   const openDetail = async (row: SaReturnRow) => {
     setDetailReturn(row);
@@ -333,6 +364,12 @@ export default function StandardAccountReturnToWarehousePage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
+            <DateRangeFilterPopover
+              value={dateRangeFilter}
+              onChange={setDateRangeFilter}
+              triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
+              align="end"
+            />
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-full sm:w-[200px]">
                 <SelectValue placeholder="Status" />
@@ -360,6 +397,7 @@ export default function StandardAccountReturnToWarehousePage() {
           ) : filtered.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">No returns yet.</div>
           ) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -372,7 +410,7 @@ export default function StandardAccountReturnToWarehousePage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((row) => {
+                {pagedItems.map((row) => {
                   const totalQty = row.items.reduce((s, i) => s + i.return_quantity, 0);
                   const inspected = row.items.reduce((s, i) => s + i.inspected_quantity, 0);
                   const destLabel = row.destination_location
@@ -449,6 +487,17 @@ export default function StandardAccountReturnToWarehousePage() {
                 })}
               </TableBody>
             </Table>
+            <div className="pt-4">
+              <ListPagination
+                pageSize={pageSize}
+                safePage={safePage}
+                pageCount={pageCount}
+                onPageSizeChange={setPageSize}
+                onPrevious={() => setPage((p) => Math.max(0, p - 1))}
+                onNext={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              />
+            </div>
+            </>
           )}
         </CardContent>
       </Card>

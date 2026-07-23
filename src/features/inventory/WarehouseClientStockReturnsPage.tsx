@@ -15,6 +15,17 @@ import {
 } from './warehouseStockReturnInspectShared';
 import { getStandardAccountReturnEvidenceSignedUrl } from './utils/uploadStandardAccountReturnEvidence';
 import { exportStandardAccountReturnPdfFromSource } from './utils/exportStandardAccountReturnPdf';
+import {
+  DEFAULT_PAGE_SIZE,
+  getListPaginationSlice,
+  ListPagination,
+  type PageSize,
+} from '@/features/shared/components/ListPagination';
+import {
+  DateRangeFilterPopover,
+  type DateRangeFilterValue,
+} from '@/features/shared/components/DateRangeFilterPopover';
+import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -278,6 +289,9 @@ export default function WarehouseClientStockReturnsPage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
   const [inspectOpen, setInspectOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailReturn, setDetailReturn] = useState<ClientReturnRow | null>(null);
@@ -425,10 +439,29 @@ export default function WarehouseClientStockReturnsPage() {
     },
   });
 
+  const dateRange = useMemo(
+    () =>
+      getDateRangeFromPreset(
+        dateRangeFilter.preset,
+        dateRangeFilter.customStart,
+        dateRangeFilter.customEnd
+      ),
+    [dateRangeFilter]
+  );
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
+    const { start, end } = dateRange;
+
     return returns.filter((row) => {
       if (statusFilter !== 'all' && row.status !== statusFilter) return false;
+
+      const inCreatedRange = isDateInRange(row.created_at, start, end);
+      const inReceiptRange = row.receipts.some((r) =>
+        isDateInRange(r.received_at, start, end)
+      );
+      if (!inCreatedRange && !inReceiptRange) return false;
+
       if (!q) return true;
       return (
         row.request_number.toLowerCase().includes(q) ||
@@ -441,7 +474,13 @@ export default function WarehouseClientStockReturnsPage() {
         )
       );
     });
-  }, [returns, searchQuery, statusFilter]);
+  }, [returns, searchQuery, statusFilter, dateRange]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
+
+  const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 
   const openDetail = async (row: ClientReturnRow) => {
     setDetailReturn(row);
@@ -666,6 +705,12 @@ export default function WarehouseClientStockReturnsPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
+            <DateRangeFilterPopover
+              value={dateRangeFilter}
+              onChange={setDateRangeFilter}
+              triggerClassName="w-full sm:w-[220px] justify-between h-10 shrink-0"
+              align="end"
+            />
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-full sm:w-[200px]">
                 <SelectValue placeholder="Status" />
@@ -707,6 +752,7 @@ export default function WarehouseClientStockReturnsPage() {
               )}
             </div>
           ) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -720,7 +766,7 @@ export default function WarehouseClientStockReturnsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((row) => {
+                {pagedItems.map((row) => {
                   const totalQty = row.items.reduce((s, i) => s + i.return_quantity, 0);
                   const inspected = row.items.reduce((s, i) => s + i.inspected_quantity, 0);
                   const destLabel = row.destination_location
@@ -796,6 +842,17 @@ export default function WarehouseClientStockReturnsPage() {
                 })}
               </TableBody>
             </Table>
+            <div className="pt-4">
+              <ListPagination
+                pageSize={pageSize}
+                safePage={safePage}
+                pageCount={pageCount}
+                onPageSizeChange={setPageSize}
+                onPrevious={() => setPage((p) => Math.max(0, p - 1))}
+                onNext={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              />
+            </div>
+            </>
           )}
         </CardContent>
       </Card>

@@ -17,7 +17,6 @@ export type StandardAccountReturnPdfInput = {
   destinationIsMain?: boolean | null;
   createdByName?: string | null;
   signatureUrl?: string | null;
-  proofImageUrl?: string | null;
   lines: StandardAccountReturnPdfLine[];
 };
 
@@ -29,8 +28,6 @@ export type StandardAccountReturnPdfSource = {
   notes?: string | null;
   signature_url?: string | null;
   signature_path?: string | null;
-  proof_image_url?: string | null;
-  proof_image_path?: string | null;
   client_company?: { company_name: string } | null;
   destination_location?: { name: string; is_main?: boolean | null } | null;
   created_by_user?: { full_name: string } | null;
@@ -108,6 +105,45 @@ function openPrintableHtml(html: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/**
+ * Strip near-white / opaque canvas background so the signature sits cleanly on the receipt.
+ */
+async function makeSignatureTransparent(src: string): Promise<string> {
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('Failed to load signature image'));
+      // data URLs don't need CORS; remote signed URLs may.
+      if (!src.startsWith('data:')) image.crossOrigin = 'anonymous';
+      image.src = src;
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx || canvas.width === 0 || canvas.height === 0) return src;
+
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const { data } = imageData;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      // Treat near-white pixels as background.
+      if (r > 240 && g > 240 && b > 240) {
+        data[i + 3] = 0;
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL('image/png');
+  } catch {
+    return src;
+  }
+}
+
 function itemRowsHtml(lines: StandardAccountReturnPdfLine[]): {
   html: string;
   showInspected: boolean;
@@ -153,10 +189,6 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   const signatureImgHtml = input.signatureUrl
     ? `<img class="sig-img" src="${escapeHtml(input.signatureUrl)}" alt="Return signature" />`
     : `<span class="sline"></span>`;
-
-  const proofImgHtml = input.proofImageUrl
-    ? `<img class="proof-img" src="${escapeHtml(input.proofImageUrl)}" alt="Return proof" />`
-    : `<span class="muted">No proof photo</span>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -269,6 +301,12 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
     font-family: ui-monospace, monospace;
     font-weight: 600;
   }
+  .return-to-row .value {
+    font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+    font-weight: 700;
+    border-bottom: 1.5px solid #000;
+    padding-bottom: 2px;
+  }
 
   .items-table {
     width: 100%;
@@ -326,29 +364,19 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
   .signature-field { align-items: flex-start; }
   .sig-img {
     display: block;
-    max-height: 56px;
-    max-width: 200px;
+    max-height: 64px;
+    max-width: 220px;
     object-fit: contain;
     margin-top: 2px;
-    border: 1px solid #ccc;
-    background: #fff;
-    padding: 4px;
+    background: transparent;
+    border: 0;
+    padding: 0;
   }
   .sline {
     display: inline-block;
     border-bottom: 1px solid #999;
     min-width: 160px;
     min-height: 16px;
-  }
-  .proof-img {
-    display: block;
-    max-height: 160px;
-    max-width: 280px;
-    object-fit: contain;
-    margin-top: 4px;
-    border: 1px solid #ccc;
-    background: #fff;
-    padding: 4px;
   }
 
   .footer-note {
@@ -401,6 +429,10 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
       <span class="label">RETURN NUMBER:</span>
       <span class="value">${rtNo}</span>
     </div>
+    <div class="meta-row return-to-row">
+      <span class="label">RETURN TO:</span>
+      <span class="value">${dest}</span>
+    </div>
     <div class="meta-row">
       <span class="label">STATUS:</span>
       <span class="value">${status}</span>
@@ -437,7 +469,7 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
           : ''
       }
       <div class="delivery-field">
-        <span class="flabel">DESTINATION:</span>
+        <span class="flabel">RETURN TO:</span>
         <span class="fvalue">${dest}</span>
       </div>
       <div class="delivery-field">
@@ -464,10 +496,6 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
         <span class="flabel">SIGNATURE:</span>
         <span class="fvalue">${signatureImgHtml}</span>
       </div>
-      <div class="delivery-field signature-field">
-        <span class="flabel">PROOF PHOTO:</span>
-        <span class="fvalue">${proofImgHtml}</span>
-      </div>
     </div>
 
     <div class="footer-note">
@@ -482,12 +510,21 @@ function buildReturnReceiptHtml(input: StandardAccountReturnPdfInput): string {
 export async function exportStandardAccountReturnPdf(
   input: StandardAccountReturnPdfInput
 ): Promise<void> {
-  openPrintableHtml(buildReturnReceiptHtml(input));
+  const signatureUrl = input.signatureUrl
+    ? await makeSignatureTransparent(input.signatureUrl)
+    : null;
+
+  openPrintableHtml(
+    buildReturnReceiptHtml({
+      ...input,
+      signatureUrl,
+    })
+  );
 }
 
 function mapSourceToInput(
   source: StandardAccountReturnPdfSource,
-  evidence: { signatureUrl: string | null; proofImageUrl: string | null }
+  evidence: { signatureUrl: string | null }
 ): StandardAccountReturnPdfInput {
   return {
     requestNumber: source.request_number,
@@ -499,7 +536,6 @@ function mapSourceToInput(
     destinationIsMain: source.destination_location?.is_main ?? null,
     createdByName: source.created_by_user?.full_name ?? null,
     signatureUrl: evidence.signatureUrl,
-    proofImageUrl: evidence.proofImageUrl,
     lines: source.items.map((item) => ({
       brandName: item.variant?.brand?.name ?? null,
       variantName: item.variant?.name ?? null,
@@ -513,15 +549,11 @@ function mapSourceToInput(
 export async function exportStandardAccountReturnPdfFromSource(
   source: StandardAccountReturnPdfSource
 ): Promise<void> {
-  const [signedSignature, signedProof] = await Promise.all([
-    getStandardAccountReturnEvidenceSignedUrl(source.signature_path),
-    getStandardAccountReturnEvidenceSignedUrl(source.proof_image_path),
-  ]);
+  const signedSignature = await getStandardAccountReturnEvidenceSignedUrl(source.signature_path);
 
   await exportStandardAccountReturnPdf(
     mapSourceToInput(source, {
       signatureUrl: signedSignature || source.signature_url || null,
-      proofImageUrl: signedProof || source.proof_image_url || null,
     })
   );
 }

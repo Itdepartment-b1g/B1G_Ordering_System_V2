@@ -316,7 +316,6 @@ export function StandardAccountReturnToWarehouseDialog({
         destinationIsMain: dest?.is_main ?? null,
         createdByName: userFullName ?? null,
         signatureUrl: signatureDataUrl || signature.url,
-        proofImageUrl: proofImageDataUrl || proof.url,
         lines: items.map((item) => {
           const row = rows.find((r) => r.variant_id === item.client_variant_id);
           return {
