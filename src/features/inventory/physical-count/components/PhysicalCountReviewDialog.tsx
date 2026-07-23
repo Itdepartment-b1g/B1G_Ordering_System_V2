@@ -76,7 +76,7 @@ export function PhysicalCountReviewDialog({
                     <TableHead>Brand</TableHead>
                     <TableHead>Variant</TableHead>
                     <TableHead>Expiration</TableHead>
-                    <TableHead className="text-right">Boxes × Qty/box</TableHead>
+                    <TableHead className="text-right">Boxes × Qty/box + Loose</TableHead>
                     <TableHead className="text-right">Physical</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -91,6 +91,13 @@ export function PhysicalCountReviewDialog({
                       <TableCell className="text-right tabular-nums">
                         {formatOptionalQty(parseNonNegativeQty(line.boxCount))} ×{' '}
                         {formatOptionalQty(parseNonNegativeQty(line.unitsPerBox))}
+                        {(line.looseBoxCount.trim() !== '' || line.looseQty.trim() !== '') && (
+                          <>
+                            {' '}
+                            + {formatOptionalQty(parseNonNegativeQty(line.looseBoxCount))} ×{' '}
+                            {formatOptionalQty(parseNonNegativeQty(line.looseQty))}
+                          </>
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{line.physical}</TableCell>
                     </TableRow>
@@ -163,7 +170,7 @@ export function PhysicalCountHistoryDetailDialog({
                   <TableHead>Variant</TableHead>
                   <TableHead>Expiration</TableHead>
                   <TableHead className="text-right">System</TableHead>
-                  <TableHead className="text-right">Boxes × Qty/box</TableHead>
+                  <TableHead className="text-right">Boxes × Qty/box + Loose</TableHead>
                   <TableHead className="text-right">Physical</TableHead>
                   <TableHead className="text-right">Variance</TableHead>
                 </TableRow>
@@ -179,6 +186,14 @@ export function PhysicalCountHistoryDetailDialog({
                     <TableCell className="text-right tabular-nums">{line.system_qty_snapshot}</TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatOptionalQty(line.box_count)} × {formatOptionalQty(line.units_per_box)}
+                      {(line.loose_box_count != null && line.loose_box_count > 0) ||
+                      (line.loose_qty != null && line.loose_qty > 0) ? (
+                        <>
+                          {' '}
+                          + {formatOptionalQty(line.loose_box_count)} ×{' '}
+                          {formatOptionalQty(line.loose_qty)}
+                        </>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{line.physical_qty}</TableCell>
                     <TableCell

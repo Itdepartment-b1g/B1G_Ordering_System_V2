@@ -746,6 +746,8 @@ export interface PhysicalCountLineRecord {
   expiration_date?: string | null;
   box_count?: number | null;
   units_per_box?: number | null;
+  loose_box_count?: number | null;
+  loose_qty?: number | null;
   created_at: string;
 }
 

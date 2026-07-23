@@ -109,6 +109,8 @@ export function usePhysicalCountSessionDetail(sessionId: string | null, enabled:
             physical_qty,
             box_count,
             units_per_box,
+            loose_box_count,
+            loose_qty,
             variance
           )
         `
