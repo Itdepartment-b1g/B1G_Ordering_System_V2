@@ -6,6 +6,7 @@ export interface CityAnalyticsExportRow {
   city: string;
   agents: string[];
   orders: number;
+  brandQty: number;
   approvedRevenue: number;
   pendingRevenue: number;
   rejectedRevenue: number;
@@ -66,6 +67,7 @@ export async function exportCityAnalyticsExcel(
     { width: 22 },
     { width: 36 },
     { width: 12 },
+    { width: 16 },
     { width: 18 },
     { width: 18 },
     { width: 20 },
@@ -77,7 +79,7 @@ export async function exportCityAnalyticsExcel(
   ];
 
   const titleRow = worksheet.getRow(1);
-  worksheet.mergeCells('A1:K1');
+  worksheet.mergeCells('A1:L1');
   titleRow.getCell(1).value = 'City Analytics Export';
   titleRow.getCell(1).font = { bold: true, size: 14 };
   titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
@@ -103,6 +105,7 @@ export async function exportCityAnalyticsExcel(
   const approvedAndPending = approvedRevenue + pendingRevenue;
   const totalAmount = approvedAndPending + rejectedRevenue;
   const totalOrders = rows.reduce((sum, r) => sum + r.orders, 0);
+  const totalBrandQty = rows.reduce((sum, r) => sum + r.brandQty, 0);
   const totalClients = rows.reduce((sum, r) => sum + r.clients, 0);
   const totalVisits = rows.reduce((sum, r) => sum + r.visits, 0);
 
@@ -128,6 +131,7 @@ export async function exportCityAnalyticsExcel(
     formatPeso(totalAmount)
   );
   cursor = addMetaRow(worksheet, cursor, 'Total orders', totalOrders);
+  cursor = addMetaRow(worksheet, cursor, 'Total brand qty', totalBrandQty);
   cursor = addMetaRow(worksheet, cursor, 'Total clients', totalClients);
   cursor = addMetaRow(worksheet, cursor, 'Total visits', totalVisits);
   cursor += 1;
@@ -136,6 +140,7 @@ export async function exportCityAnalyticsExcel(
     'City',
     'Agent(s)',
     'Orders',
+    'Total Brand Qty',
     'Approved Revenue',
     'Pending Revenue',
     'Approved + Pending',
@@ -158,15 +163,16 @@ export async function exportCityAnalyticsExcel(
     dataRow.getCell(1).value = city.city;
     dataRow.getCell(2).value = city.agents.length ? city.agents.join(', ') : '—';
     dataRow.getCell(3).value = city.orders;
-    dataRow.getCell(4).value = formatPeso(city.approvedRevenue);
-    dataRow.getCell(5).value = formatPeso(city.pendingRevenue);
-    dataRow.getCell(6).value = formatPeso(city.revenue);
-    dataRow.getCell(7).value = formatPeso(city.rejectedRevenue);
-    dataRow.getCell(8).value = formatPeso(city.totalAmount);
-    dataRow.getCell(9).value = city.clients;
-    dataRow.getCell(10).value = city.visits;
-    dataRow.getCell(11).value = Number(city.growth.toFixed(1));
-    [3, 4, 5, 6, 7, 8, 9, 10, 11].forEach((col) => {
+    dataRow.getCell(4).value = city.brandQty;
+    dataRow.getCell(5).value = formatPeso(city.approvedRevenue);
+    dataRow.getCell(6).value = formatPeso(city.pendingRevenue);
+    dataRow.getCell(7).value = formatPeso(city.revenue);
+    dataRow.getCell(8).value = formatPeso(city.rejectedRevenue);
+    dataRow.getCell(9).value = formatPeso(city.totalAmount);
+    dataRow.getCell(10).value = city.clients;
+    dataRow.getCell(11).value = city.visits;
+    dataRow.getCell(12).value = Number(city.growth.toFixed(1));
+    [3, 4, 5, 6, 7, 8, 9, 10, 11, 12].forEach((col) => {
       dataRow.getCell(col).alignment = { horizontal: 'right' };
     });
     cursor += 1;
@@ -177,16 +183,17 @@ export async function exportCityAnalyticsExcel(
   totalRow.getCell(2).value = 'TOTAL';
   totalRow.getCell(2).font = { bold: true };
   totalRow.getCell(3).value = totalOrders;
-  totalRow.getCell(4).value = formatPeso(approvedRevenue);
-  totalRow.getCell(5).value = formatPeso(pendingRevenue);
-  totalRow.getCell(6).value = formatPeso(approvedAndPending);
-  totalRow.getCell(7).value = formatPeso(rejectedRevenue);
-  totalRow.getCell(8).value = formatPeso(totalAmount);
-  totalRow.getCell(9).value = totalClients;
-  totalRow.getCell(10).value = totalVisits;
-  totalRow.getCell(11).value = '';
+  totalRow.getCell(4).value = totalBrandQty;
+  totalRow.getCell(5).value = formatPeso(approvedRevenue);
+  totalRow.getCell(6).value = formatPeso(pendingRevenue);
+  totalRow.getCell(7).value = formatPeso(approvedAndPending);
+  totalRow.getCell(8).value = formatPeso(rejectedRevenue);
+  totalRow.getCell(9).value = formatPeso(totalAmount);
+  totalRow.getCell(10).value = totalClients;
+  totalRow.getCell(11).value = totalVisits;
+  totalRow.getCell(12).value = '';
   totalRow.font = { bold: true };
-  [3, 4, 5, 6, 7, 8, 9, 10].forEach((col) => {
+  [3, 4, 5, 6, 7, 8, 9, 10, 11].forEach((col) => {
     totalRow.getCell(col).alignment = { horizontal: 'right' };
   });
 
