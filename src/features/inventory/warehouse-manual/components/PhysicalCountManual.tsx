@@ -25,7 +25,7 @@ export default function PhysicalCountManual({ embedded = false }: PhysicalCountM
         )}
         <span>2. Select the <span className="text-blue-500">Warehouse location</span> and <span className="text-blue-500">Batch</span> you are counting</span>
         <span>3. Add count lines by selecting brand and variant, then clicking <span className="text-blue-500">Add line</span>, or click <span className="text-blue-500">Add all lots in batch</span> to include every lot in that batch</span>
-        <span>4. Enter the physical quantity using <span className="text-blue-500">Boxes</span> and <span className="text-blue-500">Qty/box</span> for each line</span>
+        <span>4. Enter the physical quantity using <span className="text-blue-500">Boxes</span> and <span className="text-blue-500">Qty/box</span> for each line. Optionally add leftover stock with <span className="text-blue-500">Loose Boxes</span> and <span className="text-blue-500">Loose Qty</span> (leave both blank, or fill both). <span className="text-blue-500">Physical Qty</span> is calculated as (Boxes × Qty/box) + (Loose Boxes × Loose Qty)</span>
         <span>5. Optionally add notes, then click on <span className="text-blue-500">Review & submit</span></span>
         <span>6. Review the count summary and any variances, then click on <span className="text-blue-500">Continue to signature</span></span>
         <span>7. Sign to confirm the count and complete the submission</span>
