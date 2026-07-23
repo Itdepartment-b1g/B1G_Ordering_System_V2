@@ -49,6 +49,8 @@ function statusLabel(status: SubWarehouseStockRequest['status']): string {
   switch (status) {
     case 'pending_approval':
       return 'Pending approval';
+    case 'approved':
+      return 'Approved (awaiting delivery)';
     case 'pending_receive':
       return 'Pending receive';
     case 'partially_received':
@@ -130,8 +132,11 @@ function eventTitle(event: SubWarehouseRequestHistoryEvent): string {
   switch (event.type) {
     case 'created':
       return 'Request created';
+    case 'approved':
+      return 'Approved';
+    case 'delivered':
     case 'approved_released':
-      return 'Approved & released';
+      return 'Delivered';
     case 'remaining_released':
       return 'Remaining short allocated';
     case 'receive_confirmed':
@@ -151,9 +156,12 @@ function eventSummary(
     const requested = request.items.reduce((s, i) => s + Math.max(0, i.requestedQuantity), 0);
     return `Requested ${requested.toLocaleString()} unit(s) across ${request.items.length} item(s)`;
   }
-  if (event.type === 'approved_released') {
+  if (event.type === 'approved') {
+    return 'Approved — awaiting delivery';
+  }
+  if (event.type === 'delivered' || event.type === 'approved_released') {
     const qty = linesTotalQty(event.lines);
-    return `Released ${qty.toLocaleString()} unit(s) · ${(event.lines?.length ?? 0).toLocaleString()} item(s)`;
+    return `Delivered ${qty.toLocaleString()} unit(s) · ${(event.lines?.length ?? 0).toLocaleString()} item(s)`;
   }
   if (event.type === 'remaining_released') {
     const qty = linesTotalQty(event.lines);
@@ -175,7 +183,7 @@ function eventSummary(
 function qtyHeaderForEvent(type: SubWarehouseRequestHistoryEvent['type']): string {
   if (type === 'receive_confirmed') return 'Received';
   if (type === 'remaining_released') return 'Allocated';
-  if (type === 'approved_released') return 'Released';
+  if (type === 'delivered' || type === 'approved_released') return 'Delivered';
   if (type === 'rejected') return 'Requested';
   return 'Qty';
 }
@@ -189,7 +197,7 @@ function resolveEventSignature(
   event: SubWarehouseRequestHistoryEvent,
   request: SubWarehouseStockRequest
 ): string | undefined {
-  if (event.type === 'approved_released') {
+  if (event.type === 'delivered' || event.type === 'approved_released') {
     return event.signatureDataUrl || request.approvalSignatureUrl;
   }
   if (event.type === 'rejected') {
@@ -201,8 +209,9 @@ function resolveEventSignature(
 
 function signatureLabelForEvent(type: SubWarehouseRequestHistoryEvent['type']): string {
   switch (type) {
+    case 'delivered':
     case 'approved_released':
-      return 'Approver signature';
+      return 'Delivery signature';
     case 'remaining_released':
       return 'Allocator signature';
     case 'receive_confirmed':
@@ -247,10 +256,12 @@ function renderEventAttachments(
   request: SubWarehouseStockRequest
 ): string {
   const showProof =
+    event.type === 'delivered' ||
     event.type === 'approved_released' ||
     event.type === 'remaining_released' ||
     event.type === 'receive_confirmed';
   const showSignature =
+    event.type === 'delivered' ||
     event.type === 'approved_released' ||
     event.type === 'remaining_released' ||
     event.type === 'receive_confirmed' ||

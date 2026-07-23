@@ -23,6 +23,7 @@ import type { Brand, Variant } from '../InventoryContext';
 
 export type SubWarehouseStockRequestStatus =
   | 'pending_approval'
+  | 'approved'
   | 'pending_receive'
   | 'partially_received'
   | 'fully_received'
@@ -71,6 +72,24 @@ export type SubWarehouseRequestHistoryEvent =
       byName?: string;
     }
   | {
+      id: string;
+      type: 'approved';
+      at: string;
+      note?: string;
+      byName?: string;
+    }
+  | {
+      id: string;
+      type: 'delivered';
+      at: string;
+      note?: string;
+      byName?: string;
+      lines: SubWarehouseReleaseLine[];
+      proofImageDataUrl?: string;
+      signatureDataUrl?: string;
+    }
+  | {
+      /** @deprecated Legacy combined approve+release; treat as delivered. */
       id: string;
       type: 'approved_released';
       at: string;
@@ -127,6 +146,8 @@ export type SubWarehouseStockRequest = {
   approvalSignatureUrl?: string;
   /** Main reject signature (from request row or history event). */
   rejectionSignatureUrl?: string;
+  /** PO-style DR number assigned when main delivers (WH{L}-YYYY-MM-DR-NNNNN). */
+  drNumber?: string;
   /** Receive proof snapshots (also mirrored into history). */
   receiveProofs?: SubWarehouseReceiveProof[];
   /** Full timeline for this request number. */

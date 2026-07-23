@@ -54,8 +54,11 @@ function eventTitle(event: SubWarehouseRequestHistoryEvent): string {
   switch (event.type) {
     case 'created':
       return 'Request created';
+    case 'approved':
+      return 'Approved';
+    case 'delivered':
     case 'approved_released':
-      return 'Approved & released';
+      return 'Delivered';
     case 'remaining_released':
       return 'Remaining short allocated';
     case 'receive_confirmed':
@@ -89,10 +92,14 @@ function eventSummary(
     return `Requested ${unitLabel(requested)} across ${variantLabel(items.length)}`;
   }
 
-  if (event.type === 'approved_released') {
+  if (event.type === 'approved') {
+    return 'Approved — awaiting delivery';
+  }
+
+  if (event.type === 'delivered' || event.type === 'approved_released') {
     const qty = linesTotalQty(event.lines);
     const count = event.lines?.length ?? 0;
-    return `Released ${unitLabel(qty)} · ${variantLabel(count)}`;
+    return `Delivered ${unitLabel(qty)} · ${variantLabel(count)}`;
   }
 
   if (event.type === 'receive_confirmed') {
@@ -124,7 +131,10 @@ function EventIcon({
 }) {
   const iconClass = cn('h-3.5 w-3.5', className);
   if (type === 'created') return <Clock className={iconClass} />;
-  if (type === 'approved_released' || type === 'remaining_released') return <Send className={iconClass} />;
+  if (type === 'approved') return <CheckCircle2 className={iconClass} />;
+  if (type === 'delivered' || type === 'approved_released' || type === 'remaining_released') {
+    return <Send className={iconClass} />;
+  }
   if (type === 'receive_confirmed') return <PackageCheck className={iconClass} />;
   if (type === 'rejected') return <XCircle className={iconClass} />;
   return <CheckCircle2 className={iconClass} />;
@@ -135,6 +145,12 @@ function eventTone(type: SubWarehouseRequestHistoryEvent['type']): {
   iconWrap: string;
 } {
   switch (type) {
+    case 'approved':
+      return {
+        rail: 'bg-sky-500',
+        iconWrap: 'bg-sky-50 text-sky-700 border-sky-200',
+      };
+    case 'delivered':
     case 'approved_released':
     case 'remaining_released':
       return {
@@ -172,7 +188,7 @@ function resolveBrandName(
 function qtyHeaderForEvent(type: SubWarehouseRequestHistoryEvent['type']): string {
   if (type === 'receive_confirmed') return 'Received';
   if (type === 'remaining_released') return 'Allocated';
-  if (type === 'approved_released') return 'Delivered';
+  if (type === 'delivered' || type === 'approved_released') return 'Delivered';
   if (type === 'rejected') return 'Requested';
   return 'Qty';
 }
@@ -298,7 +314,7 @@ function buildAllocateShortProgress(
   const result = new Map<string, string>();
 
   for (const event of chronological) {
-    if (event.type === 'approved_released' && event.lines) {
+    if ((event.type === 'delivered' || event.type === 'approved_released') && event.lines) {
       for (const line of event.lines) {
         delivered.set(line.variantId, Math.max(0, line.quantity));
         received.set(line.variantId, 0);
@@ -649,11 +665,11 @@ export function SubWarehouseRequestHistoryTimeline({
                     />
                   ) : null}
 
-                  {event.type === 'approved_released' ? (
+                  {event.type === 'delivered' || event.type === 'approved_released' ? (
                     <EventAttachments
                       proofImageDataUrl={event.proofImageDataUrl}
                       signatureDataUrl={event.signatureDataUrl}
-                      signatureLabel="Approver signature"
+                      signatureLabel="Delivery signature"
                     />
                   ) : null}
 

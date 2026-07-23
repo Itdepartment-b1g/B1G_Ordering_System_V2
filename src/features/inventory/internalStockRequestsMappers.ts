@@ -73,6 +73,16 @@ function mapEvent(
   switch (event.event_type) {
     case 'created':
       return { ...base, type: 'created' };
+    case 'approved':
+      return { ...base, type: 'approved' };
+    case 'delivered':
+      return {
+        ...base,
+        type: 'delivered',
+        lines,
+        proofImageDataUrl: event.proof_image_url || undefined,
+        signatureDataUrl: event.signature_url || undefined,
+      };
     case 'approved_released':
       return {
         ...base,
@@ -136,7 +146,11 @@ export function mapInternalStockRequestRow(row: InternalStockRequestRow): SubWar
 
   // Fallback: request-level signature URLs if event rows omit them.
   history = history.map((event) => {
-    if (event.type === 'approved_released' && !event.signatureDataUrl && row.approval_signature_url) {
+    if (
+      (event.type === 'delivered' || event.type === 'approved_released') &&
+      !event.signatureDataUrl &&
+      row.approval_signature_url
+    ) {
       return { ...event, signatureDataUrl: row.approval_signature_url };
     }
     if (event.type === 'rejected' && !event.signatureDataUrl && row.rejection_signature_url) {
@@ -158,6 +172,7 @@ export function mapInternalStockRequestRow(row: InternalStockRequestRow): SubWar
     rejectionReason: row.rejection_reason || undefined,
     approvalSignatureUrl: row.approval_signature_url || undefined,
     rejectionSignatureUrl: row.rejection_signature_url || undefined,
+    drNumber: row.dr_number || undefined,
     items,
     history,
     receiveProofs: mapReceiveProofs(history),

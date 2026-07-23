@@ -30,10 +30,16 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
         ) : (
           <span>1. Go to <Link to="/inventory/sub-stock-requests" className="text-blue-500">Sub Stock Requests</Link></span>
         )}
-        <span>2. Click on the 3 vertical dots icon in the row and click on <span className="text-blue-500">Approve & Release</span></span>
-        <span>3. Complete the attachments of sub stock request and e-signature as proof of delivery and click on <span className="text-blue-500">Confirm Request</span></span>
-        <span>4. The sub stock request will be approved and you can see it in the list.</span>
-        <span>5. Then after that wait for the sub warehouse to receive the stock</span>
+        <span>2. Click on the 3 vertical dots icon in the row and click on <span className="text-blue-500">Approve</span></span>
+        <span>3. Confirm the approval. Stock is not reserved yet — the request moves to <span className="text-blue-500">Approved</span>.</span>
+      </InstructionBorder>
+      <InstructionBorder>
+        <TitleSection>How to Deliver a Sub Stock Request?</TitleSection>
+        <span>1. After a request is approved, click the 3 vertical dots and choose <span className="text-blue-500">Deliver</span></span>
+        <span>2. Upload a proof photo and add an e-signature, then click <span className="text-blue-500">Confirm deliver</span></span>
+        <span>3. Stock is reserved and the sub warehouse can receive. A <span className="text-blue-500">Delivery Receipt</span> opens automatically (no bank details).</span>
+        <span>4. You can reprint anytime via <span className="text-blue-500">Print Delivery Receipt</span></span>
+        <span>5. Wait for the sub warehouse to confirm receive</span>
       </InstructionBorder>
       <InstructionBorder>
         <TitleSection>How to Reject a Sub Stock Request?</TitleSection>

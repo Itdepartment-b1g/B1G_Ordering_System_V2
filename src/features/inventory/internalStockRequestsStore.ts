@@ -172,7 +172,29 @@ export function useInternalStockRequests() {
     persist(requestsState.map((req) => (req.id === requestId ? updater(req) : req)));
   };
 
-  const approveAndRelease = (
+  const approveRequest = (
+    requestId: string,
+    options?: {
+      byName?: string;
+    }
+  ) => {
+    updateRequest(requestId, (req) => {
+      if (req.status !== 'pending_approval') return req;
+      const at = new Date().toISOString();
+      return {
+        ...req,
+        status: 'approved',
+        history: appendHistory(req, {
+          id: newHistoryId('approved'),
+          type: 'approved',
+          at,
+          byName: options?.byName || 'Main Warehouse',
+        }),
+      };
+    });
+  };
+
+  const deliverRequest = (
     requestId: string,
     options?: {
       byName?: string;
@@ -181,7 +203,7 @@ export function useInternalStockRequests() {
     }
   ) => {
     updateRequest(requestId, (req) => {
-      if (req.status !== 'pending_approval') return req;
+      if (req.status !== 'approved') return req;
       const at = new Date().toISOString();
       const lines = req.items.map((item) => ({
         variantId: item.variantId,
@@ -199,8 +221,8 @@ export function useInternalStockRequests() {
           openReceiveQuantity: item.requestedQuantity,
         })),
         history: appendHistory(req, {
-          id: newHistoryId('release'),
-          type: 'approved_released',
+          id: newHistoryId('deliver'),
+          type: 'delivered',
           at,
           byName: options?.byName || 'Main Warehouse',
           lines,
@@ -209,6 +231,19 @@ export function useInternalStockRequests() {
         }),
       };
     });
+  };
+
+  /** @deprecated Use approveRequest + deliverRequest. */
+  const approveAndRelease = (
+    requestId: string,
+    options?: {
+      byName?: string;
+      signatureDataUrl?: string;
+      proofImageDataUrl?: string;
+    }
+  ) => {
+    approveRequest(requestId, { byName: options?.byName });
+    deliverRequest(requestId, options);
   };
 
   /**
@@ -291,7 +326,7 @@ export function useInternalStockRequests() {
     options?: { byName?: string; signatureDataUrl?: string }
   ) => {
     updateRequest(requestId, (req) => {
-      if (req.status !== 'pending_approval') return req;
+      if (req.status !== 'pending_approval' && req.status !== 'approved') return req;
       const at = new Date().toISOString();
       const note = reason.trim() || 'Rejected by main warehouse';
       const lines = req.items.map((item) => ({
@@ -321,6 +356,8 @@ export function useInternalStockRequests() {
     requests,
     createRequest,
     updateRequest,
+    approveRequest,
+    deliverRequest,
     approveAndRelease,
     allocateRemaining,
     rejectRequest,

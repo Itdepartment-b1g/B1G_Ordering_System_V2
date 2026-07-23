@@ -10,6 +10,7 @@ export const INTERNAL_STOCK_REQUESTS_QUERY_KEY = 'internal-stock-requests';
 
 export type InternalStockRequestStatus =
   | 'pending_approval'
+  | 'approved'
   | 'pending_receive'
   | 'partially_received'
   | 'fully_received'
@@ -28,6 +29,9 @@ export type InternalStockRequestRow = {
   approved_at: string | null;
   approved_by: string | null;
   approval_signature_url: string | null;
+  delivered_at: string | null;
+  delivered_by: string | null;
+  dr_number: string | null;
   rejected_at: string | null;
   rejected_by: string | null;
   rejection_signature_url: string | null;
@@ -189,14 +193,25 @@ export async function createInternalStockRequest(input: {
   );
 }
 
-export async function approveInternalStockRequest(input: {
+export async function approveInternalStockRequest(input: { requestId: string }) {
+  const { data, error } = await supabase.rpc('approve_internal_stock_request', {
+    p_request_id: input.requestId,
+  });
+  if (error) throw error;
+  return assertRpcOk(
+    data as { success: boolean; error?: string; status?: string },
+    'Failed to approve request'
+  );
+}
+
+export async function deliverInternalStockRequest(input: {
   requestId: string;
   signatureUrl: string;
   proofImageUrl: string;
   signaturePath?: string;
   proofImagePath?: string;
 }) {
-  const { data, error } = await supabase.rpc('approve_internal_stock_request', {
+  const { data, error } = await supabase.rpc('deliver_internal_stock_request', {
     p_request_id: input.requestId,
     p_signature_url: input.signatureUrl,
     p_signature_path: input.signaturePath ?? null,
@@ -205,8 +220,8 @@ export async function approveInternalStockRequest(input: {
   });
   if (error) throw error;
   return assertRpcOk(
-    data as { success: boolean; error?: string; status?: string },
-    'Failed to approve request'
+    data as { success: boolean; error?: string; status?: string; dr_number?: string },
+    'Failed to deliver request'
   );
 }
 

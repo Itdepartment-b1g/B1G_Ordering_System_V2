@@ -66,6 +66,7 @@ import {
 
 const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
   pending_approval: 'Pending approval',
+  approved: 'Approved (awaiting delivery)',
   pending_receive: 'Pending receive',
   partially_received: 'Partially received',
   fully_received: 'Fully received',
@@ -80,6 +81,14 @@ function StatusBadge({ status }: { status: SubWarehouseStockRequestStatus }) {
     return (
       <Badge variant="secondary" className="gap-1">
         <Clock className="h-3 w-3" />
+        {STATUS_LABELS[status]}
+      </Badge>
+    );
+  }
+  if (status === 'approved') {
+    return (
+      <Badge variant="secondary" className="gap-1 border-blue-200 bg-blue-50 text-blue-800">
+        <CheckCircle2 className="h-3 w-3" />
         {STATUS_LABELS[status]}
       </Badge>
     );

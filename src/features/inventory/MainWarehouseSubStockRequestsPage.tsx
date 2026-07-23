@@ -67,6 +67,7 @@ import {
   INTERNAL_STOCK_REQUESTS_QUERY_KEY,
   allocateInternalStockRequestRemaining,
   approveInternalStockRequest,
+  deliverInternalStockRequest,
   fetchInternalStockRequests,
   rejectInternalStockRequest,
 } from './internalStockRequestsApi';
@@ -75,6 +76,10 @@ import {
   canExportMainRequestPdf,
   exportMainSubStockRequestPdf,
 } from './utils/exportMainSubStockRequestPdf';
+import {
+  canExportInternalStockDeliveryReceipt,
+  exportInternalStockDeliveryReceiptPdf,
+} from './utils/exportInternalStockDeliveryReceiptPdf';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import SubStockRequestsManual from '@/features/inventory/warehouse-manual/components/SubStockRequestsManual';
 import { Input } from '@/components/ui/input';
@@ -92,6 +97,7 @@ import { getDateRangeFromPreset, isDateInRange } from '@/lib/dateRangePresets';
 
 const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
   pending_approval: 'Pending approval',
+  approved: 'Approved',
   pending_receive: 'Pending receive',
   partially_received: 'Partially received',
   fully_received: 'Fully received',
@@ -106,6 +112,14 @@ function StatusBadge({ status }: { status: SubWarehouseStockRequestStatus }) {
     return (
       <Badge variant="secondary" className="gap-1">
         <Clock className="h-3 w-3" />
+        {STATUS_LABELS[status]}
+      </Badge>
+    );
+  }
+  if (status === 'approved') {
+    return (
+      <Badge variant="secondary" className="gap-1 border-blue-200 bg-blue-50 text-blue-800">
+        <CheckCircle2 className="h-3 w-3" />
         {STATUS_LABELS[status]}
       </Badge>
     );
@@ -273,7 +287,9 @@ function MainItemChips({
           <Badge key={`${request.id}-${item.variantId}`} variant="outline" className="font-normal">
             {item.brandName ? `${item.brandName} · ` : ''}
             {item.variantName} ×{item.requestedQuantity}
-            {request.status !== 'pending_approval' && request.status !== 'rejected'
+            {request.status !== 'pending_approval' &&
+            request.status !== 'approved' &&
+            request.status !== 'rejected'
               ? ` · D ${getItemDeliveredQty(item)} · R ${getItemReceivedQty(item)}`
               : ''}
           </Badge>
@@ -300,21 +316,28 @@ function MainRequestActionsMenu({
   request,
   onView,
   onApprove,
+  onDeliver,
   onReject,
   onAllocate,
   onExportPdf,
+  onPrintDeliveryReceipt,
 }: {
   request: SubWarehouseStockRequest;
   onView: (request: SubWarehouseStockRequest) => void;
   onApprove: (request: SubWarehouseStockRequest) => void;
+  onDeliver: (request: SubWarehouseStockRequest) => void;
   onReject: (request: SubWarehouseStockRequest) => void;
   onAllocate: (request: SubWarehouseStockRequest) => void;
   onExportPdf: (request: SubWarehouseStockRequest) => void;
+  onPrintDeliveryReceipt: (request: SubWarehouseStockRequest) => void;
 }) {
   const canApprove = request.status === 'pending_approval';
+  const canDeliver = request.status === 'approved';
+  const canReject = request.status === 'pending_approval' || request.status === 'approved';
   const canAllocate =
     request.status === 'partially_received' && requestHasAllocatableQty(request);
   const canExport = canExportMainRequestPdf(request);
+  const canPrintDr = canExportInternalStockDeliveryReceipt(request);
 
   return (
     <DropdownMenu>
@@ -324,7 +347,7 @@ function MainRequestActionsMenu({
           <span className="sr-only">Open actions</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
+      <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuItem onClick={() => onView(request)}>
           <Eye className="mr-2 h-4 w-4" />
           View
@@ -335,13 +358,33 @@ function MainRequestActionsMenu({
             Export PDF
           </DropdownMenuItem>
         ) : null}
+        {canPrintDr ? (
+          <DropdownMenuItem onClick={() => onPrintDeliveryReceipt(request)}>
+            <Truck className="mr-2 h-4 w-4" />
+            Print Delivery Receipt
+          </DropdownMenuItem>
+        ) : null}
         {canApprove ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => onApprove(request)}>
-              <Send className="mr-2 h-4 w-4" />
-              Approve & release
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Approve
             </DropdownMenuItem>
+          </>
+        ) : null}
+        {canDeliver ? (
+          <>
+            {!canApprove ? <DropdownMenuSeparator /> : null}
+            <DropdownMenuItem onClick={() => onDeliver(request)}>
+              <Send className="mr-2 h-4 w-4" />
+              Deliver
+            </DropdownMenuItem>
+          </>
+        ) : null}
+        {canReject ? (
+          <>
+            {!canApprove && !canDeliver ? <DropdownMenuSeparator /> : null}
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => onReject(request)}
@@ -463,11 +506,12 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [rejectSignatureDataUrl, setRejectSignatureDataUrl] = useState('');
   const [rejectSignatureOpen, setRejectSignatureOpen] = useState(false);
   const [approveTarget, setApproveTarget] = useState<SubWarehouseStockRequest | null>(null);
-  const [approveSignatureDataUrl, setApproveSignatureDataUrl] = useState('');
-  const [approveSignatureOpen, setApproveSignatureOpen] = useState(false);
-  const [approveProofImageDataUrl, setApproveProofImageDataUrl] = useState('');
-  const [approveProofImageName, setApproveProofImageName] = useState('');
-  const approveProofFileRef = useRef<HTMLInputElement>(null);
+  const [deliverTarget, setDeliverTarget] = useState<SubWarehouseStockRequest | null>(null);
+  const [deliverSignatureDataUrl, setDeliverSignatureDataUrl] = useState('');
+  const [deliverSignatureOpen, setDeliverSignatureOpen] = useState(false);
+  const [deliverProofImageDataUrl, setDeliverProofImageDataUrl] = useState('');
+  const [deliverProofImageName, setDeliverProofImageName] = useState('');
+  const deliverProofFileRef = useRef<HTMLInputElement>(null);
   const [allocateTarget, setAllocateTarget] = useState<SubWarehouseStockRequest | null>(null);
   const [allocateNote, setAllocateNote] = useState('');
   const [allocateQtys, setAllocateQtys] = useState<Record<string, string>>({});
@@ -502,6 +546,31 @@ export default function MainWarehouseSubStockRequestsPage() {
       toast({
         title: 'Export failed',
         description: 'Could not open the PDF.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handlePrintDeliveryReceipt = async (request: SubWarehouseStockRequest) => {
+    if (!canExportInternalStockDeliveryReceipt(request)) {
+      toast({
+        title: 'Nothing to print',
+        description: 'Deliver the request before printing a Delivery Receipt.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      await exportInternalStockDeliveryReceiptPdf(request);
+      toast({
+        title: 'Delivery Receipt opened',
+        description: `${request.requestNumber} — use Print / Save PDF.`,
+      });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not open the Delivery Receipt.',
         variant: 'destructive',
       });
     }
@@ -646,30 +715,82 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   const approveMutation = useMutation({
     mutationFn: async () => {
-      if (!approveTarget || !approveSignatureDataUrl) {
-        throw new Error('Signature required');
-      }
-      if (!approveProofImageDataUrl) {
-        throw new Error('Proof image required');
-      }
-      return approveInternalStockRequest({
-        requestId: approveTarget.id,
-        signatureUrl: approveSignatureDataUrl,
-        proofImageUrl: approveProofImageDataUrl,
-      });
+      if (!approveTarget) throw new Error('No request selected');
+      return approveInternalStockRequest({ requestId: approveTarget.id });
     },
     onSuccess: async () => {
       await invalidateRequests();
       toast({
-        title: 'Approved & released',
-        description: `${approveTarget?.requestNumber} is now pending receive at ${approveTarget?.fromLocationName}.`,
+        title: 'Approved',
+        description: `${approveTarget?.requestNumber} is approved. Deliver when ready to ship.`,
       });
       closeApproveDialog();
-      setDetailRequestId(null);
     },
     onError: (error: Error) => {
       toast({
         title: 'Could not approve',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const deliverMutation = useMutation({
+    mutationFn: async () => {
+      if (!deliverTarget || !deliverSignatureDataUrl) {
+        throw new Error('Signature required');
+      }
+      if (!deliverProofImageDataUrl) {
+        throw new Error('Proof image required');
+      }
+      return deliverInternalStockRequest({
+        requestId: deliverTarget.id,
+        signatureUrl: deliverSignatureDataUrl,
+        proofImageUrl: deliverProofImageDataUrl,
+      });
+    },
+    onSuccess: async (result) => {
+      const delivered = deliverTarget;
+      const drNumber =
+        typeof result?.dr_number === 'string' && result.dr_number.trim()
+          ? result.dr_number.trim()
+          : undefined;
+      await invalidateRequests();
+      toast({
+        title: 'Delivered',
+        description: drNumber
+          ? `${delivered?.requestNumber} delivered (${drNumber}). Pending receive at ${delivered?.fromLocationName}.`
+          : `${delivered?.requestNumber} is now pending receive at ${delivered?.fromLocationName}.`,
+      });
+      closeDeliverDialog();
+      setDetailRequestId(null);
+      if (delivered) {
+        const receiptRequest: SubWarehouseStockRequest = {
+          ...delivered,
+          status: 'pending_receive',
+          drNumber: drNumber || delivered.drNumber,
+          items: delivered.items.map((item) => ({
+            ...item,
+            deliveredQuantity: item.requestedQuantity,
+            receivedQuantity: 0,
+            openReceiveQuantity: item.requestedQuantity,
+          })),
+        };
+        try {
+          await exportInternalStockDeliveryReceiptPdf(receiptRequest);
+        } catch {
+          toast({
+            title: 'Delivery Receipt',
+            description:
+              'Delivered, but the receipt could not be opened automatically. Use Print Delivery Receipt.',
+            variant: 'destructive',
+          });
+        }
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Could not deliver',
         description: error.message,
         variant: 'destructive',
       });
@@ -748,43 +869,57 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   const openApproveDialog = (request: SubWarehouseStockRequest) => {
     if (request.status !== 'pending_approval') return;
-    setApproveSignatureDataUrl('');
-    setApproveSignatureOpen(false);
-    setApproveProofImageDataUrl('');
-    setApproveProofImageName('');
     setApproveTarget(request);
   };
 
   const closeApproveDialog = () => {
     setApproveTarget(null);
-    setApproveSignatureDataUrl('');
-    setApproveSignatureOpen(false);
-    setApproveProofImageDataUrl('');
-    setApproveProofImageName('');
   };
 
   const handleConfirmApprove = () => {
     if (!approveTarget) return;
-    if (!approveProofImageDataUrl) {
-      toast({
-        title: 'Proof photo required',
-        description: 'Upload a proof photo before confirming this approval.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    if (!approveSignatureDataUrl) {
-      toast({
-        title: 'Signature required',
-        description: 'Sign to confirm this approval and release.',
-        variant: 'destructive',
-      });
-      return;
-    }
     approveMutation.mutate();
   };
 
-  const handleApproveProofFileChange = async (file: File | null) => {
+  const openDeliverDialog = (request: SubWarehouseStockRequest) => {
+    if (request.status !== 'approved') return;
+    setDeliverSignatureDataUrl('');
+    setDeliverSignatureOpen(false);
+    setDeliverProofImageDataUrl('');
+    setDeliverProofImageName('');
+    setDeliverTarget(request);
+  };
+
+  const closeDeliverDialog = () => {
+    setDeliverTarget(null);
+    setDeliverSignatureDataUrl('');
+    setDeliverSignatureOpen(false);
+    setDeliverProofImageDataUrl('');
+    setDeliverProofImageName('');
+  };
+
+  const handleConfirmDeliver = () => {
+    if (!deliverTarget) return;
+    if (!deliverProofImageDataUrl) {
+      toast({
+        title: 'Proof photo required',
+        description: 'Upload a proof photo before confirming this delivery.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!deliverSignatureDataUrl) {
+      toast({
+        title: 'Signature required',
+        description: 'Sign to confirm this delivery.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    deliverMutation.mutate();
+  };
+
+  const handleDeliverProofFileChange = async (file: File | null) => {
     if (!file) return;
     const validationError = proofFileValidationError(file);
     if (validationError) {
@@ -793,8 +928,8 @@ export default function MainWarehouseSubStockRequestsPage() {
     }
     try {
       const dataUrl = await readFileAsDataUrl(file);
-      setApproveProofImageDataUrl(dataUrl);
-      setApproveProofImageName(file.name);
+      setDeliverProofImageDataUrl(dataUrl);
+      setDeliverProofImageName(file.name);
     } catch {
       toast({
         title: 'Could not read image',
@@ -908,7 +1043,7 @@ export default function MainWarehouseSubStockRequestsPage() {
   };
 
   const openRejectDialog = (request: SubWarehouseStockRequest) => {
-    if (request.status !== 'pending_approval') return;
+    if (request.status !== 'pending_approval' && request.status !== 'approved') return;
     setRejectReason('');
     setRejectSignatureDataUrl('');
     setRejectSignatureOpen(false);
@@ -949,8 +1084,8 @@ export default function MainWarehouseSubStockRequestsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Sub Stock Requests</h1>
           <p className="text-muted-foreground">
-            Review stock requests from sub-warehouses. Approve & release, or monitor receive status
-            and shortages.
+            Review stock requests from sub-warehouses. Approve, then deliver, or monitor receive
+            status and shortages.
           </p>
           {requestsError ? (
             <p className="text-sm text-destructive mt-2">
@@ -1107,9 +1242,11 @@ export default function MainWarehouseSubStockRequestsPage() {
                           request={req}
                           onView={(r) => setDetailRequestId(r.id)}
                           onApprove={openApproveDialog}
+                          onDeliver={openDeliverDialog}
                           onReject={openRejectDialog}
                           onAllocate={openAllocateDialog}
                           onExportPdf={(r) => void handleExportPdf(r)}
+                          onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
                         />
                       </div>
                     </div>
@@ -1190,9 +1327,11 @@ export default function MainWarehouseSubStockRequestsPage() {
                               request={req}
                               onView={(r) => setDetailRequestId(r.id)}
                               onApprove={openApproveDialog}
+                              onDeliver={openDeliverDialog}
                               onReject={openRejectDialog}
                               onAllocate={openAllocateDialog}
                               onExportPdf={(r) => void handleExportPdf(r)}
+                              onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
                             />
                           </div>
                         </TableCell>
@@ -1300,6 +1439,16 @@ export default function MainWarehouseSubStockRequestsPage() {
                     Export PDF
                   </Button>
                 ) : null}
+                {canExportInternalStockDeliveryReceipt(detailRequest) ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handlePrintDeliveryReceipt(detailRequest)}
+                  >
+                    <Truck className="mr-2 h-4 w-4" />
+                    Print Delivery Receipt
+                  </Button>
+                ) : null}
                 {detailRequest.status === 'pending_approval' ? (
                   <>
                     <Button
@@ -1310,19 +1459,24 @@ export default function MainWarehouseSubStockRequestsPage() {
                       Reject
                     </Button>
                     <Button type="button" onClick={() => openApproveDialog(detailRequest)}>
-                      Approve & release
+                      Approve
                     </Button>
                   </>
                 ) : null}
-                {/* {detailRequest.status === 'partially_received' &&
-                requestHasAllocatableQty(detailRequest) ? (
-                  <Button
-                    type="button"
-                    onClick={() => openAllocateDialog(detailRequest)}
-                  >
-                    Allocate remaining
-                  </Button>
-                ) : null} */}
+                {detailRequest.status === 'approved' ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => openRejectDialog(detailRequest)}
+                    >
+                      Reject
+                    </Button>
+                    <Button type="button" onClick={() => openDeliverDialog(detailRequest)}>
+                      Deliver
+                    </Button>
+                  </>
+                ) : null}
               </DialogFooter>
             </>
           ) : null}
@@ -1566,28 +1720,78 @@ export default function MainWarehouseSubStockRequestsPage() {
           if (!open) closeApproveDialog();
         }}
       >
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Confirm request — {approveTarget?.requestNumber}</DialogTitle>
+            <DialogTitle>Approve request — {approveTarget?.requestNumber}</DialogTitle>
           </DialogHeader>
           {approveTarget ? (
+            <div className="space-y-3 py-1 text-sm text-muted-foreground">
+              <p>
+                Approve this request for{' '}
+                <span className="text-foreground font-medium">{approveTarget.fromLocationName}</span>
+                ? Stock will not move until you deliver.
+              </p>
+              <p className="tabular-nums">
+                Total requested:{' '}
+                <span className="text-foreground font-medium">
+                  {requestedTotal(approveTarget).toLocaleString()}
+                </span>
+              </p>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeApproveDialog}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmApprove}
+              disabled={approveMutation.isPending}
+            >
+              {approveMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Approving…
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Approve
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!deliverTarget}
+        onOpenChange={(open) => {
+          if (!open) closeDeliverDialog();
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Deliver request — {deliverTarget?.requestNumber}</DialogTitle>
+          </DialogHeader>
+          {deliverTarget ? (
             <div className="space-y-4 py-1">
               <div className="text-sm text-muted-foreground space-y-1">
                 <p>
                   Sub-warehouse:{' '}
-                  <span className="text-foreground font-medium">{approveTarget.fromLocationName}</span>
+                  <span className="text-foreground font-medium">{deliverTarget.fromLocationName}</span>
                 </p>
-                {approveTarget.requestedByName ? (
+                {deliverTarget.requestedByName ? (
                   <p>
                     Requested by:{' '}
-                    <span className="text-foreground font-medium">{approveTarget.requestedByName}</span>
+                    <span className="text-foreground font-medium">{deliverTarget.requestedByName}</span>
                   </p>
                 ) : null}
-                {approveTarget.notes ? <p>Notes: {approveTarget.notes}</p> : null}
+                {deliverTarget.notes ? <p>Notes: {deliverTarget.notes}</p> : null}
               </div>
 
               <div className="space-y-2">
-                <p className="text-sm font-medium">Requested items</p>
+                <p className="text-sm font-medium">Items to deliver</p>
                 <div className="rounded-md border overflow-hidden">
                   <Table>
                     <TableHeader>
@@ -1598,7 +1802,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {approveTarget.items.map((item) => (
+                      {deliverTarget.items.map((item) => (
                         <TableRow key={item.variantId} className="hover:bg-transparent">
                           <TableCell className="py-2.5 text-sm">
                             {item.brandName?.trim() || '—'}
@@ -1613,27 +1817,27 @@ export default function MainWarehouseSubStockRequestsPage() {
                   </Table>
                 </div>
                 <p className="text-xs text-muted-foreground text-right tabular-nums">
-                  Total requested: {requestedTotal(approveTarget).toLocaleString()}
+                  Total to deliver: {requestedTotal(deliverTarget).toLocaleString()}
                 </p>
               </div>
 
               <div className="space-y-2">
                 <Label>Proof photo (required)</Label>
                 <input
-                  ref={approveProofFileRef}
+                  ref={deliverProofFileRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
                   className="hidden"
-                  onChange={(e) => void handleApproveProofFileChange(e.target.files?.[0] ?? null)}
+                  onChange={(e) => void handleDeliverProofFileChange(e.target.files?.[0] ?? null)}
                 />
-                {!approveProofImageDataUrl ? (
+                {!deliverProofImageDataUrl ? (
                   <button
                     type="button"
-                    onClick={() => approveProofFileRef.current?.click()}
+                    onClick={() => deliverProofFileRef.current?.click()}
                     className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
                   >
                     <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm font-medium">Upload approval proof</p>
+                    <p className="text-sm font-medium">Upload delivery proof</p>
                     <p className="text-xs text-muted-foreground mt-1">
                       JPG, PNG, WEBP, or GIF · max 5MB
                     </p>
@@ -1642,15 +1846,15 @@ export default function MainWarehouseSubStockRequestsPage() {
                   <div className="rounded-md border p-3 space-y-3">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-xs text-muted-foreground truncate">
-                        {approveProofImageName || 'Proof image'}
+                        {deliverProofImageName || 'Proof image'}
                       </p>
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setApproveProofImageDataUrl('');
-                          setApproveProofImageName('');
+                          setDeliverProofImageDataUrl('');
+                          setDeliverProofImageName('');
                         }}
                       >
                         <Trash2 className="h-4 w-4 mr-1" />
@@ -1658,15 +1862,15 @@ export default function MainWarehouseSubStockRequestsPage() {
                       </Button>
                     </div>
                     <img
-                      src={approveProofImageDataUrl}
-                      alt="Approval proof"
+                      src={deliverProofImageDataUrl}
+                      alt="Delivery proof"
                       className="max-h-48 mx-auto rounded-md object-contain"
                     />
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => approveProofFileRef.current?.click()}
+                      onClick={() => deliverProofFileRef.current?.click()}
                     >
                       Replace photo
                     </Button>
@@ -1676,12 +1880,12 @@ export default function MainWarehouseSubStockRequestsPage() {
 
               <div className="space-y-2">
                 <Label>Signature (required)</Label>
-                {!approveSignatureDataUrl ? (
+                {!deliverSignatureDataUrl ? (
                   <Button
                     type="button"
                     variant="outline"
                     className="w-full"
-                    onClick={() => setApproveSignatureOpen(true)}
+                    onClick={() => setDeliverSignatureOpen(true)}
                   >
                     <PenTool className="h-4 w-4 mr-2" />
                     Add signature
@@ -1689,8 +1893,8 @@ export default function MainWarehouseSubStockRequestsPage() {
                 ) : (
                   <div className="rounded-md border p-3 space-y-3 bg-muted/20">
                     <img
-                      src={approveSignatureDataUrl}
-                      alt="Approver signature"
+                      src={deliverSignatureDataUrl}
+                      alt="Delivery signature"
                       className="max-h-28 mx-auto bg-white rounded-md"
                     />
                     <div className="flex gap-2 justify-end">
@@ -1698,7 +1902,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => setApproveSignatureDataUrl('')}
+                        onClick={() => setDeliverSignatureDataUrl('')}
                       >
                         <X className="h-4 w-4 mr-1" />
                         Clear
@@ -1707,13 +1911,13 @@ export default function MainWarehouseSubStockRequestsPage() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => setApproveSignatureOpen(true)}
+                        onClick={() => setDeliverSignatureOpen(true)}
                       >
                         Re-sign
                       </Button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      By signing, you approve and release these quantities to the sub-warehouse.
+                      By signing, you deliver these quantities to the sub-warehouse.
                     </p>
                   </div>
                 )}
@@ -1721,27 +1925,27 @@ export default function MainWarehouseSubStockRequestsPage() {
             </div>
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={closeApproveDialog}>
+            <Button type="button" variant="outline" onClick={closeDeliverDialog}>
               Cancel
             </Button>
             <Button
               type="button"
-              onClick={handleConfirmApprove}
+              onClick={handleConfirmDeliver}
               disabled={
-                !approveProofImageDataUrl ||
-                !approveSignatureDataUrl ||
-                approveMutation.isPending
+                !deliverProofImageDataUrl ||
+                !deliverSignatureDataUrl ||
+                deliverMutation.isPending
               }
             >
-              {approveMutation.isPending ? (
+              {deliverMutation.isPending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Confirming…
+                  Delivering…
                 </>
               ) : (
                 <>
                   <Send className="mr-2 h-4 w-4" />
-                  Confirm request
+                  Confirm deliver
                 </>
               )}
             </Button>
@@ -1749,19 +1953,19 @@ export default function MainWarehouseSubStockRequestsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={approveSignatureOpen} onOpenChange={setApproveSignatureOpen}>
+      <Dialog open={deliverSignatureOpen} onOpenChange={setDeliverSignatureOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Sign to approve & release</DialogTitle>
+            <DialogTitle>Sign to deliver</DialogTitle>
           </DialogHeader>
           <SignatureCanvas
-            title="Approver signature"
-            description="Draw your signature to confirm this approval and release"
+            title="Delivery signature"
+            description="Draw your signature to confirm this delivery"
             onSave={(dataUrl) => {
-              setApproveSignatureDataUrl(dataUrl);
-              setApproveSignatureOpen(false);
+              setDeliverSignatureDataUrl(dataUrl);
+              setDeliverSignatureOpen(false);
             }}
-            onCancel={() => setApproveSignatureOpen(false)}
+            onCancel={() => setDeliverSignatureOpen(false)}
           />
         </DialogContent>
       </Dialog>
