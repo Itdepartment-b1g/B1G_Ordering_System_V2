@@ -21,6 +21,7 @@ const adminMenuItems: MenuItem[] = [
     { title: 'Stock Allocations', url: '/inventory/allocations', description: 'Allocate stock from main inventory to team leaders.' },
     { title: 'Inventory Requests', url: '/inventory/admin-requests', description: 'Approve or reject stock requests escalated to admin.' },
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Review remitted stocks and reconcile team inventory.' },
+    { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'Admin-level management of all customer records.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'Search, filter, and manage all active clients.' },
@@ -139,6 +140,7 @@ const superAdminMenuItems: MenuItem[] = [
     { title: 'Stock Allocations', url: '/inventory/allocations', description: 'Allocate stock down to companies or teams.' },
     { title: 'Inventory Requests', url: '/inventory/admin-requests', description: 'Approve or reject high-level stock requests.' },
     { title: 'Team Remittances', url: '/inventory/admin-team-remittances', description: 'Audit remittances from teams for compliance.' },
+    { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', description: 'Return stock to your linked warehouse for inspection (good/damaged + batch).' },
   ]},
   { title: 'Clients', url: '/clients', description: 'High-level client management and quality control.', hasSubmenu: true, submenu: [
     { title: 'Clients Database', url: '/clients', description: 'View all clients registered under this tenant.' },
@@ -189,6 +191,7 @@ const warehouseMenuItems: MenuItem[] = [
       { title: 'Sub Stock Requests', url: '/inventory/sub-stock-requests', description: 'Review and approve stock requests from sub-warehouses.' },
       { title: 'Request Stock', url: '/inventory/request-stock', description: 'Sub-warehouse requests stock from main; receive confirms receipt.' },
       { title: 'Stock Returns', url: '/inventory/stock-returns', description: 'Inspect sub-warehouse returns; good restocks main batch lots, damaged goes to disposal.' },
+      { title: 'Client Stock Returns', url: '/inventory/client-stock-returns', description: 'Inspect Standard Account returns (RT-…); good restocks main batches, damaged to disposal.' },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', description: 'Audited stock corrections with batch tracking and history.' },
       { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', description: 'Investigate buyer shortfalls: redeliver (restore stock) or write off losses.' },
       { title: 'Batch View', url: '/inventory/batches', description: 'Browse on-hand stock grouped by batch with brand and variant breakdown.' },

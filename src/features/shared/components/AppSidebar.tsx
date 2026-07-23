@@ -91,6 +91,7 @@ const adminMenuItems: MenuItem[] = [
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'TL Stock Requests', url: '/inventory/admin-tl-requests', icon: Users },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
+      { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
     ]
   },
   {
@@ -362,6 +363,7 @@ const warehouseMenuItems: MenuItem[] = [
       // { title: 'Allocation History', url: '/inventory/allocation-history', icon: Package2Icon },
       { title: 'Stock Requests', url: '/inventory/stock-requests', icon: ClipboardList },
       { title: 'Stock Returns', url: '/inventory/stock-returns', icon: RotateCcw },
+      { title: 'Client Stock Returns', url: '/inventory/client-stock-returns', icon: RotateCcw },
       { title: 'Stock Adjustments', url: '/inventory/stock-adjustments', icon: Scale },
       { title: 'Delivery Shortages', url: '/inventory/delivery-shortages', icon: PackageSearch },
       { title: 'Batch View', url: '/inventory/batches', icon: Layers },
@@ -460,6 +462,7 @@ const superAdminMenuItems: MenuItem[] = [
       { title: 'Stock Allocations', url: '/inventory/allocations', icon: Users },
       { title: 'Inventory Requests', url: '/inventory/admin-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/admin-team-remittances', icon: Users },
+      { title: 'Return to Warehouse', url: '/inventory/return-to-warehouse', icon: RotateCcw },
     ]
   },
   {
@@ -527,13 +530,15 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const { user, logout, impersonatedCompany, stopImpersonation } = useAuth();
   const { state, setOpenMobile } = useSidebar();
-  const { checkPermission } = usePermissions();
+  const { checkPermission, hasWarehouseHubLink } = usePermissions();
   const isCollapsed = state === 'collapsed';
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   // Get menu items based on role, then filter by permissions
   const menuItems = useMemo(() => {
+    const canSeeReturnToWarehouse = hasWarehouseHubLink === true;
+
     // Filter menu items based on permissions
     const filterMenuItems = (items: MenuItem[]): MenuItem[] => {
       return items
@@ -544,9 +549,12 @@ export function AppSidebar() {
           }
           // If item has submenu, filter submenu items too
           if (item.hasSubmenu && item.submenu) {
-            const filteredSubmenu = item.submenu.filter(subItem =>
-              checkPermission(subItem.url)
-            );
+            const filteredSubmenu = item.submenu.filter((subItem) => {
+              if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                return false;
+              }
+              return checkPermission(subItem.url);
+            });
             // Only show parent if it has at least one accessible submenu item
             return filteredSubmenu.length > 0;
           }
@@ -557,7 +565,12 @@ export function AppSidebar() {
           if (item.hasSubmenu && item.submenu) {
             return {
               ...item,
-              submenu: item.submenu.filter(subItem => checkPermission(subItem.url))
+              submenu: item.submenu.filter((subItem) => {
+                if (subItem.url === '/inventory/return-to-warehouse' && !canSeeReturnToWarehouse) {
+                  return false;
+                }
+                return checkPermission(subItem.url);
+              }),
             };
           }
           return item;
@@ -603,7 +616,7 @@ export function AppSidebar() {
 
     // Filter menu items based on permissions
     return filterMenuItems(baseMenuItems);
-  }, [user?.role, checkPermission, impersonatedCompany]);
+  }, [user?.role, checkPermission, impersonatedCompany, hasWarehouseHubLink]);
 
   const toggleSubmenu = (menuTitle: string) => {
     setExpandedMenus(prev =>
