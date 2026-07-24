@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronDown,
   Clock,
   ImageIcon,
   MessageSquareText,
   PackageCheck,
+  PackageX,
   Printer,
   Send,
   XCircle,
@@ -79,6 +81,14 @@ function eventTitle(
       return 'Remaining short allocated';
     case 'receive_confirmed':
       return 'Receive confirmed';
+    case 'shortage_opened':
+      return 'Shortage reported';
+    case 'shortage_resolved_redeliver':
+      return 'Shortage resolved · found & redeliver';
+    case 'shortage_resolved_write_off_replace':
+      return 'Shortage resolved · write-off & replace';
+    case 'shortage_resolved_write_off':
+      return 'Shortage resolved · write-off';
     case 'rejected':
       return 'Rejected';
     default:
@@ -140,6 +150,29 @@ function eventSummary(
     return `Received ${unitLabel(qty)} · complete`;
   }
 
+  if (event.type === 'shortage_opened') {
+    const qty = event.shortQuantity ?? linesTotalQty(event.lines);
+    const reason = event.note?.trim();
+    return reason
+      ? `${unitLabel(qty)} short · ${reason}`
+      : `${unitLabel(qty)} short · under investigation`;
+  }
+
+  if (event.type === 'shortage_resolved_redeliver') {
+    const qty = event.shortQuantity ?? linesTotalQty(event.lines);
+    return `Found ${unitLabel(qty)} · re-unlocked for sub receive`;
+  }
+
+  if (event.type === 'shortage_resolved_write_off_replace') {
+    const qty = event.shortQuantity ?? linesTotalQty(event.lines);
+    return `Wrote off ${unitLabel(qty)} · replace via Allocate Remaining`;
+  }
+
+  if (event.type === 'shortage_resolved_write_off') {
+    const qty = event.shortQuantity ?? linesTotalQty(event.lines);
+    return `Wrote off ${unitLabel(qty)} · no replacement`;
+  }
+
   if (event.type === 'rejected') {
     return isMainAllocation(initiationType) ? 'Allocation was rejected' : 'Request was rejected';
   }
@@ -167,6 +200,14 @@ function EventIcon({
     return <Send className={iconClass} />;
   }
   if (type === 'receive_confirmed') return <PackageCheck className={iconClass} />;
+  if (type === 'shortage_opened') return <AlertTriangle className={iconClass} />;
+  if (
+    type === 'shortage_resolved_redeliver' ||
+    type === 'shortage_resolved_write_off_replace'
+  ) {
+    return <PackageCheck className={iconClass} />;
+  }
+  if (type === 'shortage_resolved_write_off') return <PackageX className={iconClass} />;
   if (type === 'rejected') return <XCircle className={iconClass} />;
   return <CheckCircle2 className={iconClass} />;
 }
@@ -198,6 +239,22 @@ function eventTone(type: SubWarehouseRequestHistoryEvent['type']): {
         rail: 'bg-emerald-500',
         iconWrap: 'bg-emerald-50 text-emerald-700 border-emerald-200',
       };
+    case 'shortage_opened':
+      return {
+        rail: 'bg-amber-500',
+        iconWrap: 'bg-amber-50 text-amber-800 border-amber-200',
+      };
+    case 'shortage_resolved_redeliver':
+    case 'shortage_resolved_write_off_replace':
+      return {
+        rail: 'bg-emerald-500',
+        iconWrap: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      };
+    case 'shortage_resolved_write_off':
+      return {
+        rail: 'bg-orange-500',
+        iconWrap: 'bg-orange-50 text-orange-800 border-orange-200',
+      };
     case 'rejected':
       return {
         rail: 'bg-red-500',
@@ -223,6 +280,14 @@ function resolveBrandName(
 
 function qtyHeaderForEvent(type: SubWarehouseRequestHistoryEvent['type']): string {
   if (type === 'receive_confirmed') return 'Received';
+  if (
+    type === 'shortage_opened' ||
+    type === 'shortage_resolved_redeliver' ||
+    type === 'shortage_resolved_write_off_replace' ||
+    type === 'shortage_resolved_write_off'
+  ) {
+    return 'Short';
+  }
   if (type === 'remaining_released' || type === 'main_allocated') return 'Allocated';
   if (type === 'delivered' || type === 'approved_released') return 'Delivered';
   if (type === 'rejected') return 'Requested';
@@ -250,6 +315,12 @@ function eventFlowOrder(type: SubWarehouseRequestHistoryEvent['type']): number {
       return 50;
     case 'receive_confirmed':
       return 60;
+    case 'shortage_opened':
+      return 65;
+    case 'shortage_resolved_redeliver':
+    case 'shortage_resolved_write_off_replace':
+    case 'shortage_resolved_write_off':
+      return 68;
     case 'rejected':
       return 70;
     default:
@@ -712,7 +783,12 @@ export function SubWarehouseRequestHistoryTimeline({
               const showNote =
                 !!event.note?.trim() &&
                 !isRiderBoilerplateNote &&
-                !(event.type === 'remaining_released' && isBoilerplateAllocateNote(event.note));
+                !(event.type === 'remaining_released' && isBoilerplateAllocateNote(event.note)) &&
+                event.type !== 'shortage_opened';
+              const isShortageResolveEvent =
+                event.type === 'shortage_resolved_redeliver' ||
+                event.type === 'shortage_resolved_write_off_replace' ||
+                event.type === 'shortage_resolved_write_off';
               const eventDrNumber =
                 (isDelivered || isAllocateWave) && 'drNumber' in event
                   ? event.drNumber?.trim()
@@ -837,7 +913,7 @@ export function SubWarehouseRequestHistoryTimeline({
                       <MessageSquareText className="h-3.5 w-3.5 shrink-0 mt-0.5 text-sky-700" />
                       <div className="min-w-0 space-y-0.5">
                         <p className="font-semibold uppercase tracking-wide text-sky-800 text-[10px]">
-                          Note
+                          {isShortageResolveEvent ? 'Resolution' : 'Note'}
                         </p>
                         <p className="whitespace-pre-wrap leading-snug">{event.note}</p>
                       </div>

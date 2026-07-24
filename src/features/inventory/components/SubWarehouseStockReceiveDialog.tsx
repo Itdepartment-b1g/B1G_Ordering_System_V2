@@ -11,12 +11,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
+import {
+  SHORTFALL_REASON_OPTIONS,
+  formatShortfallReasonLabel,
+  type ShortfallReason,
+} from '@/features/orders/deliveryDiscrepancyShared';
 import {
   getItemDeliveredQty,
   getItemReceivedQty,
   getItemRemainingQty,
-  getItemShortQty,
   getRequestDeliveryTotals,
   type SubWarehouseStockRequest,
   type SubWarehouseStockRequestItem,
@@ -28,6 +39,8 @@ const ACCEPTED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gi
 export type ReceiveConfirmLine = {
   variantId: string;
   quantityThisReceive: number;
+  shortfallReason?: ShortfallReason;
+  shortfallNotes?: string;
 };
 
 export type ReceiveConfirmPayload = {
@@ -102,6 +115,8 @@ export function SubWarehouseStockReceiveDialog({
 }: SubWarehouseStockReceiveDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [lines, setLines] = useState<LineDraft[]>([]);
+  const [reasonByVariant, setReasonByVariant] = useState<Record<string, ShortfallReason | ''>>({});
+  const [otherDetailByVariant, setOtherDetailByVariant] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [proofImageDataUrl, setProofImageDataUrl] = useState('');
@@ -112,6 +127,8 @@ export function SubWarehouseStockReceiveDialog({
   useEffect(() => {
     if (!open || !request) return;
     setLines(buildDrafts(request));
+    setReasonByVariant({});
+    setOtherDetailByVariant({});
     setNotes('');
     setError(null);
     setProofImageDataUrl('');
@@ -134,11 +151,41 @@ export function SubWarehouseStockReceiveDialog({
     return { delivered, thisReceive, remainingCap };
   }, [lines]);
 
+  const shortfallLines = useMemo(() => {
+    return lines
+      .map((line) => {
+        const parsed = parseReceiveInput(line.receivedInput);
+        if (parsed == null || parsed >= line.remaining) return null;
+        const shortfall = line.remaining - parsed;
+        if (shortfall <= 0) return null;
+        return {
+          variantId: line.variantId,
+          variantName: line.variantName,
+          shortfall,
+          reason: reasonByVariant[line.variantId] || ('' as ShortfallReason | ''),
+          otherDetail: otherDetailByVariant[line.variantId] || '',
+        };
+      })
+      .filter(
+        (line): line is {
+          variantId: string;
+          variantName: string;
+          shortfall: number;
+          reason: ShortfallReason | '';
+          otherDetail: string;
+        } => line != null
+      );
+  }, [lines, reasonByVariant, otherDetailByVariant]);
+
+  const totalShortfall = useMemo(
+    () => shortfallLines.reduce((sum, line) => sum + line.shortfall, 0),
+    [shortfallLines]
+  );
+
   const qtyValidationError = useMemo(() => {
     if (lines.length === 0) return 'Nothing left to receive on this request.';
 
     let anyPositive = false;
-    let hasShortage = false;
     for (const line of lines) {
       const parsed = parseReceiveInput(line.receivedInput);
       if (parsed == null) {
@@ -151,19 +198,23 @@ export function SubWarehouseStockReceiveDialog({
         return `${line.variantName}: received cannot exceed remaining (${line.remaining}).`;
       }
       if (parsed > 0) anyPositive = true;
-      if (parsed < line.remaining) hasShortage = true;
     }
 
     if (!anyPositive) {
       return 'Enter at least one line with received greater than 0 to confirm.';
     }
 
-    if (hasShortage && !notes.trim()) {
-      return 'Notes are required when received quantity is less than delivered (missing qty).';
+    for (const short of shortfallLines) {
+      if (!short.reason) {
+        return `Select a shortage reason for ${short.variantName} (${short.shortfall} short).`;
+      }
+      if (short.reason === 'other' && !short.otherDetail.trim()) {
+        return `Describe the shortage for ${short.variantName} when reason is Other.`;
+      }
     }
 
     return null;
-  }, [lines, notes]);
+  }, [lines, shortfallLines]);
 
   const proofValidationError = useMemo(() => {
     if (!proofImageDataUrl) return 'Upload a proof photo of the received stock.';
@@ -173,12 +224,7 @@ export function SubWarehouseStockReceiveDialog({
 
   const validationError = qtyValidationError || proofValidationError;
 
-  const hasShortage = useMemo(() => {
-    return lines.some((line) => {
-      const parsed = parseReceiveInput(line.receivedInput);
-      return parsed != null && parsed < line.remaining;
-    });
-  }, [lines]);
+  const hasShortage = shortfallLines.length > 0;
 
   const handleProofFileChange = async (file: File | null) => {
     setError(null);
@@ -216,10 +262,22 @@ export function SubWarehouseStockReceiveDialog({
       return;
     }
 
-    const confirmLines: ReceiveConfirmLine[] = lines.map((line) => ({
-      variantId: line.variantId,
-      quantityThisReceive: parseReceiveInput(line.receivedInput) ?? 0,
-    }));
+    const confirmLines: ReceiveConfirmLine[] = lines.map((line) => {
+      const quantityThisReceive = parseReceiveInput(line.receivedInput) ?? 0;
+      const shortfall = Math.max(0, line.remaining - quantityThisReceive);
+      const reason = reasonByVariant[line.variantId];
+      const otherDetail = otherDetailByVariant[line.variantId]?.trim() || '';
+      return {
+        variantId: line.variantId,
+        quantityThisReceive,
+        ...(shortfall > 0 && reason
+          ? {
+              shortfallReason: reason,
+              ...(reason === 'other' && otherDetail ? { shortfallNotes: otherDetail } : {}),
+            }
+          : {}),
+      };
+    });
 
     await onConfirm({
       requestId: request.id,
@@ -252,8 +310,8 @@ export function SubWarehouseStockReceiveDialog({
             <p className="text-sm text-muted-foreground font-normal pt-1">
               {request?.status === 'partially_received' ? (
                 <>
-                  Confirm only this unlocked wave from main. Leftover short stays locked until
-                  main allocates again.
+                  Confirm only this unlocked wave from main. If you receive less than unlocked,
+                  choose a shortage reason — main investigates before releasing or replacing stock.
                   {totals.remainingCap > 0 && request ? (
                     <>
                       {' '}
@@ -265,7 +323,7 @@ export function SubWarehouseStockReceiveDialog({
                   ) : null}
                 </>
               ) : (
-                'Enter received quantities for this release wave, attach a proof photo, and sign. A shortage locks leftover qty until main allocates remaining.'
+                'Enter received quantities for this release wave, attach a proof photo, and sign. Short qty requires a reason and opens a main warehouse investigation.'
               )}
             </p>
           </DialogHeader>
@@ -325,20 +383,83 @@ export function SubWarehouseStockReceiveDialog({
                 <span className="tabular-nums">{totals.remainingCap}</span> remaining
               </p>
               <p className="text-xs text-muted-foreground">
-                Received cannot exceed unlocked qty for each SKU. Confirming a shortage clears
-                leftover unlock; status stays partially received until main allocates the next
-                wave and you confirm again.
+                Received cannot exceed unlocked qty for each SKU. A shortage locks leftover unlock
+                and reports it to main for investigation (found / write-off).
               </p>
             </div>
+
+            {hasShortage ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-900 space-y-3 p-3">
+                <p className="text-xs font-medium text-foreground">
+                  Shortage ({totalShortfall} unit{totalShortfall === 1 ? '' : 's'}) — reason required
+                  per short line
+                </p>
+                {shortfallLines.map((line) => (
+                  <div key={line.variantId} className="space-y-1.5">
+                    <Label className="text-xs">
+                      {line.variantName}{' '}
+                      <span className="text-muted-foreground font-normal">
+                        ({line.shortfall} short)
+                      </span>
+                    </Label>
+                    <Select
+                      value={line.reason || undefined}
+                      onValueChange={(value) => {
+                        setError(null);
+                        setReasonByVariant((prev) => ({
+                          ...prev,
+                          [line.variantId]: value as ShortfallReason,
+                        }));
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs">
+                        <SelectValue placeholder="Select shortage reason" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SHORTFALL_REASON_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {line.reason === 'other' ? (
+                      <Input
+                        value={line.otherDetail}
+                        onChange={(e) => {
+                          setError(null);
+                          setOtherDetailByVariant((prev) => ({
+                            ...prev,
+                            [line.variantId]: e.target.value,
+                          }));
+                        }}
+                        placeholder="Describe the shortage…"
+                        maxLength={500}
+                        aria-label="Other shortage reason"
+                        className="h-9 text-xs"
+                      />
+                    ) : null}
+                  </div>
+                ))}
+                <p className="text-xs text-amber-800 dark:text-amber-200">
+                  {totalShortfall} unit{totalShortfall === 1 ? '' : 's'} will be reported to main
+                  warehouse for investigation
+                  {shortfallLines
+                    .map((l) =>
+                      l.reason
+                        ? ` (${formatShortfallReasonLabel(l.reason, l.otherDetail)})`
+                        : ''
+                    )
+                    .join('')}
+                  .
+                </p>
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               <Label htmlFor="sw-receive-notes">
                 Notes
-                {hasShortage ? (
-                  <span className="text-destructive"> (required — missing qty)</span>
-                ) : (
-                  <span className="text-muted-foreground font-normal"> (optional)</span>
-                )}
+                <span className="text-muted-foreground font-normal"> (optional)</span>
               </Label>
               <Textarea
                 id="sw-receive-notes"
@@ -349,17 +470,11 @@ export function SubWarehouseStockReceiveDialog({
                 }}
                 placeholder={
                   hasShortage
-                    ? 'Required: explain missing/short qty (e.g. 5 units damaged or not in carton)'
+                    ? 'Optional extra notes for main (gate notes, carton condition, etc.)'
                     : 'e.g. received complete shipment'
                 }
                 rows={2}
-                aria-required={hasShortage}
               />
-              {hasShortage && !notes.trim() ? (
-                <p className="text-xs text-amber-800">
-                  You entered less than remaining on at least one SKU. Add a note before confirming.
-                </p>
-              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -501,19 +616,31 @@ export function applyReceiveConfirmToItems(
   lines: ReceiveConfirmLine[]
 ): SubWarehouseStockRequestItem[] {
   const qtyByVariant = new Map(lines.map((line) => [line.variantId, line.quantityThisReceive]));
+  const shortVariants = new Set(
+    lines
+      .filter((line) => {
+        const item = items.find((i) => i.variantId === line.variantId);
+        if (!item) return false;
+        const open = item.openReceiveQuantity ?? 0;
+        return open > line.quantityThisReceive;
+      })
+      .map((line) => line.variantId)
+  );
   const nextItems = items.map((item) => {
     const add = qtyByVariant.get(item.variantId) ?? 0;
-    if (add <= 0) return item;
-    const nextReceived = Math.min(getItemDeliveredQty(item), getItemReceivedQty(item) + add);
-    const nextOpen = Math.max(0, (item.openReceiveQuantity ?? 0) - add);
+    if (add <= 0 && !shortVariants.has(item.variantId)) return item;
+    const nextReceived =
+      add > 0
+        ? Math.min(getItemDeliveredQty(item), getItemReceivedQty(item) + add)
+        : getItemReceivedQty(item);
+    const nextOpen = shortVariants.has(item.variantId)
+      ? 0
+      : Math.max(0, (item.openReceiveQuantity ?? 0) - add);
     return {
       ...item,
       receivedQuantity: nextReceived,
       openReceiveQuantity: nextOpen,
     };
   });
-  // Wave-based: any remaining short locks unlock until main allocates again.
-  const stillShort = nextItems.some((item) => getItemShortQty(item) > 0);
-  if (!stillShort) return nextItems;
-  return nextItems.map((item) => ({ ...item, openReceiveQuantity: 0 }));
+  return nextItems;
 }

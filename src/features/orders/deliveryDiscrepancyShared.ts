@@ -70,6 +70,39 @@ export const DISCREPANCY_RESOLUTION_OPTIONS: {
   },
 ];
 
+/** Resolution copy for internal sub-stock shortages (Main ↔ Sub, not supplier PO). */
+export const INTERNAL_DISCREPANCY_RESOLUTION_OPTIONS: {
+  value: DiscrepancyResolution;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: 'redeliver',
+    label: 'Found → restore & redeliver',
+    description: 'Keep the reservation and re-unlock this qty so the sub-warehouse can receive again.',
+  },
+  {
+    value: 'write_off_replace',
+    label: 'Lost → write off & ship replacement',
+    description:
+      'Release the held reservation. Use Allocate Remaining on the request to ship a replacement from available stock.',
+  },
+  {
+    value: 'write_off',
+    label: 'Lost → write off only',
+    description:
+      'Confirm the loss. Release the reservation and reduce delivered qty — do not ship a replacement for this shortage.',
+  },
+];
+
+export function formatInternalShortageContext(
+  requestNumber?: string | null,
+  drNumber?: string | null,
+  subLocationName?: string | null
+): string {
+  return [requestNumber, drNumber, subLocationName].filter(Boolean).join(' · ');
+}
+
 export function isShortfallReason(value: string): value is ShortfallReason {
   return SHORTFALL_REASON_OPTIONS.some((o) => o.value === value);
 }

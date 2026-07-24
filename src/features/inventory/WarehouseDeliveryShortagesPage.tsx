@@ -15,6 +15,7 @@ import { useWarehouseLocationMembership } from './useWarehouseLocationMembership
 import {
   DISCREPANCY_RESOLUTION_OPTIONS,
   DISCREPANCY_STATUS_LABELS,
+  INTERNAL_DISCREPANCY_RESOLUTION_OPTIONS,
   formatShortfallReasonLabel,
   type DiscrepancyResolution,
   type DiscrepancyStatus,
@@ -43,23 +44,26 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+type ShortageSource = 'po' | 'internal';
+
 type DiscrepancyRow = {
   id: string;
   company_id: string;
-  purchase_order_id: string;
-  delivery_id: string;
-  warehouse_location_id: string;
+  /** PO delivery id or internal request id (group key). */
+  group_id: string;
+  /** PO id or internal request id (for links). */
+  parent_id: string;
+  parent_number: string | null;
+  dr_number: string | null;
+  location_name: string | null;
   variant_id: string;
   quantity: number;
   reason: ShortfallReason;
-  buyer_notes: string | null;
+  reporter_notes: string | null;
   status: DiscrepancyStatus;
   resolution_notes: string | null;
   created_at: string;
   resolved_at: string | null;
-  po_number: string | null;
-  dr_number: string | null;
-  location_name: string | null;
   brand_name: string | null;
   variant_name: string | null;
   reported_by_name: string | null;
@@ -67,13 +71,13 @@ type DiscrepancyRow = {
 };
 
 type ShortageGroup = {
-  delivery_id: string;
-  purchase_order_id: string;
-  po_number: string | null;
+  group_id: string;
+  parent_id: string;
+  parent_number: string | null;
   dr_number: string | null;
   location_name: string | null;
   created_at: string;
-  buyer_notes: string | null;
+  reporter_notes: string | null;
   lines: DiscrepancyRow[];
   openLines: DiscrepancyRow[];
   openQty: number;
@@ -91,6 +95,58 @@ function itemLabel(row: Pick<DiscrepancyRow, 'brand_name' | 'variant_name' | 'va
   );
 }
 
+async function enrichVariantAndProfileNames(
+  data: Array<{
+    variant_id?: string | null;
+    reported_by?: string | null;
+    resolved_by?: string | null;
+  }>
+): Promise<{
+  nameById: Record<string, string>;
+  variantLabelById: Record<string, { brand_name: string | null; variant_name: string | null }>;
+}> {
+  const profileIds = [
+    ...new Set(
+      data
+        .flatMap((r) => [r.reported_by, r.resolved_by])
+        .filter(Boolean) as string[]
+    ),
+  ];
+  const nameById: Record<string, string> = {};
+  if (profileIds.length > 0) {
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', profileIds);
+    for (const p of profiles || []) {
+      if (p.id && p.full_name) nameById[p.id] = p.full_name;
+    }
+  }
+
+  const variantIds = [
+    ...new Set(data.map((r) => r.variant_id).filter(Boolean) as string[]),
+  ];
+  const variantLabelById: Record<string, { brand_name: string | null; variant_name: string | null }> =
+    {};
+  if (variantIds.length > 0) {
+    const { data: variants } = await supabase
+      .from('variants')
+      .select('id, name, brands:brand_id(name)')
+      .in('id', variantIds);
+    for (const v of variants || []) {
+      const brand = firstRelation(
+        (v as { brands?: { name?: string | null } | { name?: string | null }[] | null }).brands
+      );
+      variantLabelById[v.id as string] = {
+        brand_name: brand?.name ?? null,
+        variant_name: (v as { name?: string | null }).name ?? null,
+      };
+    }
+  }
+
+  return { nameById, variantLabelById };
+}
+
 const SHORTAGE_GROUPS_PER_PAGE = 10;
 
 export default function WarehouseDeliveryShortagesPage() {
@@ -103,8 +159,12 @@ export default function WarehouseDeliveryShortagesPage() {
     isWarehouse,
   });
 
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
+  const [source, setSource] = useState<ShortageSource>(() => {
+    const s = searchParams.get('source');
+    return s === 'internal' ? 'internal' : 'po';
+  });
   const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>(() => {
     const s = searchParams.get('status');
     if (s === 'open' || s === 'all' || s === 'resolved') return s;
@@ -126,18 +186,110 @@ export default function WarehouseDeliveryShortagesPage() {
     }
     const q = searchParams.get('search');
     if (q != null) setSearchQuery(q);
+    const src = searchParams.get('source');
+    if (src === 'internal' || src === 'po') setSource(src);
   }, [searchParams]);
+
+  const setSourceAndUrl = (next: ShortageSource) => {
+    setSource(next);
+    setSelectedIds(new Set());
+    setShortagesPage(1);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'internal') params.set('source', 'internal');
+    else params.delete('source');
+    setSearchParams(params, { replace: true });
+  };
 
   const {
     data: rows = [],
     isLoading,
     error,
   } = useQuery({
-    queryKey: ['warehouse-delivery-shortages', user?.company_id, membership.locationId, membership.isMain],
+    queryKey: [
+      'warehouse-delivery-shortages',
+      source,
+      user?.company_id,
+      membership.locationId,
+      membership.isMain,
+    ],
     enabled: !!user?.company_id && isWarehouse && !membershipLoading,
     staleTime: 0,
     refetchOnMount: 'always',
     queryFn: async (): Promise<DiscrepancyRow[]> => {
+      if (source === 'internal') {
+        let q = supabase
+          .from('internal_stock_request_discrepancies')
+          .select(
+            `
+            id,
+            company_id,
+            request_id,
+            from_location_id,
+            variant_id,
+            quantity,
+            reason,
+            reporter_notes,
+            status,
+            resolution_notes,
+            created_at,
+            resolved_at,
+            reported_by,
+            resolved_by,
+            dr_number,
+            internal_stock_requests:request_id(request_number, dr_number),
+            warehouse_locations:from_location_id(name)
+          `
+          )
+          .eq('company_id', user!.company_id!)
+          .order('created_at', { ascending: false });
+
+        if (!membership.isMain && membership.locationId) {
+          q = q.eq('from_location_id', membership.locationId);
+        }
+
+        const { data, error: qErr } = await q;
+        if (qErr) throw qErr;
+
+        const { nameById, variantLabelById } = await enrichVariantAndProfileNames(data || []);
+
+        return (data || []).map((raw: Record<string, unknown>) => {
+          const req = firstRelation(
+            raw.internal_stock_requests as {
+              request_number?: string;
+              dr_number?: string | null;
+            } | null
+          );
+          const loc = firstRelation(raw.warehouse_locations as { name?: string } | null);
+          const variantId = raw.variant_id as string;
+          const variantLabel = variantLabelById[variantId];
+          const reportedBy = raw.reported_by as string | null;
+          const resolvedBy = raw.resolved_by as string | null;
+          const requestId = raw.request_id as string;
+
+          return {
+            id: raw.id as string,
+            company_id: raw.company_id as string,
+            group_id: `${requestId}:${(raw.dr_number as string | null) || req?.dr_number || 'none'}`,
+            parent_id: requestId,
+            parent_number: req?.request_number ?? null,
+            dr_number: (raw.dr_number as string | null) ?? req?.dr_number ?? null,
+            location_name: loc?.name ?? null,
+            variant_id: variantId,
+            quantity: Number(raw.quantity) || 0,
+            reason: raw.reason as ShortfallReason,
+            reporter_notes: (raw.reporter_notes as string | null) ?? null,
+            status: raw.status as DiscrepancyStatus,
+            resolution_notes: (raw.resolution_notes as string | null) ?? null,
+            created_at: raw.created_at as string,
+            resolved_at: (raw.resolved_at as string | null) ?? null,
+            brand_name: variantLabel?.brand_name ?? null,
+            variant_name: variantLabel?.variant_name ?? null,
+            reported_by_name: reportedBy ? nameById[reportedBy] ?? null : null,
+            resolved_by_name: resolvedBy ? nameById[resolvedBy] ?? null : null,
+          };
+        });
+      }
+
       let q = supabase
         .from('purchase_order_delivery_discrepancies')
         .select(
@@ -172,51 +324,7 @@ export default function WarehouseDeliveryShortagesPage() {
       const { data, error: qErr } = await q;
       if (qErr) throw qErr;
 
-      const profileIds = [
-        ...new Set(
-          (data || [])
-            .flatMap((r: { reported_by?: string | null; resolved_by?: string | null }) => [
-              r.reported_by,
-              r.resolved_by,
-            ])
-            .filter(Boolean) as string[]
-        ),
-      ];
-      const nameById: Record<string, string> = {};
-      if (profileIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('id, full_name')
-          .in('id', profileIds);
-        for (const p of profiles || []) {
-          if (p.id && p.full_name) nameById[p.id] = p.full_name;
-        }
-      }
-
-      const variantIds = [
-        ...new Set(
-          (data || [])
-            .map((r: { variant_id?: string | null }) => r.variant_id)
-            .filter(Boolean) as string[]
-        ),
-      ];
-      const variantLabelById: Record<string, { brand_name: string | null; variant_name: string | null }> =
-        {};
-      if (variantIds.length > 0) {
-        const { data: variants } = await supabase
-          .from('variants')
-          .select('id, name, brands:brand_id(name)')
-          .in('id', variantIds);
-        for (const v of variants || []) {
-          const brand = firstRelation(
-            (v as { brands?: { name?: string | null } | { name?: string | null }[] | null }).brands
-          );
-          variantLabelById[v.id as string] = {
-            brand_name: brand?.name ?? null,
-            variant_name: (v as { name?: string | null }).name ?? null,
-          };
-        }
-      }
+      const { nameById, variantLabelById } = await enrichVariantAndProfileNames(data || []);
 
       return (data || []).map((raw: Record<string, unknown>) => {
         const po = firstRelation(raw.purchase_orders as { po_number?: string } | null);
@@ -232,20 +340,19 @@ export default function WarehouseDeliveryShortagesPage() {
         return {
           id: raw.id as string,
           company_id: raw.company_id as string,
-          purchase_order_id: raw.purchase_order_id as string,
-          delivery_id: raw.delivery_id as string,
-          warehouse_location_id: raw.warehouse_location_id as string,
+          group_id: raw.delivery_id as string,
+          parent_id: raw.purchase_order_id as string,
+          parent_number: po?.po_number ?? null,
+          dr_number: delivery?.dr_number ?? null,
+          location_name: loc?.name ?? null,
           variant_id: variantId,
           quantity: Number(raw.quantity) || 0,
           reason: raw.reason as ShortfallReason,
-          buyer_notes: (raw.buyer_notes as string | null) ?? null,
+          reporter_notes: (raw.buyer_notes as string | null) ?? null,
           status: raw.status as DiscrepancyStatus,
           resolution_notes: (raw.resolution_notes as string | null) ?? null,
           created_at: raw.created_at as string,
           resolved_at: (raw.resolved_at as string | null) ?? null,
-          po_number: po?.po_number ?? null,
-          dr_number: delivery?.dr_number ?? null,
-          location_name: loc?.name ?? null,
           brand_name: variantLabel?.brand_name ?? null,
           variant_name: variantLabel?.variant_name ?? null,
           reported_by_name: reportedBy ? nameById[reportedBy] ?? null : null,
@@ -271,13 +378,13 @@ export default function WarehouseDeliveryShortagesPage() {
       if (!isDateInRange(row.created_at, reportDateRange.start, reportDateRange.end)) return false;
       if (!q) return true;
       const hay = [
-        row.po_number,
+        row.parent_number,
         row.dr_number,
         row.location_name,
         row.brand_name,
         row.variant_name,
         row.reason,
-        row.buyer_notes,
+        row.reporter_notes,
         row.resolution_notes,
       ]
         .filter(Boolean)
@@ -288,15 +395,15 @@ export default function WarehouseDeliveryShortagesPage() {
   }, [rows, searchQuery, statusFilter, reportDateRange.end, reportDateRange.start]);
 
   const groups = useMemo((): ShortageGroup[] => {
-    const byDelivery = new Map<string, DiscrepancyRow[]>();
+    const byGroup = new Map<string, DiscrepancyRow[]>();
     for (const row of filtered) {
-      const list = byDelivery.get(row.delivery_id) || [];
+      const list = byGroup.get(row.group_id) || [];
       list.push(row);
-      byDelivery.set(row.delivery_id, list);
+      byGroup.set(row.group_id, list);
     }
 
     const result: ShortageGroup[] = [];
-    for (const [delivery_id, lines] of byDelivery) {
+    for (const [group_id, lines] of byGroup) {
       const sorted = [...lines].sort((a, b) => {
         if (a.status === 'open' && b.status !== 'open') return -1;
         if (a.status !== 'open' && b.status === 'open') return 1;
@@ -305,16 +412,16 @@ export default function WarehouseDeliveryShortagesPage() {
       const openLines = sorted.filter((l) => l.status === 'open');
       const first = sorted[0];
       result.push({
-        delivery_id,
-        purchase_order_id: first.purchase_order_id,
-        po_number: first.po_number,
+        group_id,
+        parent_id: first.parent_id,
+        parent_number: first.parent_number,
         dr_number: first.dr_number,
         location_name: first.location_name,
         created_at: sorted.reduce(
           (min, l) => (l.created_at < min ? l.created_at : min),
           sorted[0].created_at
         ),
-        buyer_notes: sorted.find((l) => l.buyer_notes)?.buyer_notes ?? null,
+        reporter_notes: sorted.find((l) => l.reporter_notes)?.reporter_notes ?? null,
         lines: sorted,
         openLines,
         openQty: openLines.reduce((s, l) => s + l.quantity, 0),
@@ -327,7 +434,7 @@ export default function WarehouseDeliveryShortagesPage() {
 
   useEffect(() => {
     setShortagesPage(1);
-  }, [searchQuery, statusFilter, reportDateRange.start, reportDateRange.end]);
+  }, [searchQuery, statusFilter, reportDateRange.start, reportDateRange.end, source]);
 
   const totalShortagePages = Math.max(1, Math.ceil(groups.length / SHORTAGE_GROUPS_PER_PAGE));
   const currentShortagePage = Math.min(Math.max(1, shortagesPage), totalShortagePages);
@@ -347,6 +454,9 @@ export default function WarehouseDeliveryShortagesPage() {
     () => selectedOpenRows.reduce((s, r) => s + r.quantity, 0),
     [selectedOpenRows]
   );
+
+  const resolutionOptions =
+    source === 'internal' ? INTERNAL_DISCREPANCY_RESOLUTION_OPTIONS : DISCREPANCY_RESOLUTION_OPTIONS;
 
   const toggleLine = (id: string, checked: boolean) => {
     setSelectedIds((prev) => {
@@ -384,14 +494,26 @@ export default function WarehouseDeliveryShortagesPage() {
   };
 
   const resolveCopy = (action: DiscrepancyResolution) =>
-    DISCREPANCY_RESOLUTION_OPTIONS.find((o) => o.value === action)!;
+    resolutionOptions.find((o) => o.value === action)!;
 
   const submitResolve = async () => {
     if (resolveTargets.length === 0) return;
+    if (source === 'internal' && !resolveNotes.trim()) {
+      toast({
+        title: 'Notes required',
+        description: 'Add resolution notes before confirming.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setResolving(true);
     try {
       const ids = resolveTargets.map((t) => t.id);
-      const { data, error: rpcErr } = await supabase.rpc('resolve_po_delivery_discrepancies_bulk', {
+      const rpcName =
+        source === 'internal'
+          ? 'resolve_internal_stock_request_discrepancies_bulk'
+          : 'resolve_po_delivery_discrepancies_bulk';
+      const { data, error: rpcErr } = await supabase.rpc(rpcName, {
         p_discrepancy_ids: ids,
         p_resolution: resolveAction,
         p_notes: resolveNotes.trim() || null,
@@ -420,6 +542,9 @@ export default function WarehouseDeliveryShortagesPage() {
         return next;
       });
       await queryClient.invalidateQueries({ queryKey: ['warehouse-delivery-shortages'] });
+      if (source === 'internal') {
+        await queryClient.invalidateQueries({ queryKey: ['internal-stock-requests'] });
+      }
     } catch (e: unknown) {
       toast({
         title: 'Could not resolve',
@@ -444,6 +569,9 @@ export default function WarehouseDeliveryShortagesPage() {
     );
   }
 
+  const parentLabel = source === 'internal' ? 'RN' : 'PO';
+  const notesLabel = source === 'internal' ? 'Sub note' : 'Buyer note';
+
   return (
     <div className="container mx-auto p-4 md:p-6 space-y-6">
       <div>
@@ -452,11 +580,49 @@ export default function WarehouseDeliveryShortagesPage() {
           Delivery Shortages
         </h1>
         <p className="text-muted-foreground mt-1 max-w-2xl">
-          Shortages are grouped by DR. Investigate first, then choose per line:{' '}
-          <strong>Found &amp; redeliver</strong> (restore stock),{' '}
-          <strong>Write off &amp; replace</strong> (no restore, reopen PO for another DR), or{' '}
-          <strong>Write off only</strong> (accept the short).
+          {source === 'internal' ? (
+            <>
+              Sub-stock shortages are grouped by request / DR. Investigate first, then choose:{' '}
+              <strong>Found &amp; redeliver</strong> (re-unlock for sub receive),{' '}
+              <strong>Write off &amp; replace</strong> (release reservation, then Allocate Remaining),
+              or <strong>Write off only</strong> (accept the short).
+            </>
+          ) : (
+            <>
+              Shortages are grouped by DR. Investigate first, then choose per line:{' '}
+              <strong>Found &amp; redeliver</strong> (restore stock),{' '}
+              <strong>Write off &amp; replace</strong> (no restore, reopen PO for another DR), or{' '}
+              <strong>Write off only</strong> (accept the short).
+            </>
+          )}
         </p>
+      </div>
+
+      <div className="flex gap-2 border-b pb-0">
+        <Button
+          type="button"
+          variant="ghost"
+          className={`rounded-b-none border-b-2 px-4 ${
+            source === 'po'
+              ? 'border-primary text-foreground'
+              : 'border-transparent text-muted-foreground'
+          }`}
+          onClick={() => setSourceAndUrl('po')}
+        >
+          PO deliveries
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className={`rounded-b-none border-b-2 px-4 ${
+            source === 'internal'
+              ? 'border-primary text-foreground'
+              : 'border-transparent text-muted-foreground'
+          }`}
+          onClick={() => setSourceAndUrl('internal')}
+        >
+          Sub Warehouse Allocations & Requests
+        </Button>
       </div>
 
       <Card>
@@ -465,7 +631,11 @@ export default function WarehouseDeliveryShortagesPage() {
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search PO, DR, item, notes…"
+                placeholder={
+                  source === 'internal'
+                    ? 'Search RN, DR, sub warehouse, item, notes…'
+                    : 'Search PO, DR, item, notes…'
+                }
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
@@ -535,221 +705,231 @@ export default function WarehouseDeliveryShortagesPage() {
             <div className="flex items-start gap-2 text-sm text-destructive py-6">
               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
               <span>
-                {(error as Error).message.includes('purchase_order_delivery_discrepancies')
-                  ? 'Delivery shortages table is not available yet. Apply migration 20260715120000_po_delivery_discrepancies.sql.'
-                  : (error as Error).message.includes('resolve_po_delivery_discrepancies_bulk')
-                    ? 'Bulk resolve is not available yet. Apply migration 20260716120000_resolve_po_delivery_discrepancies_bulk.sql.'
+                {(error as Error).message.includes('internal_stock_request_discrepancies')
+                  ? 'Sub-stock shortages table is not available yet. Apply migration 20260724180000_internal_stock_request_discrepancies.sql.'
+                  : (error as Error).message.includes('purchase_order_delivery_discrepancies')
+                    ? 'Delivery shortages table is not available yet. Apply migration 20260715120000_po_delivery_discrepancies.sql.'
                     : (error as Error).message}
               </span>
             </div>
           ) : groups.length === 0 ? (
             <p className="text-sm text-muted-foreground py-8 text-center">
               {statusFilter === 'open'
-                ? 'No open delivery shortages.'
+                ? source === 'internal'
+                  ? 'No open sub-stock shortages.'
+                  : 'No open delivery shortages.'
                 : 'No shortages match your filters.'}
             </p>
           ) : (
             <>
-            <div className="space-y-4">
-              {paginatedGroups.map((group) => {
-                const openIds = group.openLines.map((l) => l.id);
-                const selectedInGroup = openIds.filter((id) => selectedIds.has(id));
-                const allOpenSelected =
-                  openIds.length > 0 && selectedInGroup.length === openIds.length;
-                const someOpenSelected =
-                  selectedInGroup.length > 0 && selectedInGroup.length < openIds.length;
+              <div className="space-y-4">
+                {paginatedGroups.map((group) => {
+                  const openIds = group.openLines.map((l) => l.id);
+                  const selectedInGroup = openIds.filter((id) => selectedIds.has(id));
+                  const allOpenSelected =
+                    openIds.length > 0 && selectedInGroup.length === openIds.length;
+                  const someOpenSelected =
+                    selectedInGroup.length > 0 && selectedInGroup.length < openIds.length;
 
-                return (
-                  <div key={group.delivery_id} className="rounded-lg border overflow-hidden">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between bg-muted/30 px-3 py-3 border-b">
-                      <div className="flex items-start gap-3 min-w-0">
-                        {group.openCount > 0 ? (
-                          <Checkbox
-                            className="mt-1"
-                            checked={
-                              allOpenSelected ? true : someOpenSelected ? 'indeterminate' : false
-                            }
-                            onCheckedChange={(v) => toggleGroupOpenLines(group, v === true)}
-                            aria-label="Select all open lines on this DR"
-                          />
-                        ) : (
-                          <div className="w-4" />
-                        )}
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {group.po_number ? (
-                              <Link
-                                to={`/purchase-orders?search=${encodeURIComponent(group.po_number)}`}
-                                className="font-semibold text-violet-700 hover:underline"
-                              >
-                                {group.po_number}
-                              </Link>
-                            ) : (
-                              <span className="font-semibold">PO</span>
-                            )}
-                            <span className="font-mono text-sm text-muted-foreground">
-                              {group.dr_number || 'No DR #'}
-                            </span>
-                            {group.openCount > 0 ? (
-                              <Badge variant="destructive">
-                                {group.openCount} open · {group.openQty} unit
-                                {group.openQty === 1 ? '' : 's'}
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary">Resolved</Badge>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
-                            <span>
-                              Reported {format(new Date(group.created_at), 'MMM d, yyyy HH:mm')}
-                            </span>
-                            {group.location_name ? <span>{group.location_name}</span> : null}
-                          </div>
-                          {group.buyer_notes ? (
-                            <p className="text-xs text-muted-foreground line-clamp-2">
-                              Buyer note: {group.buyer_notes}
-                            </p>
-                          ) : null}
-                        </div>
-                      </div>
-                      {group.openCount > 0 ? (
-                        <div className="flex flex-wrap gap-2 sm:justify-end shrink-0">
-                          {(() => {
-                            const lines =
-                              selectedInGroup.length > 0
-                                ? group.openLines.filter((l) => selectedIds.has(l.id))
-                                : group.openLines;
-                            const countSuffix =
-                              selectedInGroup.length > 0 &&
-                              selectedInGroup.length < group.openCount
-                                ? ` (${selectedInGroup.length})`
-                                : '';
-                            return (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8"
-                                  onClick={() => openBulkResolve('redeliver', lines)}
+                  return (
+                    <div key={group.group_id} className="rounded-lg border overflow-hidden">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between bg-muted/30 px-3 py-3 border-b">
+                        <div className="flex items-start gap-3 min-w-0">
+                          {group.openCount > 0 ? (
+                            <Checkbox
+                              className="mt-1"
+                              checked={
+                                allOpenSelected ? true : someOpenSelected ? 'indeterminate' : false
+                              }
+                              onCheckedChange={(v) => toggleGroupOpenLines(group, v === true)}
+                              aria-label="Select all open lines in this group"
+                            />
+                          ) : (
+                            <div className="w-4" />
+                          )}
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {group.parent_number ? (
+                                <Link
+                                  to={
+                                    source === 'internal'
+                                      ? `/inventory/sub-stock-requests?search=${encodeURIComponent(group.parent_number)}`
+                                      : `/purchase-orders?search=${encodeURIComponent(group.parent_number)}`
+                                  }
+                                  className="font-semibold text-violet-700 hover:underline"
                                 >
-                                  Found & redeliver{countSuffix}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  className="h-8"
-                                  onClick={() => openBulkResolve('write_off_replace', lines)}
-                                >
-                                  Write off & replace{countSuffix}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  className="h-8"
-                                  onClick={() => openBulkResolve('write_off', lines)}
-                                >
-                                  Write off only{countSuffix}
-                                </Button>
-                              </>
-                            );
-                          })()}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="divide-y">
-                      {group.lines.map((line) => {
-                        const isOpen = line.status === 'open';
-                        return (
-                          <div
-                            key={line.id}
-                            className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-3 py-2.5 text-sm"
-                          >
-                            <div className="flex items-start gap-3 min-w-0">
-                              {isOpen ? (
-                                <Checkbox
-                                  className="mt-0.5"
-                                  checked={selectedIds.has(line.id)}
-                                  onCheckedChange={(v) => toggleLine(line.id, v === true)}
-                                  aria-label={`Select ${itemLabel(line)}`}
-                                />
+                                  {group.parent_number}
+                                </Link>
                               ) : (
-                                <div className="w-4" />
+                                <span className="font-semibold">{parentLabel}</span>
                               )}
-                              <div className="min-w-0">
-                                <div className="font-medium truncate">{itemLabel(line)}</div>
-                                <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
-                                  <span>
-                                    {formatShortfallReasonLabel(line.reason, line.buyer_notes)}
-                                  </span>
-                                  {line.reported_by_name ? (
-                                    <span>by {line.reported_by_name}</span>
-                                  ) : null}
-                                  {!isOpen && line.resolved_at ? (
+                              <span className="font-mono text-sm text-muted-foreground">
+                                {group.dr_number || 'No DR #'}
+                              </span>
+                              {group.openCount > 0 ? (
+                                <Badge variant="destructive">
+                                  {group.openCount} open · {group.openQty} unit
+                                  {group.openQty === 1 ? '' : 's'}
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary">Resolved</Badge>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
+                              <span>
+                                Reported {format(new Date(group.created_at), 'MMM d, yyyy HH:mm')}
+                              </span>
+                              {group.location_name ? <span>{group.location_name}</span> : null}
+                            </div>
+                            {group.reporter_notes ? (
+                              <p className="text-xs text-muted-foreground line-clamp-2">
+                                {notesLabel}: {group.reporter_notes}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                        {group.openCount > 0 ? (
+                          <div className="flex flex-wrap gap-2 sm:justify-end shrink-0">
+                            {(() => {
+                              const lines =
+                                selectedInGroup.length > 0
+                                  ? group.openLines.filter((l) => selectedIds.has(l.id))
+                                  : group.openLines;
+                              const countSuffix =
+                                selectedInGroup.length > 0 &&
+                                selectedInGroup.length < group.openCount
+                                  ? ` (${selectedInGroup.length})`
+                                  : '';
+                              return (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8"
+                                    onClick={() => openBulkResolve('redeliver', lines)}
+                                  >
+                                    Found & redeliver{countSuffix}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    className="h-8"
+                                    onClick={() => openBulkResolve('write_off_replace', lines)}
+                                  >
+                                    Write off & replace{countSuffix}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    className="h-8"
+                                    onClick={() => openBulkResolve('write_off', lines)}
+                                  >
+                                    Write off only{countSuffix}
+                                  </Button>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="divide-y">
+                        {group.lines.map((line) => {
+                          const isOpen = line.status === 'open';
+                          return (
+                            <div
+                              key={line.id}
+                              className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-3 py-2.5 text-sm"
+                            >
+                              <div className="flex items-start gap-3 min-w-0">
+                                {isOpen ? (
+                                  <Checkbox
+                                    className="mt-0.5"
+                                    checked={selectedIds.has(line.id)}
+                                    onCheckedChange={(v) => toggleLine(line.id, v === true)}
+                                    aria-label={`Select ${itemLabel(line)}`}
+                                  />
+                                ) : (
+                                  <div className="w-4" />
+                                )}
+                                <div className="min-w-0">
+                                  <div className="font-medium truncate">{itemLabel(line)}</div>
+                                  <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
                                     <span>
-                                      {format(new Date(line.resolved_at), 'MMM d')}
-                                      {line.resolved_by_name
-                                        ? ` · ${line.resolved_by_name}`
-                                        : ''}
+                                      {formatShortfallReasonLabel(
+                                        line.reason,
+                                        line.reporter_notes
+                                      )}
                                     </span>
+                                    {line.reported_by_name ? (
+                                      <span>by {line.reported_by_name}</span>
+                                    ) : null}
+                                    {!isOpen && line.resolved_at ? (
+                                      <span>
+                                        {format(new Date(line.resolved_at), 'MMM d')}
+                                        {line.resolved_by_name
+                                          ? ` · ${line.resolved_by_name}`
+                                          : ''}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  {!isOpen && line.resolution_notes ? (
+                                    <div className="text-xs text-muted-foreground mt-0.5">
+                                      {line.resolution_notes}
+                                    </div>
                                   ) : null}
                                 </div>
-                                {!isOpen && line.resolution_notes ? (
-                                  <div className="text-xs text-muted-foreground mt-0.5">
-                                    {line.resolution_notes}
-                                  </div>
-                                ) : null}
+                              </div>
+                              <div className="flex items-center gap-3 sm:justify-end pl-7 sm:pl-0 shrink-0">
+                                <span className="font-semibold tabular-nums">{line.quantity}</span>
+                                <Badge variant={isOpen ? 'destructive' : 'secondary'}>
+                                  {DISCREPANCY_STATUS_LABELS[line.status] || line.status}
+                                </Badge>
                               </div>
                             </div>
-                            <div className="flex items-center gap-3 sm:justify-end pl-7 sm:pl-0 shrink-0">
-                              <span className="font-semibold tabular-nums">{line.quantity}</span>
-                              <Badge variant={isOpen ? 'destructive' : 'secondary'}>
-                                {DISCREPANCY_STATUS_LABELS[line.status] || line.status}
-                              </Badge>
-                            </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-            {groups.length > SHORTAGE_GROUPS_PER_PAGE && (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mt-4 pt-2 border-t">
-                <div className="text-xs text-muted-foreground">
-                  Showing{' '}
-                  <span className="font-medium">
-                    {(currentShortagePage - 1) * SHORTAGE_GROUPS_PER_PAGE + 1}-
-                    {Math.min(currentShortagePage * SHORTAGE_GROUPS_PER_PAGE, groups.length)}
-                  </span>{' '}
-                  of <span className="font-medium">{groups.length}</span> deliveries
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShortagesPage((p) => Math.max(1, p - 1))}
-                    disabled={currentShortagePage === 1}
-                  >
-                    <ChevronLeft className="h-4 w-4 mr-1" />
-                    Prev
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    Page {currentShortagePage} of {totalShortagePages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShortagesPage((p) => Math.min(totalShortagePages, p + 1))}
-                    disabled={currentShortagePage === totalShortagePages}
-                  >
-                    Next
-                    <ChevronRight className="h-4 w-4 ml-1" />
-                  </Button>
-                </div>
+                  );
+                })}
               </div>
-            )}
+              {groups.length > SHORTAGE_GROUPS_PER_PAGE && (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mt-4 pt-2 border-t">
+                  <div className="text-xs text-muted-foreground">
+                    Showing{' '}
+                    <span className="font-medium">
+                      {(currentShortagePage - 1) * SHORTAGE_GROUPS_PER_PAGE + 1}-
+                      {Math.min(currentShortagePage * SHORTAGE_GROUPS_PER_PAGE, groups.length)}
+                    </span>{' '}
+                    of <span className="font-medium">{groups.length}</span>{' '}
+                    {source === 'internal' ? 'requests' : 'deliveries'}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShortagesPage((p) => Math.max(1, p - 1))}
+                      disabled={currentShortagePage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" />
+                      Prev
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      Page {currentShortagePage} of {totalShortagePages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShortagesPage((p) => Math.min(totalShortagePages, p + 1))}
+                      disabled={currentShortagePage === totalShortagePages}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </CardContent>
@@ -780,8 +960,8 @@ export default function WarehouseDeliveryShortagesPage() {
                   <div className="min-w-0">
                     <div className="font-semibold leading-snug">{itemLabel(t)}</div>
                     <div className="text-xs text-muted-foreground">
-                      {t.po_number || 'PO'} · {t.dr_number || 'DR'} ·{' '}
-                      {formatShortfallReasonLabel(t.reason, t.buyer_notes)}
+                      {t.parent_number || parentLabel} · {t.dr_number || 'DR'} ·{' '}
+                      {formatShortfallReasonLabel(t.reason, t.reporter_notes)}
                     </div>
                   </div>
                   <div className="font-semibold tabular-nums shrink-0">{t.quantity}</div>
@@ -789,34 +969,68 @@ export default function WarehouseDeliveryShortagesPage() {
               ))}
             </div>
             <div className="rounded-md border px-3 py-2 text-xs space-y-1 bg-background">
-              <div>
-                <span className="text-muted-foreground">Stock:</span>{' '}
-                <span className="font-medium">
-                  {resolveAction === 'redeliver'
-                    ? 'Restore to warehouse inventory'
-                    : 'Do not restore (already deducted at dispatch)'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">PO fulfillment:</span>{' '}
-                <span className="font-medium">
-                  {resolveAction === 'write_off'
-                    ? 'Leave closed for this qty (no replacement DR)'
-                    : 'Reopen reservation for another DR on this PO'}
-                </span>
-              </div>
+              {source === 'internal' ? (
+                <>
+                  <div>
+                    <span className="text-muted-foreground">Reservation:</span>{' '}
+                    <span className="font-medium">
+                      {resolveAction === 'redeliver'
+                        ? 'Keep held; re-unlock for sub receive'
+                        : 'Release held reservation back to available'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Next step:</span>{' '}
+                    <span className="font-medium">
+                      {resolveAction === 'redeliver'
+                        ? 'Sub can confirm receive on the unlocked qty'
+                        : resolveAction === 'write_off_replace'
+                          ? 'Use Allocate Remaining to ship a replacement'
+                          : 'Reduce delivered qty; no replacement for this shortage'}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <span className="text-muted-foreground">Stock:</span>{' '}
+                    <span className="font-medium">
+                      {resolveAction === 'redeliver'
+                        ? 'Restore to warehouse inventory'
+                        : 'Do not restore (already deducted at dispatch)'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">PO fulfillment:</span>{' '}
+                    <span className="font-medium">
+                      {resolveAction === 'write_off'
+                        ? 'Leave closed for this qty (no replacement DR)'
+                        : 'Reopen reservation for another DR on this PO'}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
             <div className="space-y-2">
-              <Label>Resolution notes (optional)</Label>
+              <Label>
+                Resolution notes
+                {source === 'internal' ? (
+                  <span className="text-destructive"> (required)</span>
+                ) : (
+                  <span className="text-muted-foreground font-normal"> (optional)</span>
+                )}
+              </Label>
               <Textarea
                 value={resolveNotes}
                 onChange={(e) => setResolveNotes(e.target.value)}
                 placeholder={
                   resolveAction === 'redeliver'
-                    ? 'Found on truck / left at gate — returning to stock…'
+                    ? source === 'internal'
+                      ? 'Found on truck / left at gate — re-unlocking for sub…'
+                      : 'Found on truck / left at gate — returning to stock…'
                     : resolveAction === 'write_off_replace'
                       ? 'Confirmed missing — will ship replacement from remaining stock…'
-                      : 'Confirmed loss — buyer accepts short delivery…'
+                      : 'Confirmed loss — accepting short delivery…'
                 }
                 rows={3}
               />
@@ -829,7 +1043,7 @@ export default function WarehouseDeliveryShortagesPage() {
             <Button
               variant={resolveAction === 'write_off' ? 'destructive' : 'default'}
               onClick={() => void submitResolve()}
-              disabled={resolving}
+              disabled={resolving || (source === 'internal' && !resolveNotes.trim())}
             >
               {resolving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
               Confirm ({resolveTargets.length})

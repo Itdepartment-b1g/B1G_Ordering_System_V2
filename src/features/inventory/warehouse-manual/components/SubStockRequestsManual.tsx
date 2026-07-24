@@ -113,18 +113,31 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
       <InstructionBorder>
         <TitleSection>How Partially Received Sub Stock Request Works?</TitleSection>
         <p>
-          If status is <span className="text-blue-500">Partially received</span>, the sub-warehouse did not confirm
-          the full delivered quantity. Main warehouse should investigate the shortage.
+          If status is <span className="text-blue-500">Partially received</span>, the sub-warehouse confirmed less
+          than the unlocked quantity and must select a shortage reason per short line (Missing / Damaged / Wrong
+          packaging / Other).
         </p>
         <hr className="my-2 border-gray-500" />
         <p>
-          View details from the 3 vertical dots → <span className="text-blue-500">View</span> to see the request
-          timeline.
+          That opens an investigation for Main Warehouse. Go to{' '}
+          <span className="text-blue-500">Delivery Shortages → Sub stock requests</span> to review reason, qty, and
+          resolve:
         </p>
+        <span>
+          • <span className="text-blue-500">Found → restore & redeliver</span> — re-unlock so the sub can receive
+          again
+        </span>
+        <span>
+          • <span className="text-blue-500">Lost → write off & ship replacement</span> — then use Allocate Remaining
+          for a new wave
+        </span>
+        <span>
+          • <span className="text-blue-500">Lost → write off only</span> — accept the loss (no replacement)
+        </span>
         <hr className="my-2 border-gray-500" />
         <p>
-          Then use <span className="text-blue-500">Allocate Remaining</span> to unlock the short quantity for another
-          receive wave, and wait for the sub-warehouse to confirm again.
+          Allocate Remaining is blocked while shortages are open. View the request timeline (3 dots →{' '}
+          <span className="text-blue-500">View</span>) for reason and investigation outcome.
         </p>
       </InstructionBorder>
 

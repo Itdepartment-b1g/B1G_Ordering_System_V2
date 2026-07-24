@@ -134,6 +134,32 @@ function assertRpcOk<T extends { success?: boolean; error?: string }>(result: T,
   return result;
 }
 
+async function attachOpenDiscrepancyCounts(
+  requests: SubWarehouseStockRequest[]
+): Promise<SubWarehouseStockRequest[]> {
+  if (requests.length === 0) return requests;
+  const ids = requests.map((r) => r.id);
+  const { data, error } = await supabase
+    .from('internal_stock_request_discrepancies')
+    .select('request_id')
+    .eq('status', 'open')
+    .in('request_id', ids);
+  if (error) {
+    // Table may not exist until migration is applied.
+    console.warn('[internalStockRequests] open discrepancy count failed', error);
+    return requests.map((r) => ({ ...r, openDiscrepancyCount: r.openDiscrepancyCount ?? 0 }));
+  }
+  const countById = new Map<string, number>();
+  for (const row of data || []) {
+    const id = row.request_id as string;
+    countById.set(id, (countById.get(id) ?? 0) + 1);
+  }
+  return requests.map((r) => ({
+    ...r,
+    openDiscrepancyCount: countById.get(r.id) ?? 0,
+  }));
+}
+
 export async function fetchInternalStockRequests(options?: {
   status?: InternalStockRequestStatus | 'all';
   fromLocationId?: string | 'all';
@@ -167,7 +193,9 @@ export async function fetchInternalStockRequests(options?: {
 
     const fallback = await query;
     if (fallback.error) throw fallback.error;
-    return ((fallback.data ?? []) as InternalStockRequestRow[]).map(mapInternalStockRequestRow);
+    return attachOpenDiscrepancyCounts(
+      ((fallback.data ?? []) as InternalStockRequestRow[]).map(mapInternalStockRequestRow)
+    );
   }
 
   const rows = (Array.isArray(data) ? data : []) as InternalStockRequestRow[];
@@ -183,7 +211,7 @@ export async function fetchInternalStockRequests(options?: {
     );
   }
 
-  return mapped;
+  return attachOpenDiscrepancyCounts(mapped);
 }
 
 export async function fetchInternalStockRequestById(requestId: string) {
@@ -194,7 +222,10 @@ export async function fetchInternalStockRequestById(requestId: string) {
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  return mapInternalStockRequestRow(data as InternalStockRequestRow);
+  const [mapped] = await attachOpenDiscrepancyCounts([
+    mapInternalStockRequestRow(data as InternalStockRequestRow),
+  ]);
+  return mapped;
 }
 
 export async function createInternalStockRequest(input: {
@@ -348,7 +379,12 @@ export async function allocateInternalStockRequestRemaining(input: {
 
 export async function confirmInternalStockRequestReceive(input: {
   requestId: string;
-  lines: Array<{ variant_id: string; quantity: number }>;
+  lines: Array<{
+    variant_id: string;
+    quantity: number;
+    shortfall_reason?: string;
+    shortfall_notes?: string;
+  }>;
   proofImageUrl: string;
   signatureUrl: string;
   notes?: string;
@@ -368,7 +404,13 @@ export async function confirmInternalStockRequestReceive(input: {
   });
   if (error) throw error;
   return assertRpcOk(
-    data as { success: boolean; error?: string; status?: string; short_quantity?: number },
+    data as {
+      success: boolean;
+      error?: string;
+      status?: string;
+      short_quantity?: number;
+      discrepancy_count?: number;
+    },
     'Failed to confirm receive'
   );
 }

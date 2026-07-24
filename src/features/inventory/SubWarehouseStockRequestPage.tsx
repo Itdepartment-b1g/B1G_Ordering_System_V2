@@ -146,13 +146,17 @@ export default function SubWarehouseStockRequestPage() {
 
   const receiveMutation = useMutation({
     mutationFn: async (payload: ReceiveConfirmPayload) => {
-      const lines = payload.lines
-        .filter((line) => line.quantityThisReceive > 0)
-        .map((line) => ({
-          variant_id: line.variantId,
-          quantity: line.quantityThisReceive,
-        }));
-      if (lines.length === 0) {
+      const lines = payload.lines.map((line) => ({
+        variant_id: line.variantId,
+        quantity: line.quantityThisReceive,
+        ...(line.shortfallReason
+          ? {
+              shortfall_reason: line.shortfallReason,
+              ...(line.shortfallNotes ? { shortfall_notes: line.shortfallNotes } : {}),
+            }
+          : {}),
+      }));
+      if (!lines.some((line) => line.quantity > 0)) {
         throw new Error('Enter at least one receive quantity greater than 0.');
       }
       const result = await confirmInternalStockRequestReceive({

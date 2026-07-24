@@ -126,6 +126,34 @@ function mapEvent(
         proofImageDataUrl: event.proof_image_url || undefined,
         signatureDataUrl: event.signature_url || undefined,
       };
+    case 'shortage_opened':
+      return {
+        ...base,
+        type: 'shortage_opened',
+        lines: lines.length > 0 ? lines : undefined,
+        shortQuantity: event.short_quantity ?? undefined,
+      };
+    case 'shortage_resolved_redeliver':
+      return {
+        ...base,
+        type: 'shortage_resolved_redeliver',
+        lines: lines.length > 0 ? lines : undefined,
+        shortQuantity: event.short_quantity ?? undefined,
+      };
+    case 'shortage_resolved_write_off_replace':
+      return {
+        ...base,
+        type: 'shortage_resolved_write_off_replace',
+        lines: lines.length > 0 ? lines : undefined,
+        shortQuantity: event.short_quantity ?? undefined,
+      };
+    case 'shortage_resolved_write_off':
+      return {
+        ...base,
+        type: 'shortage_resolved_write_off',
+        lines: lines.length > 0 ? lines : undefined,
+        shortQuantity: event.short_quantity ?? undefined,
+      };
     case 'rejected':
       return {
         ...base,

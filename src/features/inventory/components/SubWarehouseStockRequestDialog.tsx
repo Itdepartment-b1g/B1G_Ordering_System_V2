@@ -144,6 +144,42 @@ export type SubWarehouseRequestHistoryEvent =
     }
   | {
       id: string;
+      type: 'shortage_opened';
+      at: string;
+      note?: string;
+      byName?: string;
+      lines?: SubWarehouseReleaseLine[];
+      shortQuantity?: number;
+    }
+  | {
+      id: string;
+      type: 'shortage_resolved_redeliver';
+      at: string;
+      note?: string;
+      byName?: string;
+      lines?: SubWarehouseReleaseLine[];
+      shortQuantity?: number;
+    }
+  | {
+      id: string;
+      type: 'shortage_resolved_write_off_replace';
+      at: string;
+      note?: string;
+      byName?: string;
+      lines?: SubWarehouseReleaseLine[];
+      shortQuantity?: number;
+    }
+  | {
+      id: string;
+      type: 'shortage_resolved_write_off';
+      at: string;
+      note?: string;
+      byName?: string;
+      lines?: SubWarehouseReleaseLine[];
+      shortQuantity?: number;
+    }
+  | {
+      id: string;
       type: 'rejected';
       at: string;
       note?: string;
@@ -166,6 +202,8 @@ export type SubWarehouseStockRequest = {
   notes?: string;
   receiveNotes?: string;
   rejectionReason?: string;
+  /** Open shortage investigation rows awaiting main resolve. */
+  openDiscrepancyCount?: number;
   /** Main approve signature (from request row or history event). */
   approvalSignatureUrl?: string;
   /** Main reject signature (from request row or history event). */

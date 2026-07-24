@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -305,6 +306,22 @@ function requestHasAllocatableQty(request: SubWarehouseStockRequest): boolean {
   return request.items.some((item) => getItemAllocatableQty(item) > 0);
 }
 
+function requestHasOpenShortages(request: SubWarehouseStockRequest): boolean {
+  return (request.openDiscrepancyCount ?? 0) > 0;
+}
+
+function requestCanAllocateRemaining(request: SubWarehouseStockRequest): boolean {
+  return (
+    request.status === 'partially_received' &&
+    requestHasAllocatableQty(request) &&
+    !requestHasOpenShortages(request)
+  );
+}
+
+function shortageInvestigateUrl(requestNumber: string) {
+  return `/inventory/delivery-shortages?source=internal&status=open&search=${encodeURIComponent(requestNumber)}`;
+}
+
 function MainRequestActionsMenu({
   request,
   onView,
@@ -327,8 +344,8 @@ function MainRequestActionsMenu({
   const canApprove = request.status === 'pending_approval';
   const canDeliver = request.status === 'approved';
   const canReject = request.status === 'pending_approval' || request.status === 'approved';
-  const canAllocate =
-    request.status === 'partially_received' && requestHasAllocatableQty(request);
+  const canAllocate = requestCanAllocateRemaining(request);
+  const canInvestigate = requestHasOpenShortages(request);
   const canExport = canExportMainRequestPdf(request);
   const canPrintDr = canExportInternalStockDeliveryReceipt(request);
 
@@ -387,9 +404,20 @@ function MainRequestActionsMenu({
             </DropdownMenuItem>
           </>
         ) : null}
-        {canAllocate ? (
+        {canInvestigate ? (
           <>
             <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link to={shortageInvestigateUrl(request.requestNumber)}>
+                <AlertTriangle className="mr-2 h-4 w-4" />
+                Investigate shortage
+              </Link>
+            </DropdownMenuItem>
+          </>
+        ) : null}
+        {canAllocate ? (
+          <>
+            {!canInvestigate ? <DropdownMenuSeparator /> : null}
             <DropdownMenuItem onClick={() => onAllocate(request)}>
               <Package className="mr-2 h-4 w-4" />
               Allocate remaining
@@ -564,6 +592,15 @@ export default function MainWarehouseSubStockRequestsPage() {
   };
 
   const openAllocateDialog = (request: SubWarehouseStockRequest) => {
+    if (requestHasOpenShortages(request)) {
+      toast({
+        title: 'Open shortage investigation',
+        description:
+          'Resolve open sub-stock shortages in Delivery Shortages before allocating remaining.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!requestHasAllocatableQty(request)) {
       const open = getRequestDeliveryTotals(request.items).openReceive;
       toast({
@@ -1332,42 +1369,67 @@ export default function MainWarehouseSubStockRequestsPage() {
                           {formatRequestDate(req.createdAt)}
                         </p>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <StatusBadge status={req.status} />
-                        <MainRequestActionsMenu
-                          request={req}
-                          onView={(r) => setDetailRequestId(r.id)}
-                          onApprove={openApproveDialog}
-                          onDeliver={openDeliverDialog}
-                          onReject={openRejectDialog}
-                          onAllocate={openAllocateDialog}
-                          onExportPdf={(r) => void handleExportPdf(r)}
-                          onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
-                        />
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex items-center gap-1">
+                          <StatusBadge status={req.status} />
+                          <MainRequestActionsMenu
+                            request={req}
+                            onView={(r) => setDetailRequestId(r.id)}
+                            onApprove={openApproveDialog}
+                            onDeliver={openDeliverDialog}
+                            onReject={openRejectDialog}
+                            onAllocate={openAllocateDialog}
+                            onExportPdf={(r) => void handleExportPdf(r)}
+                            onPrintDeliveryReceipt={(r) => void handlePrintDeliveryReceipt(r)}
+                          />
+                        </div>
+                        {requestHasOpenShortages(req) ? (
+                          <Badge variant="destructive" className="font-normal text-[10px] h-5">
+                            Open shortage
+                          </Badge>
+                        ) : null}
                       </div>
                     </div>
 
                     <MainItemChips request={req} />
 
                     {req.status === 'partially_received' && totals.short > 0 ? (
-                      <p className="text-xs text-amber-800">
-                        {requestHasAllocatableQty(req) ? (
-                          <>
-                            Short {totals.short} on {req.requestNumber} — allocate remaining for
-                            the next receive wave.
-                          </>
-                        ) : requestHasOpenReceive(req.items) ? (
-                          <>
-                            Short {totals.short} unlocked for sub confirm on {req.requestNumber}.
-                            Wait until they receive this wave.
-                          </>
-                        ) : (
-                          <>
-                            Short {totals.short} on {req.requestNumber} — allocate remaining for
-                            the next receive wave.
-                          </>
-                        )}
-                      </p>
+                      <div className="space-y-2">
+                        <p className="text-xs text-amber-800">
+                          {requestHasOpenShortages(req) ? (
+                            <>
+                              Short {totals.short} on {req.requestNumber} —{' '}
+                              {(req.openDiscrepancyCount ?? 0) === 1
+                                ? '1 open shortage'
+                                : `${req.openDiscrepancyCount} open shortages`}
+                              . Resolve before Allocate Remaining.
+                            </>
+                          ) : requestCanAllocateRemaining(req) ? (
+                            <>
+                              Short {totals.short} on {req.requestNumber} — allocate remaining for
+                              the next receive wave.
+                            </>
+                          ) : requestHasOpenReceive(req.items) ? (
+                            <>
+                              Short {totals.short} unlocked for sub confirm on {req.requestNumber}.
+                              Wait until they receive this wave.
+                            </>
+                          ) : (
+                            <>
+                              Short {totals.short} on {req.requestNumber} — allocate remaining for
+                              the next receive wave.
+                            </>
+                          )}
+                        </p>
+                        {requestHasOpenShortages(req) ? (
+                          <Button asChild size="sm" variant="outline" className="h-8">
+                            <Link to={shortageInvestigateUrl(req.requestNumber)}>
+                              <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+                              Resolve shortage
+                            </Link>
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : null}
 
                     {req.notes ? (
@@ -1427,10 +1489,25 @@ export default function MainWarehouseSubStockRequestsPage() {
                           <RequestQtySummary request={req} />
                         </TableCell>
                         <TableCell>
-                          <StatusBadge status={req.status} />
+                          <div className="flex flex-col gap-1 items-start">
+                            <StatusBadge status={req.status} />
+                            {requestHasOpenShortages(req) ? (
+                              <Badge variant="destructive" className="font-normal text-[10px] h-5">
+                                Open shortage
+                              </Badge>
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end">
+                          <div className="flex justify-end items-center gap-2">
+                            {requestHasOpenShortages(req) ? (
+                              <Button asChild size="sm" variant="outline" className="h-8">
+                                <Link to={shortageInvestigateUrl(req.requestNumber)}>
+                                  <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+                                  Resolve shortage
+                                </Link>
+                              </Button>
+                            ) : null}
                             <MainRequestActionsMenu
                               request={req}
                               onView={(r) => setDetailRequestId(r.id)}
@@ -1479,6 +1556,11 @@ export default function MainWarehouseSubStockRequestsPage() {
                     </Badge>
                   ) : null}
                   <StatusBadge status={detailRequest.status} />
+                  {requestHasOpenShortages(detailRequest) ? (
+                    <Badge variant="destructive" className="font-normal text-[10px] h-5">
+                      Open shortage
+                    </Badge>
+                  ) : null}
                 </DialogTitle>
                 <p className="text-sm text-muted-foreground font-normal pt-1">
                   {detailRequest.fromLocationName}
@@ -1497,16 +1579,40 @@ export default function MainWarehouseSubStockRequestsPage() {
 
               <div className="space-y-4 py-2">
                 {detailRequest.status === 'partially_received' ? (
-                  <p className="text-sm text-amber-800 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-                    Short {getRequestDeliveryTotals(detailRequest.items).short} units on{' '}
-                    <span className="font-medium tabular-nums">{detailRequest.requestNumber}</span>.
-                    {requestHasAllocatableQty(detailRequest)
-                      ? ' Allocate a receive wave now; the sub can confirm only what you unlock.'
-                      : requestHasOpenReceive(detailRequest.items)
-                        ? ' Unlocked qty is waiting for the sub to confirm this wave.'
-                        : ' Allocate a receive wave when stock is available; the sub waits until then.'}{' '}
-                    Status stays partially received until the short is fully confirmed.
-                  </p>
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+                    <p className="text-sm text-amber-800">
+                      Short {getRequestDeliveryTotals(detailRequest.items).short} units on{' '}
+                      <span className="font-medium tabular-nums">{detailRequest.requestNumber}</span>.
+                      {requestHasOpenShortages(detailRequest) ? (
+                        <>
+                          {' '}
+                          Open shortage investigation — resolve before Allocate Remaining.
+                        </>
+                      ) : requestCanAllocateRemaining(detailRequest) ? (
+                        ' Allocate a receive wave now; the sub can confirm only what you unlock.'
+                      ) : requestHasOpenReceive(detailRequest.items) ? (
+                        ' Unlocked qty is waiting for the sub to confirm this wave.'
+                      ) : (
+                        ' Allocate a receive wave when stock is available; the sub waits until then.'
+                      )}{' '}
+                      Status stays partially received until the short is fully confirmed.
+                    </p>
+                    {requestHasOpenShortages(detailRequest) ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="destructive" className="font-normal text-[10px] h-5">
+                          {(detailRequest.openDiscrepancyCount ?? 0) === 1
+                            ? '1 open shortage'
+                            : `${detailRequest.openDiscrepancyCount} open shortages`}
+                        </Badge>
+                        <Button asChild size="sm" variant="outline" className="h-8">
+                          <Link to={shortageInvestigateUrl(detailRequest.requestNumber)}>
+                            <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+                            Resolve shortage
+                          </Link>
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 {detailRequest.notes ? (
@@ -1608,7 +1714,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                   </>
                 ) : null}
                 {detailRequest.status === 'partially_received' &&
-                requestHasAllocatableQty(detailRequest) ? (
+                requestCanAllocateRemaining(detailRequest) ? (
                   <Button type="button" onClick={() => openAllocateDialog(detailRequest)}>
                     Allocate remaining
                   </Button>
