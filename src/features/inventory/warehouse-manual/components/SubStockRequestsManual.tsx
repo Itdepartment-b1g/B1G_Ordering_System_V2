@@ -23,6 +23,8 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
           Sub stock requests are raised by a sub-warehouse asking the main warehouse for stock.
           Main warehouse handles each request in two steps: <span className="text-blue-500">Approve</span>, then{" "}
           <span className="text-blue-500">Deliver</span>. After deliver, the sub-warehouse confirms receive.
+          Main can also use <span className="text-blue-500">Allocate to Sub Warehouse</span> to push stock
+          without a prior request — the sub must still confirm receive before their on-hand increases.
         </p>
         <hr className="my-2 border-gray-500" />
         <p>Status flow:</p>

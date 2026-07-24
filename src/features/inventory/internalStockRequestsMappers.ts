@@ -73,6 +73,12 @@ function mapEvent(
   switch (event.event_type) {
     case 'created':
       return { ...base, type: 'created' };
+    case 'main_allocated':
+      return {
+        ...base,
+        type: 'main_allocated',
+        lines: lines.length > 0 ? lines : undefined,
+      };
     case 'approved':
       return { ...base, type: 'approved' };
     case 'delivered':
@@ -164,6 +170,8 @@ export function mapInternalStockRequestRow(row: InternalStockRequestRow): SubWar
     requestNumber: row.request_number,
     createdAt: row.created_at,
     status: row.status as SubWarehouseStockRequestStatus,
+    initiationType:
+      row.initiation_type === 'main_allocation' ? 'main_allocation' : 'sub_request',
     fromLocationId: row.from_location_id,
     fromLocationName: row.from_location?.name || 'Sub-warehouse',
     requestedByName: row.requested_by_user?.full_name || undefined,

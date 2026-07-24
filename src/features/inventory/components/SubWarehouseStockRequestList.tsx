@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -75,6 +76,22 @@ const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
 
 type ListViewMode = 'cards' | 'rows';
 type StatusFilter = 'all' | SubWarehouseStockRequestStatus;
+type ListTab = 'requests' | 'allocations';
+
+const ALLOCATION_STATUS_FILTERS: SubWarehouseStockRequestStatus[] = [
+  'pending_receive',
+  'partially_received',
+  'fully_received',
+];
+
+const REQUEST_STATUS_FILTERS: SubWarehouseStockRequestStatus[] = [
+  'pending_approval',
+  'approved',
+  'pending_receive',
+  'partially_received',
+  'fully_received',
+  'rejected',
+];
 
 function StatusBadge({ status }: { status: SubWarehouseStockRequestStatus }) {
   if (status === 'pending_approval') {
@@ -362,6 +379,7 @@ export function SubWarehouseStockRequestList({
 }: SubWarehouseStockRequestListProps) {
   const { toast } = useToast();
   const [viewMode, setViewMode] = useState<ListViewMode>('rows');
+  const [listTab, setListTab] = useState<ListTab>('requests');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState<DateRangeFilterValue>({ preset: 'all' });
@@ -380,13 +398,33 @@ export function SubWarehouseStockRequestList({
     [dateRangeFilter]
   );
 
+  const tabRequests = useMemo(
+    () =>
+      requests.filter((r) =>
+        listTab === 'allocations'
+          ? r.initiationType === 'main_allocation'
+          : r.initiationType !== 'main_allocation'
+      ),
+    [requests, listTab]
+  );
+
+  const tabCounts = useMemo(
+    () => ({
+      requests: requests.filter((r) => r.initiationType !== 'main_allocation').length,
+      allocations: requests.filter((r) => r.initiationType === 'main_allocation').length,
+    }),
+    [requests]
+  );
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const list = requests.filter((r) => {
+    const list = tabRequests.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (!isDateInRange(r.createdAt, dateRange.start, dateRange.end)) return false;
       if (q) {
-        const haystack = [r.requestNumber, r.requestedByName ?? ''].join(' ').toLowerCase();
+        const haystack = [r.requestNumber, r.drNumber ?? '', r.requestedByName ?? '']
+          .join(' ')
+          .toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
@@ -394,11 +432,21 @@ export function SubWarehouseStockRequestList({
     return [...list].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [requests, statusFilter, searchQuery, dateRange.end, dateRange.start]);
+  }, [tabRequests, statusFilter, searchQuery, dateRange.end, dateRange.start]);
 
   useEffect(() => {
     setPage(0);
-  }, [statusFilter, searchQuery, dateRangeFilter, pageSize]);
+  }, [listTab, statusFilter, searchQuery, dateRangeFilter, pageSize]);
+
+  useEffect(() => {
+    if (
+      listTab === 'allocations' &&
+      statusFilter !== 'all' &&
+      !ALLOCATION_STATUS_FILTERS.includes(statusFilter)
+    ) {
+      setStatusFilter('all');
+    }
+  }, [listTab, statusFilter]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 
@@ -428,17 +476,45 @@ export function SubWarehouseStockRequestList({
   };
 
   return (
+    <div className="space-y-4">
+      <Tabs
+        value={listTab}
+        onValueChange={(v) => setListTab(v as ListTab)}
+        className="space-y-4"
+      >
+        <TabsList className="bg-muted/30 p-1 border h-auto w-full sm:w-auto">
+          <TabsTrigger
+            value="requests"
+            className="px-4 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 sm:flex-none"
+          >
+            Stock requests
+            <Badge variant="secondary" className="tabular-nums font-normal">
+              {tabCounts.requests}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger
+            value="allocations"
+            className="px-4 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 sm:flex-none"
+          >
+            Allocation receive
+            <Badge variant="secondary" className="tabular-nums font-normal">
+              {tabCounts.allocations}
+            </Badge>
+          </TabsTrigger>
+        </TabsList>
+
     <Card>
       <CardHeader className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <CardTitle className="flex items-center gap-2">
               <Package className="h-5 w-5" />
-              My stock requests
+              {listTab === 'allocations' ? 'Allocation receive' : 'My stock requests'}
             </CardTitle>
             <p className="text-sm text-muted-foreground font-normal mt-1">
-              Confirm receive when status is pending receive. Shortages stay partial until main allocates
-              the rest.
+              {listTab === 'allocations'
+                ? 'Stock pushed by Main Warehouse. Confirm receive to add to your on-hand.'
+                : 'Confirm receive when status is pending receive. Shortages stay partial until main allocates the rest.'}
             </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
@@ -447,7 +523,9 @@ export function SubWarehouseStockRequestList({
               <Input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search request #…"
+                placeholder={
+                  listTab === 'allocations' ? 'Search AL / DR…' : 'Search RN / DR…'
+                }
                 className="h-9 pl-8"
               />
             </div>
@@ -465,7 +543,10 @@ export function SubWarehouseStockRequestList({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All statuses</SelectItem>
-                {(Object.keys(STATUS_LABELS) as SubWarehouseStockRequestStatus[]).map((s) => (
+                {(listTab === 'allocations'
+                  ? ALLOCATION_STATUS_FILTERS
+                  : REQUEST_STATUS_FILTERS
+                ).map((s) => (
                   <SelectItem key={s} value={s}>
                     {STATUS_LABELS[s]}
                   </SelectItem>
@@ -496,13 +577,15 @@ export function SubWarehouseStockRequestList({
         </div>
       </CardHeader>
       <CardContent>
-        {requests.length === 0 ? (
+        {tabRequests.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            No stock requests yet. Use Request stock to create one.
+            {listTab === 'allocations'
+              ? 'No allocations from Main Warehouse yet.'
+              : 'No stock requests yet. Use Request stock to create one.'}
           </p>
         ) : filtered.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            No requests match this filter.
+            No items match this filter.
           </p>
         ) : viewMode === 'cards' ? (
           <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -510,7 +593,14 @@ export function SubWarehouseStockRequestList({
               <li key={req.id} className="rounded-md border p-4 space-y-3">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <p className="font-medium tabular-nums">{req.requestNumber}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium tabular-nums">{req.requestNumber}</p>
+                      {req.initiationType === 'main_allocation' ? (
+                        <Badge variant="outline" className="font-normal text-[10px] h-5">
+                          Main allocation
+                        </Badge>
+                      ) : null}
+                    </div>
                     <p className="text-xs text-muted-foreground">{formatRequestDate(req.createdAt)}</p>
                     <p className="text-xs tabular-nums mt-1">
                       Qty {getRequestOverallQty(req).toLocaleString()}
@@ -569,7 +659,14 @@ export function SubWarehouseStockRequestList({
                 {pagedItems.map((req) => (
                   <TableRow key={req.id}>
                     <TableCell className="font-medium tabular-nums whitespace-nowrap">
-                      {req.requestNumber}
+                      <div className="flex flex-col gap-1">
+                        <span>{req.requestNumber}</span>
+                        {req.initiationType === 'main_allocation' ? (
+                          <Badge variant="outline" className="font-normal text-[10px] h-5 w-fit">
+                            Main allocation
+                          </Badge>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground whitespace-nowrap">
                       {formatRequestDate(req.createdAt)}
@@ -720,5 +817,7 @@ export function SubWarehouseStockRequestList({
         </DialogContent>
       </Dialog>
     </Card>
+      </Tabs>
+    </div>
   );
 }

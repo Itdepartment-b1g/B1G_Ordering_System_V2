@@ -52,10 +52,19 @@ export function canExportInternalStockDeliveryReceipt(
 }
 
 function buildDeliveryReceiptHtml(request: SubWarehouseStockRequest): string {
+  const isMainAllocation = request.initiationType === 'main_allocation';
   const drNo = escapeHtml(request.drNumber || '—');
-  const rnNo = escapeHtml(request.requestNumber);
+  const refNo = escapeHtml(request.requestNumber);
   const destination = escapeHtml(request.fromLocationName || 'Sub-warehouse');
-  const requestedBy = escapeHtml(request.requestedByName || '—');
+  const initiatedBy = escapeHtml(
+    isMainAllocation
+      ? request.requestedByName
+        ? `Main Warehouse · ${request.requestedByName}`
+        : 'Main Warehouse'
+      : request.requestedByName || '—'
+  );
+  const refLabel = isMainAllocation ? 'AL NUMBER:' : 'RN NUMBER:';
+  const initiatorLabel = isMainAllocation ? 'ALLOCATED BY:' : 'REQUESTED BY:';
   const footer = escapeHtml(
     request.fromLocationName
       ? `B1G → ${request.fromLocationName}`
@@ -327,12 +336,12 @@ function buildDeliveryReceiptHtml(request: SubWarehouseStockRequest): string {
         <span class="fvalue">${destination}</span>
       </div>
       <div class="delivery-field">
-        <span class="flabel">REQUESTED BY:</span>
-        <span class="fvalue">${requestedBy}</span>
+        <span class="flabel">${initiatorLabel}</span>
+        <span class="fvalue">${initiatedBy}</span>
       </div>
       <div class="delivery-field">
-        <span class="flabel">RN NUMBER:</span>
-        <span class="fvalue">${rnNo}</span>
+        <span class="flabel">${refLabel}</span>
+        <span class="fvalue">${refNo}</span>
       </div>
     </div>
 

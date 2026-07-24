@@ -132,6 +132,8 @@ function eventTitle(event: SubWarehouseRequestHistoryEvent): string {
   switch (event.type) {
     case 'created':
       return 'Request created';
+    case 'main_allocated':
+      return 'Allocated by Main Warehouse';
     case 'approved':
       return 'Approved';
     case 'delivered':
@@ -155,6 +157,14 @@ function eventSummary(
   if (event.type === 'created') {
     const requested = request.items.reduce((s, i) => s + Math.max(0, i.requestedQuantity), 0);
     return `Requested ${requested.toLocaleString()} unit(s) across ${request.items.length} item(s)`;
+  }
+  if (event.type === 'main_allocated') {
+    const qty = linesTotalQty(event.lines);
+    if (qty > 0) {
+      return `Main allocated ${qty.toLocaleString()} unit(s) · pending receive`;
+    }
+    const allocated = request.items.reduce((s, i) => s + Math.max(0, i.requestedQuantity), 0);
+    return `Main allocated ${allocated.toLocaleString()} unit(s) · pending receive`;
   }
   if (event.type === 'approved') {
     return 'Approved — awaiting delivery';
@@ -182,7 +192,7 @@ function eventSummary(
 
 function qtyHeaderForEvent(type: SubWarehouseRequestHistoryEvent['type']): string {
   if (type === 'receive_confirmed') return 'Received';
-  if (type === 'remaining_released') return 'Allocated';
+  if (type === 'remaining_released' || type === 'main_allocated') return 'Allocated';
   if (type === 'delivered' || type === 'approved_released') return 'Delivered';
   if (type === 'rejected') return 'Requested';
   return 'Qty';
@@ -338,7 +348,10 @@ function renderActivityEvent(
 }
 
 function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
-  const title = `Stock Request Report – ${request.requestNumber}`;
+  const title =
+    request.initiationType === 'main_allocation'
+      ? `Stock Allocation Report – ${request.requestNumber}`
+      : `Stock Request Report – ${request.requestNumber}`;
   const totals = getRequestDeliveryTotals(request.items);
   const totalReceived = totals.received;
   // Match dialog: short displays as 0 until something has been received.
@@ -437,14 +450,28 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
     <button type="button" onclick="window.print()">Print / Save PDF</button>
   </div>
   <div class="page">
-    <h2>Internal Stock Request Report</h2>
+    <h2>${
+      request.initiationType === 'main_allocation'
+        ? 'Internal Stock Allocation Report'
+        : 'Internal Stock Request Report'
+    }</h2>
     <p class="subtitle">Activity timeline with quantities and attachments</p>
 
     <dl class="summary">
-      <div><dt>Request number</dt><dd>${escapeHtml(request.requestNumber)}</dd></div>
+      <div><dt>${
+        request.initiationType === 'main_allocation' ? 'Allocation number' : 'Request number'
+      }</dt><dd>${escapeHtml(request.requestNumber)}</dd></div>
       <div><dt>Status</dt><dd>${escapeHtml(statusLabel(request.status))}</dd></div>
       <div><dt>Sub-warehouse</dt><dd>${escapeHtml(request.fromLocationName)}</dd></div>
-      <div><dt>Requested by</dt><dd>${escapeHtml(request.requestedByName || '—')}</dd></div>
+      <div><dt>${
+        request.initiationType === 'main_allocation' ? 'Allocated by' : 'Requested by'
+      }</dt><dd>${escapeHtml(
+        request.initiationType === 'main_allocation'
+          ? request.requestedByName
+            ? `Main Warehouse · ${request.requestedByName}`
+            : 'Main Warehouse'
+          : request.requestedByName || '—'
+      )}</dd></div>
       <div><dt>Created</dt><dd>${escapeHtml(formatDateTime(request.createdAt))}</dd></div>
       <div><dt>Requested total</dt><dd>${request.items
         .reduce((s, i) => s + i.requestedQuantity, 0)

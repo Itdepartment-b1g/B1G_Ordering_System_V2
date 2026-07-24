@@ -54,6 +54,8 @@ function eventTitle(event: SubWarehouseRequestHistoryEvent): string {
   switch (event.type) {
     case 'created':
       return 'Request created';
+    case 'main_allocated':
+      return 'Allocated by Main Warehouse';
     case 'approved':
       return 'Approved';
     case 'delivered':
@@ -90,6 +92,16 @@ function eventSummary(
     if (!items?.length) return null;
     const requested = items.reduce((sum, item) => sum + Math.max(0, item.requestedQuantity), 0);
     return `Requested ${unitLabel(requested)} across ${variantLabel(items.length)}`;
+  }
+
+  if (event.type === 'main_allocated') {
+    const qty = linesTotalQty(event.lines);
+    if (qty > 0) {
+      return `Main allocated ${unitLabel(qty)} · pending receive`;
+    }
+    if (!items?.length) return 'Main-initiated allocation · pending receive';
+    const allocated = items.reduce((sum, item) => sum + Math.max(0, item.requestedQuantity), 0);
+    return `Main allocated ${unitLabel(allocated)} · pending receive`;
   }
 
   if (event.type === 'approved') {
@@ -131,6 +143,7 @@ function EventIcon({
 }) {
   const iconClass = cn('h-3.5 w-3.5', className);
   if (type === 'created') return <Clock className={iconClass} />;
+  if (type === 'main_allocated') return <Send className={iconClass} />;
   if (type === 'approved') return <CheckCircle2 className={iconClass} />;
   if (type === 'delivered' || type === 'approved_released' || type === 'remaining_released') {
     return <Send className={iconClass} />;
@@ -145,6 +158,11 @@ function eventTone(type: SubWarehouseRequestHistoryEvent['type']): {
   iconWrap: string;
 } {
   switch (type) {
+    case 'main_allocated':
+      return {
+        rail: 'bg-violet-500',
+        iconWrap: 'bg-violet-50 text-violet-700 border-violet-200',
+      };
     case 'approved':
       return {
         rail: 'bg-sky-500',
@@ -187,7 +205,7 @@ function resolveBrandName(
 
 function qtyHeaderForEvent(type: SubWarehouseRequestHistoryEvent['type']): string {
   if (type === 'receive_confirmed') return 'Received';
-  if (type === 'remaining_released') return 'Allocated';
+  if (type === 'remaining_released' || type === 'main_allocated') return 'Allocated';
   if (type === 'delivered' || type === 'approved_released') return 'Delivered';
   if (type === 'rejected') return 'Requested';
   return 'Qty';

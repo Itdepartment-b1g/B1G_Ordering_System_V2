@@ -1,6 +1,7 @@
 /**
- * Supabase API for internal stock requests (sub → main).
+ * Supabase API for internal stock requests (sub → main) and main-initiated allocations.
  * Request numbers: RN-{LOCATION_CODE}-{####} (e.g. RN-STR-0001).
+ * Allocation numbers: AL-{COMPANY_INITIALS}-{####} (e.g. AL-BMW-0001 for B1G Main Warehouse).
  */
 import { supabase } from '@/lib/supabase';
 import { mapInternalStockRequestRow } from './internalStockRequestsMappers';
@@ -16,12 +17,15 @@ export type InternalStockRequestStatus =
   | 'fully_received'
   | 'rejected';
 
+export type InternalStockInitiationType = 'sub_request' | 'main_allocation';
+
 export type InternalStockRequestRow = {
   id: string;
   company_id: string;
   request_number: string;
   from_location_id: string;
   status: InternalStockRequestStatus;
+  initiation_type?: InternalStockInitiationType | null;
   notes: string | null;
   receive_notes: string | null;
   rejection_reason: string | null;
@@ -159,7 +163,12 @@ export async function fetchInternalStockRequests(options?: {
 
   if (options?.search?.trim()) {
     const q = options.search.trim().toLowerCase();
-    mapped = mapped.filter((r) => r.requestNumber.toLowerCase().includes(q));
+    mapped = mapped.filter(
+      (r) =>
+        r.requestNumber.toLowerCase().includes(q) ||
+        (r.drNumber || '').toLowerCase().includes(q) ||
+        r.fromLocationName.toLowerCase().includes(q)
+    );
   }
 
   return mapped;
@@ -190,6 +199,38 @@ export async function createInternalStockRequest(input: {
   return assertRpcOk(
     data as { success: boolean; error?: string; request_id?: string; request_number?: string },
     'Failed to create stock request'
+  );
+}
+
+export async function createAndDeliverMainStockAllocation(input: {
+  fromLocationId: string;
+  items: Array<{ variant_id: string; quantity: number }>;
+  signatureUrl: string;
+  proofImageUrl: string;
+  signaturePath?: string;
+  proofImagePath?: string;
+  notes?: string;
+}) {
+  const { data, error } = await supabase.rpc('create_and_deliver_main_stock_allocation', {
+    p_from_location_id: input.fromLocationId,
+    p_items: input.items,
+    p_signature_url: input.signatureUrl,
+    p_signature_path: input.signaturePath ?? null,
+    p_proof_image_url: input.proofImageUrl,
+    p_proof_image_path: input.proofImagePath ?? null,
+    p_notes: input.notes ?? null,
+  });
+  if (error) throw error;
+  return assertRpcOk(
+    data as {
+      success: boolean;
+      error?: string;
+      request_id?: string;
+      request_number?: string;
+      dr_number?: string;
+      status?: string;
+    },
+    'Failed to allocate stock to sub warehouse'
   );
 }
 

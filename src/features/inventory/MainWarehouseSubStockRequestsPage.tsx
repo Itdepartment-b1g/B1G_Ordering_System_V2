@@ -47,6 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { useToast } from '@/hooks/use-toast';
@@ -67,6 +68,7 @@ import {
   INTERNAL_STOCK_REQUESTS_QUERY_KEY,
   allocateInternalStockRequestRemaining,
   approveInternalStockRequest,
+  createAndDeliverMainStockAllocation,
   deliverInternalStockRequest,
   fetchInternalStockRequests,
   rejectInternalStockRequest,
@@ -82,6 +84,11 @@ import {
 } from './utils/exportInternalStockDeliveryReceiptPdf';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import SubStockRequestsManual from '@/features/inventory/warehouse-manual/components/SubStockRequestsManual';
+import {
+  MainWarehouseAllocateDialog,
+  type MainAllocateSubmitPayload,
+} from './components/MainWarehouseAllocateDialog';
+import { fetchMainWarehouseStockBoard } from './warehouseStockBoard';
 import { Input } from '@/components/ui/input';
 import {
   DateRangeFilterPopover,
@@ -106,6 +113,13 @@ const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
 
 type ListViewMode = 'cards' | 'rows';
 type StatusFilter = 'all' | SubWarehouseStockRequestStatus;
+type ListTab = 'requests' | 'allocations';
+
+const ALLOCATION_STATUS_FILTERS: SubWarehouseStockRequestStatus[] = [
+  'pending_receive',
+  'partially_received',
+  'fully_received',
+];
 
 function StatusBadge({ status }: { status: SubWarehouseStockRequestStatus }) {
   if (status === 'pending_approval') {
@@ -494,6 +508,7 @@ export default function MainWarehouseSubStockRequestsPage() {
   }, [user?.company_id, queryClient]);
 
   const [viewMode, setViewMode] = useState<ListViewMode>('rows');
+  const [listTab, setListTab] = useState<ListTab>('requests');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -520,6 +535,7 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [allocateProofImageDataUrl, setAllocateProofImageDataUrl] = useState('');
   const [allocateProofImageName, setAllocateProofImageName] = useState('');
   const allocateProofFileRef = useRef<HTMLInputElement>(null);
+  const [mainAllocateOpen, setMainAllocateOpen] = useState(false);
 
   const detailRequest = useMemo(
     () => requests.find((r) => r.id === detailRequestId) ?? null,
@@ -623,6 +639,80 @@ export default function MainWarehouseSubStockRequestsPage() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [requests]);
 
+  const { data: allSubLocations = [], isLoading: loadingSubLocations } = useQuery({
+    queryKey: ['sub-warehouse-locations-for-allocate', user?.company_id],
+    enabled: !!user?.company_id && mainAllocateOpen,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('warehouse_locations')
+        .select('id, name, code')
+        .eq('company_id', user!.company_id!)
+        .eq('is_main', false)
+        .order('name');
+      if (error) throw error;
+      return (data ?? []) as Array<{ id: string; name: string; code: string | null }>;
+    },
+  });
+
+  const { data: mainStockBrands = [], isLoading: loadingMainStockBrands } = useQuery({
+    queryKey: ['main-warehouse-stock-for-allocate', user?.company_id],
+    enabled: !!user?.company_id && mainAllocateOpen,
+    queryFn: () => fetchMainWarehouseStockBoard(user!.company_id!),
+    staleTime: 30_000,
+  });
+
+  const mainAllocateMutation = useMutation({
+    mutationFn: async (payload: MainAllocateSubmitPayload) => {
+      return createAndDeliverMainStockAllocation({
+        fromLocationId: payload.fromLocationId,
+        items: payload.items,
+        signatureUrl: payload.signatureUrl,
+        proofImageUrl: payload.proofImageUrl,
+        notes: payload.notes || undefined,
+      });
+    },
+    onSuccess: async (result) => {
+      await invalidateRequests();
+      const requestNumber =
+        typeof result?.request_number === 'string' ? result.request_number : 'Allocation';
+      const drNumber =
+        typeof result?.dr_number === 'string' && result.dr_number.trim()
+          ? result.dr_number.trim()
+          : undefined;
+      toast({
+        title: 'Allocated & delivered',
+        description: drNumber
+          ? `${requestNumber} delivered (${drNumber}). Pending receive at the sub warehouse.`
+          : `${requestNumber} is now pending receive at the sub warehouse.`,
+      });
+      setMainAllocateOpen(false);
+
+      if (result?.request_id) {
+        const match = (await fetchInternalStockRequests()).find((r) => r.id === result.request_id);
+        if (match) {
+          try {
+            await exportInternalStockDeliveryReceiptPdf(match);
+          } catch {
+            toast({
+              title: 'Delivery Receipt',
+              description:
+                'Allocated, but the receipt could not be opened automatically. Use Print Delivery Receipt.',
+              variant: 'destructive',
+            });
+          }
+        }
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Could not allocate',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+
   const dateRange = useMemo(
     () =>
       getDateRangeFromPreset(
@@ -633,15 +723,26 @@ export default function MainWarehouseSubStockRequestsPage() {
     [dateRangeFilter]
   );
 
+  const tabRequests = useMemo(
+    () =>
+      requests.filter((r) =>
+        listTab === 'allocations'
+          ? r.initiationType === 'main_allocation'
+          : r.initiationType !== 'main_allocation'
+      ),
+    [requests, listTab]
+  );
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const list = requests.filter((r) => {
+    const list = tabRequests.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (warehouseFilter !== 'all' && r.fromLocationId !== warehouseFilter) return false;
       if (!isDateInRange(r.createdAt, dateRange.start, dateRange.end)) return false;
       if (q) {
         const haystack = [
           r.requestNumber,
+          r.drNumber ?? '',
           r.fromLocationName,
           r.requestedByName ?? '',
         ]
@@ -655,7 +756,7 @@ export default function MainWarehouseSubStockRequestsPage() {
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
   }, [
-    requests,
+    tabRequests,
     statusFilter,
     warehouseFilter,
     searchQuery,
@@ -665,7 +766,18 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   useEffect(() => {
     setPage(0);
-  }, [statusFilter, warehouseFilter, searchQuery, dateRangeFilter, pageSize]);
+  }, [listTab, statusFilter, warehouseFilter, searchQuery, dateRangeFilter, pageSize]);
+
+  useEffect(() => {
+    // Drop status filters that don't apply on the allocations tab.
+    if (
+      listTab === 'allocations' &&
+      statusFilter !== 'all' &&
+      !ALLOCATION_STATUS_FILTERS.includes(statusFilter)
+    ) {
+      setStatusFilter('all');
+    }
+  }, [listTab, statusFilter]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
 
@@ -705,12 +817,14 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   const stats = useMemo(
     () => ({
-      total: requests.length,
-      pendingApproval: countRequestsByStatus(requests, 'pending_approval'),
-      pendingReceive: countRequestsByStatus(requests, 'pending_receive'),
-      partial: countRequestsByStatus(requests, 'partially_received'),
+      total: tabRequests.length,
+      pendingApproval: countRequestsByStatus(tabRequests, 'pending_approval'),
+      pendingReceive: countRequestsByStatus(tabRequests, 'pending_receive'),
+      partial: countRequestsByStatus(tabRequests, 'partially_received'),
+      requestCount: requests.filter((r) => r.initiationType !== 'main_allocation').length,
+      allocationCount: requests.filter((r) => r.initiationType === 'main_allocation').length,
     }),
-    [requests]
+    [tabRequests, requests]
   );
 
   const approveMutation = useMutation({
@@ -1084,8 +1198,8 @@ export default function MainWarehouseSubStockRequestsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Sub Stock Requests</h1>
           <p className="text-muted-foreground">
-            Review stock requests from sub-warehouses. Approve, then deliver, or monitor receive
-            status and shortages.
+            Review stock requests from sub-warehouses, or allocate stock directly. Approve, then
+            deliver, or monitor receive status and shortages.
           </p>
           {requestsError ? (
             <p className="text-sm text-destructive mt-2">
@@ -1093,27 +1207,46 @@ export default function MainWarehouseSubStockRequestsPage() {
             </p>
           ) : null}
         </div>
-        <PageManualDialog
-          title="Sub Stock Requests Manual"
-          fullManualHref="/warehouse-manual#sub-stock-requests"
-        >
-          <SubStockRequestsManual embedded />
-        </PageManualDialog>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" className="gap-2" onClick={() => setMainAllocateOpen(true)}>
+            <Send className="h-4 w-4" />
+            Allocate to Sub Warehouse
+          </Button>
+          <PageManualDialog
+            title="Sub Stock Requests Manual"
+            fullManualHref="/warehouse-manual#sub-stock-requests"
+          >
+            <SubStockRequestsManual embedded />
+          </PageManualDialog>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Total</p>
+            <p className="text-xs text-muted-foreground">
+              {listTab === 'allocations' ? 'Allocations' : 'Requests'}
+            </p>
             <p className="text-2xl font-semibold tabular-nums">{stats.total}</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Pending approval</p>
-            <p className="text-2xl font-semibold tabular-nums">{stats.pendingApproval}</p>
-          </CardContent>
-        </Card>
+        {listTab === 'requests' ? (
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Pending approval</p>
+              <p className="text-2xl font-semibold tabular-nums">{stats.pendingApproval}</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Fully received</p>
+              <p className="text-2xl font-semibold tabular-nums">
+                {countRequestsByStatus(tabRequests, 'fully_received')}
+              </p>
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Pending receive</p>
@@ -1128,16 +1261,44 @@ export default function MainWarehouseSubStockRequestsPage() {
         </Card>
       </div>
 
+      <Tabs
+        value={listTab}
+        onValueChange={(v) => setListTab(v as ListTab)}
+        className="space-y-4"
+      >
+        <TabsList className="bg-muted/30 p-1 border h-auto w-full sm:w-auto">
+          <TabsTrigger
+            value="requests"
+            className="px-4 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 sm:flex-none"
+          >
+            Stock requests
+            <Badge variant="secondary" className="tabular-nums font-normal">
+              {stats.requestCount}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger
+            value="allocations"
+            className="px-4 py-2 gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm flex-1 sm:flex-none"
+          >
+            Allocations
+            <Badge variant="secondary" className="tabular-nums font-normal">
+              {stats.allocationCount}
+            </Badge>
+          </TabsTrigger>
+        </TabsList>
+
       <Card>
         <CardHeader className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Package className="h-5 w-5" />
-                Incoming requests
+                {listTab === 'allocations' ? 'Main allocations' : 'Incoming requests'}
               </CardTitle>
               <p className="text-sm text-muted-foreground font-normal mt-1">
-                Incoming requests from sub-warehouses.
+                {listTab === 'allocations'
+                  ? 'Stock you pushed to sub-warehouses without a prior request. Subs confirm receive.'
+                  : 'Stock requests raised by sub-warehouses. Approve, then deliver.'}
               </p>
             </div>
             <div className="flex flex-wrap gap-2 items-center">
@@ -1146,7 +1307,9 @@ export default function MainWarehouseSubStockRequestsPage() {
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search request #…"
+                  placeholder={
+                    listTab === 'allocations' ? 'Search AL / DR…' : 'Search RN / DR…'
+                  }
                   className="h-9 pl-8"
                 />
               </div>
@@ -1177,7 +1340,10 @@ export default function MainWarehouseSubStockRequestsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All statuses</SelectItem>
-                  {(Object.keys(STATUS_LABELS) as SubWarehouseStockRequestStatus[]).map((s) => (
+                  {(listTab === 'allocations'
+                    ? ALLOCATION_STATUS_FILTERS
+                    : (Object.keys(STATUS_LABELS) as SubWarehouseStockRequestStatus[])
+                  ).map((s) => (
                     <SelectItem key={s} value={s}>
                       {STATUS_LABELS[s]}
                     </SelectItem>
@@ -1215,9 +1381,11 @@ export default function MainWarehouseSubStockRequestsPage() {
             </div>
           ) : filtered.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
-              {requests.length === 0
-                ? 'No stock requests from sub-warehouses yet.'
-                : 'No requests match this filter.'}
+              {tabRequests.length === 0
+                ? listTab === 'allocations'
+                  ? 'No allocations yet. Use Allocate to Sub Warehouse to push stock.'
+                  : 'No stock requests from sub-warehouses yet.'
+                : 'No items match this filter.'}
             </p>
           ) : viewMode === 'cards' ? (
             <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1227,10 +1395,23 @@ export default function MainWarehouseSubStockRequestsPage() {
                   <li key={req.id} className="rounded-md border p-4 space-y-3">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
-                        <p className="font-medium tabular-nums">{req.requestNumber}</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium tabular-nums">{req.requestNumber}</p>
+                          {req.initiationType === 'main_allocation' ? (
+                            <Badge variant="outline" className="font-normal text-[10px] h-5">
+                              Main allocation
+                            </Badge>
+                          ) : null}
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {req.fromLocationName}
-                          {req.requestedByName ? ` · ${req.requestedByName}` : ''}
+                          {req.requestedByName
+                            ? ` · ${
+                                req.initiationType === 'main_allocation'
+                                  ? 'Allocated by'
+                                  : 'Requested by'
+                              } ${req.requestedByName}`
+                            : ''}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {formatRequestDate(req.createdAt)}
@@ -1302,13 +1483,25 @@ export default function MainWarehouseSubStockRequestsPage() {
                     return (
                       <TableRow key={req.id}>
                         <TableCell className="font-medium tabular-nums whitespace-nowrap">
-                          {req.requestNumber}
+                          <div className="flex flex-col gap-1">
+                            <span>{req.requestNumber}</span>
+                            {req.initiationType === 'main_allocation' ? (
+                              <Badge variant="outline" className="font-normal text-[10px] h-5 w-fit">
+                                Main allocation
+                              </Badge>
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div>
                             <p className="font-medium">{req.fromLocationName}</p>
                             {req.requestedByName ? (
-                              <p className="text-xs text-muted-foreground">{req.requestedByName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {req.initiationType === 'main_allocation'
+                                  ? 'Allocated by '
+                                  : ''}
+                                {req.requestedByName}
+                              </p>
                             ) : null}
                           </div>
                         </TableCell>
@@ -1356,6 +1549,7 @@ export default function MainWarehouseSubStockRequestsPage() {
           ) : null}
         </CardContent>
       </Card>
+      </Tabs>
 
       <Dialog open={!!detailRequest} onOpenChange={(open) => !open && setDetailRequestId(null)}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1364,13 +1558,25 @@ export default function MainWarehouseSubStockRequestsPage() {
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2 flex-wrap">
                   {detailRequest.requestNumber}
+                  {detailRequest.initiationType === 'main_allocation' ? (
+                    <Badge variant="outline" className="font-normal text-[10px] h-5">
+                      Main allocation
+                    </Badge>
+                  ) : null}
                   <StatusBadge status={detailRequest.status} />
                 </DialogTitle>
                 <p className="text-sm text-muted-foreground font-normal pt-1">
                   {detailRequest.fromLocationName}
-                  {detailRequest.requestedByName ? ` · ${detailRequest.requestedByName}` : ''}
+                  {detailRequest.requestedByName
+                    ? ` · ${
+                        detailRequest.initiationType === 'main_allocation'
+                          ? 'Allocated by'
+                          : 'Requested by'
+                      } ${detailRequest.requestedByName}`
+                    : ''}
                   {' · '}
                   {formatRequestDate(detailRequest.createdAt)}
+                  {detailRequest.drNumber ? ` · DR ${detailRequest.drNumber}` : ''}
                 </p>
               </DialogHeader>
 
@@ -2123,6 +2329,19 @@ export default function MainWarehouseSubStockRequestsPage() {
           />
         </DialogContent>
       </Dialog>
+
+      <MainWarehouseAllocateDialog
+        open={mainAllocateOpen}
+        onOpenChange={setMainAllocateOpen}
+        locations={allSubLocations}
+        loadingLocations={loadingSubLocations}
+        brands={mainStockBrands}
+        loadingBrands={loadingMainStockBrands}
+        submitting={mainAllocateMutation.isPending}
+        onSubmit={async (payload) => {
+          await mainAllocateMutation.mutateAsync(payload);
+        }}
+      />
     </div>
   );
 }

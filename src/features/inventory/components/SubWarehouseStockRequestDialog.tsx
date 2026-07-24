@@ -63,6 +63,8 @@ export type SubWarehouseReleaseLine = {
   quantity: number;
 };
 
+export type SubWarehouseStockInitiationType = 'sub_request' | 'main_allocation';
+
 export type SubWarehouseRequestHistoryEvent =
   | {
       id: string;
@@ -70,6 +72,14 @@ export type SubWarehouseRequestHistoryEvent =
       at: string;
       note?: string;
       byName?: string;
+    }
+  | {
+      id: string;
+      type: 'main_allocated';
+      at: string;
+      note?: string;
+      byName?: string;
+      lines?: SubWarehouseReleaseLine[];
     }
   | {
       id: string;
@@ -135,7 +145,9 @@ export type SubWarehouseStockRequest = {
   requestNumber: string;
   createdAt: string;
   status: SubWarehouseStockRequestStatus;
-  /** Sub-warehouse that raised the request. */
+  /** sub_request = raised by sub; main_allocation = pushed by main without a prior request. */
+  initiationType: SubWarehouseStockInitiationType;
+  /** Sub-warehouse destination (request origin or allocation target). */
   fromLocationId: string;
   fromLocationName: string;
   requestedByName?: string;

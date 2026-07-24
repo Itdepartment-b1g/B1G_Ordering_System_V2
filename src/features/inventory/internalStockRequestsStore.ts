@@ -93,6 +93,7 @@ function loadInitial(): SubWarehouseStockRequest[] {
     if (!Array.isArray(parsed)) return [];
     return parsed.map((row) => ({
       ...row,
+      initiationType: row.initiationType === 'main_allocation' ? 'main_allocation' : 'sub_request',
       fromLocationId: row.fromLocationId || 'unknown-location',
       fromLocationName: row.fromLocationName || 'Sub-warehouse',
       history: row.history ?? [],
@@ -146,6 +147,7 @@ export function useInternalStockRequests() {
       requestNumber: nextRequestNumber(requestsState, input.fromLocationName),
       createdAt: at,
       status: 'pending_approval',
+      initiationType: 'sub_request',
       fromLocationId: input.fromLocationId,
       fromLocationName: input.fromLocationName,
       requestedByName: input.requestedByName,
