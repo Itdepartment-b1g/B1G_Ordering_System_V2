@@ -64,6 +64,10 @@ import {
   canExportInternalStockRequestReport,
   exportInternalStockRequestReportPdf,
 } from '../utils/exportInternalStockRequestReportPdf';
+import {
+  exportInternalStockDeliveryReceiptPdf,
+  type DeliveryReceiptWaveEvent,
+} from '../utils/exportInternalStockDeliveryReceiptPdf';
 
 const STATUS_LABELS: Record<SubWarehouseStockRequestStatus, string> = {
   pending_approval: 'Pending approval',
@@ -475,6 +479,25 @@ export function SubWarehouseStockRequestList({
     }
   };
 
+  const handlePrintDeliveryReceiptForEvent = async (
+    request: SubWarehouseStockRequest,
+    event: DeliveryReceiptWaveEvent
+  ) => {
+    try {
+      await exportInternalStockDeliveryReceiptPdf(request, { event });
+      toast({
+        title: 'Delivery Receipt opened',
+        description: `${event.drNumber?.trim() || request.drNumber || request.requestNumber} — use Print / Save PDF.`,
+      });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not open the Delivery Receipt.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Tabs
@@ -725,9 +748,15 @@ export function SubWarehouseStockRequestList({
           <SubWarehouseRequestHistoryTimeline
             history={historyRequest?.history}
             items={historyRequest?.items}
+            request={historyRequest ?? undefined}
             riderName={historyRequest?.riderName}
             riderPlateNumber={historyRequest?.riderPlateNumber}
             riderPhotoUrl={historyRequest?.riderPhotoUrl}
+            onPrintDeliveryReceipt={
+              historyRequest
+                ? (event) => void handlePrintDeliveryReceiptForEvent(historyRequest, event)
+                : undefined
+            }
           />
         </DialogContent>
       </Dialog>

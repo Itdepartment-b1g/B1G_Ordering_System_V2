@@ -91,6 +91,7 @@ function mapEvent(
         riderName: event.rider_name || undefined,
         riderPlateNumber: event.rider_plate_number || undefined,
         riderPhotoUrl: event.rider_photo_url || undefined,
+        drNumber: event.dr_number || undefined,
       };
     case 'approved_released':
       return {
@@ -102,6 +103,7 @@ function mapEvent(
         riderName: event.rider_name || undefined,
         riderPlateNumber: event.rider_plate_number || undefined,
         riderPhotoUrl: event.rider_photo_url || undefined,
+        drNumber: event.dr_number || undefined,
       };
     case 'remaining_released':
       return {
@@ -113,6 +115,7 @@ function mapEvent(
         riderName: event.rider_name || undefined,
         riderPlateNumber: event.rider_plate_number || undefined,
         riderPhotoUrl: event.rider_photo_url || undefined,
+        drNumber: event.dr_number || undefined,
       };
     case 'receive_confirmed':
       return {

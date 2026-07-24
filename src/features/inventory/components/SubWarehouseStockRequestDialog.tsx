@@ -100,6 +100,7 @@ export type SubWarehouseRequestHistoryEvent =
       riderName?: string;
       riderPlateNumber?: string;
       riderPhotoUrl?: string;
+      drNumber?: string;
     }
   | {
       /** @deprecated Legacy combined approve+release; treat as delivered. */
@@ -114,6 +115,7 @@ export type SubWarehouseRequestHistoryEvent =
       riderName?: string;
       riderPlateNumber?: string;
       riderPhotoUrl?: string;
+      drNumber?: string;
     }
   | {
       id: string;
@@ -127,6 +129,7 @@ export type SubWarehouseRequestHistoryEvent =
       riderName?: string;
       riderPlateNumber?: string;
       riderPhotoUrl?: string;
+      drNumber?: string;
     }
   | {
       id: string;

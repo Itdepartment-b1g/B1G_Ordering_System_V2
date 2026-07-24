@@ -78,6 +78,7 @@ export type InternalStockRequestEventRow = {
   rider_name?: string | null;
   rider_plate_number?: string | null;
   rider_photo_url?: string | null;
+  dr_number?: string | null;
   created_by: string | null;
   created_at: string;
   created_by_user?: { full_name: string | null } | null;
@@ -117,6 +118,7 @@ const REQUEST_SELECT = `
     rider_name,
     rider_plate_number,
     rider_photo_url,
+    dr_number,
     created_by,
     created_at,
     created_by_user:profiles!internal_stock_request_events_created_by_fkey (
@@ -339,7 +341,7 @@ export async function allocateInternalStockRequestRemaining(input: {
   });
   if (error) throw error;
   return assertRpcOk(
-    data as { success: boolean; error?: string; allocated?: number },
+    data as { success: boolean; error?: string; allocated?: number; dr_number?: string },
     'Failed to allocate remaining'
   );
 }

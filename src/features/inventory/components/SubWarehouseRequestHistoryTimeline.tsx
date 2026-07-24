@@ -6,6 +6,7 @@ import {
   ImageIcon,
   MessageSquareText,
   PackageCheck,
+  Printer,
   Send,
   XCircle,
 } from 'lucide-react';
@@ -28,6 +29,7 @@ import { cn } from '@/lib/utils';
 import type {
   SubWarehouseReleaseLine,
   SubWarehouseRequestHistoryEvent,
+  SubWarehouseStockRequest,
   SubWarehouseStockRequestItem,
 } from './SubWarehouseStockRequestDialog';
 import {
@@ -35,6 +37,10 @@ import {
   getItemReceivedQty,
   getRequestDeliveryTotals,
 } from './SubWarehouseStockRequestDialog';
+import {
+  canExportDeliveryReceiptForEvent,
+  type DeliveryReceiptWaveEvent,
+} from '../utils/exportInternalStockDeliveryReceiptPdf';
 
 function formatAt(iso: string): string {
   try {
@@ -580,19 +586,24 @@ type SubWarehouseRequestHistoryTimelineProps = {
   history: SubWarehouseRequestHistoryEvent[] | undefined;
   items?: SubWarehouseStockRequestItem[];
   emptyLabel?: string;
+  /** Full request used for Print DR (wave-scoped receipt). */
+  request?: SubWarehouseStockRequest;
   /** Rider details from the request row (fallback for delivered events without event-level rider). */
   riderName?: string;
   riderPlateNumber?: string;
   riderPhotoUrl?: string;
+  onPrintDeliveryReceipt?: (event: DeliveryReceiptWaveEvent) => void;
 };
 
 export function SubWarehouseRequestHistoryTimeline({
   history,
   items,
   emptyLabel = 'No history yet.',
+  request,
   riderName,
   riderPlateNumber,
   riderPhotoUrl,
+  onPrintDeliveryReceipt,
 }: SubWarehouseRequestHistoryTimelineProps) {
   const events = [...(history ?? [])].sort(
     (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
@@ -646,6 +657,14 @@ export function SubWarehouseRequestHistoryTimeline({
                 !!event.note?.trim() &&
                 !isRiderBoilerplateNote &&
                 !(event.type === 'remaining_released' && isBoilerplateAllocateNote(event.note));
+              const eventDrNumber =
+                (isDelivered || isAllocateWave) && 'drNumber' in event
+                  ? event.drNumber?.trim()
+                  : undefined;
+              const showPrintDr =
+                !!request &&
+                !!onPrintDeliveryReceipt &&
+                canExportDeliveryReceiptForEvent(request, event);
 
               return (
                 <TimelineStep key={event.id} type={event.type} isLast={isLast}>
@@ -660,17 +679,34 @@ export function SubWarehouseRequestHistoryTimeline({
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {formatAt(event.at)}
                         {event.byName ? ` · ${event.byName}` : ''}
+                        {eventDrNumber ? ` · ${eventDrNumber}` : ''}
                       </p>
                     </div>
-                    {hasShortBadge ? (
-                      <Badge
-                        variant="secondary"
-                        className="shrink-0 border-amber-200 bg-amber-50 text-amber-900 font-medium"
-                        title="Units still on this request after this confirm (may need main to allocate another wave)"
-                      >
-                        {event.shortQuantity.toLocaleString()} left on request
-                      </Badge>
-                    ) : null}
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {showPrintDr ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() =>
+                            onPrintDeliveryReceipt(event as DeliveryReceiptWaveEvent)
+                          }
+                        >
+                          <Printer className="h-3.5 w-3.5 mr-1" />
+                          Print DR
+                        </Button>
+                      ) : null}
+                      {hasShortBadge ? (
+                        <Badge
+                          variant="secondary"
+                          className="shrink-0 border-amber-200 bg-amber-50 text-amber-900 font-medium"
+                          title="Units still on this request after this confirm (may need main to allocate another wave)"
+                        >
+                          {event.shortQuantity.toLocaleString()} left on request
+                        </Badge>
+                      ) : null}
+                    </div>
                   </div>
 
                   {showRiderOnThisEvent ? (

@@ -81,6 +81,7 @@ import {
 import {
   canExportInternalStockDeliveryReceipt,
   exportInternalStockDeliveryReceiptPdf,
+  type DeliveryReceiptWaveEvent,
 } from './utils/exportInternalStockDeliveryReceiptPdf';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import SubStockRequestsManual from '@/features/inventory/warehouse-manual/components/SubStockRequestsManual';
@@ -602,6 +603,25 @@ export default function MainWarehouseSubStockRequestsPage() {
     }
   };
 
+  const handlePrintDeliveryReceiptForEvent = async (
+    request: SubWarehouseStockRequest,
+    event: DeliveryReceiptWaveEvent
+  ) => {
+    try {
+      await exportInternalStockDeliveryReceiptPdf(request, { event });
+      toast({
+        title: 'Delivery Receipt opened',
+        description: `${event.drNumber?.trim() || request.drNumber || request.requestNumber} — use Print / Save PDF.`,
+      });
+    } catch {
+      toast({
+        title: 'Export failed',
+        description: 'Could not open the Delivery Receipt.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const openAllocateDialog = (request: SubWarehouseStockRequest) => {
     if (!requestHasAllocatableQty(request)) {
       const open = getRequestDeliveryTotals(request.items).openReceive;
@@ -1001,18 +1021,46 @@ export default function MainWarehouseSubStockRequestsPage() {
       });
       return { ...result, meta: payload };
     },
-    onSuccess: async ({ allocated, meta }) => {
+    onSuccess: async ({ allocated, meta, dr_number }) => {
       await invalidateRequests();
       const totalAllocated = allocated ?? meta.lines.reduce((s, l) => s + l.quantity, 0);
+      const drNumber =
+        typeof dr_number === 'string' && dr_number.trim() ? dr_number.trim() : undefined;
       toast({
         title: 'Remaining allocated',
-        description:
-          totalAllocated < meta.shortBefore
+        description: drNumber
+          ? totalAllocated < meta.shortBefore
+            ? `${meta.requestNumber}: allocated ${totalAllocated} of short ${meta.shortBefore} (${drNumber}). Status stays partially received until fully received.`
+            : `${meta.requestNumber}: allocated ${totalAllocated} (${drNumber}). Sub can confirm receive; status becomes fully received when confirmed.`
+          : totalAllocated < meta.shortBefore
             ? `${meta.requestNumber}: allocated ${totalAllocated} of short ${meta.shortBefore}. Status stays partially received until fully received.`
             : `${meta.requestNumber}: allocated ${totalAllocated} (full short). Sub can confirm receive; status becomes fully received when confirmed.`,
       });
       closeAllocateDialog();
       setDetailRequestId(meta.requestId);
+
+      try {
+        const match = (await fetchInternalStockRequests()).find((r) => r.id === meta.requestId);
+        if (match) {
+          const wave =
+            match.history
+              ?.filter(
+                (e): e is DeliveryReceiptWaveEvent =>
+                  e.type === 'remaining_released' &&
+                  (!drNumber || e.drNumber === drNumber)
+              )
+              .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0] ??
+            undefined;
+          await exportInternalStockDeliveryReceiptPdf(match, wave ? { event: wave } : undefined);
+        }
+      } catch {
+        toast({
+          title: 'Delivery Receipt',
+          description:
+            'Allocated, but the receipt could not be opened automatically. Use Print DR on the timeline.',
+          variant: 'destructive',
+        });
+      }
     },
     onError: (error: Error) => {
       toast({
@@ -1771,9 +1819,13 @@ export default function MainWarehouseSubStockRequestsPage() {
                   <SubWarehouseRequestHistoryTimeline
                     history={detailRequest.history}
                     items={detailRequest.items}
+                    request={detailRequest}
                     riderName={detailRequest.riderName}
                     riderPlateNumber={detailRequest.riderPlateNumber}
                     riderPhotoUrl={detailRequest.riderPhotoUrl}
+                    onPrintDeliveryReceipt={(event) =>
+                      void handlePrintDeliveryReceiptForEvent(detailRequest, event)
+                    }
                   />
                 </div>
               </div>
