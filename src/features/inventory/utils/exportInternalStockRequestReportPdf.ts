@@ -355,10 +355,14 @@ function renderActivityEvent(
 }
 
 function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
-  const title =
-    request.initiationType === 'main_allocation'
-      ? `Stock Allocation Report – ${request.requestNumber}`
-      : `Stock Request Report – ${request.requestNumber}`;
+  const isAllocation = request.initiationType === 'main_allocation';
+  const title = isAllocation
+    ? `Stock Allocation Report – ${request.requestNumber}`
+    : `Stock Request Report – ${request.requestNumber}`;
+  const originQtyLabel = isAllocation ? 'Allocated' : 'Requested';
+  const itemsHeading = isAllocation ? 'Allocation items' : 'Request items';
+  const notesHeading = isAllocation ? 'Allocation notes' : 'Request notes';
+  const notesEmpty = isAllocation ? 'No allocation notes.' : 'No request notes.';
   const totals = getRequestDeliveryTotals(request.items);
   const totalReceived = totals.received;
   // Match dialog: short displays as 0 until something has been received.
@@ -471,7 +475,7 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
   </div>
   <div class="page">
     <h2>${
-      request.initiationType === 'main_allocation'
+      isAllocation
         ? 'Internal Stock Allocation Report'
         : 'Internal Stock Request Report'
     }</h2>
@@ -479,14 +483,12 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
 
     <dl class="summary">
       <div><dt>${
-        request.initiationType === 'main_allocation' ? 'Allocation number' : 'Request number'
+        isAllocation ? 'Allocation number' : 'Request number'
       }</dt><dd>${escapeHtml(request.requestNumber)}</dd></div>
       <div><dt>Status</dt><dd>${escapeHtml(statusLabel(request.status))}</dd></div>
       <div><dt>Sub-warehouse</dt><dd>${escapeHtml(request.fromLocationName)}</dd></div>
-      <div><dt>${
-        request.initiationType === 'main_allocation' ? 'Allocated by' : 'Requested by'
-      }</dt><dd>${escapeHtml(
-        request.initiationType === 'main_allocation'
+      <div><dt>${isAllocation ? 'Allocated by' : 'Requested by'}</dt><dd>${escapeHtml(
+        isAllocation
           ? request.requestedByName
             ? `Main Warehouse · ${request.requestedByName}`
             : 'Main Warehouse'
@@ -500,7 +502,7 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
           : ''
       }
       <div><dt>Created</dt><dd>${escapeHtml(formatDateTime(request.createdAt))}</dd></div>
-      <div><dt>Requested total</dt><dd>${request.items
+      <div><dt>${originQtyLabel} total</dt><dd>${request.items
         .reduce((s, i) => s + i.requestedQuantity, 0)
         .toLocaleString()}</dd></div>
       ${
@@ -511,13 +513,13 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
     </dl>
 
     <div class="section">
-      <h3>Request items</h3>
+      <h3>${itemsHeading}</h3>
       <table class="lines">
         <thead>
           <tr>
             <th>Brand</th>
             <th>Variant</th>
-            <th style="text-align:right;">Requested</th>
+            <th style="text-align:right;">${originQtyLabel}</th>
             ${
               showDeliveryCols
                 ? `<th style="text-align:right;">Delivered</th>
@@ -537,11 +539,11 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
     </div>
 
     <div class="section">
-      <h3>Request notes</h3>
+      <h3>${notesHeading}</h3>
       ${
         request.notes
           ? `<div class="notes">${escapeHtml(request.notes)}</div>`
-          : `<p class="muted">No request notes.</p>`
+          : `<p class="muted">${notesEmpty}</p>`
       }
     </div>
 
@@ -551,7 +553,9 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
     </div>
 
     <div class="footer">
-      Generated from internal stock request · ${escapeHtml(formatDateTime(new Date().toISOString()))}
+      Generated from ${
+        isAllocation ? 'internal stock allocation' : 'internal stock request'
+      } · ${escapeHtml(formatDateTime(new Date().toISOString()))}
     </div>
   </div>
 </body>
@@ -562,8 +566,9 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
 export async function exportInternalStockRequestReportPdf(
   request: SubWarehouseStockRequest
 ): Promise<void> {
-  openPrintableHtml(
-    `Stock Request Report – ${request.requestNumber}`,
-    buildUnifiedHtml(request)
-  );
+  const title =
+    request.initiationType === 'main_allocation'
+      ? `Stock Allocation Report – ${request.requestNumber}`
+      : `Stock Request Report – ${request.requestNumber}`;
+  openPrintableHtml(title, buildUnifiedHtml(request));
 }

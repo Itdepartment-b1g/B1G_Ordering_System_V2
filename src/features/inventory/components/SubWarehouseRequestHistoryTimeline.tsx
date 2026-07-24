@@ -447,17 +447,24 @@ function buildAllocateShortProgress(
   return result;
 }
 
-function RequestStatusSummary({ items }: { items: SubWarehouseStockRequestItem[] }) {
+function RequestStatusSummary({
+  items,
+  initiationType,
+}: {
+  items: SubWarehouseStockRequestItem[];
+  initiationType?: SubWarehouseStockInitiationType;
+}) {
   const requested = items.reduce((sum, item) => sum + Math.max(0, item.requestedQuantity), 0);
   const delivered = items.reduce((sum, item) => sum + getItemDeliveredQty(item), 0);
   const received = items.reduce((sum, item) => sum + getItemReceivedQty(item), 0);
   const { short } = getRequestDeliveryTotals(items);
   // Short only after a receive leaves a gap; before first receive show 0.
   const shortDisplay = received > 0 ? short : 0;
+  const originLabel = initiationType === 'main_allocation' ? 'Allocated' : 'Requested';
 
   const chips: { label: string; value: number; tone: string }[] = [
     {
-      label: 'Requested',
+      label: originLabel,
       value: requested,
       tone: 'border-slate-200 bg-slate-100 text-slate-700',
     },
@@ -499,7 +506,7 @@ function RequestStatusSummary({ items }: { items: SubWarehouseStockRequestItem[]
       <div className="rounded-md border divide-y overflow-hidden">
         <div className="grid grid-cols-[1fr_4.5rem_4.5rem_4.5rem] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground bg-muted/40">
           <span>SKU</span>
-          <span className="text-right">Requested</span>
+          <span className="text-right">{originLabel}</span>
           <span className="text-right">Delivered</span>
           <span className="text-right">Received</span>
         </div>
@@ -658,7 +665,9 @@ export function SubWarehouseRequestHistoryTimeline({
 
   return (
     <div className="space-y-4">
-      {items && items.length > 0 ? <RequestStatusSummary items={items} /> : null}
+      {items && items.length > 0 ? (
+        <RequestStatusSummary items={items} initiationType={request?.initiationType} />
+      ) : null}
 
       {events.length === 0 ? (
         <p className="text-sm text-muted-foreground py-2">{emptyLabel}</p>

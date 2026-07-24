@@ -3,16 +3,8 @@
  * Combines destination + item cart + deliver proof/signature, then calls
  * create_and_deliver_main_stock_allocation.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  ImagePlus,
-  Loader2,
-  Minus,
-  PenTool,
-  Plus,
-  Search,
-  Trash2,
-} from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Loader2, Minus, Plus, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -32,12 +24,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { cn } from '@/lib/utils';
 import type { Brand, Variant } from '../InventoryContext';
-
-const MAX_PROOF_IMAGE_BYTES = 5 * 1024 * 1024;
-const ACCEPTED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+import {
+  InternalStockDeliveryProofFields,
+  isInternalStockDeliveryProofComplete,
+  useInternalStockDeliveryProof,
+} from './InternalStockDeliveryProofFields';
 
 export type SubWarehouseLocationOption = {
   id: string;
@@ -109,28 +102,6 @@ function parseWholeQty(raw: string, max: number): number {
   const n = Math.floor(Number(digits));
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.min(n, Math.max(0, max));
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') resolve(reader.result);
-      else reject(new Error('Failed to read image'));
-    };
-    reader.onerror = () => reject(new Error('Failed to read image'));
-    reader.readAsDataURL(file);
-  });
-}
-
-function proofFileValidationError(file: File): string | null {
-  if (!ACCEPTED_PROOF_TYPES.includes(file.type)) {
-    return 'Use JPG, PNG, WEBP, or GIF.';
-  }
-  if (file.size > MAX_PROOF_IMAGE_BYTES) {
-    return 'Image must be 5MB or smaller.';
-  }
-  return null;
 }
 
 /** Text + inputMode qty with +/- — wheel scroll never changes the value. */
@@ -216,18 +187,7 @@ export function MainWarehouseAllocateDialog({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [notes, setNotes] = useState('');
   const [filter, setFilter] = useState('');
-  const [riderName, setRiderName] = useState('');
-  const [riderPlate, setRiderPlate] = useState('');
-  const [riderPhotoDataUrl, setRiderPhotoDataUrl] = useState('');
-  const [riderPhotoName, setRiderPhotoName] = useState('');
-  const [riderPhotoError, setRiderPhotoError] = useState<string | null>(null);
-  const [proofImageDataUrl, setProofImageDataUrl] = useState('');
-  const [proofImageName, setProofImageName] = useState('');
-  const [proofError, setProofError] = useState<string | null>(null);
-  const [signatureDataUrl, setSignatureDataUrl] = useState('');
-  const [signatureOpen, setSignatureOpen] = useState(false);
-  const proofFileRef = useRef<HTMLInputElement>(null);
-  const riderPhotoFileRef = useRef<HTMLInputElement>(null);
+  const deliveryProof = useInternalStockDeliveryProof(open);
 
   useEffect(() => {
     if (!open) return;
@@ -237,16 +197,6 @@ export function MainWarehouseAllocateDialog({
     setCart([]);
     setNotes('');
     setFilter('');
-    setRiderName('');
-    setRiderPlate('');
-    setRiderPhotoDataUrl('');
-    setRiderPhotoName('');
-    setRiderPhotoError(null);
-    setProofImageDataUrl('');
-    setProofImageName('');
-    setProofError(null);
-    setSignatureDataUrl('');
-    setSignatureOpen(false);
   }, [open]);
 
   const selectedBrand = useMemo(
@@ -346,52 +296,15 @@ export function MainWarehouseAllocateDialog({
     setCart((prev) => prev.filter((line) => line.variantId !== variantId));
   };
 
-  const handleProofFileChange = async (file: File | null) => {
-    setProofError(null);
-    if (!file) return;
-    const err = proofFileValidationError(file);
-    if (err) {
-      setProofError(err);
-      return;
-    }
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setProofImageDataUrl(dataUrl);
-      setProofImageName(file.name);
-    } catch {
-      setProofError('Could not read image file.');
-    }
-  };
-
-  const handleRiderPhotoFileChange = async (file: File | null) => {
-    setRiderPhotoError(null);
-    if (!file) return;
-    const err = proofFileValidationError(file);
-    if (err) {
-      setRiderPhotoError(err);
-      return;
-    }
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setRiderPhotoDataUrl(dataUrl);
-      setRiderPhotoName(file.name);
-    } catch {
-      setRiderPhotoError('Could not read image file.');
-    }
-  };
-
   const canSubmit =
     !!locationId &&
     cart.length > 0 &&
-    !!riderName.trim() &&
-    !!riderPlate.trim() &&
-    !!riderPhotoDataUrl &&
-    !!proofImageDataUrl &&
-    !!signatureDataUrl &&
+    isInternalStockDeliveryProofComplete(deliveryProof.value) &&
     !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+    const proof = deliveryProof.value;
     await onSubmit({
       fromLocationId: locationId,
       notes: notes.trim(),
@@ -399,11 +312,11 @@ export function MainWarehouseAllocateDialog({
         variant_id: line.variantId,
         quantity: line.quantity,
       })),
-      signatureUrl: signatureDataUrl,
-      proofImageUrl: proofImageDataUrl,
-      riderName: riderName.trim(),
-      riderPlateNumber: riderPlate.trim(),
-      riderPhotoUrl: riderPhotoDataUrl,
+      signatureUrl: proof.signatureDataUrl,
+      proofImageUrl: proof.proofImageDataUrl,
+      riderName: proof.riderName.trim(),
+      riderPlateNumber: proof.riderPlate.trim(),
+      riderPhotoUrl: proof.riderPhotoDataUrl,
     });
   };
 
@@ -640,189 +553,24 @@ export function MainWarehouseAllocateDialog({
             </section>
 
             {/* Rider & proof */}
-            <section className="space-y-3 shrink-0">
-              <SectionLabel>Rider &amp; proof</SectionLabel>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="main-alloc-rider-name">Rider name (required)</Label>
-                  <Input
-                    id="main-alloc-rider-name"
-                    value={riderName}
-                    onChange={(e) => setRiderName(e.target.value)}
-                    placeholder="e.g. Juan Dela Cruz"
-                    className="h-10"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="main-alloc-rider-plate">Plate number (required)</Label>
-                  <Input
-                    id="main-alloc-rider-plate"
-                    value={riderPlate}
-                    onChange={(e) => setRiderPlate(e.target.value)}
-                    placeholder="e.g. ABC-1234"
-                    className="h-10"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Rider photo (required)</Label>
-                <input
-                  ref={riderPhotoFileRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(e) => void handleRiderPhotoFileChange(e.target.files?.[0] ?? null)}
-                />
-                {!riderPhotoDataUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => riderPhotoFileRef.current?.click()}
-                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
-                  >
-                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm font-medium">Upload rider photo</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      JPG, PNG, WEBP, or GIF · max 5MB
-                    </p>
-                  </button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs text-muted-foreground truncate">
-                        {riderPhotoName || 'Rider photo'}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setRiderPhotoDataUrl('');
-                          setRiderPhotoName('');
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Remove
-                      </Button>
-                    </div>
-                    <img
-                      src={riderPhotoDataUrl}
-                      alt="Rider"
-                      className="max-h-40 mx-auto rounded-md object-contain"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => riderPhotoFileRef.current?.click()}
-                    >
-                      Replace photo
-                    </Button>
-                  </div>
-                )}
-                {riderPhotoError ? (
-                  <p className="text-xs text-destructive">{riderPhotoError}</p>
-                ) : null}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Delivery proof (required)</Label>
-                <input
-                  ref={proofFileRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(e) => void handleProofFileChange(e.target.files?.[0] ?? null)}
-                />
-                {!proofImageDataUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => proofFileRef.current?.click()}
-                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
-                  >
-                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm font-medium">Upload delivery / cargo proof</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      JPG, PNG, WEBP, or GIF · max 5MB
-                    </p>
-                  </button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs text-muted-foreground truncate">
-                        {proofImageName || 'Delivery proof'}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setProofImageDataUrl('');
-                          setProofImageName('');
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Remove
-                      </Button>
-                    </div>
-                    <img
-                      src={proofImageDataUrl}
-                      alt="Delivery proof"
-                      className="max-h-40 mx-auto rounded-md object-contain"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => proofFileRef.current?.click()}
-                    >
-                      Replace photo
-                    </Button>
-                  </div>
-                )}
-                {proofError ? <p className="text-xs text-destructive">{proofError}</p> : null}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Signature (required)</Label>
-                {!signatureDataUrl ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full h-10"
-                    onClick={() => setSignatureOpen(true)}
-                  >
-                    <PenTool className="h-4 w-4 mr-2" />
-                    Add signature
-                  </Button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3 bg-muted/20">
-                    <img
-                      src={signatureDataUrl}
-                      alt="Allocation signature"
-                      className="max-h-28 mx-auto bg-white rounded-md"
-                    />
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSignatureOpen(true)}
-                      >
-                        Re-sign
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setSignatureDataUrl('')}
-                      >
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
+            <section className="shrink-0">
+              <InternalStockDeliveryProofFields
+                value={deliveryProof.value}
+                onChange={deliveryProof.patch}
+                riderPhotoError={deliveryProof.riderPhotoError}
+                proofError={deliveryProof.proofError}
+                onRiderPhotoError={deliveryProof.setRiderPhotoError}
+                onProofError={deliveryProof.setProofError}
+                labels={{
+                  idPrefix: 'main-alloc',
+                  sectionTitle: 'Rider & proof',
+                  signatureAlt: 'Allocation signature',
+                  signatureDialogTitle: 'Sign allocation',
+                  signatureCanvasTitle: 'Allocation signature',
+                  signatureCanvasDescription:
+                    'Draw your signature to confirm this allocation delivery',
+                }}
+              />
             </section>
           </div>
 
@@ -846,23 +594,6 @@ export function MainWarehouseAllocateDialog({
               )}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={signatureOpen} onOpenChange={setSignatureOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Sign allocation</DialogTitle>
-          </DialogHeader>
-          <SignatureCanvas
-            title="Allocation signature"
-            description="Draw your signature to confirm this allocation delivery"
-            onSave={(dataUrl) => {
-              setSignatureDataUrl(dataUrl);
-              setSignatureOpen(false);
-            }}
-            onCancel={() => setSignatureOpen(false)}
-          />
         </DialogContent>
       </Dialog>
     </>

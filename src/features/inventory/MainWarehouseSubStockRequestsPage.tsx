@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -6,7 +6,6 @@ import {
   Clock,
   Eye,
   FileDown,
-  ImagePlus,
   LayoutGrid,
   List,
   Loader2,
@@ -16,7 +15,6 @@ import {
   PenTool,
   Search,
   Send,
-  Trash2,
   Truck,
   X,
   XCircle,
@@ -64,6 +62,11 @@ import {
   type SubWarehouseStockRequestStatus,
 } from './components/SubWarehouseStockRequestDialog';
 import { SubWarehouseRequestHistoryTimeline } from './components/SubWarehouseRequestHistoryTimeline';
+import {
+  InternalStockDeliveryProofFields,
+  isInternalStockDeliveryProofComplete,
+  useInternalStockDeliveryProof,
+} from './components/InternalStockDeliveryProofFields';
 import {
   INTERNAL_STOCK_REQUESTS_QUERY_KEY,
   allocateInternalStockRequestRemaining,
@@ -183,31 +186,6 @@ function formatRequestDate(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-const MAX_PROOF_IMAGE_BYTES = 5 * 1024 * 1024;
-const ACCEPTED_PROOF_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') resolve(reader.result);
-      else reject(new Error('Failed to read image'));
-    };
-    reader.onerror = () => reject(new Error('Failed to read image'));
-    reader.readAsDataURL(file);
-  });
-}
-
-function proofFileValidationError(file: File): string | null {
-  if (!ACCEPTED_PROOF_TYPES.includes(file.type)) {
-    return 'Use JPG, PNG, WEBP, or GIF.';
-  }
-  if (file.size > MAX_PROOF_IMAGE_BYTES) {
-    return 'Image must be 5MB or smaller.';
-  }
-  return null;
 }
 
 function requestedTotal(request: SubWarehouseStockRequest): number {
@@ -523,29 +501,11 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [rejectSignatureOpen, setRejectSignatureOpen] = useState(false);
   const [approveTarget, setApproveTarget] = useState<SubWarehouseStockRequest | null>(null);
   const [deliverTarget, setDeliverTarget] = useState<SubWarehouseStockRequest | null>(null);
-  const [deliverSignatureDataUrl, setDeliverSignatureDataUrl] = useState('');
-  const [deliverSignatureOpen, setDeliverSignatureOpen] = useState(false);
-  const [deliverProofImageDataUrl, setDeliverProofImageDataUrl] = useState('');
-  const [deliverProofImageName, setDeliverProofImageName] = useState('');
-  const deliverProofFileRef = useRef<HTMLInputElement>(null);
-  const [deliverRiderName, setDeliverRiderName] = useState('');
-  const [deliverRiderPlate, setDeliverRiderPlate] = useState('');
-  const [deliverRiderPhotoDataUrl, setDeliverRiderPhotoDataUrl] = useState('');
-  const [deliverRiderPhotoName, setDeliverRiderPhotoName] = useState('');
-  const deliverRiderPhotoFileRef = useRef<HTMLInputElement>(null);
+  const deliverProof = useInternalStockDeliveryProof(!!deliverTarget);
   const [allocateTarget, setAllocateTarget] = useState<SubWarehouseStockRequest | null>(null);
+  const allocateProof = useInternalStockDeliveryProof(!!allocateTarget);
   const [allocateNote, setAllocateNote] = useState('');
   const [allocateQtys, setAllocateQtys] = useState<Record<string, string>>({});
-  const [allocateSignatureDataUrl, setAllocateSignatureDataUrl] = useState('');
-  const [allocateSignatureOpen, setAllocateSignatureOpen] = useState(false);
-  const [allocateProofImageDataUrl, setAllocateProofImageDataUrl] = useState('');
-  const [allocateProofImageName, setAllocateProofImageName] = useState('');
-  const allocateProofFileRef = useRef<HTMLInputElement>(null);
-  const [allocateRiderName, setAllocateRiderName] = useState('');
-  const [allocateRiderPlate, setAllocateRiderPlate] = useState('');
-  const [allocateRiderPhotoDataUrl, setAllocateRiderPhotoDataUrl] = useState('');
-  const [allocateRiderPhotoName, setAllocateRiderPhotoName] = useState('');
-  const allocateRiderPhotoFileRef = useRef<HTMLInputElement>(null);
   const [mainAllocateOpen, setMainAllocateOpen] = useState(false);
 
   const detailRequest = useMemo(
@@ -640,31 +600,16 @@ export default function MainWarehouseSubStockRequestsPage() {
       const allocatable = getItemAllocatableQty(item);
       if (allocatable > 0) initial[item.variantId] = String(allocatable);
     }
+    allocateProof.reset();
     setAllocateTarget(request);
     setAllocateNote('');
     setAllocateQtys(initial);
-    setAllocateSignatureDataUrl('');
-    setAllocateSignatureOpen(false);
-    setAllocateProofImageDataUrl('');
-    setAllocateProofImageName('');
-    setAllocateRiderName('');
-    setAllocateRiderPlate('');
-    setAllocateRiderPhotoDataUrl('');
-    setAllocateRiderPhotoName('');
   };
 
   const closeAllocateDialog = () => {
     setAllocateTarget(null);
     setAllocateNote('');
     setAllocateQtys({});
-    setAllocateSignatureDataUrl('');
-    setAllocateSignatureOpen(false);
-    setAllocateProofImageDataUrl('');
-    setAllocateProofImageName('');
-    setAllocateRiderName('');
-    setAllocateRiderPlate('');
-    setAllocateRiderPhotoDataUrl('');
-    setAllocateRiderPhotoName('');
   };
 
   const warehouseOptions = useMemo(() => {
@@ -892,32 +837,25 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   const deliverMutation = useMutation({
     mutationFn: async () => {
-      if (!deliverTarget || !deliverSignatureDataUrl) {
-        throw new Error('Signature required');
+      if (!deliverTarget) {
+        throw new Error('No request selected');
       }
-      if (!deliverProofImageDataUrl) {
-        throw new Error('Delivery proof required');
-      }
-      if (!deliverRiderName.trim()) {
-        throw new Error('Rider name required');
-      }
-      if (!deliverRiderPlate.trim()) {
-        throw new Error('Rider plate number required');
-      }
-      if (!deliverRiderPhotoDataUrl) {
-        throw new Error('Rider photo required');
+      const proof = deliverProof.value;
+      if (!isInternalStockDeliveryProofComplete(proof)) {
+        throw new Error('Rider details, delivery proof, and signature are required');
       }
       return deliverInternalStockRequest({
         requestId: deliverTarget.id,
-        signatureUrl: deliverSignatureDataUrl,
-        proofImageUrl: deliverProofImageDataUrl,
-        riderName: deliverRiderName.trim(),
-        riderPlateNumber: deliverRiderPlate.trim(),
-        riderPhotoUrl: deliverRiderPhotoDataUrl,
+        signatureUrl: proof.signatureDataUrl,
+        proofImageUrl: proof.proofImageDataUrl,
+        riderName: proof.riderName.trim(),
+        riderPlateNumber: proof.riderPlate.trim(),
+        riderPhotoUrl: proof.riderPhotoDataUrl,
       });
     },
     onSuccess: async (result) => {
       const delivered = deliverTarget;
+      const proof = deliverProof.value;
       const drNumber =
         typeof result?.dr_number === 'string' && result.dr_number.trim()
           ? result.dr_number.trim()
@@ -936,9 +874,9 @@ export default function MainWarehouseSubStockRequestsPage() {
           ...delivered,
           status: 'pending_receive',
           drNumber: drNumber || delivered.drNumber,
-          riderName: deliverRiderName.trim() || delivered.riderName,
-          riderPlateNumber: deliverRiderPlate.trim() || delivered.riderPlateNumber,
-          riderPhotoUrl: deliverRiderPhotoDataUrl || delivered.riderPhotoUrl,
+          riderName: proof.riderName.trim() || delivered.riderName,
+          riderPlateNumber: proof.riderPlate.trim() || delivered.riderPlateNumber,
+          riderPhotoUrl: proof.riderPhotoDataUrl || delivered.riderPhotoUrl,
           items: delivered.items.map((item) => ({
             ...item,
             deliveredQuantity: item.requestedQuantity,
@@ -1087,152 +1025,25 @@ export default function MainWarehouseSubStockRequestsPage() {
 
   const openDeliverDialog = (request: SubWarehouseStockRequest) => {
     if (request.status !== 'approved') return;
-    setDeliverSignatureDataUrl('');
-    setDeliverSignatureOpen(false);
-    setDeliverProofImageDataUrl('');
-    setDeliverProofImageName('');
-    setDeliverRiderName('');
-    setDeliverRiderPlate('');
-    setDeliverRiderPhotoDataUrl('');
-    setDeliverRiderPhotoName('');
+    deliverProof.reset();
     setDeliverTarget(request);
   };
 
   const closeDeliverDialog = () => {
     setDeliverTarget(null);
-    setDeliverSignatureDataUrl('');
-    setDeliverSignatureOpen(false);
-    setDeliverProofImageDataUrl('');
-    setDeliverProofImageName('');
-    setDeliverRiderName('');
-    setDeliverRiderPlate('');
-    setDeliverRiderPhotoDataUrl('');
-    setDeliverRiderPhotoName('');
   };
 
   const handleConfirmDeliver = () => {
     if (!deliverTarget) return;
-    if (!deliverRiderName.trim()) {
+    if (!isInternalStockDeliveryProofComplete(deliverProof.value)) {
       toast({
-        title: 'Rider name required',
-        description: 'Enter the rider name before confirming this delivery.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    if (!deliverRiderPlate.trim()) {
-      toast({
-        title: 'Plate number required',
-        description: 'Enter the rider plate number before confirming this delivery.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    if (!deliverRiderPhotoDataUrl) {
-      toast({
-        title: 'Rider photo required',
-        description: 'Upload a rider photo before confirming this delivery.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    if (!deliverProofImageDataUrl) {
-      toast({
-        title: 'Delivery proof required',
-        description: 'Upload a delivery proof photo before confirming this delivery.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    if (!deliverSignatureDataUrl) {
-      toast({
-        title: 'Signature required',
-        description: 'Sign to confirm this delivery.',
+        title: 'Delivery proof incomplete',
+        description: 'Rider name, plate, photo, delivery proof, and signature are required.',
         variant: 'destructive',
       });
       return;
     }
     deliverMutation.mutate();
-  };
-
-  const handleDeliverProofFileChange = async (file: File | null) => {
-    if (!file) return;
-    const validationError = proofFileValidationError(file);
-    if (validationError) {
-      toast({ title: 'Invalid image', description: validationError, variant: 'destructive' });
-      return;
-    }
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setDeliverProofImageDataUrl(dataUrl);
-      setDeliverProofImageName(file.name);
-    } catch {
-      toast({
-        title: 'Could not read image',
-        description: 'Try another photo.',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  const handleDeliverRiderPhotoFileChange = async (file: File | null) => {
-    if (!file) return;
-    const validationError = proofFileValidationError(file);
-    if (validationError) {
-      toast({ title: 'Invalid image', description: validationError, variant: 'destructive' });
-      return;
-    }
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setDeliverRiderPhotoDataUrl(dataUrl);
-      setDeliverRiderPhotoName(file.name);
-    } catch {
-      toast({
-        title: 'Could not read image',
-        description: 'Try another photo.',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  const handleAllocateProofFileChange = async (file: File | null) => {
-    if (!file) return;
-    const validationError = proofFileValidationError(file);
-    if (validationError) {
-      toast({ title: 'Invalid image', description: validationError, variant: 'destructive' });
-      return;
-    }
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setAllocateProofImageDataUrl(dataUrl);
-      setAllocateProofImageName(file.name);
-    } catch {
-      toast({
-        title: 'Could not read image',
-        description: 'Try another photo.',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  const handleAllocateRiderPhotoFileChange = async (file: File | null) => {
-    if (!file) return;
-    const validationError = proofFileValidationError(file);
-    if (validationError) {
-      toast({ title: 'Invalid image', description: validationError, variant: 'destructive' });
-      return;
-    }
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      setAllocateRiderPhotoDataUrl(dataUrl);
-      setAllocateRiderPhotoName(file.name);
-    } catch {
-      toast({
-        title: 'Could not read image',
-        description: 'Try another photo.',
-        variant: 'destructive',
-      });
-    }
   };
 
   const handleAllocateRemaining = () => {
@@ -1287,52 +1098,17 @@ export default function MainWarehouseSubStockRequestsPage() {
       return;
     }
 
-    if (!allocateRiderName.trim()) {
+    if (!isInternalStockDeliveryProofComplete(allocateProof.value)) {
       toast({
-        title: 'Rider name required',
-        description: 'Enter the rider name before allocating remaining stock.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (!allocateRiderPlate.trim()) {
-      toast({
-        title: 'Plate number required',
-        description: 'Enter the rider plate number before allocating remaining stock.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (!allocateRiderPhotoDataUrl) {
-      toast({
-        title: 'Rider photo required',
-        description: 'Upload a rider photo before allocating remaining stock.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (!allocateProofImageDataUrl) {
-      toast({
-        title: 'Proof photo required',
-        description: 'Upload a proof photo before allocating remaining stock.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (!allocateSignatureDataUrl) {
-      toast({
-        title: 'Signature required',
-        description: 'Sign to confirm this allocation.',
+        title: 'Delivery proof incomplete',
+        description: 'Rider name, plate, photo, proof photo, and signature are required.',
         variant: 'destructive',
       });
       return;
     }
 
     const shortBefore = getRequestDeliveryTotals(allocateTarget.items).short;
+    const proof = allocateProof.value;
 
     allocateMutation.mutate({
       requestId: allocateTarget.id,
@@ -1340,11 +1116,11 @@ export default function MainWarehouseSubStockRequestsPage() {
       lines: payload,
       note: allocateNote.trim() || undefined,
       shortBefore,
-      proofImageUrl: allocateProofImageDataUrl,
-      signatureUrl: allocateSignatureDataUrl,
-      riderName: allocateRiderName.trim(),
-      riderPlateNumber: allocateRiderPlate.trim(),
-      riderPhotoUrl: allocateRiderPhotoDataUrl,
+      proofImageUrl: proof.proofImageDataUrl,
+      signatureUrl: proof.signatureDataUrl,
+      riderName: proof.riderName.trim(),
+      riderPlateNumber: proof.riderPlate.trim(),
+      riderPhotoUrl: proof.riderPhotoDataUrl,
     });
   };
 
@@ -1791,7 +1567,9 @@ export default function MainWarehouseSubStockRequestsPage() {
                     <MessageSquareText className="h-4 w-4 shrink-0 mt-0.5 text-sky-700" />
                     <div className="min-w-0 space-y-0.5">
                       <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">
-                        Request notes
+                        {detailRequest.initiationType === 'main_allocation'
+                          ? 'Allocation notes'
+                          : 'Request notes'}
                       </p>
                       <p className="whitespace-pre-wrap leading-snug">{detailRequest.notes}</p>
                     </div>
@@ -1881,6 +1659,12 @@ export default function MainWarehouseSubStockRequestsPage() {
                       Deliver
                     </Button>
                   </>
+                ) : null}
+                {detailRequest.status === 'partially_received' &&
+                requestHasAllocatableQty(detailRequest) ? (
+                  <Button type="button" onClick={() => openAllocateDialog(detailRequest)}>
+                    Allocate remaining
+                  </Button>
                 ) : null}
               </DialogFooter>
             </>
@@ -1976,184 +1760,25 @@ export default function MainWarehouseSubStockRequestsPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="allocate-rider-name">Rider name (required)</Label>
-                  <Input
-                    id="allocate-rider-name"
-                    value={allocateRiderName}
-                    onChange={(e) => setAllocateRiderName(e.target.value)}
-                    placeholder="e.g. Juan Dela Cruz"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="allocate-rider-plate">Plate number (required)</Label>
-                  <Input
-                    id="allocate-rider-plate"
-                    value={allocateRiderPlate}
-                    onChange={(e) => setAllocateRiderPlate(e.target.value)}
-                    placeholder="e.g. ABC-1234"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Rider photo (required)</Label>
-                <input
-                  ref={allocateRiderPhotoFileRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(e) =>
-                    void handleAllocateRiderPhotoFileChange(e.target.files?.[0] ?? null)
-                  }
-                />
-                {!allocateRiderPhotoDataUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => allocateRiderPhotoFileRef.current?.click()}
-                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
-                  >
-                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm font-medium">Upload rider photo</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      JPG, PNG, WEBP, or GIF · max 5MB
-                    </p>
-                  </button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs text-muted-foreground truncate">
-                        {allocateRiderPhotoName || 'Rider photo'}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setAllocateRiderPhotoDataUrl('');
-                          setAllocateRiderPhotoName('');
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Remove
-                      </Button>
-                    </div>
-                    <img
-                      src={allocateRiderPhotoDataUrl}
-                      alt="Rider"
-                      className="max-h-48 mx-auto rounded-md object-contain"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => allocateRiderPhotoFileRef.current?.click()}
-                    >
-                      Replace photo
-                    </Button>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Proof photo (required)</Label>
-                <input
-                  ref={allocateProofFileRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(e) => void handleAllocateProofFileChange(e.target.files?.[0] ?? null)}
-                />
-                {!allocateProofImageDataUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => allocateProofFileRef.current?.click()}
-                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
-                  >
-                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm font-medium">Upload allocate proof</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      JPG, PNG, WEBP, or GIF · max 5MB
-                    </p>
-                  </button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs text-muted-foreground truncate">
-                        {allocateProofImageName || 'Proof image'}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setAllocateProofImageDataUrl('');
-                          setAllocateProofImageName('');
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Remove
-                      </Button>
-                    </div>
-                    <img
-                      src={allocateProofImageDataUrl}
-                      alt="Allocate proof"
-                      className="max-h-48 mx-auto rounded-md object-contain"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => allocateProofFileRef.current?.click()}
-                    >
-                      Replace photo
-                    </Button>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Signature (required)</Label>
-                {!allocateSignatureDataUrl ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => setAllocateSignatureOpen(true)}
-                  >
-                    <PenTool className="h-4 w-4 mr-2" />
-                    Add signature
-                  </Button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3 bg-muted/20">
-                    <img
-                      src={allocateSignatureDataUrl}
-                      alt="Allocator signature"
-                      className="max-h-28 mx-auto bg-white rounded-md"
-                    />
-                    <div className="flex gap-2 justify-end">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setAllocateSignatureDataUrl('')}
-                      >
-                        <X className="h-4 w-4 mr-1" />
-                        Clear
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setAllocateSignatureOpen(true)}
-                      >
-                        Re-sign
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <InternalStockDeliveryProofFields
+                value={allocateProof.value}
+                onChange={allocateProof.patch}
+                riderPhotoError={allocateProof.riderPhotoError}
+                proofError={allocateProof.proofError}
+                onRiderPhotoError={allocateProof.setRiderPhotoError}
+                onProofError={allocateProof.setProofError}
+                labels={{
+                  idPrefix: 'allocate-remaining',
+                  proofLabel: 'Proof photo (required)',
+                  proofUploadTitle: 'Upload allocate proof',
+                  proofAlt: 'Allocate proof',
+                  signatureAlt: 'Allocator signature',
+                  signatureDialogTitle: 'Sign to allocate remaining',
+                  signatureCanvasTitle: 'Allocator signature',
+                  signatureCanvasDescription:
+                    'Draw your signature to confirm this allocation wave',
+                }}
+              />
             </div>
           ) : null}
           <DialogFooter>
@@ -2164,11 +1789,7 @@ export default function MainWarehouseSubStockRequestsPage() {
               type="button"
               onClick={handleAllocateRemaining}
               disabled={
-                !allocateRiderName.trim() ||
-                !allocateRiderPlate.trim() ||
-                !allocateRiderPhotoDataUrl ||
-                !allocateProofImageDataUrl ||
-                !allocateSignatureDataUrl ||
+                !isInternalStockDeliveryProofComplete(allocateProof.value) ||
                 allocateMutation.isPending
               }
             >
@@ -2182,23 +1803,6 @@ export default function MainWarehouseSubStockRequestsPage() {
               )}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={allocateSignatureOpen} onOpenChange={setAllocateSignatureOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Sign to allocate remaining</DialogTitle>
-          </DialogHeader>
-          <SignatureCanvas
-            title="Allocator signature"
-            description="Draw your signature to confirm this allocation wave"
-            onSave={(dataUrl) => {
-              setAllocateSignatureDataUrl(dataUrl);
-              setAllocateSignatureOpen(false);
-            }}
-            onCancel={() => setAllocateSignatureOpen(false)}
-          />
         </DialogContent>
       </Dialog>
 
@@ -2309,187 +1913,22 @@ export default function MainWarehouseSubStockRequestsPage() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="deliver-rider-name">Rider name (required)</Label>
-                  <Input
-                    id="deliver-rider-name"
-                    value={deliverRiderName}
-                    onChange={(e) => setDeliverRiderName(e.target.value)}
-                    placeholder="e.g. Juan Dela Cruz"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="deliver-rider-plate">Plate number (required)</Label>
-                  <Input
-                    id="deliver-rider-plate"
-                    value={deliverRiderPlate}
-                    onChange={(e) => setDeliverRiderPlate(e.target.value)}
-                    placeholder="e.g. ABC-1234"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Rider photo (required)</Label>
-                <input
-                  ref={deliverRiderPhotoFileRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(e) =>
-                    void handleDeliverRiderPhotoFileChange(e.target.files?.[0] ?? null)
-                  }
-                />
-                {!deliverRiderPhotoDataUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => deliverRiderPhotoFileRef.current?.click()}
-                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
-                  >
-                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm font-medium">Upload rider photo</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      JPG, PNG, WEBP, or GIF · max 5MB
-                    </p>
-                  </button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs text-muted-foreground truncate">
-                        {deliverRiderPhotoName || 'Rider photo'}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setDeliverRiderPhotoDataUrl('');
-                          setDeliverRiderPhotoName('');
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Remove
-                      </Button>
-                    </div>
-                    <img
-                      src={deliverRiderPhotoDataUrl}
-                      alt="Rider"
-                      className="max-h-48 mx-auto rounded-md object-contain"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => deliverRiderPhotoFileRef.current?.click()}
-                    >
-                      Replace photo
-                    </Button>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Delivery proof (required)</Label>
-                <input
-                  ref={deliverProofFileRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  onChange={(e) => void handleDeliverProofFileChange(e.target.files?.[0] ?? null)}
-                />
-                {!deliverProofImageDataUrl ? (
-                  <button
-                    type="button"
-                    onClick={() => deliverProofFileRef.current?.click()}
-                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
-                  >
-                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm font-medium">Upload delivery / cargo proof</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      JPG, PNG, WEBP, or GIF · max 5MB
-                    </p>
-                  </button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs text-muted-foreground truncate">
-                        {deliverProofImageName || 'Delivery proof'}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setDeliverProofImageDataUrl('');
-                          setDeliverProofImageName('');
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Remove
-                      </Button>
-                    </div>
-                    <img
-                      src={deliverProofImageDataUrl}
-                      alt="Delivery proof"
-                      className="max-h-48 mx-auto rounded-md object-contain"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => deliverProofFileRef.current?.click()}
-                    >
-                      Replace photo
-                    </Button>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Signature (required)</Label>
-                {!deliverSignatureDataUrl ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => setDeliverSignatureOpen(true)}
-                  >
-                    <PenTool className="h-4 w-4 mr-2" />
-                    Add signature
-                  </Button>
-                ) : (
-                  <div className="rounded-md border p-3 space-y-3 bg-muted/20">
-                    <img
-                      src={deliverSignatureDataUrl}
-                      alt="Delivery signature"
-                      className="max-h-28 mx-auto bg-white rounded-md"
-                    />
-                    <div className="flex gap-2 justify-end">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setDeliverSignatureDataUrl('')}
-                      >
-                        <X className="h-4 w-4 mr-1" />
-                        Clear
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setDeliverSignatureOpen(true)}
-                      >
-                        Re-sign
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      By signing, you deliver these quantities to the sub-warehouse.
-                    </p>
-                  </div>
-                )}
-              </div>
+              <InternalStockDeliveryProofFields
+                value={deliverProof.value}
+                onChange={deliverProof.patch}
+                riderPhotoError={deliverProof.riderPhotoError}
+                proofError={deliverProof.proofError}
+                onRiderPhotoError={deliverProof.setRiderPhotoError}
+                onProofError={deliverProof.setProofError}
+                labels={{
+                  idPrefix: 'deliver',
+                  signatureAlt: 'Delivery signature',
+                  signatureDialogTitle: 'Sign to deliver',
+                  signatureCanvasTitle: 'Delivery signature',
+                  signatureCanvasDescription:
+                    'Draw your signature to confirm this delivery',
+                }}
+              />
             </div>
           ) : null}
           <DialogFooter>
@@ -2500,11 +1939,7 @@ export default function MainWarehouseSubStockRequestsPage() {
               type="button"
               onClick={handleConfirmDeliver}
               disabled={
-                !deliverRiderName.trim() ||
-                !deliverRiderPlate.trim() ||
-                !deliverRiderPhotoDataUrl ||
-                !deliverProofImageDataUrl ||
-                !deliverSignatureDataUrl ||
+                !isInternalStockDeliveryProofComplete(deliverProof.value) ||
                 deliverMutation.isPending
               }
             >
@@ -2521,23 +1956,6 @@ export default function MainWarehouseSubStockRequestsPage() {
               )}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={deliverSignatureOpen} onOpenChange={setDeliverSignatureOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Sign to deliver</DialogTitle>
-          </DialogHeader>
-          <SignatureCanvas
-            title="Delivery signature"
-            description="Draw your signature to confirm this delivery"
-            onSave={(dataUrl) => {
-              setDeliverSignatureDataUrl(dataUrl);
-              setDeliverSignatureOpen(false);
-            }}
-            onCancel={() => setDeliverSignatureOpen(false)}
-          />
         </DialogContent>
       </Dialog>
 
