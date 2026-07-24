@@ -128,12 +128,13 @@ function isBoilerplateAllocateNote(note: string | undefined): boolean {
   return /^allocated\s+\d+\s+unit\(s\)\s+of\s+remaining\s+short\.?$/i.test(note.trim());
 }
 
-function eventTitle(event: SubWarehouseRequestHistoryEvent): string {
+function eventTitle(event: SubWarehouseRequestHistoryEvent, request: SubWarehouseStockRequest): string {
+  const isAllocation = request.initiationType === 'main_allocation';
   switch (event.type) {
     case 'created':
-      return 'Request created';
+      return isAllocation ? 'Created' : 'Request created';
     case 'main_allocated':
-      return 'Allocated by Main Warehouse';
+      return 'Created';
     case 'approved':
       return 'Approved';
     case 'delivered':
@@ -154,17 +155,21 @@ function eventSummary(
   event: SubWarehouseRequestHistoryEvent,
   request: SubWarehouseStockRequest
 ): string {
+  const isAllocation = request.initiationType === 'main_allocation';
   if (event.type === 'created') {
     const requested = request.items.reduce((s, i) => s + Math.max(0, i.requestedQuantity), 0);
+    if (isAllocation) {
+      return `Allocated ${requested.toLocaleString()} unit(s) across ${request.items.length} item(s)`;
+    }
     return `Requested ${requested.toLocaleString()} unit(s) across ${request.items.length} item(s)`;
   }
   if (event.type === 'main_allocated') {
     const qty = linesTotalQty(event.lines);
     if (qty > 0) {
-      return `Main allocated ${qty.toLocaleString()} unit(s) · pending receive`;
+      return `Allocated ${qty.toLocaleString()} unit(s) · pending receive`;
     }
     const allocated = request.items.reduce((s, i) => s + Math.max(0, i.requestedQuantity), 0);
-    return `Main allocated ${allocated.toLocaleString()} unit(s) · pending receive`;
+    return `Allocated ${allocated.toLocaleString()} unit(s) · pending receive`;
   }
   if (event.type === 'approved') {
     return 'Approved — awaiting delivery';
@@ -185,7 +190,9 @@ function eventSummary(
     return `Received ${qty.toLocaleString()} unit(s) · complete`;
   }
   if (event.type === 'rejected') {
-    return 'Request was rejected';
+    return request.initiationType === 'main_allocation'
+      ? 'Allocation was rejected'
+      : 'Request was rejected';
   }
   return '';
 }
@@ -323,7 +330,7 @@ function renderActivityEvent(
     <article class="activity-item">
       <div class="activity-head">
         <div>
-          <h4>${escapeHtml(eventTitle(event))}</h4>
+          <h4>${escapeHtml(eventTitle(event, request))}</h4>
           ${summary ? `<p class="activity-summary">${escapeHtml(summary)}</p>` : ''}
           <p class="activity-meta">${escapeHtml(formatDateTime(event.at))}${
             event.byName ? ` · ${escapeHtml(event.byName)}` : ''
@@ -363,9 +370,22 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
     totals.delivered > 0 ||
     totals.received > 0;
 
-  const historyOldestFirst = [...(request.history ?? [])].sort(
-    (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
-  );
+  const historyOldestFirst = [...(request.history ?? [])].sort((a, b) => {
+    const ta = new Date(a.at).getTime();
+    const tb = new Date(b.at).getTime();
+    if (ta !== tb) return ta - tb;
+    const order: Record<string, number> = {
+      created: 10,
+      main_allocated: 20,
+      approved: 30,
+      delivered: 40,
+      approved_released: 40,
+      remaining_released: 50,
+      receive_confirmed: 60,
+      rejected: 70,
+    };
+    return (order[a.type] ?? 100) - (order[b.type] ?? 100);
+  });
 
   const lineRows = request.items
     .map((item) => {

@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import type {
   SubWarehouseReleaseLine,
   SubWarehouseRequestHistoryEvent,
+  SubWarehouseStockInitiationType,
   SubWarehouseStockRequest,
   SubWarehouseStockRequestItem,
 } from './SubWarehouseStockRequestDialog';
@@ -56,12 +57,19 @@ function formatAt(iso: string): string {
   }
 }
 
-function eventTitle(event: SubWarehouseRequestHistoryEvent): string {
+function isMainAllocation(initiationType?: SubWarehouseStockInitiationType): boolean {
+  return initiationType === 'main_allocation';
+}
+
+function eventTitle(
+  event: SubWarehouseRequestHistoryEvent,
+  initiationType?: SubWarehouseStockInitiationType
+): string {
   switch (event.type) {
     case 'created':
-      return 'Request created';
+      return isMainAllocation(initiationType) ? 'Created' : 'Request created';
     case 'main_allocated':
-      return 'Allocated by Main Warehouse';
+      return 'Created';
     case 'approved':
       return 'Approved';
     case 'delivered':
@@ -92,22 +100,26 @@ function variantLabel(n: number): string {
 
 function eventSummary(
   event: SubWarehouseRequestHistoryEvent,
-  items?: SubWarehouseStockRequestItem[]
+  items?: SubWarehouseStockRequestItem[],
+  initiationType?: SubWarehouseStockInitiationType
 ): string | null {
   if (event.type === 'created') {
     if (!items?.length) return null;
     const requested = items.reduce((sum, item) => sum + Math.max(0, item.requestedQuantity), 0);
+    if (isMainAllocation(initiationType)) {
+      return `Allocated ${unitLabel(requested)} across ${variantLabel(items.length)}`;
+    }
     return `Requested ${unitLabel(requested)} across ${variantLabel(items.length)}`;
   }
 
   if (event.type === 'main_allocated') {
     const qty = linesTotalQty(event.lines);
     if (qty > 0) {
-      return `Main allocated ${unitLabel(qty)} · pending receive`;
+      return `Allocated ${unitLabel(qty)} · pending receive`;
     }
     if (!items?.length) return 'Main-initiated allocation · pending receive';
     const allocated = items.reduce((sum, item) => sum + Math.max(0, item.requestedQuantity), 0);
-    return `Main allocated ${unitLabel(allocated)} · pending receive`;
+    return `Allocated ${unitLabel(allocated)} · pending receive`;
   }
 
   if (event.type === 'approved') {
@@ -129,7 +141,7 @@ function eventSummary(
   }
 
   if (event.type === 'rejected') {
-    return 'Request was rejected';
+    return isMainAllocation(initiationType) ? 'Allocation was rejected' : 'Request was rejected';
   }
 
   if (event.type === 'remaining_released') {
@@ -220,6 +232,40 @@ function qtyHeaderForEvent(type: SubWarehouseRequestHistoryEvent['type']): strin
 function isBoilerplateAllocateNote(note: string | undefined): boolean {
   if (!note?.trim()) return true;
   return /^allocated\s+\d+\s+unit\(s\)\s+of\s+remaining\s+short\.?$/i.test(note.trim());
+}
+
+/** Business flow rank — used when events share the same timestamp (e.g. allocate+deliver). */
+function eventFlowOrder(type: SubWarehouseRequestHistoryEvent['type']): number {
+  switch (type) {
+    case 'created':
+      return 10;
+    case 'main_allocated':
+      return 20;
+    case 'approved':
+      return 30;
+    case 'delivered':
+    case 'approved_released':
+      return 40;
+    case 'remaining_released':
+      return 50;
+    case 'receive_confirmed':
+      return 60;
+    case 'rejected':
+      return 70;
+    default:
+      return 100;
+  }
+}
+
+/** Newest → oldest, with Delivered above Created when times collide. */
+function compareHistoryEvents(
+  a: SubWarehouseRequestHistoryEvent,
+  b: SubWarehouseRequestHistoryEvent
+): number {
+  const ta = new Date(a.at).getTime();
+  const tb = new Date(b.at).getTime();
+  if (ta !== tb) return tb - ta;
+  return eventFlowOrder(b.type) - eventFlowOrder(a.type);
 }
 
 type RemainingReleasedEvent = Extract<
@@ -322,9 +368,12 @@ function buildAllocateShortProgress(
   history: SubWarehouseRequestHistoryEvent[],
   items?: SubWarehouseStockRequestItem[]
 ): Map<string, string> {
-  const chronological = [...history].sort(
-    (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()
-  );
+  const chronological = [...history].sort((a, b) => {
+    const ta = new Date(a.at).getTime();
+    const tb = new Date(b.at).getTime();
+    if (ta !== tb) return ta - tb;
+    return eventFlowOrder(a.type) - eventFlowOrder(b.type);
+  });
 
   const delivered = new Map<string, number>();
   const received = new Map<string, number>();
@@ -605,9 +654,7 @@ export function SubWarehouseRequestHistoryTimeline({
   riderPhotoUrl,
   onPrintDeliveryReceipt,
 }: SubWarehouseRequestHistoryTimelineProps) {
-  const events = [...(history ?? [])].sort(
-    (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
-  );
+  const events = [...(history ?? [])].sort(compareHistoryEvents);
 
   return (
     <div className="space-y-4">
@@ -622,7 +669,7 @@ export function SubWarehouseRequestHistoryTimeline({
             {events.map((event, eventIndex) => {
               const isLast = eventIndex === events.length - 1;
               const lines = 'lines' in event ? event.lines : undefined;
-              const summary = eventSummary(event, items);
+              const summary = eventSummary(event, items, request?.initiationType);
               const hasShortBadge =
                 event.type === 'receive_confirmed' && event.shortQuantity > 0;
               const isDelivered =
@@ -670,7 +717,9 @@ export function SubWarehouseRequestHistoryTimeline({
                 <TimelineStep key={event.id} type={event.type} isLast={isLast}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium leading-snug">{eventTitle(event)}</p>
+                      <p className="text-sm font-medium leading-snug">
+                        {eventTitle(event, request?.initiationType)}
+                      </p>
                       {summary ? (
                         <p className="text-sm text-foreground/80 leading-snug mt-0.5">
                           {summary}
