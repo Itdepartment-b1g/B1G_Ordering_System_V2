@@ -583,7 +583,7 @@ export default function WarehouseDeliveryShortagesPage() {
           {source === 'internal' ? (
             <>
               Sub-stock shortages are grouped by request / DR. Investigate first, then choose:{' '}
-              <strong>Found &amp; redeliver</strong> (re-unlock for sub receive),{' '}
+              <strong>Found &amp; redeliver</strong> (then Allocate Remaining with rider + proof),{' '}
               <strong>Write off &amp; replace</strong> (release reservation, then Allocate Remaining),
               or <strong>Write off only</strong> (accept the short).
             </>
@@ -974,19 +974,17 @@ export default function WarehouseDeliveryShortagesPage() {
                   <div>
                     <span className="text-muted-foreground">Reservation:</span>{' '}
                     <span className="font-medium">
-                      {resolveAction === 'redeliver'
-                        ? 'Keep held; re-unlock for sub receive'
-                        : 'Release held reservation back to available'}
+                      {resolveAction === 'write_off'
+                        ? 'Release held reservation back to available'
+                        : 'Release held reservation; re-deliver via Allocate Remaining'}
                     </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Next step:</span>{' '}
                     <span className="font-medium">
-                      {resolveAction === 'redeliver'
-                        ? 'Sub can confirm receive on the unlocked qty'
-                        : resolveAction === 'write_off_replace'
-                          ? 'Use Allocate Remaining to ship a replacement'
-                          : 'Reduce delivered qty; no replacement for this shortage'}
+                      {resolveAction === 'write_off'
+                        ? 'Reduce delivered qty; no replacement for this shortage'
+                        : 'Use Allocate Remaining (rider photo, plate, proof, new DR) on Sub Stock Requests'}
                     </span>
                   </div>
                 </>
@@ -1026,7 +1024,7 @@ export default function WarehouseDeliveryShortagesPage() {
                 placeholder={
                   resolveAction === 'redeliver'
                     ? source === 'internal'
-                      ? 'Found on truck / left at gate — re-unlocking for sub…'
+                      ? 'Found on truck / left at gate — will Allocate Remaining to re-deliver…'
                       : 'Found on truck / left at gate — returning to stock…'
                     : resolveAction === 'write_off_replace'
                       ? 'Confirmed missing — will ship replacement from remaining stock…'

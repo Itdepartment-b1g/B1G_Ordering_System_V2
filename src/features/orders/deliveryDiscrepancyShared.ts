@@ -79,7 +79,8 @@ export const INTERNAL_DISCREPANCY_RESOLUTION_OPTIONS: {
   {
     value: 'redeliver',
     label: 'Found → restore & redeliver',
-    description: 'Keep the reservation and re-unlock this qty so the sub-warehouse can receive again.',
+    description:
+      'Release the held reservation. Then use Allocate Remaining on the request (rider + proof + new DR) to re-deliver — same idea as reopening a PO for another DR.',
   },
   {
     value: 'write_off_replace',

@@ -124,12 +124,13 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
           resolve:
         </p>
         <span>
-          • <span className="text-blue-500">Found → restore & redeliver</span> — re-unlock so the sub can receive
-          again
+          • <span className="text-blue-500">Found → restore & redeliver</span> — then use{' '}
+          <span className="text-blue-500">Allocate Remaining</span> (rider photo, plate, proof, new DR) to
+          re-deliver
         </span>
         <span>
-          • <span className="text-blue-500">Lost → write off & ship replacement</span> — then use Allocate Remaining
-          for a new wave
+          • <span className="text-blue-500">Lost → write off & ship replacement</span> — then use Allocate
+          Remaining for a new wave
         </span>
         <span>
           • <span className="text-blue-500">Lost → write off only</span> — accept the loss (no replacement)

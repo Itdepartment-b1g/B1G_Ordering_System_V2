@@ -10,6 +10,7 @@ import type {
   InternalStockRequestEventRow,
   InternalStockRequestRow,
 } from './internalStockRequestsApi';
+import { formatShortfallReasonLabel } from '@/features/orders/deliveryDiscrepancyShared';
 
 type RawEventLine = {
   variant_id?: string;
@@ -19,6 +20,9 @@ type RawEventLine = {
   variantName?: string;
   brand_name?: string;
   brandName?: string;
+  reason?: string;
+  shortfall_notes?: string;
+  shortfallNotes?: string;
 };
 
 function mapItems(row: InternalStockRequestRow): SubWarehouseStockRequestItem[] {
@@ -46,11 +50,20 @@ function resolveLines(
     const line = entry as RawEventLine;
     const variantId = String(line.variant_id || line.variantId || '');
     const item = items.find((i) => i.variantId === variantId);
+    const rawReason = line.reason?.trim() || '';
+    const shortfallNotes =
+      (line.shortfall_notes || line.shortfallNotes || '').trim() || undefined;
     return {
       variantId,
       variantName: line.variantName || line.variant_name || item?.variantName || variantId,
       brandName: line.brandName || line.brand_name || item?.brandName,
       quantity: Number(line.quantity) || 0,
+      ...(rawReason
+        ? {
+            reason: formatShortfallReasonLabel(rawReason, shortfallNotes) || rawReason,
+            ...(shortfallNotes ? { shortfallNotes } : {}),
+          }
+        : {}),
     };
   });
 }

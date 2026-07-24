@@ -178,6 +178,41 @@ function getRequestOverallQty(request: SubWarehouseStockRequest): number {
   return request.items.reduce((sum, item) => sum + Math.max(0, item.requestedQuantity || 0), 0);
 }
 
+/** Secondary badge for partial-receive waves: ready vs waiting on main. */
+function PartialReceiveStateBadge({ request }: { request: SubWarehouseStockRequest }) {
+  if (request.status !== 'partially_received') return null;
+  const { short, openReceive } = getRequestDeliveryTotals(request.items);
+  if (short <= 0) return null;
+  if (openReceive > 0) {
+    return (
+      <Badge
+        variant="outline"
+        className="font-normal text-[10px] h-5 gap-1 border-emerald-300 bg-emerald-50 text-emerald-900"
+      >
+        <Truck className="h-3 w-3" />
+        Ready to receive
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="font-normal text-[10px] h-5 gap-1 border-amber-300 bg-amber-50 text-amber-900"
+    >
+      <Clock className="h-3 w-3" />
+      Waiting on main to resolve shortage
+    </Badge>
+  );
+}
+
+function RequestStatusCluster({ request }: { request: SubWarehouseStockRequest }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 justify-end">
+      <StatusBadge status={request.status} />
+      <PartialReceiveStateBadge request={request} />
+    </div>
+  );
+}
 
 function RequestTotals({ request }: { request: SubWarehouseStockRequest }) {
   if (request.status !== 'partially_received' && request.status !== 'fully_received') {
@@ -202,17 +237,22 @@ function RequestTotals({ request }: { request: SubWarehouseStockRequest }) {
         ) : null}
       </p>
       {openReceive > 0 ? (
-        <p className="text-xs text-foreground">
-          Unlocked {openReceive} of short {short}
-        </p>
+        <>
+          <p className="text-xs text-foreground">
+            Unlocked {openReceive} of short {short}
+          </p>
+          <p className="text-xs text-emerald-800">
+            Main unlocked a receive wave — confirm receive.
+          </p>
+        </>
       ) : short > 0 && request.status === 'partially_received' ? (
         <p className="text-xs text-amber-800">
-          Waiting for main to allocate remaining {short} unit{short === 1 ? '' : 's'} on this
-          request.
+          Waiting for main to finish shortage investigation or unlock remaining {short} unit
+          {short === 1 ? '' : 's'}.
         </p>
       ) : short > 0 ? (
         <p className="text-xs text-amber-800">
-          Main warehouse must allocate remaining {short} unit{short === 1 ? '' : 's'}.
+          Waiting for main to unlock remaining {short} unit{short === 1 ? '' : 's'}.
         </p>
       ) : null}
     </div>
@@ -629,8 +669,8 @@ export function SubWarehouseStockRequestList({
                       Qty {getRequestOverallQty(req).toLocaleString()}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <StatusBadge status={req.status} />
+                  <div className="flex items-start gap-1">
+                    <RequestStatusCluster request={req} />
                     <RequestRowActionsMenu
                       request={req}
                       onHistory={setHistoryRequest}
@@ -643,17 +683,32 @@ export function SubWarehouseStockRequestList({
                 <ItemChips request={req} />
                 <RequestTotals request={req} />
 
-                {hasReceiptSummary(req.status) ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={() => setReceiptRequest(req)}
-                  >
-                    View receipt
-                  </Button>
-                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  {canReceiveRequest(req) ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8"
+                      onClick={() => onReceive(req)}
+                    >
+                      <Truck className="mr-1.5 h-3.5 w-3.5" />
+                      {req.status === 'partially_received'
+                        ? 'Confirm receive'
+                        : 'Receive'}
+                    </Button>
+                  ) : null}
+                  {hasReceiptSummary(req.status) ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      onClick={() => setReceiptRequest(req)}
+                    >
+                      View receipt
+                    </Button>
+                  ) : null}
+                </div>
 
                 {req.notes ? (
                   <p className="text-xs text-muted-foreground">Notes: {req.notes}</p>
@@ -703,13 +758,26 @@ export function SubWarehouseStockRequestList({
                       {getRequestOverallQty(req).toLocaleString()}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={req.status} />
+                      <RequestStatusCluster request={req} />
                     </TableCell>
                     <TableCell className="min-w-[10rem]">
                       <ReceiptCell request={req} onViewReceipt={setReceiptRequest} />
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end">
+                      <div className="flex justify-end items-center gap-2">
+                        {canReceiveRequest(req) ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-8"
+                            onClick={() => onReceive(req)}
+                          >
+                            <Truck className="mr-1.5 h-3.5 w-3.5" />
+                            {req.status === 'partially_received'
+                              ? 'Confirm receive'
+                              : 'Receive'}
+                          </Button>
+                        ) : null}
                         <RequestRowActionsMenu
                           request={req}
                           onHistory={setHistoryRequest}
@@ -741,8 +809,9 @@ export function SubWarehouseStockRequestList({
       <Dialog open={!!historyRequest} onOpenChange={(open) => !open && setHistoryRequest(null)}>
         <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
               History{historyRequest ? ` — ${historyRequest.requestNumber}` : ''}
+              {historyRequest ? <RequestStatusCluster request={historyRequest} /> : null}
             </DialogTitle>
           </DialogHeader>
           <SubWarehouseRequestHistoryTimeline
@@ -770,7 +839,7 @@ export function SubWarehouseStockRequestList({
           </DialogHeader>
           {receiptRequest ? (
             <div className="space-y-4">
-              <StatusBadge status={receiptRequest.status} />
+              <RequestStatusCluster request={receiptRequest} />
               <RequestTotals request={receiptRequest} />
               {receiptRequest.receiveNotes ? (
                 <p className="text-sm text-muted-foreground">

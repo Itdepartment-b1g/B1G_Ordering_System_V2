@@ -61,6 +61,10 @@ export type SubWarehouseReleaseLine = {
   variantName: string;
   brandName?: string;
   quantity: number;
+  /** Shortage reason label for shortage_opened lines (display). */
+  reason?: string;
+  /** Free-text detail when reason is other (or extra notes). */
+  shortfallNotes?: string;
 };
 
 export type SubWarehouseStockInitiationType = 'sub_request' | 'main_allocation';

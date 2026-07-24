@@ -44,6 +44,7 @@ import {
   canExportDeliveryReceiptForEvent,
   type DeliveryReceiptWaveEvent,
 } from '../utils/exportInternalStockDeliveryReceiptPdf';
+import { SHORTFALL_REASON_LABELS } from '@/features/orders/deliveryDiscrepancyShared';
 
 function formatAt(iso: string): string {
   try {
@@ -82,7 +83,7 @@ function eventTitle(
     case 'receive_confirmed':
       return 'Receive confirmed';
     case 'shortage_opened':
-      return 'Shortage reported';
+      return 'Under investigation';
     case 'shortage_resolved_redeliver':
       return 'Shortage resolved · found & redeliver';
     case 'shortage_resolved_write_off_replace':
@@ -152,15 +153,12 @@ function eventSummary(
 
   if (event.type === 'shortage_opened') {
     const qty = event.shortQuantity ?? linesTotalQty(event.lines);
-    const reason = event.note?.trim();
-    return reason
-      ? `${unitLabel(qty)} short · ${reason}`
-      : `${unitLabel(qty)} short · under investigation`;
+    return `${unitLabel(qty)} short sent to warehouse`;
   }
 
   if (event.type === 'shortage_resolved_redeliver') {
     const qty = event.shortQuantity ?? linesTotalQty(event.lines);
-    return `Found ${unitLabel(qty)} · re-unlocked for sub receive`;
+    return `Found ${unitLabel(qty)} · use Allocate Remaining to re-deliver`;
   }
 
   if (event.type === 'shortage_resolved_write_off_replace') {
@@ -299,6 +297,23 @@ function isBoilerplateAllocateNote(note: string | undefined): boolean {
   return /^allocated\s+\d+\s+unit\(s\)\s+of\s+remaining\s+short\.?$/i.test(note.trim());
 }
 
+/** Investigation note for shortage_opened — skip when note is only the reason label. */
+function shortageInvestigationNote(
+  event: Extract<SubWarehouseRequestHistoryEvent, { type: 'shortage_opened' }>
+): string | null {
+  const fromLines = (event.lines ?? [])
+    .map((l) => l.shortfallNotes?.trim())
+    .filter((n): n is string => !!n);
+  if (fromLines.length > 0) return fromLines.join('\n');
+
+  const note = event.note?.trim();
+  if (!note) return null;
+  const reasonLabels = Object.values(SHORTFALL_REASON_LABELS);
+  if (reasonLabels.includes(note as (typeof reasonLabels)[number])) return null;
+  if (/^Other(\s*—|\s+-)/i.test(note)) return null;
+  return note;
+}
+
 /** Business flow rank — used when events share the same timestamp (e.g. allocate+deliver). */
 function eventFlowOrder(type: SubWarehouseRequestHistoryEvent['type']): number {
   switch (type) {
@@ -354,6 +369,7 @@ function HistoryLinesTable({
   qtyHeader: string;
 }) {
   if (lines.length === 0) return null;
+  const showReason = lines.some((line) => !!line.reason?.trim());
 
   return (
     <div className="rounded-md border overflow-hidden">
@@ -362,6 +378,7 @@ function HistoryLinesTable({
           <TableRow className="hover:bg-transparent">
             <TableHead className="h-8 text-xs">Brand</TableHead>
             <TableHead className="h-8 text-xs">Variant</TableHead>
+            {showReason ? <TableHead className="h-8 text-xs">Reason</TableHead> : null}
             <TableHead className="h-8 text-xs text-right">{qtyHeader}</TableHead>
           </TableRow>
         </TableHeader>
@@ -373,6 +390,11 @@ function HistoryLinesTable({
             >
               <TableCell className="py-2 text-xs">{resolveBrandName(line, items)}</TableCell>
               <TableCell className="py-2 text-xs">{line.variantName}</TableCell>
+              {showReason ? (
+                <TableCell className="py-2 text-xs text-muted-foreground">
+                  {line.reason?.trim() || '—'}
+                </TableCell>
+              ) : null}
               <TableCell className="py-2 text-xs text-right tabular-nums">
                 {line.quantity.toLocaleString()}
               </TableCell>
@@ -750,8 +772,19 @@ export function SubWarehouseRequestHistoryTimeline({
               const isLast = eventIndex === events.length - 1;
               const lines = 'lines' in event ? event.lines : undefined;
               const summary = eventSummary(event, items, request?.initiationType);
+              const shortQty =
+                event.type === 'receive_confirmed' || event.type === 'shortage_opened'
+                  ? (event.shortQuantity ?? 0)
+                  : 0;
               const hasShortBadge =
-                event.type === 'receive_confirmed' && event.shortQuantity > 0;
+                (event.type === 'receive_confirmed' || event.type === 'shortage_opened') &&
+                shortQty > 0;
+              const shortBadgeLabel =
+                event.type === 'shortage_opened'
+                  ? `${shortQty.toLocaleString()} under investigation`
+                  : `${shortQty.toLocaleString()} left on request`;
+              const shortageNote =
+                event.type === 'shortage_opened' ? shortageInvestigationNote(event) : null;
               const isDelivered =
                 event.type === 'delivered' || event.type === 'approved_released';
               const isAllocateWave = event.type === 'remaining_released';
@@ -835,9 +868,13 @@ export function SubWarehouseRequestHistoryTimeline({
                         <Badge
                           variant="secondary"
                           className="shrink-0 border-amber-200 bg-amber-50 text-amber-900 font-medium"
-                          title="Units still on this request after this confirm (may need main to allocate another wave)"
+                          title={
+                            event.type === 'shortage_opened'
+                              ? 'Short quantity currently under warehouse investigation'
+                              : 'Units still on this request after this confirm (may need main to allocate another wave)'
+                          }
                         >
-                          {event.shortQuantity.toLocaleString()} left on request
+                          {shortBadgeLabel}
                         </Badge>
                       ) : null}
                     </div>
@@ -906,6 +943,16 @@ export function SubWarehouseRequestHistoryTimeline({
                           Reason
                         </p>
                         <p className="whitespace-pre-wrap leading-snug">{event.note}</p>
+                      </div>
+                    </div>
+                  ) : shortageNote ? (
+                    <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-950">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-700" />
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="font-semibold uppercase tracking-wide text-amber-800 text-[10px]">
+                          Investigation note
+                        </p>
+                        <p className="whitespace-pre-wrap leading-snug">{shortageNote}</p>
                       </div>
                     </div>
                   ) : showNote ? (
