@@ -19,7 +19,7 @@ import { generateAndOpenReceiveReceiptPdf } from '../dr/generateReceiveReceiptPd
 import { PoBuyerReceiveDialog, type PoReceiveLine } from './PoBuyerReceiveDialog';
 import { PoBuyerCancelDialog } from './PoBuyerCancelDialog';
 import {
-  SHORTFALL_REASON_LABELS,
+  formatShortfallReasonLabel,
   type ShortfallReason,
 } from '@/features/orders/deliveryDiscrepancyShared';
 
@@ -138,6 +138,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
         variant_id: string;
         quantity: number;
         reason: string;
+        buyer_notes: string | null;
         status: string;
       }>
     >
@@ -200,10 +201,9 @@ export function PurchaseOrderDeliveryDetailsPanel({
           : variant.brands
         : null;
       const disc = discs.find((d) => d.variant_id === item.variant_id);
-      const shortfallReason =
-        disc?.reason && disc.reason in SHORTFALL_REASON_LABELS
-          ? SHORTFALL_REASON_LABELS[disc.reason as ShortfallReason]
-          : disc?.reason || null;
+      const shortfallReason = disc?.reason
+        ? formatShortfallReasonLabel(disc.reason as ShortfallReason, disc.buyer_notes)
+        : null;
       return {
         brand_name: brand?.name ?? null,
         variant_name: variant?.name ?? null,
@@ -275,7 +275,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
 
         const { data: discData, error: discErr } = await supabase
           .from('purchase_order_delivery_discrepancies')
-          .select('delivery_id,variant_id,quantity,reason,status')
+          .select('delivery_id,variant_id,quantity,reason,buyer_notes,status')
           .in('delivery_id', deliveryIds);
         if (discErr) {
           // Table may not exist until migration is applied
@@ -288,6 +288,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
             variant_id: string;
             quantity: number;
             reason: string;
+            buyer_notes: string | null;
             status: string;
           }>) {
             (dMap[row.delivery_id] ||= []).push(row);

@@ -403,6 +403,18 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
         if (itemsError) throw itemsError;
 
+        const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+        void logPurchaseOrderEvent({
+          purchaseOrderId: newPO.id,
+          eventType: 'created',
+          note: orderData.notes || null,
+          lines: orderData.items.map((item) => ({
+            variant_id: item.variant_id,
+            quantity: item.quantity,
+          })),
+          createdBy: user.id,
+        });
+
         toast({
           title: 'Success',
           description: `Purchase Order ${poNumber} created successfully`,
@@ -469,6 +481,16 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       console.log('[PO Approval] Success! PO Number:', data.po_number);
 
+      // approve_multi_location_po already writes purchase_order_events; log for other paths.
+      if (rpcName !== 'approve_multi_location_po') {
+        const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+        void logPurchaseOrderEvent({
+          purchaseOrderId: poId,
+          eventType: 'approved',
+          createdBy: user.id,
+        });
+      }
+
       toast({
         title: 'Purchase Order Approved',
         description:
@@ -509,6 +531,13 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
 
       if (error) throw error;
 
+      const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poId,
+        eventType: 'rejected',
+        createdBy: user.id,
+      });
+
       toast({ title: 'Purchase Order Rejected', description: 'The PO has been rejected.' });
       scheduleBackgroundRefresh();
       return { success: true };
@@ -518,25 +547,16 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Resolve linked warehouse hub for admin / super_admin (client company PO creation)
+  // Resolve linked warehouse hub for client companies (any non-warehouse role).
+  // Used for warehouse_transfer PO creation and History visibility.
   useEffect(() => {
-    if (!user?.company_id || !['super_admin', 'admin'].includes(user.role)) {
+    if (!user?.company_id || user.role === 'warehouse') {
       setLinkedWarehouseCompanyId(null);
       return;
     }
 
     let cancelled = false;
     (async () => {
-      const { data: row, error } = await supabase
-        .from('warehouse_company_assignments')
-        .select('warehouse_user_id')
-        .eq('client_company_id', user.company_id)
-        .maybeSingle();
-
-      if (cancelled || error || !row?.warehouse_user_id) {
-        if (!cancelled) setLinkedWarehouseCompanyId(null);
-        return;
-      }
       // Tenant users may not be able to SELECT the warehouse user's profile row due to RLS
       // (different company). Use a SECURITY DEFINER RPC to resolve hub company_id safely.
       const { data: hubCompanyId, error: hubErr } = await supabase.rpc('get_linked_warehouse_company_id', {});
@@ -546,7 +566,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         setLinkedWarehouseCompanyId(null);
         return;
       }
-      setLinkedWarehouseCompanyId(hubCompanyId as any);
+      setLinkedWarehouseCompanyId(hubCompanyId as string);
     })();
 
     return () => {

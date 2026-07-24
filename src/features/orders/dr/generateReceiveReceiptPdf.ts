@@ -1,6 +1,4 @@
 import { supabase } from '@/lib/supabase';
-import { getDrBankAccounts } from '@/features/finance/paymentSettingsUtils';
-import type { BankAccount } from '@/types/database.types';
 import type { PurchaseOrder } from '../types';
 
 export type ReceiveReceiptLine = {
@@ -41,11 +39,6 @@ type DrReceiptInfo = {
     city: string;
     country: string;
   } | null;
-  payment?: {
-    company_name?: string;
-    bank_transfer_enabled?: boolean;
-    bank_accounts?: BankAccount[];
-  } | null;
 };
 
 type DeliveryDetails = {
@@ -55,53 +48,17 @@ type DeliveryDetails = {
   contactPhone: string;
 };
 
-async function fetchWarehousePaymentFallback(
-  po: PurchaseOrder
-): Promise<DrReceiptInfo['payment'] | null> {
-  const companyId = po.warehouse_company_id;
-  if (!companyId) return null;
-
-  const [{ data: paymentRow }, { data: companyRow }] = await Promise.all([
-    supabase
-      .from('company_payment_settings')
-      .select('bank_accounts, bank_transfer_enabled')
-      .eq('company_id', companyId)
-      .maybeSingle(),
-    supabase.from('companies').select('company_name').eq('id', companyId).maybeSingle(),
-  ]);
-
-  if (!paymentRow && !companyRow) return null;
-
-  return {
-    company_name: companyRow?.company_name ?? '',
-    bank_transfer_enabled: paymentRow?.bank_transfer_enabled ?? false,
-    bank_accounts: (paymentRow?.bank_accounts as BankAccount[] | undefined) ?? [],
-  };
-}
-
-async function fetchDrReceiptInfoFallback(po: PurchaseOrder): Promise<DrReceiptInfo> {
-  const payment = await fetchWarehousePaymentFallback(po);
-  return payment ? { payment } : {};
-}
-
 async function fetchDrReceiptInfo(po: PurchaseOrder): Promise<DrReceiptInfo> {
   try {
     const { data, error } = await supabase.rpc('get_po_dr_receipt_info', { p_po_id: po.id });
     if (error) {
       console.warn('[RR] get_po_dr_receipt_info error:', error);
-      return await fetchDrReceiptInfoFallback(po);
+      return {};
     }
-    const info = (data || {}) as DrReceiptInfo;
-    if (!info.payment?.bank_accounts?.length) {
-      const fallbackPayment = await fetchWarehousePaymentFallback(po);
-      if (fallbackPayment) {
-        info.payment = { ...info.payment, ...fallbackPayment };
-      }
-    }
-    return info;
+    return (data || {}) as DrReceiptInfo;
   } catch (e) {
     console.warn('[RR] get_po_dr_receipt_info exception:', e);
-    return fetchDrReceiptInfoFallback(po);
+    return {};
   }
 }
 
@@ -227,33 +184,6 @@ function itemRowsHtml(lines: ReceiveReceiptLine[]): string {
   return rows.join('');
 }
 
-function bankSectionHtml(receiptInfo: DrReceiptInfo): string {
-  const payment = receiptInfo.payment;
-  const banks = getDrBankAccounts(payment ? { bank_accounts: payment.bank_accounts ?? [] } : null);
-
-  if (banks.length === 0) return '';
-
-  const companyName = payment?.company_name?.trim() || 'B1G CORPORATION';
-  const cols = banks
-    .map(
-      (bank) => `
-        <div>
-          <div class="corp">${escapeHtml(companyName)}</div>
-          <div class="bank-name">${escapeHtml(bank.name)}</div>
-          <div class="bank-acct">${escapeHtml(bank.account_number)}</div>
-        </div>`
-    )
-    .join('');
-
-  return `
-    <div class="bank-section">
-      <div class="bank-title">BANK DETAILS:</div>
-      <div class="bank-cols">
-        ${cols}
-      </div>
-    </div>`;
-}
-
 function buildReceiveReceiptHtml(
   po: PurchaseOrder,
   options: ReceiveReceiptPdfOptions,
@@ -270,7 +200,8 @@ function buildReceiveReceiptHtml(
     ? ''
     : `<div class="warehouse-badge">Received from: <span>${whLabel}</span></div>`;
   const footerNoteHtml = hideWarehouse ? '' : `<div class="footer-note">${whFooter}</div>`;
-  const bankSection = bankSectionHtml(receiptInfo);
+  // Receive receipt confirms goods received — omit payment/bank details.
+  const bankSection = '';
 
   const totalDispatched = options.lines.reduce((s, l) => s + Number(l.quantity_dispatched || 0), 0);
   const totalReceived = options.lines.reduce((s, l) => s + Number(l.quantity_received || 0), 0);

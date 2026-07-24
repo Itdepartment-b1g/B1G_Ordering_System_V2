@@ -27,7 +27,7 @@ import { Loader2 } from 'lucide-react';
 import type { PurchaseOrder } from '../types';
 import { generateAndOpenReceiveReceiptPdf } from '../dr/generateReceiveReceiptPdf';
 import {
-  SHORTFALL_REASON_LABELS,
+  formatShortfallReasonLabel,
   SHORTFALL_REASON_OPTIONS,
   type ShortfallReason,
 } from '@/features/orders/deliveryDiscrepancyShared';
@@ -78,6 +78,7 @@ export function PoBuyerReceiveDialog({
   const [step, setStep] = useState<1 | 2>(1);
   const [qtyByVariant, setQtyByVariant] = useState<Record<string, number>>({});
   const [reasonByVariant, setReasonByVariant] = useState<Record<string, ShortfallReason | ''>>({});
+  const [otherDetailByVariant, setOtherDetailByVariant] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
@@ -89,12 +90,15 @@ export function PoBuyerReceiveDialog({
     if (!open) return;
     const next: Record<string, number> = {};
     const reasons: Record<string, ShortfallReason | ''> = {};
+    const otherDetails: Record<string, string> = {};
     for (const line of lines) {
       next[line.variant_id] = line.quantity_dispatched;
       reasons[line.variant_id] = '';
+      otherDetails[line.variant_id] = '';
     }
     setQtyByVariant(next);
     setReasonByVariant(reasons);
+    setOtherDetailByVariant(otherDetails);
     setNotes('');
     setProofFile(null);
     setProofPreview(null);
@@ -133,13 +137,18 @@ export function PoBuyerReceiveDialog({
                 ...line,
                 shortfall: short,
                 reason: reasonByVariant[line.variant_id] || '',
+                otherDetail: otherDetailByVariant[line.variant_id] || '',
               }
             : null;
         })
         .filter(Boolean) as Array<
-        PoReceiveLine & { shortfall: number; reason: ShortfallReason | '' }
+        PoReceiveLine & {
+          shortfall: number;
+          reason: ShortfallReason | '';
+          otherDetail: string;
+        }
       >,
-    [lines, qtyByVariant, reasonByVariant]
+    [lines, qtyByVariant, reasonByVariant, otherDetailByVariant]
   );
   const totalShortfall = useMemo(
     () => shortfallLines.reduce((s, l) => s + l.shortfall, 0),
@@ -175,12 +184,20 @@ export function PoBuyerReceiveDialog({
       }
     }
     for (const short of shortfallLines) {
+      const itemLabel =
+        [short.brand_name, short.variant_name].filter(Boolean).join(' · ') || 'item';
       if (!short.reason) {
         toast({
           title: 'Shortfall reason required',
-          description: `Select a reason for the ${short.shortfall} missing unit(s) of ${
-            [short.brand_name, short.variant_name].filter(Boolean).join(' · ') || 'item'
-          }.`,
+          description: `Select a reason for the ${short.shortfall} missing unit(s) of ${itemLabel}.`,
+          variant: 'destructive',
+        });
+        return false;
+      }
+      if (short.reason === 'other' && !short.otherDetail.trim()) {
+        toast({
+          title: 'Describe the shortfall',
+          description: `Enter a reason for the ${short.shortfall} missing unit(s) of ${itemLabel}.`,
           variant: 'destructive',
         });
         return false;
@@ -212,6 +229,15 @@ export function PoBuyerReceiveDialog({
       toast({
         title: 'Signature required',
         description: 'Draw your signature to confirm receipt.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (totalShortfall > 0 && !notes.trim()) {
+      toast({
+        title: 'Notes required',
+        description:
+          'Add a note explaining the shortfall when receiving less than dispatched.',
         variant: 'destructive',
       });
       return;
@@ -266,10 +292,16 @@ export function PoBuyerReceiveDialog({
         const quantity_received = qtyByVariant[line.variant_id] ?? 0;
         const shortfall = line.quantity_dispatched - quantity_received;
         const reason = reasonByVariant[line.variant_id];
+        const otherDetail = otherDetailByVariant[line.variant_id]?.trim() || '';
         return {
           variant_id: line.variant_id,
           quantity_received,
-          ...(shortfall > 0 && reason ? { shortfall_reason: reason } : {}),
+          ...(shortfall > 0 && reason
+            ? {
+                shortfall_reason: reason,
+                ...(reason === 'other' && otherDetail ? { shortfall_notes: otherDetail } : {}),
+              }
+            : {}),
         };
       });
 
@@ -287,6 +319,58 @@ export function PoBuyerReceiveDialog({
       }
 
       const shortfall = totalDispatched - totalReceiving;
+      const { logPurchaseOrderEvent } = await import('../purchaseOrderEventsApi');
+      // Log receive first, then shortage, so timeline order is Receive → Under investigation.
+      await logPurchaseOrderEvent({
+        purchaseOrderId,
+        eventType: 'receive_confirmed',
+        note: notes.trim() || null,
+        lines: lines
+          .map((line) => ({
+            variant_id: line.variant_id,
+            quantity: qtyByVariant[line.variant_id] ?? 0,
+            variant_name: line.variant_name,
+            brand_name: line.brand_name,
+          }))
+          .filter((l) => l.quantity > 0),
+        shortQuantity: shortfall > 0 ? shortfall : 0,
+        proofImageUrl: proofUrl,
+        signatureUrl: signatureUrl,
+        signaturePath: signaturePath,
+        deliveryId,
+        createdBy: user?.id,
+      });
+      if (shortfall > 0) {
+        const shortageLines = lines
+          .map((line) => {
+            const quantityReceived = qtyByVariant[line.variant_id] ?? 0;
+            const shortageQty = line.quantity_dispatched - quantityReceived;
+            const reason = reasonByVariant[line.variant_id];
+            if (shortageQty <= 0) return null;
+            return {
+              variant_id: line.variant_id,
+              quantity: shortageQty,
+              variant_name: line.variant_name,
+              brand_name: line.brand_name,
+              reason: reason
+                ? formatShortfallReasonLabel(reason, otherDetailByVariant[line.variant_id])
+                : 'Under investigation',
+            };
+          })
+          .filter((line): line is NonNullable<typeof line> => line != null);
+
+        await logPurchaseOrderEvent({
+          purchaseOrderId,
+          eventType: 'shortage_opened',
+          note: notes.trim() || null,
+          lines: shortageLines,
+          shortQuantity: shortfall,
+          deliveryId,
+          createdBy: user?.id,
+          createdAt: new Date(Date.now() + 1000).toISOString(),
+        });
+      }
+
       const discrepancyCount =
         Number((data as { discrepancies_opened?: number })?.discrepancies_opened) || 0;
       toast({
@@ -308,7 +392,9 @@ export function PoBuyerReceiveDialog({
             quantity_dispatched: line.quantity_dispatched,
             quantity_received,
             shortfall_reason:
-              shortfallQty > 0 && reason ? SHORTFALL_REASON_LABELS[reason] : null,
+              shortfallQty > 0 && reason
+                ? formatShortfallReasonLabel(reason, otherDetailByVariant[line.variant_id])
+                : null,
           };
         });
         void generateAndOpenReceiveReceiptPdf(purchaseOrder, {
@@ -399,6 +485,10 @@ export function PoBuyerReceiveDialog({
                                     ...prev,
                                     [line.variant_id]: '',
                                   }));
+                                  setOtherDetailByVariant((prev) => ({
+                                    ...prev,
+                                    [line.variant_id]: '',
+                                  }));
                                 }
                               }}
                             />
@@ -427,12 +517,19 @@ export function PoBuyerReceiveDialog({
                         </Label>
                         <Select
                           value={line.reason || undefined}
-                          onValueChange={(v) =>
+                          onValueChange={(v) => {
+                            const next = v as ShortfallReason;
                             setReasonByVariant((prev) => ({
                               ...prev,
-                              [line.variant_id]: v as ShortfallReason,
-                            }))
-                          }
+                              [line.variant_id]: next,
+                            }));
+                            if (next !== 'other') {
+                              setOtherDetailByVariant((prev) => ({
+                                ...prev,
+                                [line.variant_id]: '',
+                              }));
+                            }
+                          }}
                         >
                           <SelectTrigger className="h-8 text-xs">
                             <SelectValue placeholder="Select reason…" />
@@ -445,6 +542,21 @@ export function PoBuyerReceiveDialog({
                             ))}
                           </SelectContent>
                         </Select>
+                        {line.reason === 'other' ? (
+                          <Input
+                            className="h-8 text-xs"
+                            value={line.otherDetail}
+                            onChange={(e) =>
+                              setOtherDetailByVariant((prev) => ({
+                                ...prev,
+                                [line.variant_id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Describe the shortfall…"
+                            maxLength={500}
+                            aria-label="Other shortfall reason"
+                          />
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -483,7 +595,9 @@ export function PoBuyerReceiveDialog({
                       warehouse for investigation
                       {shortfallLines
                         .map((l) =>
-                          l.reason ? ` (${SHORTFALL_REASON_LABELS[l.reason as ShortfallReason]})` : ''
+                          l.reason
+                            ? ` (${formatShortfallReasonLabel(l.reason, l.otherDetail)})`
+                            : ''
                         )
                         .filter(Boolean)
                         .join('')}
@@ -545,13 +659,24 @@ export function PoBuyerReceiveDialog({
 
                 <div className="space-y-2">
                   <Label>
-                    Notes <span className="text-muted-foreground font-normal">(optional)</span>
+                    Notes{' '}
+                    {totalShortfall > 0 ? (
+                      <span className="text-destructive font-normal">(required for shortfall)</span>
+                    ) : (
+                      <span className="text-muted-foreground font-normal">(optional)</span>
+                    )}
                   </Label>
                   <Textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Damaged units, missing pieces, gate notes…"
+                    placeholder={
+                      totalShortfall > 0
+                        ? 'Explain the shortfall (what happened, gate notes, etc.)…'
+                        : 'Damaged units, missing pieces, gate notes…'
+                    }
                     rows={2}
+                    required={totalShortfall > 0}
+                    aria-required={totalShortfall > 0}
                   />
                 </div>
               </>
@@ -575,7 +700,13 @@ export function PoBuyerReceiveDialog({
                 </Button>
                 <Button
                   onClick={() => void handleSubmit()}
-                  disabled={saving || lines.length === 0 || !signatureDataUrl || !proofFile}
+                  disabled={
+                    saving ||
+                    lines.length === 0 ||
+                    !signatureDataUrl ||
+                    !proofFile ||
+                    (totalShortfall > 0 && !notes.trim())
+                  }
                 >
                   {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                   Confirm receive ({totalReceiving})

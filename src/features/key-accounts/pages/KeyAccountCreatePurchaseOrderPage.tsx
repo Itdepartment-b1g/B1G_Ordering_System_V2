@@ -796,6 +796,19 @@ export function KeyAccountPurchaseOrderPage() {
 
       if (itemsError) throw itemsError;
 
+      const { logPurchaseOrderEvent } = await import('@/features/orders/purchaseOrderEventsApi');
+      void logPurchaseOrderEvent({
+        purchaseOrderId: poData.id,
+        eventType: 'created',
+        lines: items.map((item) => ({
+          variant_id: item.variantId,
+          quantity: item.quantity,
+          variant_name: item.variantName,
+          brand_name: item.brandName,
+        })),
+        createdBy: user?.id,
+      });
+
       if (!user.company_id) {
         throw new Error('Missing company context for payment proof upload.');
       }

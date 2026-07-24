@@ -16,6 +16,21 @@ export const SHORTFALL_REASON_LABELS: Record<ShortfallReason, string> = {
   other: 'Other',
 };
 
+/** Display label; when reason is `other`, append buyer free-text detail. */
+export function formatShortfallReasonLabel(
+  reason: ShortfallReason | string | null | undefined,
+  detail?: string | null
+): string {
+  if (!reason) return '';
+  const base =
+    reason in SHORTFALL_REASON_LABELS
+      ? SHORTFALL_REASON_LABELS[reason as ShortfallReason]
+      : String(reason);
+  const firstLine = detail?.trim().split(/\r?\n/)[0]?.trim();
+  if (reason === 'other' && firstLine) return `${base} — ${firstLine}`;
+  return base;
+}
+
 export type DiscrepancyStatus =
   | 'open'
   | 'resolved_redeliver'
