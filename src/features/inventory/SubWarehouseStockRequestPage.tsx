@@ -57,6 +57,15 @@ export default function SubWarehouseStockRequestPage() {
   useEffect(() => {
     if (!user?.company_id || !myLocationId) return;
 
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+      }, 250);
+    };
+
     const channel = supabase
       .channel(`internal-stock-requests-sub-${myLocationId}`)
       .on(
@@ -65,15 +74,21 @@ export default function SubWarehouseStockRequestPage() {
           event: '*',
           schema: 'public',
           table: 'internal_stock_requests',
-          filter: `from_location_id=eq.${myLocationId}`,
         },
-        () => {
-          void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+        (payload) => {
+          const row = (payload.new ?? payload.old) as { from_location_id?: string } | null;
+          if (row?.from_location_id && row.from_location_id !== myLocationId) return;
+          scheduleRefresh();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('[SubStockRequests] realtime subscription failed:', status);
+        }
+      });
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       void supabase.removeChannel(channel);
     };
   }, [user?.company_id, myLocationId, queryClient]);

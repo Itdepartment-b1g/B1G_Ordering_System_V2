@@ -410,49 +410,13 @@ export default function MainWarehouseSubStockRequestsPage() {
     data: requests = [],
     isLoading: loadingRequests,
     error: requestsError,
-    isFetching: fetchingRequests,
-    status: queryStatus,
   } = useQuery({
     queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY, 'main', user?.company_id, 'rpc-v1'],
     enabled: !!user?.company_id,
-    staleTime: 0,
-    refetchOnMount: 'always',
-    queryFn: async () => {
-      console.log('[MainSubStockRequests] fetch start', {
-        companyId: user?.company_id,
-        userId: user?.id,
-        email: user?.email,
-        role: user?.role,
-      });
-
-      const { data: accessDebug, error: accessDebugErr } = await supabase.rpc(
-        'debug_internal_stock_request_access'
-      );
-      console.log('[MainSubStockRequests] access debug RPC', { accessDebug, accessDebugErr });
-
-      const { data: idList, error: idListErr } = await supabase.rpc(
-        'list_visible_internal_stock_request_ids',
-        { p_from_location_id: null }
-      );
-      console.log('[MainSubStockRequests] visible ids RPC', {
-        count: Array.isArray(idList) ? idList.length : 0,
-        idList,
-        idListErr,
-      });
-
-      try {
-        const data = await fetchInternalStockRequests();
-        console.log('[MainSubStockRequests] fetch OK', {
-          count: data.length,
-          requestNumbers: data.map((r) => r.requestNumber),
-          requests: data,
-        });
-        return data;
-      } catch (err) {
-        console.error('[MainSubStockRequests] fetch FAILED', err);
-        throw err;
-      }
-    },
+    staleTime: 15_000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
+    queryFn: () => fetchInternalStockRequests(),
   });
 
   const invalidateRequests = async () => {
@@ -465,23 +429,40 @@ export default function MainWarehouseSubStockRequestsPage() {
   useEffect(() => {
     if (!user?.company_id) return;
 
+    const companyId = user.company_id;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+      }, 250);
+    };
+
     const channel = supabase
-      .channel(`internal-stock-requests-main-${user.company_id}`)
+      .channel(`internal-stock-requests-main-${companyId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'internal_stock_requests',
-          filter: `company_id=eq.${user.company_id}`,
         },
-        () => {
-          void queryClient.invalidateQueries({ queryKey: [INTERNAL_STOCK_REQUESTS_QUERY_KEY] });
+        (payload) => {
+          const row = (payload.new ?? payload.old) as { company_id?: string } | null;
+          // Skip other companies when payload includes company_id; RLS already scopes events.
+          if (row?.company_id && row.company_id !== companyId) return;
+          scheduleRefresh();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('[MainSubStockRequests] realtime subscription failed:', status);
+        }
+      });
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       void supabase.removeChannel(channel);
     };
   }, [user?.company_id, queryClient]);
@@ -766,40 +747,6 @@ export default function MainWarehouseSubStockRequestsPage() {
   }, [listTab, statusFilter]);
 
   const { pageCount, safePage, pagedItems } = getListPaginationSlice(filtered, page, pageSize);
-
-  useEffect(() => {
-    console.log('[MainSubStockRequests] state', {
-      queryStatus,
-      loadingRequests,
-      fetchingRequests,
-      enabled: !!user?.company_id,
-      user: user ? { id: user.id, email: user.email, company_id: user.company_id, role: user.role } : null,
-      rawCount: requests.length,
-      filteredCount: filtered.length,
-      error: requestsError
-        ? {
-            message: (requestsError as Error).message,
-            name: (requestsError as Error).name,
-            ...(requestsError as object),
-          }
-        : null,
-      filters: { statusFilter, warehouseFilter, searchQuery, dateRangeFilter },
-      rawRequests: requests,
-      filteredRequests: filtered,
-    });
-  }, [
-    queryStatus,
-    loadingRequests,
-    fetchingRequests,
-    user,
-    requests,
-    filtered,
-    requestsError,
-    statusFilter,
-    warehouseFilter,
-    searchQuery,
-    dateRangeFilter,
-  ]);
 
   const stats = useMemo(
     () => ({
