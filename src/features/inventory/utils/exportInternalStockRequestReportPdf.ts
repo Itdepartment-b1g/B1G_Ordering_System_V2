@@ -472,6 +472,13 @@ function buildUnifiedHtml(request: SubWarehouseStockRequest): string {
             : 'Main Warehouse'
           : request.requestedByName || '—'
       )}</dd></div>
+      ${
+        request.riderName || request.riderPlateNumber
+          ? `<div><dt>Rider</dt><dd>${escapeHtml(
+              [request.riderName, request.riderPlateNumber].filter(Boolean).join(' · ') || '—'
+            )}</dd></div>`
+          : ''
+      }
       <div><dt>Created</dt><dd>${escapeHtml(formatDateTime(request.createdAt))}</dd></div>
       <div><dt>Requested total</dt><dd>${request.items
         .reduce((s, i) => s + i.requestedQuantity, 0)

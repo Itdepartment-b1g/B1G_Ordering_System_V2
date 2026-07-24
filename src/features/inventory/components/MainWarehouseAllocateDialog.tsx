@@ -51,6 +51,9 @@ export type MainAllocateSubmitPayload = {
   items: Array<{ variant_id: string; quantity: number }>;
   signatureUrl: string;
   proofImageUrl: string;
+  riderName: string;
+  riderPlateNumber: string;
+  riderPhotoUrl: string;
 };
 
 type MainWarehouseAllocateDialogProps = {
@@ -121,12 +124,18 @@ export function MainWarehouseAllocateDialog({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [notes, setNotes] = useState('');
   const [filter, setFilter] = useState('');
+  const [riderName, setRiderName] = useState('');
+  const [riderPlate, setRiderPlate] = useState('');
+  const [riderPhotoDataUrl, setRiderPhotoDataUrl] = useState('');
+  const [riderPhotoName, setRiderPhotoName] = useState('');
+  const [riderPhotoError, setRiderPhotoError] = useState<string | null>(null);
   const [proofImageDataUrl, setProofImageDataUrl] = useState('');
   const [proofImageName, setProofImageName] = useState('');
   const [proofError, setProofError] = useState<string | null>(null);
   const [signatureDataUrl, setSignatureDataUrl] = useState('');
   const [signatureOpen, setSignatureOpen] = useState(false);
   const proofFileRef = useRef<HTMLInputElement>(null);
+  const riderPhotoFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -136,6 +145,11 @@ export function MainWarehouseAllocateDialog({
     setCart([]);
     setNotes('');
     setFilter('');
+    setRiderName('');
+    setRiderPlate('');
+    setRiderPhotoDataUrl('');
+    setRiderPhotoName('');
+    setRiderPhotoError(null);
     setProofImageDataUrl('');
     setProofImageName('');
     setProofError(null);
@@ -225,9 +239,29 @@ export function MainWarehouseAllocateDialog({
     }
   };
 
+  const handleRiderPhotoFileChange = async (file: File | null) => {
+    setRiderPhotoError(null);
+    if (!file) return;
+    const err = proofFileValidationError(file);
+    if (err) {
+      setRiderPhotoError(err);
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setRiderPhotoDataUrl(dataUrl);
+      setRiderPhotoName(file.name);
+    } catch {
+      setRiderPhotoError('Could not read image file.');
+    }
+  };
+
   const canSubmit =
     !!locationId &&
     cart.length > 0 &&
+    !!riderName.trim() &&
+    !!riderPlate.trim() &&
+    !!riderPhotoDataUrl &&
     !!proofImageDataUrl &&
     !!signatureDataUrl &&
     !submitting;
@@ -243,6 +277,9 @@ export function MainWarehouseAllocateDialog({
       })),
       signatureUrl: signatureDataUrl,
       proofImageUrl: proofImageDataUrl,
+      riderName: riderName.trim(),
+      riderPlateNumber: riderPlate.trim(),
+      riderPhotoUrl: riderPhotoDataUrl,
     });
   };
 
@@ -446,8 +483,89 @@ export function MainWarehouseAllocateDialog({
               />
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0">
+              <div className="space-y-2">
+                <Label htmlFor="main-alloc-rider-name">Rider name (required)</Label>
+                <Input
+                  id="main-alloc-rider-name"
+                  value={riderName}
+                  onChange={(e) => setRiderName(e.target.value)}
+                  placeholder="e.g. Juan Dela Cruz"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="main-alloc-rider-plate">Plate number (required)</Label>
+                <Input
+                  id="main-alloc-rider-plate"
+                  value={riderPlate}
+                  onChange={(e) => setRiderPlate(e.target.value)}
+                  placeholder="e.g. ABC-1234"
+                />
+              </div>
+            </div>
+
             <div className="space-y-2 shrink-0">
-              <Label>Proof photo (required)</Label>
+              <Label>Rider photo (required)</Label>
+              <input
+                ref={riderPhotoFileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => void handleRiderPhotoFileChange(e.target.files?.[0] ?? null)}
+              />
+              {!riderPhotoDataUrl ? (
+                <button
+                  type="button"
+                  onClick={() => riderPhotoFileRef.current?.click()}
+                  className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
+                >
+                  <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                  <p className="text-sm font-medium">Upload rider photo</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    JPG, PNG, WEBP, or GIF · max 5MB
+                  </p>
+                </button>
+              ) : (
+                <div className="rounded-md border p-3 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-xs text-muted-foreground truncate">
+                      {riderPhotoName || 'Rider photo'}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setRiderPhotoDataUrl('');
+                        setRiderPhotoName('');
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Remove
+                    </Button>
+                  </div>
+                  <img
+                    src={riderPhotoDataUrl}
+                    alt="Rider"
+                    className="max-h-40 mx-auto rounded-md object-contain"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => riderPhotoFileRef.current?.click()}
+                  >
+                    Replace photo
+                  </Button>
+                </div>
+              )}
+              {riderPhotoError ? (
+                <p className="text-xs text-destructive">{riderPhotoError}</p>
+              ) : null}
+            </div>
+
+            <div className="space-y-2 shrink-0">
+              <Label>Delivery proof (required)</Label>
               <input
                 ref={proofFileRef}
                 type="file"
@@ -462,7 +580,7 @@ export function MainWarehouseAllocateDialog({
                   className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
                 >
                   <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                  <p className="text-sm font-medium">Upload delivery proof</p>
+                  <p className="text-sm font-medium">Upload delivery / cargo proof</p>
                   <p className="text-xs text-muted-foreground mt-1">
                     JPG, PNG, WEBP, or GIF · max 5MB
                   </p>
@@ -471,7 +589,7 @@ export function MainWarehouseAllocateDialog({
                 <div className="rounded-md border p-3 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-xs text-muted-foreground truncate">
-                      {proofImageName || 'Proof image'}
+                      {proofImageName || 'Delivery proof'}
                     </p>
                     <Button
                       type="button"

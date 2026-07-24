@@ -343,6 +343,16 @@ function buildDeliveryReceiptHtml(request: SubWarehouseStockRequest): string {
         <span class="flabel">${refLabel}</span>
         <span class="fvalue">${refNo}</span>
       </div>
+      ${
+        request.riderName || request.riderPlateNumber
+          ? `<div class="delivery-field">
+        <span class="flabel">RIDER:</span>
+        <span class="fvalue">${escapeHtml(
+          [request.riderName, request.riderPlateNumber].filter(Boolean).join(' · ') || '—'
+        )}</span>
+      </div>`
+          : ''
+      }
     </div>
 
     <table class="signoff-table">

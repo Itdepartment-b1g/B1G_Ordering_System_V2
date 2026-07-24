@@ -725,6 +725,9 @@ export function SubWarehouseStockRequestList({
           <SubWarehouseRequestHistoryTimeline
             history={historyRequest?.history}
             items={historyRequest?.items}
+            riderName={historyRequest?.riderName}
+            riderPlateNumber={historyRequest?.riderPlateNumber}
+            riderPhotoUrl={historyRequest?.riderPhotoUrl}
           />
         </DialogContent>
       </Dialog>

@@ -88,6 +88,9 @@ function mapEvent(
         lines,
         proofImageDataUrl: event.proof_image_url || undefined,
         signatureDataUrl: event.signature_url || undefined,
+        riderName: event.rider_name || undefined,
+        riderPlateNumber: event.rider_plate_number || undefined,
+        riderPhotoUrl: event.rider_photo_url || undefined,
       };
     case 'approved_released':
       return {
@@ -96,6 +99,9 @@ function mapEvent(
         lines,
         proofImageDataUrl: event.proof_image_url || undefined,
         signatureDataUrl: event.signature_url || undefined,
+        riderName: event.rider_name || undefined,
+        riderPlateNumber: event.rider_plate_number || undefined,
+        riderPhotoUrl: event.rider_photo_url || undefined,
       };
     case 'remaining_released':
       return {
@@ -104,6 +110,9 @@ function mapEvent(
         lines,
         proofImageDataUrl: event.proof_image_url || undefined,
         signatureDataUrl: event.signature_url || undefined,
+        riderName: event.rider_name || undefined,
+        riderPlateNumber: event.rider_plate_number || undefined,
+        riderPhotoUrl: event.rider_photo_url || undefined,
       };
     case 'receive_confirmed':
       return {
@@ -181,6 +190,9 @@ export function mapInternalStockRequestRow(row: InternalStockRequestRow): SubWar
     approvalSignatureUrl: row.approval_signature_url || undefined,
     rejectionSignatureUrl: row.rejection_signature_url || undefined,
     drNumber: row.dr_number || undefined,
+    riderName: row.rider_name || undefined,
+    riderPlateNumber: row.rider_plate_number || undefined,
+    riderPhotoUrl: row.rider_photo_url || undefined,
     items,
     history,
     receiveProofs: mapReceiveProofs(history),

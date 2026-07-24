@@ -527,6 +527,11 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [deliverProofImageDataUrl, setDeliverProofImageDataUrl] = useState('');
   const [deliverProofImageName, setDeliverProofImageName] = useState('');
   const deliverProofFileRef = useRef<HTMLInputElement>(null);
+  const [deliverRiderName, setDeliverRiderName] = useState('');
+  const [deliverRiderPlate, setDeliverRiderPlate] = useState('');
+  const [deliverRiderPhotoDataUrl, setDeliverRiderPhotoDataUrl] = useState('');
+  const [deliverRiderPhotoName, setDeliverRiderPhotoName] = useState('');
+  const deliverRiderPhotoFileRef = useRef<HTMLInputElement>(null);
   const [allocateTarget, setAllocateTarget] = useState<SubWarehouseStockRequest | null>(null);
   const [allocateNote, setAllocateNote] = useState('');
   const [allocateQtys, setAllocateQtys] = useState<Record<string, string>>({});
@@ -535,6 +540,11 @@ export default function MainWarehouseSubStockRequestsPage() {
   const [allocateProofImageDataUrl, setAllocateProofImageDataUrl] = useState('');
   const [allocateProofImageName, setAllocateProofImageName] = useState('');
   const allocateProofFileRef = useRef<HTMLInputElement>(null);
+  const [allocateRiderName, setAllocateRiderName] = useState('');
+  const [allocateRiderPlate, setAllocateRiderPlate] = useState('');
+  const [allocateRiderPhotoDataUrl, setAllocateRiderPhotoDataUrl] = useState('');
+  const [allocateRiderPhotoName, setAllocateRiderPhotoName] = useState('');
+  const allocateRiderPhotoFileRef = useRef<HTMLInputElement>(null);
   const [mainAllocateOpen, setMainAllocateOpen] = useState(false);
 
   const detailRequest = useMemo(
@@ -617,6 +627,10 @@ export default function MainWarehouseSubStockRequestsPage() {
     setAllocateSignatureOpen(false);
     setAllocateProofImageDataUrl('');
     setAllocateProofImageName('');
+    setAllocateRiderName('');
+    setAllocateRiderPlate('');
+    setAllocateRiderPhotoDataUrl('');
+    setAllocateRiderPhotoName('');
   };
 
   const closeAllocateDialog = () => {
@@ -627,6 +641,10 @@ export default function MainWarehouseSubStockRequestsPage() {
     setAllocateSignatureOpen(false);
     setAllocateProofImageDataUrl('');
     setAllocateProofImageName('');
+    setAllocateRiderName('');
+    setAllocateRiderPlate('');
+    setAllocateRiderPhotoDataUrl('');
+    setAllocateRiderPhotoName('');
   };
 
   const warehouseOptions = useMemo(() => {
@@ -669,6 +687,9 @@ export default function MainWarehouseSubStockRequestsPage() {
         items: payload.items,
         signatureUrl: payload.signatureUrl,
         proofImageUrl: payload.proofImageUrl,
+        riderName: payload.riderName,
+        riderPlateNumber: payload.riderPlateNumber,
+        riderPhotoUrl: payload.riderPhotoUrl,
         notes: payload.notes || undefined,
       });
     },
@@ -855,12 +876,24 @@ export default function MainWarehouseSubStockRequestsPage() {
         throw new Error('Signature required');
       }
       if (!deliverProofImageDataUrl) {
-        throw new Error('Proof image required');
+        throw new Error('Delivery proof required');
+      }
+      if (!deliverRiderName.trim()) {
+        throw new Error('Rider name required');
+      }
+      if (!deliverRiderPlate.trim()) {
+        throw new Error('Rider plate number required');
+      }
+      if (!deliverRiderPhotoDataUrl) {
+        throw new Error('Rider photo required');
       }
       return deliverInternalStockRequest({
         requestId: deliverTarget.id,
         signatureUrl: deliverSignatureDataUrl,
         proofImageUrl: deliverProofImageDataUrl,
+        riderName: deliverRiderName.trim(),
+        riderPlateNumber: deliverRiderPlate.trim(),
+        riderPhotoUrl: deliverRiderPhotoDataUrl,
       });
     },
     onSuccess: async (result) => {
@@ -883,6 +916,9 @@ export default function MainWarehouseSubStockRequestsPage() {
           ...delivered,
           status: 'pending_receive',
           drNumber: drNumber || delivered.drNumber,
+          riderName: deliverRiderName.trim() || delivered.riderName,
+          riderPlateNumber: deliverRiderPlate.trim() || delivered.riderPlateNumber,
+          riderPhotoUrl: deliverRiderPhotoDataUrl || delivered.riderPhotoUrl,
           items: delivered.items.map((item) => ({
             ...item,
             deliveredQuantity: item.requestedQuantity,
@@ -949,6 +985,9 @@ export default function MainWarehouseSubStockRequestsPage() {
       shortBefore: number;
       proofImageUrl: string;
       signatureUrl: string;
+      riderName: string;
+      riderPlateNumber: string;
+      riderPhotoUrl: string;
     }) => {
       const result = await allocateInternalStockRequestRemaining({
         requestId: payload.requestId,
@@ -956,6 +995,9 @@ export default function MainWarehouseSubStockRequestsPage() {
         note: payload.note,
         proofImageUrl: payload.proofImageUrl,
         signatureUrl: payload.signatureUrl,
+        riderName: payload.riderName,
+        riderPlateNumber: payload.riderPlateNumber,
+        riderPhotoUrl: payload.riderPhotoUrl,
       });
       return { ...result, meta: payload };
     },
@@ -1001,6 +1043,10 @@ export default function MainWarehouseSubStockRequestsPage() {
     setDeliverSignatureOpen(false);
     setDeliverProofImageDataUrl('');
     setDeliverProofImageName('');
+    setDeliverRiderName('');
+    setDeliverRiderPlate('');
+    setDeliverRiderPhotoDataUrl('');
+    setDeliverRiderPhotoName('');
     setDeliverTarget(request);
   };
 
@@ -1010,14 +1056,42 @@ export default function MainWarehouseSubStockRequestsPage() {
     setDeliverSignatureOpen(false);
     setDeliverProofImageDataUrl('');
     setDeliverProofImageName('');
+    setDeliverRiderName('');
+    setDeliverRiderPlate('');
+    setDeliverRiderPhotoDataUrl('');
+    setDeliverRiderPhotoName('');
   };
 
   const handleConfirmDeliver = () => {
     if (!deliverTarget) return;
+    if (!deliverRiderName.trim()) {
+      toast({
+        title: 'Rider name required',
+        description: 'Enter the rider name before confirming this delivery.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!deliverRiderPlate.trim()) {
+      toast({
+        title: 'Plate number required',
+        description: 'Enter the rider plate number before confirming this delivery.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (!deliverRiderPhotoDataUrl) {
+      toast({
+        title: 'Rider photo required',
+        description: 'Upload a rider photo before confirming this delivery.',
+        variant: 'destructive',
+      });
+      return;
+    }
     if (!deliverProofImageDataUrl) {
       toast({
-        title: 'Proof photo required',
-        description: 'Upload a proof photo before confirming this delivery.',
+        title: 'Delivery proof required',
+        description: 'Upload a delivery proof photo before confirming this delivery.',
         variant: 'destructive',
       });
       return;
@@ -1053,6 +1127,26 @@ export default function MainWarehouseSubStockRequestsPage() {
     }
   };
 
+  const handleDeliverRiderPhotoFileChange = async (file: File | null) => {
+    if (!file) return;
+    const validationError = proofFileValidationError(file);
+    if (validationError) {
+      toast({ title: 'Invalid image', description: validationError, variant: 'destructive' });
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setDeliverRiderPhotoDataUrl(dataUrl);
+      setDeliverRiderPhotoName(file.name);
+    } catch {
+      toast({
+        title: 'Could not read image',
+        description: 'Try another photo.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleAllocateProofFileChange = async (file: File | null) => {
     if (!file) return;
     const validationError = proofFileValidationError(file);
@@ -1064,6 +1158,26 @@ export default function MainWarehouseSubStockRequestsPage() {
       const dataUrl = await readFileAsDataUrl(file);
       setAllocateProofImageDataUrl(dataUrl);
       setAllocateProofImageName(file.name);
+    } catch {
+      toast({
+        title: 'Could not read image',
+        description: 'Try another photo.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleAllocateRiderPhotoFileChange = async (file: File | null) => {
+    if (!file) return;
+    const validationError = proofFileValidationError(file);
+    if (validationError) {
+      toast({ title: 'Invalid image', description: validationError, variant: 'destructive' });
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setAllocateRiderPhotoDataUrl(dataUrl);
+      setAllocateRiderPhotoName(file.name);
     } catch {
       toast({
         title: 'Could not read image',
@@ -1125,6 +1239,33 @@ export default function MainWarehouseSubStockRequestsPage() {
       return;
     }
 
+    if (!allocateRiderName.trim()) {
+      toast({
+        title: 'Rider name required',
+        description: 'Enter the rider name before allocating remaining stock.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!allocateRiderPlate.trim()) {
+      toast({
+        title: 'Plate number required',
+        description: 'Enter the rider plate number before allocating remaining stock.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!allocateRiderPhotoDataUrl) {
+      toast({
+        title: 'Rider photo required',
+        description: 'Upload a rider photo before allocating remaining stock.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!allocateProofImageDataUrl) {
       toast({
         title: 'Proof photo required',
@@ -1153,6 +1294,9 @@ export default function MainWarehouseSubStockRequestsPage() {
       shortBefore,
       proofImageUrl: allocateProofImageDataUrl,
       signatureUrl: allocateSignatureDataUrl,
+      riderName: allocateRiderName.trim(),
+      riderPlateNumber: allocateRiderPlate.trim(),
+      riderPhotoUrl: allocateRiderPhotoDataUrl,
     });
   };
 
@@ -1627,6 +1771,9 @@ export default function MainWarehouseSubStockRequestsPage() {
                   <SubWarehouseRequestHistoryTimeline
                     history={detailRequest.history}
                     items={detailRequest.items}
+                    riderName={detailRequest.riderName}
+                    riderPlateNumber={detailRequest.riderPlateNumber}
+                    riderPhotoUrl={detailRequest.riderPhotoUrl}
                   />
                 </div>
               </div>
@@ -1777,6 +1924,86 @@ export default function MainWarehouseSubStockRequestsPage() {
                 />
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="allocate-rider-name">Rider name (required)</Label>
+                  <Input
+                    id="allocate-rider-name"
+                    value={allocateRiderName}
+                    onChange={(e) => setAllocateRiderName(e.target.value)}
+                    placeholder="e.g. Juan Dela Cruz"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="allocate-rider-plate">Plate number (required)</Label>
+                  <Input
+                    id="allocate-rider-plate"
+                    value={allocateRiderPlate}
+                    onChange={(e) => setAllocateRiderPlate(e.target.value)}
+                    placeholder="e.g. ABC-1234"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Rider photo (required)</Label>
+                <input
+                  ref={allocateRiderPhotoFileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) =>
+                    void handleAllocateRiderPhotoFileChange(e.target.files?.[0] ?? null)
+                  }
+                />
+                {!allocateRiderPhotoDataUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => allocateRiderPhotoFileRef.current?.click()}
+                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
+                  >
+                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm font-medium">Upload rider photo</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      JPG, PNG, WEBP, or GIF · max 5MB
+                    </p>
+                  </button>
+                ) : (
+                  <div className="rounded-md border p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs text-muted-foreground truncate">
+                        {allocateRiderPhotoName || 'Rider photo'}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAllocateRiderPhotoDataUrl('');
+                          setAllocateRiderPhotoName('');
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                    <img
+                      src={allocateRiderPhotoDataUrl}
+                      alt="Rider"
+                      className="max-h-48 mx-auto rounded-md object-contain"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => allocateRiderPhotoFileRef.current?.click()}
+                    >
+                      Replace photo
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-2">
                 <Label>Proof photo (required)</Label>
                 <input
@@ -1885,6 +2112,9 @@ export default function MainWarehouseSubStockRequestsPage() {
               type="button"
               onClick={handleAllocateRemaining}
               disabled={
+                !allocateRiderName.trim() ||
+                !allocateRiderPlate.trim() ||
+                !allocateRiderPhotoDataUrl ||
                 !allocateProofImageDataUrl ||
                 !allocateSignatureDataUrl ||
                 allocateMutation.isPending
@@ -2027,8 +2257,88 @@ export default function MainWarehouseSubStockRequestsPage() {
                 </p>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="deliver-rider-name">Rider name (required)</Label>
+                  <Input
+                    id="deliver-rider-name"
+                    value={deliverRiderName}
+                    onChange={(e) => setDeliverRiderName(e.target.value)}
+                    placeholder="e.g. Juan Dela Cruz"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="deliver-rider-plate">Plate number (required)</Label>
+                  <Input
+                    id="deliver-rider-plate"
+                    value={deliverRiderPlate}
+                    onChange={(e) => setDeliverRiderPlate(e.target.value)}
+                    placeholder="e.g. ABC-1234"
+                  />
+                </div>
+              </div>
+
               <div className="space-y-2">
-                <Label>Proof photo (required)</Label>
+                <Label>Rider photo (required)</Label>
+                <input
+                  ref={deliverRiderPhotoFileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) =>
+                    void handleDeliverRiderPhotoFileChange(e.target.files?.[0] ?? null)
+                  }
+                />
+                {!deliverRiderPhotoDataUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => deliverRiderPhotoFileRef.current?.click()}
+                    className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
+                  >
+                    <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm font-medium">Upload rider photo</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      JPG, PNG, WEBP, or GIF · max 5MB
+                    </p>
+                  </button>
+                ) : (
+                  <div className="rounded-md border p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs text-muted-foreground truncate">
+                        {deliverRiderPhotoName || 'Rider photo'}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setDeliverRiderPhotoDataUrl('');
+                          setDeliverRiderPhotoName('');
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                    <img
+                      src={deliverRiderPhotoDataUrl}
+                      alt="Rider"
+                      className="max-h-48 mx-auto rounded-md object-contain"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => deliverRiderPhotoFileRef.current?.click()}
+                    >
+                      Replace photo
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Delivery proof (required)</Label>
                 <input
                   ref={deliverProofFileRef}
                   type="file"
@@ -2043,7 +2353,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                     className="w-full rounded-md border border-dashed px-4 py-8 text-center hover:bg-muted/40 transition-colors"
                   >
                     <ImagePlus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm font-medium">Upload delivery proof</p>
+                    <p className="text-sm font-medium">Upload delivery / cargo proof</p>
                     <p className="text-xs text-muted-foreground mt-1">
                       JPG, PNG, WEBP, or GIF · max 5MB
                     </p>
@@ -2052,7 +2362,7 @@ export default function MainWarehouseSubStockRequestsPage() {
                   <div className="rounded-md border p-3 space-y-3">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-xs text-muted-foreground truncate">
-                        {deliverProofImageName || 'Proof image'}
+                        {deliverProofImageName || 'Delivery proof'}
                       </p>
                       <Button
                         type="button"
@@ -2138,6 +2448,9 @@ export default function MainWarehouseSubStockRequestsPage() {
               type="button"
               onClick={handleConfirmDeliver}
               disabled={
+                !deliverRiderName.trim() ||
+                !deliverRiderPlate.trim() ||
+                !deliverRiderPhotoDataUrl ||
                 !deliverProofImageDataUrl ||
                 !deliverSignatureDataUrl ||
                 deliverMutation.isPending

@@ -36,6 +36,10 @@ export type InternalStockRequestRow = {
   delivered_at: string | null;
   delivered_by: string | null;
   dr_number: string | null;
+  rider_name?: string | null;
+  rider_plate_number?: string | null;
+  rider_photo_url?: string | null;
+  rider_photo_path?: string | null;
   rejected_at: string | null;
   rejected_by: string | null;
   rejection_signature_url: string | null;
@@ -71,6 +75,9 @@ export type InternalStockRequestEventRow = {
   short_quantity: number | null;
   proof_image_url: string | null;
   signature_url: string | null;
+  rider_name?: string | null;
+  rider_plate_number?: string | null;
+  rider_photo_url?: string | null;
   created_by: string | null;
   created_at: string;
   created_by_user?: { full_name: string | null } | null;
@@ -107,6 +114,9 @@ const REQUEST_SELECT = `
     short_quantity,
     proof_image_url,
     signature_url,
+    rider_name,
+    rider_plate_number,
+    rider_photo_url,
     created_by,
     created_at,
     created_by_user:profiles!internal_stock_request_events_created_by_fkey (
@@ -207,8 +217,12 @@ export async function createAndDeliverMainStockAllocation(input: {
   items: Array<{ variant_id: string; quantity: number }>;
   signatureUrl: string;
   proofImageUrl: string;
+  riderName: string;
+  riderPlateNumber: string;
+  riderPhotoUrl: string;
   signaturePath?: string;
   proofImagePath?: string;
+  riderPhotoPath?: string;
   notes?: string;
 }) {
   const { data, error } = await supabase.rpc('create_and_deliver_main_stock_allocation', {
@@ -218,6 +232,10 @@ export async function createAndDeliverMainStockAllocation(input: {
     p_signature_path: input.signaturePath ?? null,
     p_proof_image_url: input.proofImageUrl,
     p_proof_image_path: input.proofImagePath ?? null,
+    p_rider_name: input.riderName,
+    p_rider_plate_number: input.riderPlateNumber,
+    p_rider_photo_url: input.riderPhotoUrl,
+    p_rider_photo_path: input.riderPhotoPath ?? null,
     p_notes: input.notes ?? null,
   });
   if (error) throw error;
@@ -249,8 +267,12 @@ export async function deliverInternalStockRequest(input: {
   requestId: string;
   signatureUrl: string;
   proofImageUrl: string;
+  riderName: string;
+  riderPlateNumber: string;
+  riderPhotoUrl: string;
   signaturePath?: string;
   proofImagePath?: string;
+  riderPhotoPath?: string;
 }) {
   const { data, error } = await supabase.rpc('deliver_internal_stock_request', {
     p_request_id: input.requestId,
@@ -258,6 +280,10 @@ export async function deliverInternalStockRequest(input: {
     p_signature_path: input.signaturePath ?? null,
     p_proof_image_url: input.proofImageUrl,
     p_proof_image_path: input.proofImagePath ?? null,
+    p_rider_name: input.riderName,
+    p_rider_plate_number: input.riderPlateNumber,
+    p_rider_photo_url: input.riderPhotoUrl,
+    p_rider_photo_path: input.riderPhotoPath ?? null,
   });
   if (error) throw error;
   return assertRpcOk(
@@ -290,9 +316,13 @@ export async function allocateInternalStockRequestRemaining(input: {
   lines: Array<{ variant_id: string; quantity: number }>;
   proofImageUrl: string;
   signatureUrl: string;
+  riderName: string;
+  riderPlateNumber: string;
+  riderPhotoUrl: string;
   note?: string;
   proofImagePath?: string;
   signaturePath?: string;
+  riderPhotoPath?: string;
 }) {
   const { data, error } = await supabase.rpc('allocate_internal_stock_request_remaining', {
     p_request_id: input.requestId,
@@ -302,6 +332,10 @@ export async function allocateInternalStockRequestRemaining(input: {
     p_note: input.note ?? null,
     p_proof_image_path: input.proofImagePath ?? null,
     p_signature_path: input.signaturePath ?? null,
+    p_rider_name: input.riderName,
+    p_rider_plate_number: input.riderPlateNumber,
+    p_rider_photo_url: input.riderPhotoUrl,
+    p_rider_photo_path: input.riderPhotoPath ?? null,
   });
   if (error) throw error;
   return assertRpcOk(

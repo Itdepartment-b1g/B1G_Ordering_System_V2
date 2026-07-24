@@ -499,15 +499,17 @@ function EventAttachments({
   proofImageDataUrl,
   signatureDataUrl,
   signatureLabel,
+  proofLabel = 'Proof photo',
 }: {
   proofImageDataUrl?: string;
   signatureDataUrl?: string;
   signatureLabel: string;
+  proofLabel?: string;
 }) {
   if (!proofImageDataUrl && !signatureDataUrl) return null;
 
   const parts: string[] = [];
-  if (proofImageDataUrl) parts.push('proof photo');
+  if (proofImageDataUrl) parts.push(proofLabel.toLowerCase());
   if (signatureDataUrl) parts.push('signature');
 
   return (
@@ -517,11 +519,11 @@ function EventAttachments({
           <div className="space-y-1">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
               <ImageIcon className="h-3 w-3" />
-              Proof photo
+              {proofLabel}
             </p>
             <img
               src={proofImageDataUrl}
-              alt="Proof"
+              alt={proofLabel}
               className="h-40 w-40 max-w-full rounded-md object-cover border bg-muted/30"
             />
           </div>
@@ -578,12 +580,19 @@ type SubWarehouseRequestHistoryTimelineProps = {
   history: SubWarehouseRequestHistoryEvent[] | undefined;
   items?: SubWarehouseStockRequestItem[];
   emptyLabel?: string;
+  /** Rider details from the request row (fallback for delivered events without event-level rider). */
+  riderName?: string;
+  riderPlateNumber?: string;
+  riderPhotoUrl?: string;
 };
 
 export function SubWarehouseRequestHistoryTimeline({
   history,
   items,
   emptyLabel = 'No history yet.',
+  riderName,
+  riderPlateNumber,
+  riderPhotoUrl,
 }: SubWarehouseRequestHistoryTimelineProps) {
   const events = [...(history ?? [])].sort(
     (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
@@ -605,8 +614,37 @@ export function SubWarehouseRequestHistoryTimeline({
               const summary = eventSummary(event, items);
               const hasShortBadge =
                 event.type === 'receive_confirmed' && event.shortQuantity > 0;
+              const isDelivered =
+                event.type === 'delivered' || event.type === 'approved_released';
+              const isAllocateWave = event.type === 'remaining_released';
+              const eventRiderName =
+                (isDelivered || isAllocateWave) && 'riderName' in event
+                  ? event.riderName
+                  : undefined;
+              const eventRiderPlate =
+                (isDelivered || isAllocateWave) && 'riderPlateNumber' in event
+                  ? event.riderPlateNumber
+                  : undefined;
+              const eventRiderPhoto =
+                (isDelivered || isAllocateWave) && 'riderPhotoUrl' in event
+                  ? event.riderPhotoUrl
+                  : undefined;
+              const displayRiderName = eventRiderName?.trim() || (isDelivered ? riderName : undefined);
+              const displayRiderPlate =
+                eventRiderPlate?.trim() || (isDelivered ? riderPlateNumber : undefined);
+              const displayRiderPhoto =
+                eventRiderPhoto?.trim() || (isDelivered ? riderPhotoUrl : undefined);
+              const showRiderOnThisEvent =
+                !!displayRiderName?.trim() ||
+                !!displayRiderPlate?.trim() ||
+                !!displayRiderPhoto?.trim();
+              const isRiderBoilerplateNote =
+                (isDelivered || isAllocateWave) &&
+                !!event.note?.trim() &&
+                /^Rider:\s*.+\s·\sPlate:\s*.+$/i.test(event.note.trim());
               const showNote =
                 !!event.note?.trim() &&
+                !isRiderBoilerplateNote &&
                 !(event.type === 'remaining_released' && isBoilerplateAllocateNote(event.note));
 
               return (
@@ -634,6 +672,43 @@ export function SubWarehouseRequestHistoryTimeline({
                       </Badge>
                     ) : null}
                   </div>
+
+                  {showRiderOnThisEvent ? (
+                    <div className="rounded-md border bg-muted/20 px-2.5 py-2 space-y-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Rider
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
+                        {displayRiderName?.trim() ? (
+                          <p>
+                            <span className="text-muted-foreground">Name: </span>
+                            {displayRiderName.trim()}
+                          </p>
+                        ) : null}
+                        {displayRiderPlate?.trim() ? (
+                          <p>
+                            <span className="text-muted-foreground">Plate: </span>
+                            <span className="font-medium tabular-nums">
+                              {displayRiderPlate.trim()}
+                            </span>
+                          </p>
+                        ) : null}
+                      </div>
+                      {displayRiderPhoto?.trim() ? (
+                        <div className="space-y-1">
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                            <ImageIcon className="h-3 w-3" />
+                            Rider photo
+                          </p>
+                          <img
+                            src={displayRiderPhoto}
+                            alt="Rider"
+                            className="h-40 w-40 max-w-full rounded-md object-cover border bg-muted/30"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {event.type === 'remaining_released' && lines && lines.length > 0 ? (
                     <DetailsToggle label={`item details (${lines.length})`}>
@@ -688,6 +763,7 @@ export function SubWarehouseRequestHistoryTimeline({
                       proofImageDataUrl={event.proofImageDataUrl}
                       signatureDataUrl={event.signatureDataUrl}
                       signatureLabel="Delivery signature"
+                      proofLabel="Delivery proof"
                     />
                   ) : null}
 

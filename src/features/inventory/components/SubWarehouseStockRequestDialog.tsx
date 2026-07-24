@@ -97,6 +97,9 @@ export type SubWarehouseRequestHistoryEvent =
       lines: SubWarehouseReleaseLine[];
       proofImageDataUrl?: string;
       signatureDataUrl?: string;
+      riderName?: string;
+      riderPlateNumber?: string;
+      riderPhotoUrl?: string;
     }
   | {
       /** @deprecated Legacy combined approve+release; treat as delivered. */
@@ -108,6 +111,9 @@ export type SubWarehouseRequestHistoryEvent =
       lines: SubWarehouseReleaseLine[];
       proofImageDataUrl?: string;
       signatureDataUrl?: string;
+      riderName?: string;
+      riderPlateNumber?: string;
+      riderPhotoUrl?: string;
     }
   | {
       id: string;
@@ -118,6 +124,9 @@ export type SubWarehouseRequestHistoryEvent =
       lines: SubWarehouseReleaseLine[];
       proofImageDataUrl?: string;
       signatureDataUrl?: string;
+      riderName?: string;
+      riderPlateNumber?: string;
+      riderPhotoUrl?: string;
     }
   | {
       id: string;
@@ -160,6 +169,10 @@ export type SubWarehouseStockRequest = {
   rejectionSignatureUrl?: string;
   /** PO-style DR number assigned when main delivers (WH{L}-YYYY-MM-DR-NNNNN). */
   drNumber?: string;
+  /** Rider / courier captured on deliver. */
+  riderName?: string;
+  riderPlateNumber?: string;
+  riderPhotoUrl?: string;
   /** Receive proof snapshots (also mirrored into history). */
   receiveProofs?: SubWarehouseReceiveProof[];
   /** Full timeline for this request number. */
