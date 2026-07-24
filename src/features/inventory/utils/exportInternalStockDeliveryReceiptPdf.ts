@@ -1,7 +1,9 @@
 /**
- * Bank-free Delivery Receipt for internal stock requests (main → sub).
- * Opens an HTML print tab (same pattern as PO DR / stock return receipts).
+ * Delivery Receipt for internal stock requests (main → sub).
+ * Matches PO DR layout (generateDrPdf): logo, items, company/contact,
+ * client confirmation signoff — without bank details.
  */
+import { supabase } from '@/lib/supabase';
 import {
   getItemDeliveredQty,
   type SubWarehouseReleaseLine,
@@ -20,7 +22,7 @@ function escapeHtml(value: unknown): string {
 }
 
 function fmtQty(n: number): string {
-  return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function openPrintableHtml(title: string, html: string): void {
@@ -84,18 +86,51 @@ export function canExportDeliveryReceiptForEvent(
 ): boolean {
   if (!isDeliveryWaveEvent(event)) return false;
   if (event.drNumber?.trim()) return true;
-  // Legacy first-delivery events: fall back to request-level DR.
   if (event.type === 'delivered' || event.type === 'approved_released') {
     return !!request.drNumber?.trim();
   }
-  // Old remaining_released waves without a stored DR stay unprintable.
   return false;
 }
 
 export type ExportDeliveryReceiptOptions = {
-  /** When set, print this wave's DR / lines / rider instead of the latest wave. */
+  /** When set, print this wave's DR / lines instead of the latest wave. */
   event?: DeliveryReceiptWaveEvent;
 };
+
+async function fetchCompanyName(): Promise<string> {
+  try {
+    const { data: authData } = await supabase.auth.getUser();
+    const uid = authData.user?.id;
+    if (!uid) return '';
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('id', uid)
+      .maybeSingle();
+
+    const companyId = profile?.company_id as string | null | undefined;
+    if (!companyId) return '';
+
+    const { data: companyRow } = await supabase
+      .from('companies')
+      .select('company_name')
+      .eq('id', companyId)
+      .maybeSingle();
+
+    return (companyRow?.company_name as string | undefined)?.trim() || '';
+  } catch (e) {
+    console.warn('[internal DR] company name fetch failed', e);
+    return '';
+  }
+}
+
+function formatWarehouseFooterLabel(locationName: string): string {
+  const base = locationName.replace(/\s*\(Main\)\s*$/i, '').trim();
+  if (!base) return 'B1G Warehouse';
+  if (/^B1G\s/i.test(base) && /\bWarehouse\s*$/i.test(base)) return base;
+  return `B1G ${base} Warehouse`;
+}
 
 function resolveReceiptLines(
   request: SubWarehouseStockRequest,
@@ -124,45 +159,33 @@ function resolveReceiptLines(
 
 function buildDeliveryReceiptHtml(
   request: SubWarehouseStockRequest,
+  companyName: string,
   options?: ExportDeliveryReceiptOptions
 ): string {
   const wave = options?.event ?? getLatestDeliveryWaveEvent(request);
-  const isMainAllocation = request.initiationType === 'main_allocation';
   const drNo = escapeHtml(wave?.drNumber?.trim() || request.drNumber || '—');
-  const refNo = escapeHtml(request.requestNumber);
-  const destination = escapeHtml(request.fromLocationName || 'Sub-warehouse');
-  const initiatedBy = escapeHtml(
-    isMainAllocation
-      ? request.requestedByName
-        ? `Main Warehouse · ${request.requestedByName}`
-        : 'Main Warehouse'
-      : request.requestedByName || '—'
-  );
-  const refLabel = isMainAllocation ? 'AL NUMBER:' : 'RN NUMBER:';
-  const initiatorLabel = isMainAllocation ? 'ALLOCATED BY:' : 'REQUESTED BY:';
-  const footer = escapeHtml(
-    request.fromLocationName
-      ? `B1G → ${request.fromLocationName}`
-      : 'B1G Internal Stock Transfer'
-  );
-
-  const riderName = wave?.riderName?.trim() || request.riderName?.trim();
-  const riderPlate = wave?.riderPlateNumber?.trim() || request.riderPlateNumber?.trim();
+  const destination = request.fromLocationName || 'Sub-warehouse';
+  const companyLabel = companyName.trim() || destination;
+  const contactPerson = request.requestedByName?.trim() || '';
+  const whLabel = escapeHtml(destination);
+  const whFooter = escapeHtml(formatWarehouseFooterLabel(destination));
 
   const receiptLines = resolveReceiptLines(request, wave);
-  const lines = receiptLines
-    .map(
-      (row) => `
+  const itemRows =
+    receiptLines.length > 0
+      ? receiptLines
+          .map(
+            (row) => `
         <tr>
           <td class="col-desc">${escapeHtml(row.desc)}</td>
           <td class="col-qty">${fmtQty(row.qty)}</td>
         </tr>`
-    )
-    .join('');
-
-  const itemRows =
-    lines ||
-    `<tr><td class="col-desc" colspan="2">No delivered items</td></tr>`;
+          )
+          .join('')
+      : `<tr>
+          <td class="col-desc">&nbsp;</td>
+          <td class="col-qty">&nbsp;</td>
+        </tr>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -190,60 +213,64 @@ function buildDeliveryReceiptHtml(
   }
   .toolbar-left h1 { margin: 0; font-size: 13px; font-weight: 600; }
   .toolbar-left .hint { font-size: 11px; opacity: 0.75; display: block; margin-top: 2px; }
-  .toolbar-center { text-align: center; justify-self: center; }
+  .toolbar-center {
+    text-align: center;
+    justify-self: center;
+  }
   .warehouse-badge {
     display: inline-block;
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: #374151;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    background: #1e3a5f;
+    border: 1px solid #3b82f6;
+    color: #dbeafe;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 6px;
+    letter-spacing: 0.02em;
   }
+  .warehouse-badge span { color: #93c5fd; font-weight: 600; }
   .toolbar-right { justify-self: end; }
   .toolbar button {
-    appearance: none;
-    border: 0;
-    border-radius: 6px;
-    padding: 8px 14px;
-    background: #fff;
-    color: #111827;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
+    background: #22c55e; color: #000; border: 0;
+    padding: 8px 16px; font-size: 13px; font-weight: 700;
+    border-radius: 4px; cursor: pointer;
   }
-  .toolbar button:hover { background: #f3f4f6; }
+  .toolbar button:hover { background: #16a34a; color: #fff; }
 
   .page {
     width: 210mm;
     min-height: 297mm;
-    margin: 16px auto 32px;
-    padding: 18mm 16mm 16mm;
+    margin: 16px auto;
+    padding: 12mm 14mm 20mm;
     background: #fff;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    font-size: 11px;
+    line-height: 1.35;
+    color: #000;
+    position: relative;
   }
 
-  .logo-block { text-align: center; margin-bottom: 8px; }
+  .logo-block { text-align: center; margin-bottom: 6px; }
   .logo-b1g {
     font-size: 42px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: -2px;
     line-height: 1;
   }
   .logo-corp {
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.28em;
+    letter-spacing: 0.35em;
     margin-top: 2px;
   }
 
   .doc-title {
     text-align: center;
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    margin: 14px 0 10px;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    margin: 10px 0 14px;
   }
 
   .dr-number-row {
@@ -251,104 +278,126 @@ function buildDeliveryReceiptHtml(
     justify-content: flex-end;
     align-items: baseline;
     gap: 8px;
-    margin-bottom: 14px;
-    font-size: 13px;
+    margin-bottom: 12px;
+    font-size: 12px;
   }
   .dr-number-row .label { font-weight: 700; }
-  .dr-number-row .value { font-weight: 700; letter-spacing: 0.02em; }
+  .dr-number-row .value {
+    min-width: 180px;
+    border-bottom: 1.5px solid #000;
+    font-weight: 700;
+    font-family: ui-monospace, monospace;
+    padding-bottom: 2px;
+  }
 
   .items-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12px;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
   }
-  .items-table th,
-  .items-table td {
-    border: 1px solid #111;
-    padding: 6px 8px;
+  .items-table thead th {
+    text-align: left;
+    font-weight: 800;
+    font-size: 12px;
+    padding: 6px 4px;
+    border-bottom: 2px solid #000;
+  }
+  .items-table thead th.col-qty { text-align: right; }
+  .items-table tbody td {
+    padding: 7px 4px;
+    border-bottom: 1px solid #ccc;
     vertical-align: top;
   }
-  .items-table th {
-    background: #f3f4f6;
-    text-align: left;
-    font-weight: 700;
+  .items-table .col-qty {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    width: 90px;
   }
-  .col-desc { width: 78%; }
-  .col-qty { width: 22%; text-align: right; }
 
-  .delivery-section { margin-bottom: 18px; font-size: 12px; }
-  .section-label { font-weight: 700; margin-bottom: 6px; }
-  .delivery-field {
-    display: grid;
-    grid-template-columns: 160px 1fr;
-    gap: 8px;
-    margin-bottom: 4px;
+  .delivery-section {
+    margin: 18px 0;
+    padding-top: 8px;
+    border-top: 1.5px solid #000;
   }
-  .delivery-field .flabel { font-weight: 700; }
-  .delivery-field .fvalue { border-bottom: 1px solid #111; min-height: 1.2em; }
+  .delivery-section .section-label {
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .delivery-field {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 11px;
+  }
+  .delivery-field .flabel {
+    font-weight: 800;
+    min-width: 120px;
+    flex-shrink: 0;
+  }
+  .delivery-field .fvalue { flex: 1; }
 
   .signoff-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 11px;
-    margin-top: 8px;
+    font-size: 10px;
+    margin-top: 24px;
   }
   .signoff-table th,
   .signoff-table td {
-    border: 1px solid #111;
-    padding: 8px;
+    border: 1px solid #000;
+    padding: 6px 8px;
     vertical-align: top;
   }
-  .signoff-table th {
-    background: #f3f4f6;
-    font-weight: 700;
-    text-align: left;
+  .signoff-table .boxes-col { width: 18%; }
+  .signoff-table .confirm-col { width: 42%; }
+  .signoff-table .legal-col { width: 40%; font-size: 9px; line-height: 1.4; }
+  .signoff-table .sub-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 6px;
   }
-  .boxes-col { width: 22%; }
-  .confirm-col { width: 38%; }
-  .legal-col { width: 40%; font-weight: 400 !important; }
-  .sub-row {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    margin-bottom: 10px;
-  }
-  .sub-row .slabel { white-space: nowrap; }
-  .sub-row .sline {
-    flex: 1;
-    border-bottom: 1px solid #111;
+  .signoff-table .sub-row .slabel { font-weight: 600; }
+  .signoff-table .sub-row .sline {
+    border-bottom: 1px solid #999;
     min-height: 16px;
   }
 
   .footer-note {
-    margin-top: 18px;
     text-align: center;
-    font-size: 11px;
-    color: #444;
+    font-size: 8px;
+    color: #555;
+    margin-top: 14px;
   }
 
   @media print {
+    @page {
+      size: A4 portrait;
+      margin: 6mm;
+    }
     html, body { background: #fff; }
     .toolbar { display: none !important; }
     .page {
-      width: auto;
-      min-height: auto;
-      margin: 0;
-      padding: 12mm 10mm;
+      width: auto; min-height: auto;
+      margin: 0; padding: 0;
       box-shadow: none;
     }
+    .footer-note {
+      margin-top: 10px;
+    }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
 </head>
 <body>
   <div class="toolbar">
     <div class="toolbar-left">
-      <h1>Delivery Receipt</h1>
-      <span class="hint">Internal stock · print or Save as PDF</span>
+      <h1>Delivery Receipt
+        <span class="hint">Use <b>Print</b> (Ctrl/⌘ + P), turn off <b>Headers and footers</b>, then save as PDF.</span>
+      </h1>
     </div>
     <div class="toolbar-center">
-      <span class="warehouse-badge">${escapeHtml(request.fromLocationName || 'Sub warehouse')}</span>
+      <div class="warehouse-badge">DR to: <span>${whLabel}</span></div>
     </div>
     <div class="toolbar-right">
       <button type="button" onclick="window.print()">Print</button>
@@ -383,38 +432,28 @@ function buildDeliveryReceiptHtml(
     <div class="delivery-section">
       <div class="section-label">Delivery Details:</div>
       <div class="delivery-field">
-        <span class="flabel">FROM:</span>
-        <span class="fvalue">Main Warehouse</span>
+        <span class="flabel">COMPANY:</span>
+        <span class="fvalue">${escapeHtml(companyLabel)}</span>
       </div>
       <div class="delivery-field">
-        <span class="flabel">TO (SUB-WAREHOUSE):</span>
-        <span class="fvalue">${destination}</span>
+        <span class="flabel">ADDRESS:</span>
+        <span class="fvalue"></span>
       </div>
       <div class="delivery-field">
-        <span class="flabel">${initiatorLabel}</span>
-        <span class="fvalue">${initiatedBy}</span>
+        <span class="flabel">CONTACT PERSON:</span>
+        <span class="fvalue">${escapeHtml(contactPerson)}</span>
       </div>
       <div class="delivery-field">
-        <span class="flabel">${refLabel}</span>
-        <span class="fvalue">${refNo}</span>
+        <span class="flabel">CONTACT #:</span>
+        <span class="fvalue"></span>
       </div>
-      ${
-        riderName || riderPlate
-          ? `<div class="delivery-field">
-        <span class="flabel">RIDER:</span>
-        <span class="fvalue">${escapeHtml(
-          [riderName, riderPlate].filter(Boolean).join(' · ') || '—'
-        )}</span>
-      </div>`
-          : ''
-      }
     </div>
 
     <table class="signoff-table">
       <thead>
         <tr>
           <th class="boxes-col">Number of Boxes</th>
-          <th class="confirm-col">Receiver confirmation</th>
+          <th class="confirm-col">Client confirmation</th>
           <th class="legal-col">I hereby acknowledged that the order details above are accurate and received in good condition. No further claims will be accepted.</th>
         </tr>
       </thead>
@@ -423,7 +462,7 @@ function buildDeliveryReceiptHtml(
           <td class="boxes-col" style="height: 80px;"></td>
           <td class="confirm-col">
             <div class="sub-row">
-              <span class="slabel">Name of receiver</span>
+              <span class="slabel">Name of Client/representative</span>
               <span class="sline"></span>
             </div>
             <div class="sub-row">
@@ -440,7 +479,7 @@ function buildDeliveryReceiptHtml(
       </tbody>
     </table>
 
-    <div class="footer-note">${footer}</div>
+    <div class="footer-note">${whFooter}</div>
   </div>
 </body>
 </html>`;
@@ -451,7 +490,8 @@ export async function exportInternalStockDeliveryReceiptPdf(
   options?: ExportDeliveryReceiptOptions
 ): Promise<void> {
   const wave = options?.event ?? getLatestDeliveryWaveEvent(request);
-  const html = buildDeliveryReceiptHtml(request, { event: wave });
+  const companyName = await fetchCompanyName();
+  const html = buildDeliveryReceiptHtml(request, companyName, { event: wave });
   const titleNo = wave?.drNumber?.trim() || request.drNumber || request.requestNumber;
   openPrintableHtml(`Delivery Receipt — ${titleNo}`, html);
 }
