@@ -183,6 +183,24 @@ export function PoBuyerCancelDialog({
         throw new Error((data as { error?: string })?.error || 'Cancel failed');
       }
 
+      const { logPurchaseOrderEvent } = await import('../purchaseOrderEventsApi');
+      void logPurchaseOrderEvent({
+        purchaseOrderId,
+        eventType: 'cancelled',
+        note: notes.trim() || null,
+        lines: lines.map((line) => ({
+          variant_id: line.variant_id,
+          quantity: line.quantity_dispatched,
+          variant_name: line.variant_name,
+          brand_name: line.brand_name,
+        })),
+        proofImageUrl: proofUrl,
+        signatureUrl: signatureUrl,
+        signaturePath: signaturePath,
+        deliveryId,
+        createdBy: user?.id,
+      });
+
       toast({
         title: 'DR cancelled',
         description: `${drNumber || 'Delivery'} refused. ${totalUnits} unit(s) returned to warehouse for another dispatch.`,

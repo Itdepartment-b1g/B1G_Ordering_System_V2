@@ -30,7 +30,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, PackageCheck, XCircle } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, PackageCheck, XCircle, History } from 'lucide-react';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
@@ -50,6 +50,7 @@ import { SignatureCanvas } from '@/components/ui/signature-canvas';
 import { PurchaseOrderDeliveryDetailsPanel, purchaseOrderDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
 import { PoBuyerReceiveDialog, type PoReceiveLine } from './components/PoBuyerReceiveDialog';
 import { PoBuyerCancelDialog } from './components/PoBuyerCancelDialog';
+import { PurchaseOrderHistoryDialog } from './components/PurchaseOrderHistoryDialog';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
 import PurchaseOrderManual from '@/features/inventory/warehouse-manual/components/PurchaseOrderManual';
@@ -323,6 +324,7 @@ export default function PurchaseOrdersPage() {
   // View Dialog States
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [orderToView, setOrderToView] = useState<any>(null);
+  const [historyOrder, setHistoryOrder] = useState<any | null>(null);
   const [transferLocationStatuses, setTransferLocationStatuses] = useState<Array<{ location_id: string; location_name: string; status: string }>>([]);
 
   const [isMobile, setIsMobile] = useState(false);
@@ -339,6 +341,8 @@ export default function PurchaseOrdersPage() {
 
   const isWarehouse = user?.role === 'warehouse';
   const { membership } = useWarehouseLocationMembership({ userId: user?.id, isWarehouse });
+  /** History is for warehouse-transfer flow; hide for companies with no warehouse link. */
+  const canShowPurchaseOrderHistory = isWarehouse || !!linkedWarehouseCompanyId;
   const canFulfillAsSubWarehouse =
     isWarehouse &&
     membership.status === 'sub' &&
@@ -380,6 +384,18 @@ export default function PurchaseOrdersPage() {
         warehouseLocationId: string | null;
         warehouseLocationName: string | null;
         lines: PoReceiveLine[];
+      }
+    >
+  >({});
+  /** Standard Account transfer POs only — receive/shortfall progress for list status. */
+  const [receiveProgressByPoId, setReceiveProgressByPoId] = useState<
+    Record<
+      string,
+      {
+        ordered: number;
+        dispatched: number;
+        received: number;
+        shortOpen: number;
       }
     >
   >({});
@@ -516,6 +532,7 @@ export default function PurchaseOrdersPage() {
       case 'partially_fulfilled':
       case 'awaiting_receive':
       case 'partial_delivered':
+      case 'shortfall_open':
         return 'bg-amber-500 text-white hover:bg-amber-600';
       case 'pending':
         return 'bg-gray-500 text-white hover:bg-gray-600';
@@ -527,41 +544,58 @@ export default function PurchaseOrdersPage() {
     }
   };
 
-  /** List/detail badge label — buyers see receive state; warehouse keeps ship progress. */
+  const isKeyAccountPo = (order: { company_account_type?: string | null }) =>
+    String(order.company_account_type || 'Standard Accounts') === 'Key Accounts';
+
+  /** List/detail badge label — buyers see receive state; warehouse keeps ship progress.
+   * Key Accounts: no buyer receive / shortfall UI (dispatch completes delivery). */
   const resolvePoStatusPresentation = (order: {
     id: string;
     status?: string | null;
     workflow_status?: string | null;
     fulfillment_type?: string | null;
+    company_account_type?: string | null;
   }) => {
     const status = String(order.status || '');
     const workflow = String(order.workflow_status || '');
     const isTransfer = order.fulfillment_type === 'warehouse_transfer';
-    const hasPendingReceive = !!pendingReceiveByPoId[order.id];
+    const isKeyAccount = isKeyAccountPo(order);
+    const hasPendingReceive = !isKeyAccount && !!pendingReceiveByPoId[order.id];
+    const shortOpen = !isKeyAccount ? receiveProgressByPoId[order.id]?.shortOpen ?? 0 : 0;
 
     if (isTransfer) {
-      // Buyer: prioritize actionable receive state
-      if (!isWarehouse) {
-        if (hasPendingReceive) {
-          return { badgeKey: 'awaiting_receive', label: 'Awaiting receive' };
+      if (!isKeyAccount) {
+        // Buyer / warehouse: prioritize actionable receive + open shortfall (Standard Accounts only)
+        if (!isWarehouse) {
+          if (hasPendingReceive) {
+            return { badgeKey: 'awaiting_receive', label: 'Awaiting receive' };
+          }
+          if (shortOpen > 0) {
+            return { badgeKey: 'shortfall_open', label: 'Shortfall · under investigation' };
+          }
+          if (workflow === 'delivered') {
+            return { badgeKey: 'delivered', label: 'Delivered' };
+          }
+        } else {
+          if (hasPendingReceive) {
+            return {
+              badgeKey: 'awaiting_receive',
+              label:
+                status === 'partially_fulfilled'
+                  ? 'Partial ship · awaiting receive'
+                  : 'Awaiting buyer receive',
+            };
+          }
+          if (shortOpen > 0) {
+            return { badgeKey: 'shortfall_open', label: 'Shortfall · needs action' };
+          }
+          if (workflow === 'delivered') {
+            return { badgeKey: 'delivered', label: 'Delivered' };
+          }
         }
-        if (workflow === 'delivered') {
-          return { badgeKey: 'delivered', label: 'Delivered' };
-        }
-      } else {
-        // Warehouse: show when buyer still needs to confirm a dispatch
-        if (hasPendingReceive) {
-          return {
-            badgeKey: 'awaiting_receive',
-            label:
-              status === 'partially_fulfilled'
-                ? 'Partial ship · awaiting receive'
-                : 'Awaiting buyer receive',
-          };
-        }
-        if (workflow === 'delivered') {
-          return { badgeKey: 'delivered', label: 'Delivered' };
-        }
+      } else if (workflow === 'delivered') {
+        // Key Accounts: dispatch completes delivery — no receive/shortfall states
+        return { badgeKey: 'delivered', label: 'Delivered' };
       }
     }
 
@@ -580,6 +614,7 @@ export default function PurchaseOrdersPage() {
     status?: string | null;
     workflow_status?: string | null;
     fulfillment_type?: string | null;
+    company_account_type?: string | null;
   }) => getStatusBadgeClass(resolvePoStatusPresentation(order).badgeKey);
 
   const getStatusDisplayTextForOrder = (order: {
@@ -587,7 +622,41 @@ export default function PurchaseOrdersPage() {
     status?: string | null;
     workflow_status?: string | null;
     fulfillment_type?: string | null;
+    company_account_type?: string | null;
   }) => resolvePoStatusPresentation(order).label;
+
+  const renderPoListStatus = (order: {
+    id: string;
+    status?: string | null;
+    workflow_status?: string | null;
+    fulfillment_type?: string | null;
+    company_account_type?: string | null;
+  }) => {
+    const progress = !isKeyAccountPo(order) ? receiveProgressByPoId[order.id] : undefined;
+    const showProgress =
+      order.fulfillment_type === 'warehouse_transfer' &&
+      !!progress &&
+      (progress.dispatched > 0 || progress.shortOpen > 0);
+
+    return (
+      <div className="flex flex-col items-start gap-1 min-w-0">
+        <Badge variant="default" className={getStatusBadgeClassForOrder(order)}>
+          {getStatusDisplayTextForOrder(order)}
+        </Badge>
+        {showProgress ? (
+          <div className="text-[11px] text-muted-foreground leading-tight tabular-nums whitespace-nowrap">
+            Recv {progress.received}/{progress.dispatched}
+            {progress.shortOpen > 0 ? (
+              <span className="text-amber-700 dark:text-amber-400">
+                {' '}
+                · Short {progress.shortOpen}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   const itemLocLabel = (item: any) => {
     const raw = Array.isArray(item?.warehouse_location) ? item.warehouse_location[0] : item?.warehouse_location;
@@ -658,6 +727,7 @@ export default function PurchaseOrdersPage() {
       .filter(
         (o) =>
           o.fulfillment_type === 'warehouse_transfer' &&
+          !isKeyAccountPo(o) &&
           String(o.company_id) === String(user.company_id) &&
           (o.status === 'fulfilled' ||
             o.status === 'partially_fulfilled' ||
@@ -769,6 +839,133 @@ export default function PurchaseOrdersPage() {
       cancelled = true;
     };
   }, [purchaseOrders, isWarehouse, user?.company_id]);
+
+  // Standard Accounts only: receive qty + open shortfall for list status (Key Accounts excluded)
+  useEffect(() => {
+    const saTransferPos = purchaseOrders.filter(
+      (o) =>
+        o.fulfillment_type === 'warehouse_transfer' &&
+        !isKeyAccountPo(o) &&
+        (o.status === 'fulfilled' ||
+          o.status === 'partially_fulfilled' ||
+          o.status === 'approved_for_fulfillment' ||
+          o.workflow_status === 'partial_delivered' ||
+          o.workflow_status === 'delivered')
+    );
+
+    if (saTransferPos.length === 0) {
+      setReceiveProgressByPoId({});
+      return;
+    }
+
+    const orderedByPo: Record<string, number> = {};
+    for (const o of saTransferPos) {
+      orderedByPo[o.id] = (o.items || []).reduce(
+        (sum, item) => sum + (Number(item.quantity) || 0),
+        0
+      );
+    }
+    const poIds = saTransferPos.map((o) => o.id);
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [{ data: deliveries, error: delErr }, { data: discs, error: discErr }] =
+          await Promise.all([
+            supabase
+              .from('purchase_order_deliveries')
+              .select('id,purchase_order_id,status')
+              .in('purchase_order_id', poIds)
+              .neq('status', 'cancelled'),
+            supabase
+              .from('purchase_order_delivery_discrepancies')
+              .select('purchase_order_id,quantity,status')
+              .in('purchase_order_id', poIds)
+              .in('status', ['open', 'resolved_redeliver']),
+          ]);
+        if (delErr) throw delErr;
+        if (discErr) {
+          // Table/migration may not be applied yet — still show receive progress
+          console.warn('[PO List] open shortfall load failed', discErr);
+        }
+        if (cancelled) return;
+
+        const next: typeof receiveProgressByPoId = {};
+        const foundRedeliverByPo: Record<string, number> = {};
+        for (const poId of poIds) {
+          next[poId] = {
+            ordered: orderedByPo[poId] || 0,
+            dispatched: 0,
+            received: 0,
+            shortOpen: 0,
+          };
+          foundRedeliverByPo[poId] = 0;
+        }
+
+        const deliveryRows = (deliveries || []) as Array<{
+          id: string;
+          purchase_order_id: string;
+        }>;
+        const deliveryIds = deliveryRows.map((d) => d.id);
+        const poIdByDelivery: Record<string, string> = {};
+        for (const row of deliveryRows) {
+          poIdByDelivery[row.id] = String(row.purchase_order_id);
+        }
+
+        if (deliveryIds.length > 0) {
+          const { data: itemData, error: itemErr } = await supabase
+            .from('purchase_order_delivery_items')
+            .select('delivery_id,quantity_dispatched,quantity_received')
+            .in('delivery_id', deliveryIds);
+          if (itemErr) throw itemErr;
+          if (cancelled) return;
+
+          for (const item of (itemData || []) as Array<{
+            delivery_id: string;
+            quantity_dispatched?: number;
+            quantity_received?: number;
+          }>) {
+            const poId = poIdByDelivery[item.delivery_id];
+            if (!poId || !next[poId]) continue;
+            next[poId].dispatched += Number(item.quantity_dispatched) || 0;
+            next[poId].received += Number(item.quantity_received) || 0;
+          }
+        }
+
+        for (const row of discs || []) {
+          const poId = String((row as { purchase_order_id: string }).purchase_order_id);
+          if (!next[poId]) continue;
+          const qty = Number((row as { quantity: number }).quantity) || 0;
+          const status = String((row as { status?: string }).status || '');
+          if (status === 'open') {
+            next[poId].shortOpen += qty;
+          } else if (status === 'resolved_redeliver') {
+            foundRedeliverByPo[poId] = (foundRedeliverByPo[poId] || 0) + qty;
+          }
+        }
+
+        // Match History: "found & redeliver" redispatch is the same units — do not inflate Dispatched.
+        for (const poId of poIds) {
+          const gross = next[poId].dispatched;
+          const ordered = next[poId].ordered;
+          const foundQty = foundRedeliverByPo[poId] || 0;
+          if (foundQty <= 0) continue;
+          const extraBeyondOrdered = Math.max(0, gross - ordered);
+          const foundCredit = Math.min(foundQty, extraBeyondOrdered);
+          next[poId].dispatched = Math.max(0, gross - foundCredit);
+        }
+
+        setReceiveProgressByPoId(next);
+      } catch (e) {
+        console.warn('[PO List] receive progress load failed', e);
+        if (!cancelled) setReceiveProgressByPoId({});
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [purchaseOrders]);
 
   // DR numbers issued by this warehouse user's location (for Print DR button visibility).
   useEffect(() => {
@@ -1041,8 +1238,14 @@ export default function PurchaseOrdersPage() {
     );
   };
 
-  const canReceiveOrder = (order: { id: string; company_id?: string; fulfillment_type?: string }) => {
+  const canReceiveOrder = (order: {
+    id: string;
+    company_id?: string;
+    fulfillment_type?: string;
+    company_account_type?: string | null;
+  }) => {
     if (isWarehouse) return false;
+    if (isKeyAccountPo(order)) return false;
     if (order.fulfillment_type !== 'warehouse_transfer') return false;
     if (!user?.company_id || String(order.company_id) !== String(user.company_id)) return false;
     return !!pendingReceiveByPoId[order.id];
@@ -1636,9 +1839,7 @@ export default function PurchaseOrdersPage() {
                       )}
                     </div>
                   </div>
-                  <Badge variant="default" className={getStatusBadgeClassForOrder(order)}>
-                    {getStatusDisplayTextForOrder(order)}
-                  </Badge>
+                  {renderPoListStatus(order)}
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div>
@@ -1742,6 +1943,16 @@ export default function PurchaseOrdersPage() {
                   <Button variant="ghost" size="sm" onClick={() => handleViewOrder(order)}>
                     <Eye className="h-4 w-4 mr-1" /> View
                   </Button>
+                  {canShowPurchaseOrderHistory ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setHistoryOrder(order)}
+                      title="View PO history"
+                    >
+                      <History className="h-4 w-4 mr-1" /> History
+                    </Button>
+                  ) : null}
                 </div>
               </div>
               );
@@ -1869,11 +2080,7 @@ export default function PurchaseOrdersPage() {
                       <TableCell className="text-right font-semibold">
                         ₱{order.total_amount.toLocaleString()}
                       </TableCell>
-                      <TableCell>
-                        <Badge variant="default" className={getStatusBadgeClassForOrder(order)}>
-                          {getStatusDisplayTextForOrder(order)}
-                        </Badge>
-                      </TableCell>
+                      <TableCell>{renderPoListStatus(order)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           {canApproveOrder(order) && (
@@ -1953,6 +2160,16 @@ export default function PurchaseOrdersPage() {
                           <Button variant="ghost" size="icon" onClick={() => handleViewOrder(order)}>
                             <Eye className="h-4 w-4" />
                           </Button>
+                          {canShowPurchaseOrderHistory ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setHistoryOrder(order)}
+                              title="View PO history"
+                            >
+                              <History className="h-4 w-4" />
+                            </Button>
+                          ) : null}
                           <Button variant="outline" size="icon" onClick={() => void openCofForOrder(order)} title="View / Print COF">
                             <FileText className="h-4 w-4" />
                           </Button>
@@ -2698,6 +2915,27 @@ export default function PurchaseOrdersPage() {
                       );
                       if (itemsErr) throw itemsErr;
 
+                      const { logPurchaseOrderEvent } = await import('./purchaseOrderEventsApi');
+                      void logPurchaseOrderEvent({
+                        purchaseOrderId: dispatchPo.id,
+                        eventType: 'dispatched',
+                        note: dispatchNotes.trim() || null,
+                        lines: fulfilledItems.map((it) => {
+                          const fromUi = dispatchLines.find((l) => l.variant_id === it.variant_id);
+                          return {
+                            variant_id: it.variant_id,
+                            quantity: it.quantity,
+                            variant_name: fromUi?.variant_name ?? null,
+                            brand_name: fromUi?.brand_name ?? null,
+                          };
+                        }),
+                        proofImageUrl: riderPhotoUrl,
+                        signatureUrl: warehouseSignatureUrl,
+                        signaturePath: signaturePath,
+                        deliveryId: deliveryRow.id,
+                        createdBy: user.id,
+                      });
+
                       // 4) Workflow status
                       // Key Accounts: dispatch completes delivery (no buyer receive).
                       // Standard Accounts: stay partial_delivered until receive_po_delivery.
@@ -2897,6 +3135,16 @@ export default function PurchaseOrdersPage() {
         />
       ) : null}
 
+      <PurchaseOrderHistoryDialog
+        open={!!historyOrder}
+        onOpenChange={(open) => {
+          if (!open) setHistoryOrder(null);
+        }}
+        purchaseOrderId={historyOrder?.id ?? null}
+        poNumber={historyOrder?.po_number ?? null}
+        purchaseOrder={historyOrder ?? null}
+      />
+
       {/* View Purchase Order - Mobile: Sheet, Desktop: Dialog */}
       {isMobile ? (
         <Sheet open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
@@ -2904,11 +3152,7 @@ export default function PurchaseOrdersPage() {
             <SheetHeader className="px-4 pt-4 pb-2 border-b">
               <div className="flex items-center justify-between">
                 <SheetTitle>PO Details</SheetTitle>
-                {orderToView && (
-                  <Badge variant="default" className={getStatusBadgeClassForOrder(orderToView)}>
-                    {getStatusDisplayTextForOrder(orderToView)}
-                  </Badge>
-                )}
+                {orderToView && renderPoListStatus(orderToView)}
               </div>
             </SheetHeader>
             <ScrollArea className="h-[calc(95vh-80px)]">
@@ -3160,12 +3404,7 @@ export default function PurchaseOrdersPage() {
                       <h3 className="text-2xl font-bold">{orderToView.po_number}</h3>
                       <p className="text-sm text-muted-foreground">Purchase Order</p>
                     </div>
-                    <Badge
-                      variant="default"
-                      className={`text-base px-4 py-2 ${getStatusBadgeClassForOrder(orderToView)}`}
-                    >
-                      {getStatusDisplayTextForOrder(orderToView)}
-                    </Badge>
+                    {renderPoListStatus(orderToView)}
                   </div>
 
                   {/* Dates */}

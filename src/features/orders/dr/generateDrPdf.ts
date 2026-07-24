@@ -321,7 +321,8 @@ function buildDrHtml(po: PurchaseOrder, options: DrPdfOptions, receiptInfo: DrRe
     ? ''
     : `<div class="warehouse-badge">DR from: <span>${whLabel}</span></div>`;
   const footerNoteHtml = hideWarehouse ? '' : `<div class="footer-note">${whFooter}</div>`;
-  const bankSection = bankSectionHtml(receiptInfo);
+  const bankSection =
+    acct === 'Key Accounts' ? bankSectionHtml(receiptInfo) : '';
   const cancelled = !!options.cancelled;
   const cancelledWatermarkHtml = cancelled
     ? `<div class="cancelled-watermark" aria-hidden="true">CANCELLED</div>`

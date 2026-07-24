@@ -15,7 +15,7 @@ import { useWarehouseLocationMembership } from './useWarehouseLocationMembership
 import {
   DISCREPANCY_RESOLUTION_OPTIONS,
   DISCREPANCY_STATUS_LABELS,
-  SHORTFALL_REASON_LABELS,
+  formatShortfallReasonLabel,
   type DiscrepancyResolution,
   type DiscrepancyStatus,
   type ShortfallReason,
@@ -680,7 +680,7 @@ export default function WarehouseDeliveryShortagesPage() {
                                 <div className="font-medium truncate">{itemLabel(line)}</div>
                                 <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
                                   <span>
-                                    {SHORTFALL_REASON_LABELS[line.reason] || line.reason}
+                                    {formatShortfallReasonLabel(line.reason, line.buyer_notes)}
                                   </span>
                                   {line.reported_by_name ? (
                                     <span>by {line.reported_by_name}</span>
@@ -781,7 +781,7 @@ export default function WarehouseDeliveryShortagesPage() {
                     <div className="font-semibold leading-snug">{itemLabel(t)}</div>
                     <div className="text-xs text-muted-foreground">
                       {t.po_number || 'PO'} · {t.dr_number || 'DR'} ·{' '}
-                      {SHORTFALL_REASON_LABELS[t.reason] || t.reason}
+                      {formatShortfallReasonLabel(t.reason, t.buyer_notes)}
                     </div>
                   </div>
                   <div className="font-semibold tabular-nums shrink-0">{t.quantity}</div>
