@@ -152,7 +152,7 @@ export default function LeaderPoReceivePage() {
             Confirm receipt for warehouse transfer POs assigned to you.
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={loading}>
+        <Button type="button" variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
           Refresh
         </Button>
@@ -229,7 +229,7 @@ export default function LeaderPoReceivePage() {
           warehouseLocationName={receiveTarget.warehouseLocationName}
           onSuccess={() => {
             setReceiveTarget(null);
-            refresh();
+            refresh({ silent: true });
           }}
         />
       ) : null}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { PoReceiveLine } from '@/features/orders/components/PoBuyerReceiveDialog';
 import type { PurchaseOrderHistoryItem } from '@/features/orders/purchaseOrderHistoryTypes';
@@ -60,8 +60,12 @@ export function useLeaderAssignedPoReceives(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const silentRefreshRef = useRef(false);
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const refresh = useCallback((options?: { silent?: boolean }) => {
+    silentRefreshRef.current = options?.silent ?? false;
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     if (!enabled || !userId || !companyId) {
@@ -72,9 +76,11 @@ export function useLeaderAssignedPoReceives(
     }
 
     let cancelled = false;
+    const silent = silentRefreshRef.current;
+    silentRefreshRef.current = false;
 
     void (async () => {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
       try {
         const { data: poData, error: poErr } = await supabase
@@ -473,7 +479,7 @@ export function useLeaderAssignedPoReceives(
           setOrders([]);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && !silent) setLoading(false);
       }
     })();
 
@@ -481,6 +487,65 @@ export function useLeaderAssignedPoReceives(
       cancelled = true;
     };
   }, [userId, companyId, enabled, refreshKey]);
+
+  useEffect(() => {
+    if (!enabled || !userId || !companyId) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        refresh({ silent: true });
+      }, 300);
+    };
+
+    const channel = supabase
+      .channel(`tl-po-receive:${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'purchase_orders',
+          filter: `assigned_team_leader_id=eq.${userId}`,
+        },
+        scheduleRefresh
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'purchase_order_deliveries',
+          filter: `company_id=eq.${companyId}`,
+        },
+        scheduleRefresh
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'purchase_order_delivery_items',
+        },
+        scheduleRefresh
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'purchase_order_delivery_discrepancies',
+        },
+        scheduleRefresh
+      )
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [enabled, userId, companyId, refresh]);
 
   return { orders, loading, error, refresh };
 }
