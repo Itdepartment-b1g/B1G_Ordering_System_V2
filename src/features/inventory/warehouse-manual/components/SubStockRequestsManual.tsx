@@ -11,7 +11,7 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
       {!embedded && (
         <div className="flex flex-col items-center">
           <ContentSection>
-            SUB STOCK REQUESTS
+            SUB STOCK REQUESTS & ALLOCATIONS
           </ContentSection>
           <p className="text-sm text-gray-500">Main Warehouse</p>
         </div>
@@ -54,7 +54,7 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
           <span>
             1. Go to{" "}
             <Link to="/inventory/sub-stock-requests" className="text-blue-500">
-              Sub Stock Requests
+              Sub Stock Requests & Allocations
             </Link>
           </span>
         )}

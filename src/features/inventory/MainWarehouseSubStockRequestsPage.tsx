@@ -1148,7 +1148,7 @@ export default function MainWarehouseSubStockRequestsPage() {
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Sub Stock Requests</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Sub Stock Requests & Allocations</h1>
           <p className="text-muted-foreground">
             Review stock requests from sub-warehouses, or allocate stock directly. Approve, then
             deliver, or monitor receive status and shortages.
@@ -1165,7 +1165,7 @@ export default function MainWarehouseSubStockRequestsPage() {
             Allocate to Sub Warehouse
           </Button>
           <PageManualDialog
-            title="Sub Stock Requests Manual"
+            title="Sub Stock Requests & Allocations Manual"
             fullManualHref="/warehouse-manual#sub-stock-requests"
           >
             <SubStockRequestsManual embedded />

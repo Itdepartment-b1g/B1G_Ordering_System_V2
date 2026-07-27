@@ -582,7 +582,7 @@ export function SubWarehouseStockRequestDialog({
             {cart.length === 0 ? (
               <p className="text-sm text-muted-foreground py-2">No items added yet.</p>
             ) : (
-              <ul className="space-y-2 max-h-32 overflow-y-auto">
+              <ul className="space-y-2">
                 {cart.map((line) => (
                   <li
                     key={line.variantId}
