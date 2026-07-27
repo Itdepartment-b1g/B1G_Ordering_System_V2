@@ -35,6 +35,7 @@ import {
   Network,
   Plus,
   Package2Icon,
+  PackageCheck,
   RotateCcw,
   PackageX,
   Scale,
@@ -297,6 +298,7 @@ const leaderMenuItems: MenuItem[] = [
       { title: 'Pending Requests', url: '/inventory/pending-requests', icon: Send },
       { title: 'Team Remittances', url: '/inventory/team-remittances', icon: ArrowLeft },
       { title: 'Cash Deposits', url: '/inventory/cash-deposits', icon: DollarSign },
+      { title: 'PO Receiving', url: '/inventory/po-receive', icon: PackageCheck },
     ]
   },
   {

@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { NotificationType, SystemAuditLog } from '@/types/database.types';
+import { Notification, NotificationType, SystemAuditLog } from '@/types/database.types';
 
 export interface SendNotificationParams {
     userId: string;
@@ -9,6 +9,41 @@ export interface SendNotificationParams {
     message: string;
     referenceType?: string;
     referenceId?: string;
+}
+
+/**
+ * Deep-link path for a notification, if any.
+ * Used by the notifications dropdown so items navigate on click.
+ */
+export function getNotificationHref(
+    notification: Pick<Notification, 'notification_type' | 'reference_type'>,
+    role?: string | null
+): string | null {
+    const ref = notification.reference_type;
+    if (!ref) return null;
+
+    switch (ref) {
+        case 'purchase_order':
+            if (notification.notification_type === 'inventory_allocated') {
+                return role === 'team_leader' ? '/my-inventory' : '/purchase-orders';
+            }
+            return role === 'team_leader' ? '/inventory/po-receive' : '/purchase-orders';
+        case 'allocation':
+        case 'agent_inventory':
+            return '/my-inventory';
+        case 'stock_request':
+            if (role === 'team_leader') return '/inventory/pending-requests';
+            if (role === 'admin' || role === 'super_admin') return '/inventory/admin-requests';
+            return '/inventory/request';
+        case 'client_order':
+            return '/orders';
+        case 'client':
+            return '/clients';
+        case 'cash_deposit':
+            return '/inventory/cash-deposits';
+        default:
+            return null;
+    }
 }
 
 /**

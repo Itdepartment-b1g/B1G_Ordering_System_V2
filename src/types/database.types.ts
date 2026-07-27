@@ -453,6 +453,8 @@ export interface PurchaseOrder {
   key_account_payment_status?: KeyAccountPoPaymentStatus | null;
   po_order_kind?: PurchaseOrderKind | null;
   source_rebate_id?: string | null;
+  /** Warehouse transfer PO: team leader who receives dispatched stock. */
+  assigned_team_leader_id?: string | null;
 }
 
 export interface PurchaseOrderItem {

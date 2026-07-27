@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 import type { PurchaseOrder, PurchaseOrderItem, Supplier } from './types';
 import { PurchaseOrderContext } from './hooks';
 
@@ -74,6 +75,9 @@ function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
   const rawCreatedByUser = Array.isArray(order.created_by_user)
     ? order.created_by_user[0]
     : order.created_by_user;
+  const rawAssignedTeamLeader = Array.isArray(order.assigned_team_leader)
+    ? order.assigned_team_leader[0]
+    : order.assigned_team_leader;
 
   return {
     ...order,
@@ -90,6 +94,7 @@ function formatPurchaseOrder(order: any, items: any[]): PurchaseOrder {
     address: rawAddress ?? null,
     kam: rawKam ?? null,
     created_by_user: rawCreatedByUser ?? null,
+    assigned_team_leader: rawAssignedTeamLeader ?? null,
   };
 }
 
@@ -121,7 +126,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
         .select(`
           id, created_at, supplier_id, fulfillment_type, warehouse_company_id, warehouse_location_id, subtotal, tax_rate, tax_amount, discount, total_amount, status, company_id, po_number, order_date, expected_delivery_date, notes, created_by, approved_by, approved_at, updated_at,
           company_account_type, workflow_status, rfpf_number, dr_number, po_order_kind, source_rebate_id,
-          kam_id,
+          kam_id, assigned_team_leader_id,
           key_account_client_id, key_account_shop_id, key_account_address_id,
           warehouse_locations:warehouse_location_id (
             id,
@@ -142,6 +147,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           address:key_account_delivery_addresses(address_label,full_address,city,province,zip_code,contact_name,contact_phone,is_default),
           kam:profiles!purchase_orders_kam_id_fkey(full_name,email),
           created_by_user:profiles!purchase_orders_created_by_fkey(full_name,email),
+          assigned_team_leader:profiles!purchase_orders_assigned_team_leader_id_fkey(full_name,email),
           purchase_order_items (${PO_ITEMS_SELECT})
         `);
 
@@ -277,6 +283,7 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
     tax_rate: number;
     discount: number;
     notes: string;
+    assigned_team_leader_id?: string | null;
   }) => {
     // Retry configuration
     const MAX_RETRIES = 3;
@@ -303,6 +310,9 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           const hasItemLocations = (orderData.items || []).every((it) => !!it.warehouse_location_id);
           if (!hasHeaderLocation && !hasItemLocations) {
             return { success: false, error: 'Warehouse location is required for internal transfers' };
+          }
+          if (!orderData.assigned_team_leader_id) {
+            return { success: false, error: 'Receiving team leader is required for internal transfers' };
           }
         }
 
@@ -369,6 +379,10 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
             status: 'pending',
             notes: orderData.notes,
             created_by: user.id,
+            assigned_team_leader_id:
+              orderData.fulfillment_type === 'warehouse_transfer'
+                ? orderData.assigned_team_leader_id
+                : null,
           })
           .select()
           .single();
@@ -414,6 +428,22 @@ export function PurchaseOrderProvider({ children }: { children: ReactNode }) {
           })),
           createdBy: user.id,
         });
+
+        if (
+          orderData.fulfillment_type === 'warehouse_transfer' &&
+          orderData.assigned_team_leader_id &&
+          user.company_id
+        ) {
+          void sendNotification({
+            userId: orderData.assigned_team_leader_id,
+            companyId: user.company_id,
+            type: 'purchase_order_approved',
+            title: 'Purchase Order Assigned',
+            message: `${poNumber} was assigned to you for receiving. Open PO Receiving when the warehouse dispatches stock.`,
+            referenceType: 'purchase_order',
+            referenceId: newPO.id,
+          });
+        }
 
         toast({
           title: 'Success',

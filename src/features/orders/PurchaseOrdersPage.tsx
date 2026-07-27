@@ -30,7 +30,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, PackageCheck, XCircle, History } from 'lucide-react';
+import { Plus, Search, Eye, X, Trash2, Check, Package, Loader2, ChevronLeft, ChevronRight, FileText, Receipt, MapPin, Store, Filter, XCircle, History } from 'lucide-react';
 import { KeyAccountShopCorView } from '@/features/key-accounts/components/KeyAccountShopCorView';
 import { useToast } from '@/hooks/use-toast';
 import { usePurchaseOrders } from './hooks';
@@ -48,7 +48,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SignatureCanvas } from '@/components/ui/signature-canvas';
   import { Textarea } from '@/components/ui/textarea';
 import { PurchaseOrderDeliveryDetailsPanel, purchaseOrderDeliveryDetailsEnabled } from './components/PurchaseOrderDeliveryDetailsPanel';
-import { PoBuyerReceiveDialog, type PoReceiveLine } from './components/PoBuyerReceiveDialog';
+import { type PoReceiveLine } from './components/PoBuyerReceiveDialog';
 import { PoBuyerCancelDialog } from './components/PoBuyerCancelDialog';
 import { PurchaseOrderHistoryDialog } from './components/PurchaseOrderHistoryDialog';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
@@ -400,18 +400,6 @@ export default function PurchaseOrdersPage() {
       }
     >
   >({});
-  const [tableReceiveOpen, setTableReceiveOpen] = useState(false);
-  const [tableReceiveTarget, setTableReceiveTarget] = useState<{
-    deliveryId: string;
-    purchaseOrderId: string;
-    companyId: string;
-    drNumber: string | null;
-    warehouseLocationId: string | null;
-    warehouseLocationName: string | null;
-    order: any;
-    lines: PoReceiveLine[];
-  } | null>(null);
-  const [openingReceivePoId, setOpeningReceivePoId] = useState<string | null>(null);
   const [tableCancelOpen, setTableCancelOpen] = useState(false);
   const [tableCancelTarget, setTableCancelTarget] = useState<{
     deliveryId: string;
@@ -1239,7 +1227,7 @@ export default function PurchaseOrdersPage() {
     );
   };
 
-  const canReceiveOrder = (order: {
+  const canCancelPendingDr = (order: {
     id: string;
     company_id?: string;
     fulfillment_type?: string;
@@ -1250,31 +1238,6 @@ export default function PurchaseOrdersPage() {
     if (order.fulfillment_type !== 'warehouse_transfer') return false;
     if (!user?.company_id || String(order.company_id) !== String(user.company_id)) return false;
     return !!pendingReceiveByPoId[order.id];
-  };
-
-  const openReceiveForOrder = (order: { id: string }) => {
-    const pending = pendingReceiveByPoId[order.id];
-    if (!pending) {
-      toast({
-        title: 'Nothing to receive',
-        description: 'No dispatched delivery is waiting for receive on this PO.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    setOpeningReceivePoId(order.id);
-    setTableReceiveTarget({
-      deliveryId: pending.deliveryId,
-      purchaseOrderId: order.id,
-      companyId: pending.companyId,
-      drNumber: pending.drNumber,
-      warehouseLocationId: pending.warehouseLocationId,
-      warehouseLocationName: pending.warehouseLocationName,
-      order,
-      lines: pending.lines,
-    });
-    setTableReceiveOpen(true);
-    setOpeningReceivePoId(null);
   };
 
   const openCancelForOrder = (order: { id: string }) => {
@@ -1898,22 +1861,7 @@ export default function PurchaseOrdersPage() {
                       Fulfill
                     </Button>
                   )}
-                  {canReceiveOrder(order) && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onClick={() => openReceiveForOrder(order)}
-                      disabled={openingReceivePoId === order.id}
-                    >
-                      {openingReceivePoId === order.id ? (
-                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                      ) : (
-                        <PackageCheck className="h-4 w-4 mr-1" />
-                      )}
-                      Receive
-                    </Button>
-                  )}
-                  {canReceiveOrder(order) && (
+                  {canCancelPendingDr(order) && (
                     <Button
                       variant="destructive"
                       size="sm"
@@ -2117,22 +2065,7 @@ export default function PurchaseOrdersPage() {
                               Fulfill
                             </Button>
                           )}
-                          {canReceiveOrder(order) && (
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={() => openReceiveForOrder(order)}
-                              disabled={openingReceivePoId === order.id}
-                            >
-                              {openingReceivePoId === order.id ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              ) : (
-                                <PackageCheck className="h-4 w-4 mr-1" />
-                              )}
-                              Receive
-                            </Button>
-                          )}
-                          {canReceiveOrder(order) && (
+                          {canCancelPendingDr(order) && (
                             <Button
                               variant="destructive"
                               size="sm"
@@ -3097,28 +3030,6 @@ export default function PurchaseOrdersPage() {
         </DialogContent>
       </Dialog>
 
-      {tableReceiveTarget ? (
-        <PoBuyerReceiveDialog
-          open={tableReceiveOpen}
-          onOpenChange={(next) => {
-            setTableReceiveOpen(next);
-            if (!next) setTableReceiveTarget(null);
-          }}
-          deliveryId={tableReceiveTarget.deliveryId}
-          purchaseOrderId={tableReceiveTarget.purchaseOrderId}
-          companyId={tableReceiveTarget.companyId}
-          drNumber={tableReceiveTarget.drNumber}
-          lines={tableReceiveTarget.lines}
-          purchaseOrder={tableReceiveTarget.order}
-          warehouseLocationId={tableReceiveTarget.warehouseLocationId}
-          warehouseLocationName={tableReceiveTarget.warehouseLocationName}
-          onSuccess={() => {
-            setTableReceiveTarget(null);
-            void fetchPurchaseOrders(false, true);
-          }}
-        />
-      ) : null}
-
       {tableCancelTarget ? (
         <PoBuyerCancelDialog
           open={tableCancelOpen}
@@ -3223,6 +3134,12 @@ export default function PurchaseOrdersPage() {
                                   <p className="text-muted-foreground">Email</p>
                                   <p>{viewRequestorInfo?.profile?.email || 'N/A'}</p>
                                 </div>
+                                {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                                  <div className="col-span-2 pt-2 border-t">
+                                    <p className="text-muted-foreground">Receiving team leader</p>
+                                    <p>{orderToView.assigned_team_leader?.full_name || '—'}</p>
+                                  </div>
+                                )}
                               </div>
                             </>
                           )}
@@ -3288,7 +3205,8 @@ export default function PurchaseOrdersPage() {
                         warehouseNamesById={Object.fromEntries(
                           transferLocationStatuses.map((s) => [s.location_id, s.location_name])
                         )}
-                        allowBuyerReceive
+                        allowBuyerReceive={false}
+                        allowBuyerCancel
                         onReceiveSuccess={() => void fetchPurchaseOrders(false, true)}
                       />
                     )}
@@ -3450,6 +3368,12 @@ export default function PurchaseOrdersPage() {
                             <p className="text-sm">
                               Email: {viewRequestorInfo?.profile?.email || 'N/A'}
                             </p>
+                            {orderToView.fulfillment_type === 'warehouse_transfer' && (
+                              <p className="text-sm pt-2 border-t mt-2">
+                                Receiving team leader:{' '}
+                                {orderToView.assigned_team_leader?.full_name || '—'}
+                              </p>
+                            )}
                           </>
                         )}
                       </div>
@@ -3505,7 +3429,8 @@ export default function PurchaseOrdersPage() {
                       warehouseNamesById={Object.fromEntries(
                         transferLocationStatuses.map((s) => [s.location_id, s.location_name])
                       )}
-                      allowBuyerReceive
+                      allowBuyerReceive={false}
+                      allowBuyerCancel
                       onReceiveSuccess={() => void fetchPurchaseOrders(false, true)}
                     />
                   )}
@@ -4114,7 +4039,8 @@ function KeyAccountPOView({ order }: KeyAccountPOViewProps) {
         purchaseOrder={order}
         filterWarehouseLocationId={isWarehouse ? membership.locationId : null}
         warehouseNamesById={warehouseNamesById}
-        allowBuyerReceive
+        allowBuyerReceive={false}
+        allowBuyerCancel
       />
 
       {/* Items — grouped by source warehouse (same as Standard tab PO modal) */}

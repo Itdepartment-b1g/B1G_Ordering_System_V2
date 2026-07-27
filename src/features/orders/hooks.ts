@@ -24,6 +24,7 @@ export interface PurchaseOrderContextType {
         tax_rate: number;
         discount: number;
         notes: string;
+        assigned_team_leader_id?: string | null;
     }) => Promise<{ success: boolean; error?: string }>;
     approvePurchaseOrder: (poId: string) => Promise<{ success: boolean; error?: string }>;
     rejectPurchaseOrder: (poId: string) => Promise<{ success: boolean; error?: string }>;

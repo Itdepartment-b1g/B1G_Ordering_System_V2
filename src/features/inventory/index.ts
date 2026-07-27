@@ -25,6 +25,7 @@ export { default as PendingRequestsPage } from './PendingRequestsPage';
 export { default as AdminRequestsPage } from './AdminRequestsPage';
 export { default as LeaderStockRequestPage } from './LeaderStockRequestPage';
 export { default as MobileSalesStockRequestPage } from './MobileSalesStockRequestPage';
+export { default as LeaderPoReceivePage } from './LeaderPoReceivePage';
 
 export { InventoryProvider, useInventory, type Brand, type Variant } from './InventoryContext';
 export { AgentInventoryProvider } from './AgentInventoryContext';

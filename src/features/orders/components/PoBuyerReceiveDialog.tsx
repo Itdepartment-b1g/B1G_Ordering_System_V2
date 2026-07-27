@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -31,6 +32,8 @@ import {
   SHORTFALL_REASON_OPTIONS,
   type ShortfallReason,
 } from '@/features/orders/deliveryDiscrepancyShared';
+import { refetchSuperAdminAllocationHistory } from '@/features/sales-agents/components/super-admin-allocation-history/hooks/useSuperAdminAllocationHistory';
+import { sendNotification } from '@/features/shared/lib/notification.helpers';
 
 const BUYER_PROOF_BUCKET = 'ka-delivery-rider-photos';
 const BUYER_SIGNATURE_BUCKET = 'ka-delivery-warehouse-signatures';
@@ -74,8 +77,8 @@ export function PoBuyerReceiveDialog({
 }: Props) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const proofInputRef = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState<1 | 2>(1);
   const [qtyByVariant, setQtyByVariant] = useState<Record<string, number>>({});
   const [reasonByVariant, setReasonByVariant] = useState<Record<string, ShortfallReason | ''>>({});
   const [otherDetailByVariant, setOtherDetailByVariant] = useState<Record<string, string>>({});
@@ -104,7 +107,6 @@ export function PoBuyerReceiveDialog({
     setProofPreview(null);
     setSignatureDataUrl(null);
     setShowSignatureModal(false);
-    setStep(1);
     if (proofInputRef.current) proofInputRef.current.value = '';
   }, [open, lines]);
 
@@ -204,11 +206,6 @@ export function PoBuyerReceiveDialog({
       }
     }
     return true;
-  };
-
-  const goNext = () => {
-    if (!validateQtys()) return;
-    setStep(2);
   };
 
   const handleSubmit = async () => {
@@ -373,13 +370,35 @@ export function PoBuyerReceiveDialog({
 
       const discrepancyCount =
         Number((data as { discrepancies_opened?: number })?.discrepancies_opened) || 0;
+      const allocatedToLeader =
+        Boolean((data as { allocation_id?: string | null })?.allocation_id) && totalReceiving > 0;
       toast({
         title: shortfall > 0 ? 'Partial receive saved' : 'Items received',
         description:
           shortfall > 0
-            ? `Received ${totalReceiving} of ${totalDispatched}. ${discrepancyCount || shortfall} unit shortfall sent to warehouse for investigation.`
-            : `All ${totalReceiving} unit(s) received for${drNumber ? ` ${drNumber}` : ' this DR'}.`,
+            ? `Received ${totalReceiving} of ${totalDispatched}. ${discrepancyCount || shortfall} unit shortfall sent to warehouse for investigation.${
+                allocatedToLeader ? ' Received stock allocated to your inventory.' : ''
+              }`
+            : `All ${totalReceiving} unit(s) received for${drNumber ? ` ${drNumber}` : ' this DR'}.${
+                allocatedToLeader ? ' Stock allocated to your inventory.' : ''
+              }`,
       });
+
+      void refetchSuperAdminAllocationHistory(queryClient, user);
+
+      if (allocatedToLeader && user?.id && (user.company_id || companyId)) {
+        const poLabel = purchaseOrder?.po_number || 'your assigned PO';
+        const drLabel = drNumber ? ` (${drNumber})` : '';
+        void sendNotification({
+          userId: user.id,
+          companyId: user.company_id || companyId,
+          type: 'inventory_allocated',
+          title: 'PO Stock Allocated',
+          message: `${totalReceiving} unit(s) from ${poLabel}${drLabel} were allocated to your inventory.`,
+          referenceType: 'purchase_order',
+          referenceId: purchaseOrderId,
+        });
+      }
 
       if (purchaseOrder && warehouseLocationId && drNumber) {
         const receiptLines = lines.map((line) => {
@@ -435,284 +454,229 @@ export function PoBuyerReceiveDialog({
                 const context = [drNumber || null, wh ? `from ${wh}` : null]
                   .filter(Boolean)
                   .join(' ');
-                return step === 1
-                  ? `Step 1 of 2 — confirm quantities${context ? ` for ${context}` : ''}.`
-                  : `Step 2 of 2 — proof, signature, and notes${context ? ` for ${context}` : ''}.`;
+                return context
+                  ? `Confirm quantities, proof, and signature for ${context}.`
+                  : 'Confirm quantities, upload proof, and sign to receive.';
               })()}
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4 space-y-4">
-            {step === 1 ? (
-              <>
-                <div className="rounded-md border overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="h-8 text-xs">Item</TableHead>
-                        <TableHead className="h-8 text-xs text-right">Dispatched</TableHead>
-                        <TableHead className="h-8 text-xs text-right w-28">Received</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {lines.map((line) => (
-                        <TableRow key={line.variant_id}>
-                          <TableCell className="py-2 text-xs">
-                            <div className="font-medium">
-                              {[line.brand_name, line.variant_name].filter(Boolean).join(' · ') ||
-                                line.variant_id.slice(0, 8)}
-                            </div>
-                          </TableCell>
-                          <TableCell className="py-2 text-xs text-right font-semibold">
-                            {line.quantity_dispatched}
-                          </TableCell>
-                          <TableCell className="py-2 text-right">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={line.quantity_dispatched}
-                              className="h-8 text-right"
-                              value={qtyByVariant[line.variant_id] ?? 0}
-                              onChange={(e) => {
-                                const n = Number(e.target.value);
-                                const nextQty = Number.isFinite(n) ? n : 0;
-                                setQtyByVariant((prev) => ({
-                                  ...prev,
-                                  [line.variant_id]: nextQty,
-                                }));
-                                if (nextQty >= line.quantity_dispatched) {
-                                  setReasonByVariant((prev) => ({
-                                    ...prev,
-                                    [line.variant_id]: '',
-                                  }));
-                                  setOtherDetailByVariant((prev) => ({
-                                    ...prev,
-                                    [line.variant_id]: '',
-                                  }));
-                                }
-                              }}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {shortfallLines.length > 0 ? (
-                  <div className="rounded-md border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-900 space-y-3 p-3">
-                    <p className="text-xs font-medium text-foreground">
-                      Shortfall ({totalShortfall} unit
-                      {totalShortfall === 1 ? '' : 's'}) — warehouse will investigate. Stock is not
-                      restored until they choose redeliver or write-off.
-                    </p>
-                    {shortfallLines.map((line) => (
-                      <div key={line.variant_id} className="space-y-1.5">
-                        <Label className="text-xs">
+            <div className="rounded-md border overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="h-8 text-xs">Item</TableHead>
+                    <TableHead className="h-8 text-xs text-right">Dispatched</TableHead>
+                    <TableHead className="h-8 text-xs text-right w-28">Received</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lines.map((line) => (
+                    <TableRow key={line.variant_id}>
+                      <TableCell className="py-2 text-xs">
+                        <div className="font-medium">
                           {[line.brand_name, line.variant_name].filter(Boolean).join(' · ') ||
-                            line.variant_id.slice(0, 8)}{' '}
-                          <span className="text-muted-foreground font-normal">
-                            ({line.shortfall} short)
-                          </span>
-                        </Label>
-                        <Select
-                          value={line.reason || undefined}
-                          onValueChange={(v) => {
-                            const next = v as ShortfallReason;
-                            setReasonByVariant((prev) => ({
+                            line.variant_id.slice(0, 8)}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-2 text-xs text-right font-semibold">
+                        {line.quantity_dispatched}
+                      </TableCell>
+                      <TableCell className="py-2 text-right">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={line.quantity_dispatched}
+                          className="h-8 text-right"
+                          value={qtyByVariant[line.variant_id] ?? 0}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            const nextQty = Number.isFinite(n) ? n : 0;
+                            setQtyByVariant((prev) => ({
                               ...prev,
-                              [line.variant_id]: next,
+                              [line.variant_id]: nextQty,
                             }));
-                            if (next !== 'other') {
+                            if (nextQty >= line.quantity_dispatched) {
+                              setReasonByVariant((prev) => ({
+                                ...prev,
+                                [line.variant_id]: '',
+                              }));
                               setOtherDetailByVariant((prev) => ({
                                 ...prev,
                                 [line.variant_id]: '',
                               }));
                             }
                           }}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue placeholder="Select reason…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {SHORTFALL_REASON_OPTIONS.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                                {opt.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {line.reason === 'other' ? (
-                          <Input
-                            className="h-8 text-xs"
-                            value={line.otherDetail}
-                            onChange={(e) =>
-                              setOtherDetailByVariant((prev) => ({
-                                ...prev,
-                                [line.variant_id]: e.target.value,
-                              }))
-                            }
-                            placeholder="Describe the shortfall…"
-                            maxLength={500}
-                            aria-label="Other shortfall reason"
-                          />
-                        ) : null}
-                      </div>
-                    ))}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            {shortfallLines.length > 0 ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-900 space-y-3 p-3">
+                <p className="text-xs font-medium text-foreground">
+                  Shortfall ({totalShortfall} unit
+                  {totalShortfall === 1 ? '' : 's'}) — warehouse will investigate. Stock is not
+                  restored until they choose redeliver or write-off.
+                </p>
+                {shortfallLines.map((line) => (
+                  <div key={line.variant_id} className="space-y-1.5">
+                    <Label className="text-xs">
+                      {[line.brand_name, line.variant_name].filter(Boolean).join(' · ') ||
+                        line.variant_id.slice(0, 8)}{' '}
+                      <span className="text-muted-foreground font-normal">
+                        ({line.shortfall} short)
+                      </span>
+                    </Label>
+                    <Select
+                      value={line.reason || undefined}
+                      onValueChange={(v) => {
+                        const next = v as ShortfallReason;
+                        setReasonByVariant((prev) => ({
+                          ...prev,
+                          [line.variant_id]: next,
+                        }));
+                        if (next !== 'other') {
+                          setOtherDetailByVariant((prev) => ({
+                            ...prev,
+                            [line.variant_id]: '',
+                          }));
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Select reason…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SHORTFALL_REASON_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {line.reason === 'other' ? (
+                      <Input
+                        className="h-8 text-xs"
+                        value={line.otherDetail}
+                        onChange={(e) =>
+                          setOtherDetailByVariant((prev) => ({
+                            ...prev,
+                            [line.variant_id]: e.target.value,
+                          }))
+                        }
+                        placeholder="Describe the shortfall…"
+                        maxLength={500}
+                        aria-label="Other shortfall reason"
+                      />
+                    ) : null}
                   </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Total receiving:{' '}
-                    <span className="font-medium text-foreground">{totalReceiving}</span> of{' '}
-                    {totalDispatched}.
-                  </p>
-                )}
-              </>
+                ))}
+              </div>
             ) : (
-              <>
-                <div className="rounded-md border bg-muted/20 p-3 text-sm space-y-1">
-                  <div>
-                    Confirming receive of{' '}
-                    <span className="font-semibold">{totalReceiving}</span> / {totalDispatched}{' '}
-                    unit(s)
-                    {drNumber ? (
-                      <>
-                        {' '}
-                        for <span className="font-mono font-medium">{drNumber}</span>
-                      </>
-                    ) : null}
-                    {warehouseLocationName?.trim() ? (
-                      <>
-                        {' '}
-                        from <span className="font-medium">{warehouseLocationName.trim()}</span>
-                      </>
-                    ) : null}
-                    .
-                  </div>
-                  {shortfallLines.length > 0 ? (
-                    <p className="text-xs text-amber-800 dark:text-amber-200">
-                      {totalShortfall} unit{totalShortfall === 1 ? '' : 's'} will be reported to
-                      warehouse for investigation
-                      {shortfallLines
-                        .map((l) =>
-                          l.reason
-                            ? ` (${formatShortfallReasonLabel(l.reason, l.otherDetail)})`
-                            : ''
-                        )
-                        .filter(Boolean)
-                        .join('')}
-                      .
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Proof photo</Label>
-                  <Input
-                    ref={proofInputRef}
-                    type="file"
-                    accept={PROOF_ACCEPT}
-                    onChange={(e) => handleProofChange(e.target.files?.[0] ?? null)}
-                  />
-                  {proofPreview ? (
-                    <div className="rounded border overflow-hidden bg-muted/30 p-2">
-                      <img
-                        src={proofPreview}
-                        alt="Receive proof preview"
-                        className="max-h-40 w-full object-contain mx-auto"
-                      />
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Receiver e-signature</Label>
-                  {signatureDataUrl ? (
-                    <div className="border rounded-md p-3 bg-muted/30 space-y-2">
-                      <img
-                        src={signatureDataUrl}
-                        alt="Buyer signature"
-                        className="max-h-20 mx-auto"
-                      />
-                      <div className="flex justify-end">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setShowSignatureModal(true)}
-                        >
-                          Change signature
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="border rounded-md p-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm text-muted-foreground">
-                        Draw your signature to confirm receipt.
-                      </p>
-                      <Button type="button" size="sm" onClick={() => setShowSignatureModal(true)}>
-                        Add signature
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <Label>
-                    Notes{' '}
-                    {totalShortfall > 0 ? (
-                      <span className="text-destructive font-normal">(required for shortfall)</span>
-                    ) : (
-                      <span className="text-muted-foreground font-normal">(optional)</span>
-                    )}
-                  </Label>
-                  <Textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder={
-                      totalShortfall > 0
-                        ? 'Explain the shortfall (what happened, gate notes, etc.)…'
-                        : 'Damaged units, missing pieces, gate notes…'
-                    }
-                    rows={2}
-                    required={totalShortfall > 0}
-                    aria-required={totalShortfall > 0}
-                  />
-                </div>
-              </>
+              <p className="text-xs text-muted-foreground">
+                Total receiving:{' '}
+                <span className="font-medium text-foreground">{totalReceiving}</span> of{' '}
+                {totalDispatched}.
+              </p>
             )}
+
+            <div className="space-y-2">
+              <Label>Proof photo</Label>
+              <Input
+                ref={proofInputRef}
+                type="file"
+                accept={PROOF_ACCEPT}
+                onChange={(e) => handleProofChange(e.target.files?.[0] ?? null)}
+              />
+              {proofPreview ? (
+                <div className="rounded border overflow-hidden bg-muted/30 p-2">
+                  <img
+                    src={proofPreview}
+                    alt="Receive proof preview"
+                    className="max-h-40 w-full object-contain mx-auto"
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Receiver e-signature</Label>
+              {signatureDataUrl ? (
+                <div className="border rounded-md p-3 bg-muted/30 space-y-2">
+                  <img
+                    src={signatureDataUrl}
+                    alt="Buyer signature"
+                    className="max-h-20 mx-auto"
+                  />
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowSignatureModal(true)}
+                    >
+                      Change signature
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="border rounded-md p-3 bg-muted/30 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-muted-foreground">
+                    Draw your signature to confirm receipt.
+                  </p>
+                  <Button type="button" size="sm" onClick={() => setShowSignatureModal(true)}>
+                    Add signature
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>
+                Notes{' '}
+                {totalShortfall > 0 ? (
+                  <span className="text-destructive font-normal">(required for shortfall)</span>
+                ) : (
+                  <span className="text-muted-foreground font-normal">(optional)</span>
+                )}
+              </Label>
+              <Textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder={
+                  totalShortfall > 0
+                    ? 'Explain the shortfall (what happened, gate notes, etc.)…'
+                    : 'Damaged units, missing pieces, gate notes…'
+                }
+                rows={2}
+                required={totalShortfall > 0}
+                aria-required={totalShortfall > 0}
+              />
+            </div>
           </div>
 
           <DialogFooter className="px-6 py-4 border-t shrink-0 gap-2 sm:gap-2">
-            {step === 1 ? (
-              <>
-                <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-                  Cancel
-                </Button>
-                <Button onClick={goNext} disabled={lines.length === 0}>
-                  Next
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button variant="outline" onClick={() => setStep(1)} disabled={saving}>
-                  Back
-                </Button>
-                <Button
-                  onClick={() => void handleSubmit()}
-                  disabled={
-                    saving ||
-                    lines.length === 0 ||
-                    !signatureDataUrl ||
-                    !proofFile ||
-                    (totalShortfall > 0 && !notes.trim())
-                  }
-                >
-                  {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  Confirm receive ({totalReceiving})
-                </Button>
-              </>
-            )}
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void handleSubmit()}
+              disabled={
+                saving ||
+                lines.length === 0 ||
+                !signatureDataUrl ||
+                !proofFile ||
+                (totalShortfall > 0 && !notes.trim())
+              }
+            >
+              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Confirm receive ({totalReceiving})
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

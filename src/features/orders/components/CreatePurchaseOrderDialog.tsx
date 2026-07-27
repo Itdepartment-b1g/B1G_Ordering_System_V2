@@ -27,6 +27,7 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Package, FileText } from 'lucide-react';
+import { PoTeamLeaderSelect } from './PoTeamLeaderSelect';
 
 // Types
 import type { Supplier } from '../types';
@@ -72,6 +73,7 @@ interface CreatePurchaseOrderDialogProps {
         tax_rate: number;
         discount: number;
         notes: string;
+        assigned_team_leader_id?: string | null;
     }) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -111,6 +113,7 @@ export function CreatePurchaseOrderDialog({
     const [taxRate, setTaxRate] = useState(0);
     const [discount, setDiscount] = useState(0);
     const [notes, setNotes] = useState('');
+    const [selectedTeamLeaderId, setSelectedTeamLeaderId] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Items State
@@ -118,6 +121,18 @@ export function CreatePurchaseOrderDialog({
 
     // Stock State: map of `${variantId}::${locationId}` to stock quantity
     const [itemStockMap, setItemStockMap] = useState<Record<string, number>>({});
+
+    useEffect(() => {
+        if (!open) {
+            setSelectedTeamLeaderId('');
+        }
+    }, [open]);
+
+    useEffect(() => {
+        if (fulfillmentMode !== 'warehouse_transfer') {
+            setSelectedTeamLeaderId('');
+        }
+    }, [fulfillmentMode]);
 
     // Keep item-level location in sync with source mode and default selection.
     useEffect(() => {
@@ -579,6 +594,10 @@ export function CreatePurchaseOrderDialog({
                 return;
             }
         }
+        if (fulfillmentMode === 'warehouse_transfer' && !selectedTeamLeaderId) {
+            toast({ title: 'Error', description: 'Please select a receiving team leader', variant: 'destructive' });
+            return;
+        }
         if (items.length === 0) {
             toast({ title: 'Error', description: 'Please add at least one item', variant: 'destructive' });
             return;
@@ -714,12 +733,15 @@ export function CreatePurchaseOrderDialog({
                 items: itemsPayload,
                 tax_rate: taxRate,
                 discount: discount,
-                notes: notes
+                notes: notes,
+                assigned_team_leader_id:
+                    fulfillmentMode === 'warehouse_transfer' ? selectedTeamLeaderId : null,
             });
 
             if (!success) throw new Error(error);
 
             setItems([]);
+            setSelectedTeamLeaderId('');
             onOpenChange(false);
 
         } catch (err: any) {
@@ -858,6 +880,15 @@ export function CreatePurchaseOrderDialog({
                                             </div>
                                         )}
                                 </div>
+                            )}
+
+                            {fulfillmentMode === 'warehouse_transfer' && (
+                                <PoTeamLeaderSelect
+                                    companyId={user?.company_id}
+                                    value={selectedTeamLeaderId}
+                                    onValueChange={setSelectedTeamLeaderId}
+                                    enabled={open}
+                                />
                             )}
 
                             {fulfillmentMode === 'warehouse_transfer' && (

@@ -112,6 +112,8 @@ interface PurchaseOrderDeliveryDetailsPanelProps {
   filterWarehouseLocationId?: string | null;
   /** Buying company users can receive dispatched DRs. */
   allowBuyerReceive?: boolean;
+  /** Buying company users can refuse/cancel a pending dispatched DR. */
+  allowBuyerCancel?: boolean;
   onReceiveSuccess?: () => void;
 }
 
@@ -122,6 +124,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
   purchaseOrder = null,
   filterWarehouseLocationId = null,
   allowBuyerReceive = false,
+  allowBuyerCancel = false,
   onReceiveSuccess,
 }: PurchaseOrderDeliveryDetailsPanelProps) {
   const { user } = useAuth();
@@ -397,7 +400,12 @@ export function PurchaseOrderDeliveryDetailsPanel({
                   isBuyerCompany &&
                   row.status === 'dispatched' &&
                   itemLines.length > 0;
-                const canCancel = canReceive;
+                const canCancel =
+                  !isKeyAccount &&
+                  allowBuyerCancel &&
+                  isBuyerCompany &&
+                  row.status === 'dispatched' &&
+                  itemLines.length > 0;
                 const showPrintRr =
                   !isKeyAccount &&
                   showPrintDr &&
@@ -715,7 +723,7 @@ export function PurchaseOrderDeliveryDetailsPanel({
                                   </div>
                                 ) : null}
                                 {!hasBuyerProof ? (
-                                  <p className="text-xs text-muted-foreground">Awaiting buyer receive.</p>
+                                  <p className="text-xs text-muted-foreground">Awaiting team leader receive.</p>
                                 ) : null}
                               </>
                             )}

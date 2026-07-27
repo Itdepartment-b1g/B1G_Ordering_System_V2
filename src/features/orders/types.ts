@@ -45,6 +45,9 @@ export interface PurchaseOrder {
     kam?: { full_name?: string | null; email?: string | null } | null;
     /** Creator profile when joined (created_by → profiles). */
     created_by_user?: { full_name?: string | null; email?: string | null } | null;
+    /** Warehouse transfer PO: assigned receiving team leader. */
+    assigned_team_leader_id?: string | null;
+    assigned_team_leader?: { full_name?: string | null; email?: string | null } | null;
     /** standard | rebate_fulfillment (replacement shipment after rebate approval). */
     po_order_kind?: PurchaseOrderKind | string | null;
     /** Links rebate fulfillment PO to key_account_po_rebates.id */
