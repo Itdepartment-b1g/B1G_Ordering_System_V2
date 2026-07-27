@@ -5,6 +5,8 @@ import { AlertCircle, Eye, FileText, Loader2, MoreHorizontal, RotateCcw, Search,
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import ClientStockReturnsManual from '@/features/inventory/warehouse-manual/components/ClientStockReturnsManual';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import { WarehouseStockReturnInspectDialog } from './components/WarehouseStockReturnInspectDialog';
 import {
@@ -681,15 +683,23 @@ export default function WarehouseClientStockReturnsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-          <RotateCcw className="h-6 w-6" />
-          Client Stock Returns
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Inspect returns from linked Standard Accounts (RT-YYYYMM-####). Good qty restocks a batch
-          at the chosen location; damaged goes to disposal.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+            <RotateCcw className="h-6 w-6" />
+            Client Stock Returns
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Inspect returns from linked Standard Accounts (RT-YYYYMM-####). Good qty restocks a batch
+            at the chosen location; damaged goes to disposal.
+          </p>
+        </div>
+        <PageManualDialog
+          title="Client Stock Returns Manual"
+          fullManualHref="/warehouse-manual#client-stock-returns"
+        >
+          <ClientStockReturnsManual embedded />
+        </PageManualDialog>
       </div>
 
       <Card>

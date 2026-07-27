@@ -23,6 +23,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import VariantTypesManual from '@/features/inventory/warehouse-manual/components/VariantTypesManual';
 
 interface VariantType {
@@ -321,6 +322,7 @@ export default function VariantTypesPage() {
           <p className="text-muted-foreground">Manage variant types for future-proofing your product catalog</p>
         </div>
         <div className="flex gap-2">
+          <PageGettingStartedDialog />
           <PageManualDialog
             title="Variant Types Manual"
             fullManualHref="/warehouse-manual#variant-types"

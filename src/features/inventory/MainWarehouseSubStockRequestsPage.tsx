@@ -88,6 +88,7 @@ import {
   type DeliveryReceiptWaveEvent,
 } from './utils/exportInternalStockDeliveryReceiptPdf';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import SubStockRequestsManual from '@/features/inventory/warehouse-manual/components/SubStockRequestsManual';
 import {
   MainWarehouseAllocateDialog,
@@ -1177,6 +1178,7 @@ export default function MainWarehouseSubStockRequestsPage() {
             <Send className="h-4 w-4" />
             Allocate to Sub Warehouse
           </Button>
+          <PageGettingStartedDialog />
           <PageManualDialog
             title="Sub Stock Requests & Allocations Manual"
             fullManualHref="/warehouse-manual#sub-stock-requests"

@@ -53,6 +53,7 @@ import { PoBuyerCancelDialog } from './components/PoBuyerCancelDialog';
 import { PurchaseOrderHistoryDialog } from './components/PurchaseOrderHistoryDialog';
 import { PurchaseOrderItemsByWarehouse } from './components/PurchaseOrderItemsByWarehouse';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import PurchaseOrderManual from '@/features/inventory/warehouse-manual/components/PurchaseOrderManual';
 import { SortableTableHead } from '@/features/shared/components/SortableTableHead';
 import {
@@ -1701,12 +1702,15 @@ export default function PurchaseOrdersPage() {
         </div>
         <div className="flex gap-2">
           {isWarehouse && (
-            <PageManualDialog
-              title="Purchase Order Manual"
-              fullManualHref="/warehouse-manual#purchase-order"
-            >
-              <PurchaseOrderManual embedded />
-            </PageManualDialog>
+            <>
+              <PageGettingStartedDialog />
+              <PageManualDialog
+                title="Purchase Order Manual"
+                fullManualHref="/warehouse-manual#purchase-order"
+              >
+                <PurchaseOrderManual embedded />
+              </PageManualDialog>
+            </>
           )}
           {user?.role !== 'warehouse' && (
             <Button className="w-full md:w-auto" onClick={() => setCreateDialogOpen(true)}>

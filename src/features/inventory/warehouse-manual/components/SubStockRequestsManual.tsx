@@ -27,6 +27,13 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
           without a prior request — the sub must still confirm receive before their on-hand increases.
         </p>
         <hr className="my-2 border-gray-500" />
+        <p>
+          This page has two tabs: <span className="text-blue-500">Requests</span> (sub-raised RN-…) and{" "}
+          <span className="text-blue-500">Allocations</span> (main-pushed AL-…). After a short receive, use{" "}
+          <span className="text-blue-500">Allocate Remaining</span> on the row to unlock the next receive wave
+          (blocked while a shortage investigation is open).
+        </p>
+        <hr className="my-2 border-gray-500" />
         <p>Status flow:</p>
         <span>
           1. <span className="text-blue-500">Pending approval</span> — waiting for main warehouse review
@@ -75,8 +82,8 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
           <span className="text-blue-500">Deliver</span>
         </span>
         <span>
-          2. Upload a proof photo and add an e-signature, then click{" "}
-          <span className="text-blue-500">Confirm deliver</span>
+          2. Enter rider name, plate number, and rider photo; upload a proof photo; add your e-signature; then
+          click <span className="text-blue-500">Confirm deliver</span>
         </span>
         <span>
           3. Main warehouse stock is reserved and the sub-warehouse can receive. A{" "}
@@ -92,6 +99,51 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
           5. You can reprint anytime via <span className="text-blue-500">Print Delivery Receipt</span>
         </span>
         <span>6. Wait for the sub-warehouse to confirm receive</span>
+      </InstructionBorder>
+
+      <InstructionBorder>
+        <TitleSection>How to Allocate to Sub Warehouse?</TitleSection>
+        <p>
+          Use <span className="text-blue-500">Allocate to Sub Warehouse</span> when Main pushes stock to a
+          sub-warehouse without waiting for a request. The sub still confirms receive before their on-hand
+          increases.
+        </p>
+        <hr className="my-2 border-gray-500" />
+        {embedded ? (
+          <span>
+            1. On this page, click <span className="text-blue-500">Allocate to Sub Warehouse</span>
+          </span>
+        ) : (
+          <span>
+            1. Go to{" "}
+            <Link to="/inventory/sub-stock-requests" className="text-blue-500">
+              Sub Stock Requests &amp; Allocations
+            </Link>{" "}
+            and click <span className="text-blue-500">Allocate to Sub Warehouse</span>
+          </span>
+        )}
+        <span>
+          2. Choose the destination <span className="text-blue-500">sub-warehouse</span>
+        </span>
+        <span>
+          3. Select a brand, set quantities from available main stock, then click{" "}
+          <span className="text-blue-500">Add to allocation</span>. Repeat for more brands if needed. Review
+          the cart and remove lines you do not want.
+        </span>
+        <span>
+          4. Optionally add notes. Enter rider name, plate number, and rider photo; upload a proof photo; add
+          your e-signature.
+        </span>
+        <span>
+          5. Click <span className="text-blue-500">Confirm allocate</span>. Stock is reserved, a DR is assigned,
+          and a Delivery Receipt opens. Status becomes{" "}
+          <span className="text-blue-500">Pending receive</span>.
+        </span>
+        <span>
+          6. Find the row under the <span className="text-blue-500">Allocations</span> tab (AL / DR search). Wait
+          for the sub-warehouse to confirm receive. Partial receive and shortage investigation work the same as
+          for requests.
+        </span>
       </InstructionBorder>
 
       <InstructionBorder>
@@ -119,26 +171,46 @@ export default function SubStockRequestsManual({ embedded = false }: SubStockReq
         </p>
         <hr className="my-2 border-gray-500" />
         <p>
-          That opens an investigation for Main Warehouse. Go to{' '}
-          <span className="text-blue-500">Delivery Shortages → Sub stock requests</span> to review reason, qty, and
-          resolve:
+          That opens an investigation. On this page the row shows an{" "}
+          <span className="text-blue-500">Open shortage</span> badge, and{" "}
+          <span className="text-blue-500">Allocate Remaining</span> stays blocked until you resolve.
         </p>
         <span>
-          • <span className="text-blue-500">Found → restore & redeliver</span> — then use{' '}
-          <span className="text-blue-500">Allocate Remaining</span> (rider photo, plate, proof, new DR) to
-          re-deliver
+          1. Use <span className="text-blue-500">Investigate shortage</span> /{" "}
+          <span className="text-blue-500">Resolve shortage</span> on the row, or go to{" "}
+          {embedded ? (
+            <Link to="/warehouse-manual#delivery-shortages" className="text-blue-500">
+              Delivery Shortages
+            </Link>
+          ) : (
+            <a href="#delivery-shortages" className="text-blue-500">
+              Delivery Shortages
+            </a>
+          )}{" "}
+          → <span className="text-blue-500">Sub Warehouse Allocations &amp; Requests</span>
+        </span>
+        <span>2. Review reason, qty, and notes, then resolve:</span>
+        <span>
+          • <span className="text-blue-500">Found → restore &amp; redeliver</span> — closes the investigation and
+          releases the hold. Resolving does <strong>not</strong> unlock Sub receive by itself.
         </span>
         <span>
-          • <span className="text-blue-500">Lost → write off & ship replacement</span> — then use Allocate
-          Remaining for a new wave
+          • <span className="text-blue-500">Lost → write off &amp; ship replacement</span> — same: resolve first,
+          then ship a replacement wave
         </span>
         <span>
           • <span className="text-blue-500">Lost → write off only</span> — accept the loss (no replacement)
         </span>
         <hr className="my-2 border-gray-500" />
         <p>
-          Allocate Remaining is blocked while shortages are open. View the request timeline (3 dots →{' '}
-          <span className="text-blue-500">View</span>) for reason and investigation outcome.
+          After Found or write-off &amp; replace, the row shows{" "}
+          <span className="text-blue-500">Ready to allocate</span>. Then use{" "}
+          <span className="text-blue-500">Allocate Remaining</span> (rider photo, plate, proof, new DR) to unlock
+          the next receive wave for the sub-warehouse.
+        </p>
+        <p>
+          View the request timeline (3 dots → <span className="text-blue-500">View</span>) for{" "}
+          <span className="text-blue-500">Under investigation</span> and the resolution outcome.
         </p>
       </InstructionBorder>
 

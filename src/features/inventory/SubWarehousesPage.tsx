@@ -19,6 +19,7 @@ import { useWarehouseLocationMembership } from './useWarehouseLocationMembership
 import { SubWarehouseReturnStockDialog } from './components/SubWarehouseReturnStockDialog';
 import { deriveLocationCode } from './internalStockRequestsStore';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import SubwarehouseManual from '@/features/inventory/warehouse-manual/components/SubwarehouseManual';
 
 type LocationRow = {
@@ -348,6 +349,7 @@ export default function SubWarehousesPage() {
           <p className="text-muted-foreground">Create sub-warehouses and allocate stock from the main warehouse.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <PageGettingStartedDialog />
           <PageManualDialog
             title="Sub Warehouses Manual"
             fullManualHref="/warehouse-manual#subwarehouse"

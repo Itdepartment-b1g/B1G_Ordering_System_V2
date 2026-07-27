@@ -46,6 +46,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import PhysicalCountManual from '@/features/inventory/warehouse-manual/components/PhysicalCountManual';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
@@ -645,6 +646,7 @@ export default function PhysicalCountPage() {
             </p>
           )}
         </div>
+        <PageGettingStartedDialog />
         <PageManualDialog
           title="Physical Count Manual"
           fullManualHref="/warehouse-manual#physical-count"

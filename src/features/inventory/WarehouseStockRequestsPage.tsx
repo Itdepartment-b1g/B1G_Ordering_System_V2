@@ -62,6 +62,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import StockRequestManual from '@/features/inventory/warehouse-manual/components/StockRequestManual';
 import {
   AlertDialog,
@@ -730,6 +731,7 @@ export default function WarehouseStockRequestsPage() {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <PageGettingStartedDialog />
           <PageManualDialog
             title="Stock Request Manual"
             fullManualHref="/warehouse-manual#stock-request"

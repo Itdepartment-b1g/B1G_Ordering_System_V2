@@ -11,6 +11,8 @@ import {
   type DateRangeFilterValue,
 } from '@/features/shared/components/DateRangeFilterPopover';
 import { useToast } from '@/hooks/use-toast';
+import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import DeliveryShortagesManual from '@/features/inventory/warehouse-manual/components/DeliveryShortagesManual';
 import { useWarehouseLocationMembership } from './useWarehouseLocationMembership';
 import {
   DISCREPANCY_RESOLUTION_OPTIONS,
@@ -574,28 +576,36 @@ export default function WarehouseDeliveryShortagesPage() {
 
   return (
     <div className="container mx-auto p-4 md:p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <PackageSearch className="h-7 w-7" />
-          Delivery Shortages
-        </h1>
-        <p className="text-muted-foreground mt-1 max-w-2xl">
-          {source === 'internal' ? (
-            <>
-              Sub-stock shortages are grouped by request / DR. Investigate first, then choose:{' '}
-              <strong>Found &amp; redeliver</strong> (then Allocate Remaining with rider + proof),{' '}
-              <strong>Write off &amp; replace</strong> (release reservation, then Allocate Remaining),
-              or <strong>Write off only</strong> (accept the short).
-            </>
-          ) : (
-            <>
-              Shortages are grouped by DR. Investigate first, then choose per line:{' '}
-              <strong>Found &amp; redeliver</strong> (restore stock),{' '}
-              <strong>Write off &amp; replace</strong> (no restore, reopen PO for another DR), or{' '}
-              <strong>Write off only</strong> (accept the short).
-            </>
-          )}
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <PackageSearch className="h-7 w-7" />
+            Delivery Shortages
+          </h1>
+          <p className="text-muted-foreground mt-1 max-w-2xl">
+            {source === 'internal' ? (
+              <>
+                Sub-stock shortages are grouped by request / DR. Investigate first, then choose:{' '}
+                <strong>Found &amp; redeliver</strong> (then Allocate Remaining with rider + proof),{' '}
+                <strong>Write off &amp; replace</strong> (release reservation, then Allocate Remaining),
+                or <strong>Write off only</strong> (accept the short).
+              </>
+            ) : (
+              <>
+                Shortages are grouped by DR. Investigate first, then choose per line:{' '}
+                <strong>Found &amp; redeliver</strong> (restore stock),{' '}
+                <strong>Write off &amp; replace</strong> (no restore, reopen PO for another DR), or{' '}
+                <strong>Write off only</strong> (accept the short).
+              </>
+            )}
+          </p>
+        </div>
+        <PageManualDialog
+          title="Delivery Shortages Manual"
+          fullManualHref="/warehouse-manual#delivery-shortages"
+        >
+          <DeliveryShortagesManual embedded />
+        </PageManualDialog>
       </div>
 
       <div className="flex gap-2 border-b pb-0">

@@ -38,6 +38,7 @@ import { useAuth } from '@/features/auth/hooks';
 import { usePaymentSettings } from '@/features/finance/hooks/usePaymentSettings';
 import type { BankAccount, CompanyPaymentSettings } from '@/types/database.types';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import PaymentSettingsManual from '@/features/inventory/warehouse-manual/components/PaymentSettingsManual';
 
 export default function PaymentSettingsPage() {
@@ -397,6 +398,7 @@ export default function PaymentSettingsPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <PageGettingStartedDialog />
           <PageManualDialog
             title="Payment Settings Manual"
             fullManualHref="/warehouse-manual#payment-settings"

@@ -45,6 +45,31 @@ export default function PurchaseOrderManual({ embedded = false }: PurchaseOrderM
       </InstructionBorder>
 
       <InstructionBorder>
+        <TitleSection>How Buyer Delivery Shortages Work?</TitleSection>
+        <p>
+          If a buyer confirms less than the delivered quantity and reports a shortfall, investigate it in{' '}
+          {embedded ? (
+            <Link to="/warehouse-manual#delivery-shortages" className="text-blue-500">
+              Delivery Shortages
+            </Link>
+          ) : (
+            <a href="#delivery-shortages" className="text-blue-500">
+              Delivery Shortages
+            </a>
+          )}{' '}
+          → <span className="text-blue-500">PO deliveries</span>. Resolve lines as Found (restore &amp; redeliver),
+          write off &amp; replace, or write off only.
+        </p>
+        <span>
+          Open the page anytime at{' '}
+          <Link to="/inventory/delivery-shortages?source=po" className="text-blue-500">
+            Delivery Shortages
+          </Link>
+          .
+        </span>
+      </InstructionBorder>
+
+      <InstructionBorder>
         <TitleSection>How to Reject a Purchase Order?</TitleSection>
         <span>1. Click the 'Reject' button in the purchase order row to reject the purchase order.</span>
         <span>2. A dialog will be displayed to confirm the rejection. Click on <span className="text-blue-500">Reject</span> to confirm.</span>

@@ -36,6 +36,7 @@ import {
   type MainInventoryVariantSortKey,
 } from './utils/mainInventoryVariantSorting';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import MainInventoryManual from '@/features/inventory/warehouse-manual/components/MainInventoryManual';
 
 interface ReturnHistoryEntry {
@@ -1008,12 +1009,15 @@ export default function MainInventoryPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {isWarehouse && (
-            <PageManualDialog
-              title="Main Inventory Manual"
-              fullManualHref="/warehouse-manual#main-inventory"
-            >
-              <MainInventoryManual embedded />
-            </PageManualDialog>
+            <>
+              <PageGettingStartedDialog />
+              <PageManualDialog
+                title="Main Inventory Manual"
+                fullManualHref="/warehouse-manual#main-inventory"
+              >
+                <MainInventoryManual embedded />
+              </PageManualDialog>
+            </>
           )}
           {isWarehouse && isMainWarehouseUser && (
             <>

@@ -24,6 +24,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import BrandsAndVariantsManual from '@/features/inventory/warehouse-manual/components/BrandsAndVariantsManual';
 
 interface Brand {
@@ -551,6 +552,7 @@ export default function BrandsPage() {
           <p className="text-muted-foreground">Manage brands and their product variants</p>
         </div>
         <div className="flex gap-2">
+          <PageGettingStartedDialog />
           <PageManualDialog
             title="Brands & Variants Manual"
             fullManualHref="/warehouse-manual#brands-and-variants"

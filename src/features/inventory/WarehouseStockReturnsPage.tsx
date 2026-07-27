@@ -29,6 +29,7 @@ import {
   type InspectRequestItem,
 } from './warehouseStockReturnInspectShared';
 import PageManualDialog from '@/features/inventory/warehouse-manual/components/PageManualDialog';
+import PageGettingStartedDialog from '@/features/inventory/warehouse-manual/components/PageGettingStartedDialog';
 import StockReturnsManual from '@/features/inventory/warehouse-manual/components/StockReturnsManual';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -690,6 +691,7 @@ export default function WarehouseStockReturnsPage() {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <PageGettingStartedDialog />
           <PageManualDialog
             title="Stock Returns Manual"
             fullManualHref="/warehouse-manual#stock-returns"
