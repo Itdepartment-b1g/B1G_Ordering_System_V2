@@ -60,6 +60,7 @@ type ListViewMode = 'cards' | 'rows';
 type StatusFilter = 'all' | TlPoReceiveStatus;
 
 const STATUS_FILTERS: TlPoReceiveStatus[] = [
+  'awaiting_warehouse_fulfillment',
   'pending_receive',
   'fully_received',
   'shortfall_investigation',
@@ -103,6 +104,14 @@ function getDeliveryTotals(order: TlReceiveListItem) {
 }
 
 function StatusBadge({ status }: { status: TlPoReceiveStatus }) {
+  if (status === 'awaiting_warehouse_fulfillment') {
+    return (
+      <Badge variant="secondary" className="gap-1">
+        <Package className="h-3 w-3" />
+        {TL_PO_STATUS_LABELS[status]}
+      </Badge>
+    );
+  }
   if (status === 'pending_receive') {
     return (
       <Badge variant="default" className="gap-1">
@@ -130,6 +139,15 @@ function StatusBadge({ status }: { status: TlPoReceiveStatus }) {
 function PoTotals({ order }: { order: TlReceiveListItem }) {
   const { delivered, received, short } = getDeliveryTotals(order);
   const showActiveShort = short > 0 && order.status === 'shortfall_investigation';
+  const ordered = getOverallQty(order);
+
+  if (order.status === 'awaiting_warehouse_fulfillment') {
+    return (
+      <p className="text-xs text-muted-foreground tabular-nums">
+        Ordered {ordered.toLocaleString()} · awaiting warehouse fulfillment
+      </p>
+    );
+  }
 
   if (order.status === 'pending_receive') {
     return (
@@ -175,7 +193,9 @@ function ItemChips({
         {visibleItems.map((item) => {
           const short = Math.max(0, (item.dispatchedQuantity || 0) - (item.receivedQuantity || 0));
           const label =
-            order.status === 'pending_receive'
+            order.status === 'awaiting_warehouse_fulfillment'
+              ? `${item.variantName} · x${item.orderedQuantity}`
+              : order.status === 'pending_receive'
               ? `${item.variantName} · x${item.dispatchedQuantity}`
               : short > 0 && order.status === 'shortfall_investigation'
                 ? `${item.variantName} · x${item.dispatchedQuantity}`
@@ -408,8 +428,8 @@ export function LeaderPoReceiveList({ orders, onReceive }: LeaderPoReceiveListPr
               PO Receiving
             </CardTitle>
             <p className="text-sm text-muted-foreground font-normal mt-1">
-              Confirm receive when status is pending receive. Shortages stay under investigation
-              until warehouse resolves them.
+              Receive when status is pending receive. Awaiting warehouse fulfillment means approval
+              or dispatch is still in progress.
             </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">

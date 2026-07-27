@@ -43,11 +43,24 @@ function deriveStatus(args: {
   shortOpen: number;
   dispatched: number;
   received: number;
+  poStatus?: string | null;
 }): TlPoReceiveStatus {
   if (args.hasPendingReceive) return 'pending_receive';
   if (args.shortOpen > 0) return 'shortfall_investigation';
   if (args.dispatched > 0 && args.received >= args.dispatched) return 'fully_received';
   if (args.received > 0) return 'fully_received';
+
+  if (args.dispatched === 0 && args.received === 0) {
+    const poStatus = String(args.poStatus || '').toLowerCase();
+    const awaitingWarehouse =
+      poStatus === 'pending' ||
+      poStatus === 'submitted' ||
+      poStatus === 'draft' ||
+      poStatus === 'approved_for_fulfillment' ||
+      poStatus === 'partially_fulfilled';
+    if (awaitingWarehouse) return 'awaiting_warehouse_fulfillment';
+  }
+
   return 'pending_receive';
 }
 
@@ -414,6 +427,7 @@ export function useLeaderAssignedPoReceives(
             shortOpen: progress.shortOpen,
             dispatched: progress.dispatched,
             received: progress.received,
+            poStatus: po.status,
           });
           const meta = pending
             ? {

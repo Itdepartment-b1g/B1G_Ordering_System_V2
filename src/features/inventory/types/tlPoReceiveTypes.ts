@@ -5,11 +5,13 @@ import type {
 } from '@/features/orders/purchaseOrderHistoryTypes';
 
 export type TlPoReceiveStatus =
+  | 'awaiting_warehouse_fulfillment'
   | 'pending_receive'
   | 'fully_received'
   | 'shortfall_investigation';
 
 export const TL_PO_STATUS_LABELS: Record<TlPoReceiveStatus, string> = {
+  awaiting_warehouse_fulfillment: 'Awaiting warehouse fulfillment',
   pending_receive: 'Pending receive',
   fully_received: 'Fully received',
   shortfall_investigation: 'Shortfall · under investigation',
