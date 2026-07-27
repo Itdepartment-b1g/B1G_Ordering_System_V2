@@ -318,6 +318,19 @@ function requestCanAllocateRemaining(request: SubWarehouseStockRequest): boolean
   );
 }
 
+/** Secondary badge when shortage is resolved and Main can unlock the next receive wave. */
+function ReadyToAllocateBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="font-normal text-[10px] h-5 gap-1 border-emerald-300 bg-emerald-50 text-emerald-900"
+    >
+      <Package className="h-3 w-3" />
+      Ready to allocate
+    </Badge>
+  );
+}
+
 function shortageInvestigateUrl(requestNumber: string) {
   return `/inventory/delivery-shortages?source=internal&status=open&search=${encodeURIComponent(requestNumber)}`;
 }
@@ -1387,6 +1400,8 @@ export default function MainWarehouseSubStockRequestsPage() {
                           <Badge variant="destructive" className="font-normal text-[10px] h-5">
                             Open shortage
                           </Badge>
+                        ) : requestCanAllocateRemaining(req) ? (
+                          <ReadyToAllocateBadge />
                         ) : null}
                       </div>
                     </div>
@@ -1495,6 +1510,8 @@ export default function MainWarehouseSubStockRequestsPage() {
                               <Badge variant="destructive" className="font-normal text-[10px] h-5">
                                 Open shortage
                               </Badge>
+                            ) : requestCanAllocateRemaining(req) ? (
+                              <ReadyToAllocateBadge />
                             ) : null}
                           </div>
                         </TableCell>
@@ -1560,6 +1577,8 @@ export default function MainWarehouseSubStockRequestsPage() {
                     <Badge variant="destructive" className="font-normal text-[10px] h-5">
                       Open shortage
                     </Badge>
+                  ) : requestCanAllocateRemaining(detailRequest) ? (
+                    <ReadyToAllocateBadge />
                   ) : null}
                 </DialogTitle>
                 <p className="text-sm text-muted-foreground font-normal pt-1">
@@ -1610,6 +1629,10 @@ export default function MainWarehouseSubStockRequestsPage() {
                             Resolve shortage
                           </Link>
                         </Button>
+                      </div>
+                    ) : requestCanAllocateRemaining(detailRequest) ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ReadyToAllocateBadge />
                       </div>
                     ) : null}
                   </div>
