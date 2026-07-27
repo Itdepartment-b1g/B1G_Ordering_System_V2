@@ -53,7 +53,8 @@ function deriveStatus(args: {
 
 export function useLeaderAssignedPoReceives(
   userId: string | undefined,
-  companyId: string | undefined
+  companyId: string | undefined,
+  enabled = true
 ) {
   const [orders, setOrders] = useState<TlReceiveListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +64,7 @@ export function useLeaderAssignedPoReceives(
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   useEffect(() => {
-    if (!userId || !companyId) {
+    if (!enabled || !userId || !companyId) {
       setOrders([]);
       setLoading(false);
       setError(null);
@@ -479,7 +480,7 @@ export function useLeaderAssignedPoReceives(
     return () => {
       cancelled = true;
     };
-  }, [userId, companyId, refreshKey]);
+  }, [userId, companyId, enabled, refreshKey]);
 
   return { orders, loading, error, refresh };
 }

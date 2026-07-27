@@ -12,15 +12,11 @@ export function usePermissions() {
 
   // If this tenant is linked to a warehouse hub, we lock the standard catalog
   // (brands & variant management) so only the warehouse controls catalog changes.
-  const { data: hasWarehouseHubLink } = useQuery({
+  const { data: hasWarehouseHubLink, isLoading: hasWarehouseHubLinkLoading } = useQuery({
     queryKey: ['has-warehouse-hub-link', user?.company_id],
     enabled: !!user?.company_id && user?.role !== 'warehouse',
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('warehouse_company_assignments')
-        .select('id')
-        .eq('client_company_id', user!.company_id)
-        .maybeSingle();
+      const { data, error } = await supabase.rpc('get_linked_warehouse_company_id', {});
       if (error) throw error;
       return !!data;
     },
@@ -42,6 +38,11 @@ export function usePermissions() {
         return false;
       }
       return hasWarehouseHubLink === true;
+    }
+
+    // PO Receiving is only available for team leaders whose tenant is linked to a warehouse hub.
+    if (route === '/inventory/po-receive') {
+      return user?.role === 'team_leader' && hasWarehouseHubLink === true;
     }
 
     // If impersonating, allow full navigation access to the tenant environment.
@@ -174,6 +175,7 @@ export function usePermissions() {
     isExecutive: user?.role === 'executive',
     isWarehouse: user?.role === 'warehouse',
     hasWarehouseHubLink: hasWarehouseHubLink === true,
+    hasWarehouseHubLinkLoading,
     lockStandardCatalog,
   };
 }

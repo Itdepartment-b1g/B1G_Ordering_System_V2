@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Loader2, PackageCheck, Clock, CheckCircle2, AlertTriangle, Package } from 'lucide-react';
 import { useAuth } from '@/features/auth';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -62,9 +63,11 @@ function toPurchaseOrder(order: TlReceiveListItem): PurchaseOrder {
 export default function LeaderPoReceivePage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { hasWarehouseHubLink, hasWarehouseHubLinkLoading } = usePermissions();
   const { orders, loading, error, refresh } = useLeaderAssignedPoReceives(
     user?.id,
-    user?.company_id
+    user?.company_id,
+    hasWarehouseHubLink
   );
 
   const [receiveOpen, setReceiveOpen] = useState(false);
@@ -105,6 +108,32 @@ export default function LeaderPoReceivePage() {
           <CardHeader>
             <CardTitle>Access Denied</CardTitle>
             <CardDescription>Only team leaders can access this page</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
+  if (hasWarehouseHubLinkLoading) {
+    return (
+      <div className="w-full p-4 md:p-6">
+        <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          Checking warehouse link…
+        </div>
+      </div>
+    );
+  }
+
+  if (!hasWarehouseHubLink) {
+    return (
+      <div className="w-full p-4 md:p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Warehouse not linked</CardTitle>
+            <CardDescription>
+              PO Receiving becomes available after your company is assigned to a warehouse hub.
+            </CardDescription>
           </CardHeader>
         </Card>
       </div>

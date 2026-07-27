@@ -129,6 +129,7 @@ function StatusBadge({ status }: { status: TlPoReceiveStatus }) {
 
 function PoTotals({ order }: { order: TlReceiveListItem }) {
   const { delivered, received, short } = getDeliveryTotals(order);
+  const showActiveShort = short > 0 && order.status === 'shortfall_investigation';
 
   if (order.status === 'pending_receive') {
     return (
@@ -142,11 +143,11 @@ function PoTotals({ order }: { order: TlReceiveListItem }) {
     <div className="space-y-1">
       <p className="text-xs tabular-nums">
         Delivered {delivered} · Received {received}
-        {short > 0 ? (
+        {showActiveShort ? (
           <span className="text-amber-700 font-medium"> · Short {short}</span>
         ) : null}
       </p>
-      {short > 0 && order.status === 'shortfall_investigation' ? (
+      {showActiveShort ? (
         <p className="text-xs text-amber-800">
           Waiting for warehouse to finish shortage investigation.
         </p>
